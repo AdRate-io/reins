@@ -23,6 +23,7 @@
 | 2026-09-08 | **S2** TanStack AI 0.53.0：`onConfig` 返回的 Partial 可同时含 `providerMessages` 与 `systemPrompts`（浅合并；只返回 `messages` 时框架自动同步 `providerMessages`）；init 与每轮 beforeModel 都调用，`config.messages` 是含 tool 结果的完整历史。`ModelMessage.role` 只有 user/assistant/tool，无 system → TanStack 路径下 `system_note` 只能落 user 角色或追加 `systemPrompts`（改动缓存前缀），有损声明。`MetadataStore` 是需中间件在 `setup` 里 `provide` 的命名空间 KV（async get/set/delete），无默认实现 → 适配器**不**用它存 run 状态，状态引用放 EventLog。审批暂停走 `onInterruptBoundary`，预算走 `onShouldContinue`/`onUsage`，模型事件记录走 `onChunk` | 读上游 dist 类型与 compose.js 源码 | 中 |
 | 2026-09-08 | **S3** `@reins/store-sqlite` 首版驱动用 `node:sqlite`（Node 22.13+ 免 flag，官方稳定性 1.2 候选发布，本机 22.20 实测可用）；Bun 用 `bun:sqlite`（同为同步 API，SQL 层共用，驱动按运行时选择）；Cloudflare 不做 SQLite 文件包，用 Durable Objects SQLite（`ctx.storage.sql.exec`）单独做 `@reins/store-do`，第二期。**不用** better-sqlite3（原生编译、装机负担）与 sqlite-wasm（Node 下仅内存、无持久化） | 零原生依赖；一份 SQL 三个驱动 | 高 |
 | 2026-09-08 | lint 与格式化用 Biome 2.5.12（单一工具、零插件）；提交信息校验用零依赖的 `.githooks/commit-msg`，由 `pnpm install` 的 prepare 自动挂载；不引入 ESLint/Prettier/husky/commitlint | 工具链越少越好，三个月后仍能一眼看懂 | 高 |
+| 2026-09-08 | **T3** 事件载荷统一放 `payload` 字段（不平铺到事件顶层）；`trust` 缺省按 actor 推导（tool→untrusted）；`EventSchemaRegistry` 在登记时就校验升级链完整（version=n 必须有 1..n-1 全部 upcaster）；uuidv7 自实现不引依赖；payload 形状在读取时不做运行时校验，只校验壳与版本 | 壳稳定则升级函数只碰 payload，三个月后加字段不会牵连 EventBase；启动即报错优于读到一半才发现；payload 校验交给写入方与工具 inputSchema，避免核心包绑定校验库 | 高（发布前） |
 
 ## 待 Boss 本人操作
 

@@ -19,7 +19,7 @@
 
 ### 阶段 2：核心数据与存储
 
-- [ ] T3 事件模型：EventBase、core.* 类型、schemaVersion、upcast 表、fail-closed 读取 —— 验收：类型测试 + 一个 v1→v2 升级用例
+- [x] T3 事件模型：EventBase、core.* 类型、schemaVersion、upcast 表、fail-closed 读取 —— 验收：类型测试 + 一个 v1→v2 升级用例（2026-09-08 完成：15 种 core.* 全 v1；`EventSchemaRegistry` fail-closed 五类错误码；v1→v2 与三级链升级用例；类型测试 `types.test-d.ts`；19 个测试全绿，core 零 `node:` 引用）
 - [ ] T4 Store 接口：EventLog / BlobStore / MemoryStore + 内存实现 —— 验收：接口一致性测试套件对内存实现全绿
 - [ ] T5 一致性测试套件导出为 `@reins/core/testing`，供第三方后端复用 —— 验收：套件可独立 import 运行
 
