@@ -7,10 +7,10 @@
 
 ### 阶段 0：进代码前的核实（1~2 天，结论写入 docs/DECISIONS.md）
 
-- [ ] S1 pi-ai 对 Anthropic 中途 system 消息的支持；不支持则 `system_note` 降为 user 角色并在 capabilities 声明 —— 验收：一段实测代码与结论
-- [ ] S2 TanStack AI `onConfig` 能否同时替换 providerMessages 与注入 systemPrompts；`metadata` store 形状 —— 验收：结论 + 适配器接口草案调整
-- [ ] S3 SQLite 实现选型：better-sqlite3 / node:sqlite（Node 22 内置）/ sqlite-wasm —— 验收：选一个并说明 Bun 与 Workers 上的替代
-- [ ] S4 pi-ai 精确版本与其 Message/Context 类型边界确认 —— 验收：pin 版本号写入 DECISIONS
+- [x] S1 pi-ai 对 Anthropic 中途 system 消息的支持；不支持则 `system_note` 降为 user 角色并在 capabilities 声明 —— 验收：一段实测代码与结论（2026-09-08 完成：官方 API 支持，pi-ai 不支持；用 `onPayload` 改写补齐，脚本在 `spikes/s1-mid-system`）
+- [x] S2 TanStack AI `onConfig` 能否同时替换 providerMessages 与注入 systemPrompts；`metadata` store 形状 —— 验收：结论 + 适配器接口草案调整（2026-09-08 完成：可以同时返回；MetadataStore 无默认实现，不用它存状态；钩子映射写入技术方案 §2）
+- [x] S3 SQLite 实现选型：better-sqlite3 / node:sqlite（Node 22 内置）/ sqlite-wasm —— 验收：选一个并说明 Bun 与 Workers 上的替代（2026-09-08 完成：node:sqlite；Bun 用 bun:sqlite；Workers 用 Durable Objects SQLite 另起包）
+- [x] S4 pi-ai 精确版本与其 Message/Context 类型边界确认 —— 验收：pin 版本号写入 DECISIONS（2026-09-08 完成：`@earendil-works/pi-ai@0.85.1`，旧 scope 已 deprecated；只从 `api/*` 子路径导入）
 
 ### 阶段 1：仓库与工程
 

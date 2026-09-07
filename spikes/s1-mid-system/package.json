@@ -1,0 +1,8 @@
+{
+  "name": "spike-s1-mid-system",
+  "private": true,
+  "type": "module",
+  "description": "S1 spike：pi-ai 对 Anthropic 中途 system 消息的支持现状（假 fetch 截包，不联网）",
+  "scripts": { "start": "node mid-system.mjs" },
+  "dependencies": { "@earendil-works/pi-ai": "0.85.1" }
+}
