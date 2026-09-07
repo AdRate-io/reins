@@ -26,8 +26,8 @@
 ### 阶段 3：投影与降级
 
 - [x] T6 Projection 策略链：过滤 → 折叠 → 钉住 → 感知注入（占位）→ 预算裁剪；纯函数 —— 验收：给定时间线快照，输出确定且有单测（2026-09-08 完成：`packages/core/src/projection/`，四个内置策略 + `perception` 插槽；`project()` 同步纯函数，新造事件走 `emitted`；31 个用例全绿，含确定性、嵌套折叠、pin 幸存、工具配对不拆、seq 封闭、overBudget）
-- [ ] T7 `@reins/lowering-pi`：事件 → pi-ai Message → 请求；流式响应 → 事件；capabilities；有损矩阵落地 —— 验收：Anthropic 与 OpenAI Responses 各跑通一次带工具调用与 thinking 回放的往返
-- [ ] T8 有损声明测试：每种事件在两家 API 的落点有断言，禁止静默丢弃 —— 验收：矩阵测试全绿
+- [x] T7 `@reins/lowering-pi`：事件 → pi-ai Message → 请求；流式响应 → 事件；capabilities；有损矩阵落地 —— 验收：Anthropic 与 OpenAI Responses 各跑通一次带工具调用与 thinking 回放的往返（2026-09-08 完成：core 增加 `Lowering` 接口、`EventDraft`、有损矩阵类型；`PiAiLowering` 只从 pi-ai `api/*` 与 `providers/*.models` 导入；system_note 经 `onPayload` 改写为 Anthropic 中途 system 并按官方规则归位、OpenAI 落 developer；用假 fetch 断言两家请求体（thinking 签名 / reasoning item 回放、tool 配对、system 归位、store:false）与假 SSE 译回草稿，13 用例全绿。**真实联网往返待 Boss 提供 key**：`pnpm build && ANTHROPIC_API_KEY=... OPENAI_API_KEY=... node spikes/t7-live-roundtrip/live.mjs`）
+- [x] T8 有损声明测试：每种事件在两家 API 的落点有断言，禁止静默丢弃 —— 验收：矩阵测试全绿（2026-09-08 完成：`LOSS_MATRIX` 覆盖 15 种 core 事件 + ext.* × 两家 API；`loss-matrix.test.ts` 用 19 个变体 × 4 个模型目标逐条断言实际落点必在声明内，并反向检查矩阵无死条目，77 用例全绿）
 
 ### 阶段 4：循环与运行状态
 

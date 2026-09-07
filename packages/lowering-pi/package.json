@@ -1,7 +1,7 @@
 {
   "name": "@reins/lowering-pi",
   "version": "0.0.0",
-  "description": "reins — lowering-pi",
+  "description": "reins — lowering layer on pi-ai: events ⇄ provider wire protocols (Anthropic Messages, OpenAI Responses)",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -15,7 +15,11 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean"
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.85.1",
+    "@reins/core": "workspace:*"
   },
   "engines": {
     "node": ">=22"

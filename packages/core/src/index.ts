@@ -9,9 +9,11 @@
  * - events/：事件模型、schema 注册表与升级（T3）
  * - store/：EventLog / BlobStore / MemoryStore 接口与内存实现（T4）
  * - projection/：投影策略链，从时间线算出模型本轮看到什么（T6）
+ * - lowering/：降级层接口与有损矩阵类型，实现在 @reins/lowering-pi（T7）
  * - testing/：存储一致性套件，单独入口 @reins/core/testing（T5）
  */
 export * from "./events/index.js"
+export * from "./lowering/index.js"
 export * from "./projection/index.js"
 export * from "./store/index.js"
 

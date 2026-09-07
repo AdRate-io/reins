@@ -7,17 +7,28 @@ import type { CoreEventOf, CoreEventPayloads, CoreEventType } from "./core.js"
 import { uuidv7 } from "./id.js"
 import type { EventSchemaRegistry } from "./registry.js"
 
-export interface CreateEventInput<T extends string, P> {
+/**
+ * 事件草稿：还没进日志的事件，缺 id / seq / at / sessionId / schemaVersion。
+ * 降级层（模型输出）与脑子模块（注入的 system_note）都只产出草稿，由循环补齐后 append ——
+ * 谁分配 seq 只有循环知道，草稿不替它做主。
+ */
+export interface EventDraft<T extends string = string, P = unknown> {
   type: T
   payload: P
-  sessionId: string
-  seq: number
   actor: Actor
   /** 缺省按 DEFAULT_TRUST[actor] */
   trust?: Trust
   parentId?: string
   provenance?: Provenance
   replay?: Record<string, unknown>
+}
+
+/** 内置事件的草稿联合，type 与 payload 联动 */
+export type CoreEventDraft = { [T in CoreEventType]: EventDraft<T, CoreEventPayloads[T]> }[CoreEventType]
+
+export interface CreateEventInput<T extends string, P> extends EventDraft<T, P> {
+  sessionId: string
+  seq: number
   /** 测试注入用；缺省 Date.now() */
   at?: number
   id?: string
