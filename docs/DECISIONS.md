@@ -26,6 +26,7 @@
 | 2026-09-08 | **T3** 事件载荷统一放 `payload` 字段（不平铺到事件顶层）；`trust` 缺省按 actor 推导（tool→untrusted）；`EventSchemaRegistry` 在登记时就校验升级链完整（version=n 必须有 1..n-1 全部 upcaster）；uuidv7 自实现不引依赖；payload 形状在读取时不做运行时校验，只校验壳与版本 | 壳稳定则升级函数只碰 payload，三个月后加字段不会牵连 EventBase；启动即报错优于读到一半才发现；payload 校验交给写入方与工具 inputSchema，避免核心包绑定校验库 | 高（发布前） |
 | 2026-09-08 | **T4/T5** EventLog 的 seq 由调用方分配、日志只校验连续性（乐观并发）；fork 保留原事件 id（id 唯一性范围改为"会话内"）；一致性套件不依赖任何测试框架的 expect，只接收 `{ describe, it }`，断言自带；core 增加 `./testing` 子路径导出，tsup 多入口时 DTS 关闭 composite | 存储层不做主，循环层才知道 seq 该是多少；保留 id 才能让 parentId / pinsKept 在分叉会话里继续有效；不绑 vitest 让 Bun、Node 原生测试都能跑套件 | 高（发布前） |
 | 2026-09-08 | `@reins/store-pg` 从第二期提前到 M1 B9，与 SQLite 并列；pg 表结构：事件表主键 (session_id, seq)、payload jsonb，唯一约束直接产生 seq_conflict；blob 小对象 bytea、大对象存对象存储只留引用 | Boss 确认投放工具数据库为 pg，dogfood 落 pg 少一层搬运；接口极简，两个后端共用一致性套件 | 高 |
+| 2026-09-08 | **T6** 投影是同步纯函数，随机（id）与时间（at）从参数注入；策略新造事件走 `emitted` 由循环 append，seq 按时间线末尾预分配。trust 标注移到降级层（投影不篡改 payload）。折叠摘要放在被覆盖区间的位置，投影顺序允许与 seq 不一致。`system_note(kind=pin)` 默认自动穿越折叠，`pinsKept` 用于钉住其它事件；被多次覆盖须全部保留才幸存。预算裁剪只在轮边界切、不留孤儿 tool_result、要求 seq 封闭；旧摘要原文并入新摘要。默认 token 估算为粗估（宁高勿低），`reserveTokens` 缺省窗口 15% | 纯函数才能单测、回放、eval 对比；"模型可见 ⟺ 已记录"要求新造事件必须落日志；摘要放原段位置读起来顺；核心包零依赖不带 tokenizer | 高（发布前） |
 
 ## 待 Boss 本人操作
 
