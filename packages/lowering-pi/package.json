@@ -1,0 +1,12 @@
+{
+  "name": "@reins/lowering-pi",
+  "version": "0.0.0",
+  "description": "reins — lowering-pi",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup src/index.ts --format esm --dts --clean" },
+  "engines": { "node": ">=22" }
+}
