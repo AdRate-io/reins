@@ -28,7 +28,7 @@ export interface Provenance {
  * 载荷放在 payload 下（而不是平铺），这样 schema 升级函数只碰 payload，壳永远稳定。
  */
 export interface EventBase {
-  /** uuidv7，时间有序；跨会话全局唯一 */
+  /** uuidv7，时间有序；会话内唯一。fork 复制的事件保留原 id，以维持 parentId / pinsKept 等引用 */
   id: string
   sessionId: string
   /** 会话内单调递增，从 1 起；是会话内排序的唯一依据 */

@@ -7,8 +7,10 @@
  *
  * 模块：
  * - events/：事件模型、schema 注册表与升级（T3）
- * - store/：EventLog / BlobStore / MemoryStore 接口与内存实现（T4，待做）
+ * - store/：EventLog / BlobStore / MemoryStore 接口与内存实现（T4）
+ * - testing/：存储一致性套件，单独入口 @reins/core/testing（T5）
  */
 export * from "./events/index.js"
+export * from "./store/index.js"
 
 export const REINS_VERSION = "0.0.0"
