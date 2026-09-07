@@ -1,0 +1,68 @@
+# reins 任务板
+
+> 规则：每个任务包 ≤ 1 个工作日，有明确验收；完成后打勾并写一行结果。技术方案 §16 的里程碑在此展开。Boss 只需看"验收"列能不能看到东西。
+> 代码仓库：`~/Desktop/reins`（本地，发布时再推远程）。文档在 `docs/`。
+
+## M0 骨架（目标 2 周）：能跑、能回放、能在 Workers 上起 handler
+
+### 阶段 0：进代码前的核实（1~2 天，结论写入 docs/DECISIONS.md）
+
+- [ ] S1 pi-ai 对 Anthropic 中途 system 消息的支持；不支持则 `system_note` 降为 user 角色并在 capabilities 声明 —— 验收：一段实测代码与结论
+- [ ] S2 TanStack AI `onConfig` 能否同时替换 providerMessages 与注入 systemPrompts；`metadata` store 形状 —— 验收：结论 + 适配器接口草案调整
+- [ ] S3 SQLite 实现选型：better-sqlite3 / node:sqlite（Node 22 内置）/ sqlite-wasm —— 验收：选一个并说明 Bun 与 Workers 上的替代
+- [ ] S4 pi-ai 精确版本与其 Message/Context 类型边界确认 —— 验收：pin 版本号写入 DECISIONS
+
+### 阶段 1：仓库与工程
+
+- [x] T1 pnpm monorepo 骨架：core / brain / lowering-pi 三包、TS 严格模式、vitest、tsup、changesets、MIT、README 首屏写宪法 —— 验收：`pnpm i && pnpm test` 通过（2026-09-08 完成）
+- [ ] T2 CI 脚本（本地 `pnpm check`：typecheck + lint + test）与提交约定 —— 验收：一条命令全绿
+
+### 阶段 2：核心数据与存储
+
+- [ ] T3 事件模型：EventBase、core.* 类型、schemaVersion、upcast 表、fail-closed 读取 —— 验收：类型测试 + 一个 v1→v2 升级用例
+- [ ] T4 Store 接口：EventLog / BlobStore / MemoryStore + 内存实现 —— 验收：接口一致性测试套件对内存实现全绿
+- [ ] T5 一致性测试套件导出为 `@reins/core/testing`，供第三方后端复用 —— 验收：套件可独立 import 运行
+
+### 阶段 3：投影与降级
+
+- [ ] T6 Projection 策略链：过滤 → 折叠 → 钉住 → 感知注入（占位）→ 预算裁剪；纯函数 —— 验收：给定时间线快照，输出确定且有单测
+- [ ] T7 `@reins/lowering-pi`：事件 → pi-ai Message → 请求；流式响应 → 事件；capabilities；有损矩阵落地 —— 验收：Anthropic 与 OpenAI Responses 各跑通一次带工具调用与 thinking 回放的往返
+- [ ] T8 有损声明测试：每种事件在两家 API 的落点有断言，禁止静默丢弃 —— 验收：矩阵测试全绿
+
+### 阶段 4：循环与运行状态
+
+- [ ] T9 `runLoop` 异步生成器 + Socket 五个钩子 + RunResult 四态 —— 验收：一个带工具的 agent 跑三轮并结束；日志可完整回放
+- [ ] T10 RunState 序列化 / 恢复 + 审批暂停（`paused`）跨进程续跑 —— 验收：进程 A 暂停、进程 B 恢复的测试
+- [ ] T11 fork：任意 seq 分叉出新会话 —— 验收：分叉后两条会话独立演进
+
+### 阶段 5：服务端与前端
+
+- [ ] T12 `@reins/server` `createAgentHandler`：Web 标准 handler、SSE、`lastSeq` 重连补发 —— 验收：Node 与 Cloudflare Workers（miniflare）各跑通
+- [ ] T13 `@reins/ui-agui` 事件映射 —— 验收：映射表测试；一个最小 HTML 页面消费流
+- [ ] T14 示例应用 `examples/minimal`：五分钟体验代码原样可跑 —— 验收：PRD §5.1 代码块复制即用
+
+### 阶段 6：M0 收口
+
+- [ ] T15 回放演示：从事件日志重放一次完整会话并展示 —— 验收：Boss 能看到"发生过什么"的时间线
+- [ ] T16 M0 复盘：更新技术方案与 DECISIONS —— 验收：文档与代码一致
+
+## M1 脑子 v1（目标 3 周）
+
+- [ ] B1 perception（分档注入、每档一次）
+- [ ] B2 compact 工具 + 规则提示 + 阈值兜底 + 连续上限
+- [ ] B3 pins 幸存契约 + 折叠后重注入
+- [ ] B4 spill 外溢 + `fetch_blob`
+- [ ] B5 handoff + `onHandoff` 回调
+- [ ] B6 memory 工具（memory_20250818 形状）+ 路径防穿越
+- [ ] B7 approval Policy 管线（deny→ask→allow、fail-closed、HMAC）
+- [ ] B8 budget 上限 + `budget_usage` 事件
+- [ ] B9 `@reins/store-sqlite`
+- [ ] B10 `@reins/adapter-tanstack-ai`
+- [ ] B11 投放工具接入（Boss 参与：选一条真实长任务流程）
+
+## M2 数字（目标 2 周）
+
+- [ ] E1 eval 运行器与指标
+- [ ] E2 首批 fixture（投放工具脱敏）
+- [ ] E3 三组对照跑数 → 决定默认开关
+- [ ] E4 文档、CHANGELOG、0.1 发布准备（远程仓库与 npm 组织在此之前建）
