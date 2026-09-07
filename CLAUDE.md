@@ -53,5 +53,5 @@ reins（缰绳）是一个可嵌入的 Agent 库：装上、配自己的模型�
 
 - pnpm monorepo，Node ≥ 22，TypeScript 严格模式，vitest，tsup，changesets，MIT。
 - `packages/core`、`packages/brain`、`packages/lowering-pi` 起步；其余包按 TASKS 需要再建。
-- 命令：`pnpm check`（typecheck + test）、`pnpm build`。
+- 命令：`pnpm check`（typecheck + lint + test）、`pnpm format`、`pnpm build`。提交约定见 `CONTRIBUTING.md`。
 - 代码注释写清设计意图，见名知义；三个月后再看也能懂。

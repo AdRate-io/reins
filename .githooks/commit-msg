@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+// 提交信息校验：首行必须是 `type: 摘要`，type 见 CONTRIBUTING.md。零依赖，由 `pnpm install` 的 prepare 脚本自动挂载。
+const fs = require("node:fs")
+const msg = fs.readFileSync(process.argv[2], "utf8")
+const first = msg.split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? ""
+const re = /^(feat|fix|docs|spike|refactor|test|chore|build|ci|perf)(\([\w./-]+\))?: \S.{1,71}$/u
+if (!re.test(first)) {
+  console.error(`✗ 提交信息首行不合规范：${JSON.stringify(first)}`)
+  console.error("  期望：type: 摘要（type ∈ feat fix docs spike refactor test chore build ci perf，摘要 ≤ 72 字符）")
+  console.error("  例如：feat: 事件模型与 upcast 表（T3）")
+  process.exit(1)
+}

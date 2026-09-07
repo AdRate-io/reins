@@ -15,7 +15,7 @@
 ### 阶段 1：仓库与工程
 
 - [x] T1 pnpm monorepo 骨架：core / brain / lowering-pi 三包、TS 严格模式、vitest、tsup、changesets、MIT、README 首屏写宪法 —— 验收：`pnpm i && pnpm test` 通过（2026-09-08 完成）
-- [ ] T2 CI 脚本（本地 `pnpm check`：typecheck + lint + test）与提交约定 —— 验收：一条命令全绿
+- [x] T2 CI 脚本（本地 `pnpm check`：typecheck + lint + test）与提交约定 —— 验收：一条命令全绿（2026-09-08 完成：Biome 做 lint+format，`.githooks/commit-msg` 校验 `type: 摘要`，GitHub Actions 同跑 `pnpm check`，约定见 CONTRIBUTING.md）
 
 ### 阶段 2：核心数据与存储
 
