@@ -25,6 +25,7 @@
 | 2026-09-08 | lint 与格式化用 Biome 2.5.12（单一工具、零插件）；提交信息校验用零依赖的 `.githooks/commit-msg`，由 `pnpm install` 的 prepare 自动挂载；不引入 ESLint/Prettier/husky/commitlint | 工具链越少越好，三个月后仍能一眼看懂 | 高 |
 | 2026-09-08 | **T3** 事件载荷统一放 `payload` 字段（不平铺到事件顶层）；`trust` 缺省按 actor 推导（tool→untrusted）；`EventSchemaRegistry` 在登记时就校验升级链完整（version=n 必须有 1..n-1 全部 upcaster）；uuidv7 自实现不引依赖；payload 形状在读取时不做运行时校验，只校验壳与版本 | 壳稳定则升级函数只碰 payload，三个月后加字段不会牵连 EventBase；启动即报错优于读到一半才发现；payload 校验交给写入方与工具 inputSchema，避免核心包绑定校验库 | 高（发布前） |
 | 2026-09-08 | **T4/T5** EventLog 的 seq 由调用方分配、日志只校验连续性（乐观并发）；fork 保留原事件 id（id 唯一性范围改为"会话内"）；一致性套件不依赖任何测试框架的 expect，只接收 `{ describe, it }`，断言自带；core 增加 `./testing` 子路径导出，tsup 多入口时 DTS 关闭 composite | 存储层不做主，循环层才知道 seq 该是多少；保留 id 才能让 parentId / pinsKept 在分叉会话里继续有效；不绑 vitest 让 Bun、Node 原生测试都能跑套件 | 高（发布前） |
+| 2026-09-08 | `@reins/store-pg` 从第二期提前到 M1 B9，与 SQLite 并列；pg 表结构：事件表主键 (session_id, seq)、payload jsonb，唯一约束直接产生 seq_conflict；blob 小对象 bytea、大对象存对象存储只留引用 | Boss 确认投放工具数据库为 pg，dogfood 落 pg 少一层搬运；接口极简，两个后端共用一致性套件 | 高 |
 
 ## 待 Boss 本人操作
 

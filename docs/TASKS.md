@@ -56,7 +56,7 @@
 - [ ] B6 memory 工具（memory_20250818 形状）+ 路径防穿越
 - [ ] B7 approval Policy 管线（deny→ask→allow、fail-closed、HMAC）
 - [ ] B8 budget 上限 + `budget_usage` 事件
-- [ ] B9 `@reins/store-sqlite`
+- [ ] B9 `@reins/store-sqlite` 与 `@reins/store-pg`（投放工具用 pg，dogfood 直接落 pg；两者共跑 `@reins/core/testing` 套件）
 - [ ] B10 `@reins/adapter-tanstack-ai`
 - [ ] B11 投放工具接入（Boss 参与：选一条真实长任务流程）
 
