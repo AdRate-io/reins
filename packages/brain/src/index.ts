@@ -7,8 +7,10 @@
  * - perception/：感知（B1）。把上下文用量、历史长度、预算余量等按档位写成 system_note 追加到时间线末尾
  * - compact/：自主整理（B2）。compact 工具 + 规则提示；阈值兜底复用 core 投影链；连续整理上限 → 暂停
  * - pins/：幸存契约（B3）。宿主声明的 pin（静态 / 抽取）+ 模型 pin 工具；幸存与重注入本身在 core 投影链
- * - spill / handoff / memory / approval / budget：M1 后续任务
+ * - spill/：结果外溢（B4）。超限的工具结果全文进 BlobStore，模型看首尾预览 + blob id，用 fetch_blob 分段取回
+ * - handoff / memory / approval / budget：M1 后续任务
  */
 export * from "./compact/index.js"
 export * from "./perception/index.js"
 export * from "./pins/index.js"
+export * from "./spill/index.js"
