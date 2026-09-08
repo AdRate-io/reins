@@ -10,6 +10,7 @@
     { "path": "packages/adapter-tanstack-ai" },
     { "path": "packages/ui-agui" },
     { "path": "packages/reins" },
-    { "path": "examples/minimal" }
+    { "path": "examples/minimal" },
+    { "path": "examples/adrate" }
   ]
 }

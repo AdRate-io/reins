@@ -1,0 +1,2387 @@
+{
+  "fetchedAt": "2026-09-08",
+  "issuer": "https://api.test.adrate.io",
+  "cliVersion": "0.1.0",
+  "capabilities": [
+    {
+      "capabilityId": "identity.read",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "low",
+      "rateClass": "public_read",
+      "operationUnits": 0,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "identity.get",
+          "method": "GET",
+          "pathTemplate": "/public/v1/me",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "cliCommand": "adrate auth whoami",
+          "cliFlags": [],
+          "examples": [
+            {
+              "command": "adrate auth whoami --json"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "connections.read",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "low",
+      "rateClass": "public_read",
+      "operationUnits": 0,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "connections.advertisers.list",
+          "method": "GET",
+          "pathTemplate": "/public/v1/ads/advertisers",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "cliCommand": "adrate ads advertisers",
+          "cliFlags": [],
+          "examples": [
+            {
+              "command": "adrate ads advertisers --json"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "ads.campaign.read",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "medium",
+      "rateClass": "upstream_read",
+      "operationUnits": 1,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "ads.campaigns.list",
+          "method": "GET",
+          "pathTemplate": "/public/v1/ads/advertisers/{advId}/campaigns",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "default": 1
+              },
+              "pageSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 50
+              }
+            }
+          },
+          "cliCommand": "adrate ads campaigns list",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            },
+            {
+              "name": "--page",
+              "inputPath": "page",
+              "required": false,
+              "description": "TikTok page number"
+            },
+            {
+              "name": "--page-size",
+              "inputPath": "pageSize",
+              "required": false,
+              "description": "Rows per TikTok page"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads campaigns list --adv-id 70001 --page-size 50 --json",
+              "advId": "70001",
+              "page": 1,
+              "pageSize": 50
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "ads.campaigns.get",
+          "method": "GET",
+          "pathTemplate": "/public/v1/ads/advertisers/{advId}/campaigns/{campaignId}",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "campaignId"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              }
+            }
+          },
+          "cliCommand": "adrate ads campaigns get",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": true,
+              "description": "TikTok campaign ID"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads campaigns get --adv-id 70001 --campaign-id 80001 --json",
+              "advId": "70001",
+              "campaignId": "80001"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "ads.report.read",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "medium",
+      "rateClass": "upstream_read",
+      "operationUnits": 2,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "ads.campaigns.report",
+          "method": "GET",
+          "pathTemplate": "/public/v1/ads/advertisers/{advId}/reports/campaigns",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "startDate",
+              "endDate"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "startDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+              },
+              "endDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+              },
+              "groupBy": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "day",
+                  "hour"
+                ],
+                "default": "none"
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "default": 1
+              },
+              "pageSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 50
+              }
+            },
+            "x-adrate-report": {
+              "metricPackage": "basic_v1",
+              "metrics": [
+                "campaign_name",
+                "spend",
+                "impressions",
+                "clicks",
+                "ctr",
+                "cpc",
+                "cpm",
+                "conversion",
+                "cost_per_conversion",
+                "conversion_rate",
+                "conversion_rate_v2"
+              ],
+              "dataLevel": "AUCTION_CAMPAIGN"
+            }
+          },
+          "cliCommand": "adrate ads report campaigns",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            },
+            {
+              "name": "--start-date",
+              "inputPath": "startDate",
+              "required": true,
+              "description": "Report start date"
+            },
+            {
+              "name": "--end-date",
+              "inputPath": "endDate",
+              "required": true,
+              "description": "Report end date"
+            },
+            {
+              "name": "--group-by",
+              "inputPath": "groupBy",
+              "required": false,
+              "description": "none, day, or hour"
+            },
+            {
+              "name": "--page",
+              "inputPath": "page",
+              "required": false,
+              "description": "TikTok page number"
+            },
+            {
+              "name": "--page-size",
+              "inputPath": "pageSize",
+              "required": false,
+              "description": "Rows per TikTok page"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads report campaigns --adv-id 70001 --start-date 2026-07-01 --end-date 2026-07-28 --group-by day --json",
+              "advId": "70001",
+              "startDate": "2026-07-01",
+              "endDate": "2026-07-28",
+              "groupBy": "day",
+              "page": 1,
+              "pageSize": 50
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "ads.copy.read",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "medium",
+      "rateClass": "public_read",
+      "operationUnits": 0,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "ads.copy.tasks.list",
+          "method": "GET",
+          "pathTemplate": "/public/v1/ads/copy/tasks",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "processing",
+                  "completed",
+                  "failed",
+                  "partial",
+                  "cancelled"
+                ],
+                "description": "Campaign copy task status"
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "default": 1
+              },
+              "pageSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20
+              }
+            }
+          },
+          "cliCommand": "adrate ads copy tasks",
+          "cliFlags": [
+            {
+              "name": "--status",
+              "inputPath": "status",
+              "required": false,
+              "description": "Campaign copy task status"
+            },
+            {
+              "name": "--page",
+              "inputPath": "page",
+              "required": false,
+              "description": "Page number"
+            },
+            {
+              "name": "--page-size",
+              "inputPath": "pageSize",
+              "required": false,
+              "description": "Rows per page (max 100)"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads copy tasks --status failed --json",
+              "status": "failed",
+              "page": 1,
+              "pageSize": 20
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "ads.copy.tasks.get",
+          "method": "GET",
+          "pathTemplate": "/public/v1/ads/copy/tasks/{taskId}",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "taskId"
+            ],
+            "properties": {
+              "taskId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Campaign copy task ID"
+              }
+            }
+          },
+          "cliCommand": "adrate ads copy tasks get",
+          "cliFlags": [
+            {
+              "name": "--task-id",
+              "inputPath": "taskId",
+              "required": true,
+              "description": "Campaign copy task ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads copy tasks get --task-id 42 --json",
+              "taskId": 42
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "ads.copy.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "high",
+      "rateClass": "public_write",
+      "operationUnits": 2,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "ads.copy.submit",
+          "method": "POST",
+          "pathTemplate": "/public/v1/ads/copy/submit",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceAdvId",
+              "sourceAuthId",
+              "sourceCampaignIds",
+              "targets",
+              "idempotencyKey"
+            ],
+            "properties": {
+              "sourceAdvId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "sourceAuthId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "sourceCampaignIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                  "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+                }
+              },
+              "targets": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "advId"
+                  ],
+                  "properties": {
+                    "advId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 50,
+                      "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                      "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+                    }
+                  }
+                }
+              },
+              "copyCount": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 1
+              },
+              "options": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationStatus": {
+                    "type": "string",
+                    "enum": [
+                      "ENABLE",
+                      "DISABLE"
+                    ],
+                    "default": "DISABLE"
+                  },
+                  "namePrefix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "nameSuffix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "campaignName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "budget": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "multipleOf": 0.01
+                  },
+                  "landingPageUrl": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "format": "uri"
+                  }
+                }
+              },
+              "idempotencyKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "Idempotency-Key value"
+              }
+            }
+          },
+          "cliCommand": "adrate ads copy submit",
+          "cliFlags": [
+            {
+              "name": "--file",
+              "inputPath": "body",
+              "required": true,
+              "description": "PublicCopySubmitDto JSON file"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Stable retry identity"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads copy submit --file copy.json --idempotency-key copy-20260808-1 --json"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        },
+        {
+          "operationId": "ads.copy.preview",
+          "method": "POST",
+          "pathTemplate": "/public/v1/ads/copy/preview",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceAdvId",
+              "sourceAuthId",
+              "sourceCampaignIds",
+              "targets"
+            ],
+            "properties": {
+              "sourceAdvId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "sourceAuthId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "sourceCampaignIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                  "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+                }
+              },
+              "targets": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "advId"
+                  ],
+                  "properties": {
+                    "advId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 50,
+                      "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                      "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+                    }
+                  }
+                }
+              },
+              "copyCount": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 1
+              },
+              "options": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationStatus": {
+                    "type": "string",
+                    "enum": [
+                      "ENABLE",
+                      "DISABLE"
+                    ],
+                    "default": "DISABLE"
+                  },
+                  "namePrefix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "nameSuffix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "campaignName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "budget": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "multipleOf": 0.01
+                  },
+                  "landingPageUrl": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          },
+          "cliCommand": "adrate ads copy preview",
+          "cliFlags": [
+            {
+              "name": "--file",
+              "inputPath": "body",
+              "required": true,
+              "description": "PublicCopySubmitDto JSON file"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads copy preview --file copy.json --json"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "ads.campaign.status.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "high",
+      "rateClass": "public_write",
+      "operationUnits": 3,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "ads.campaigns.status",
+          "method": "POST",
+          "pathTemplate": "/public/v1/ads/advertisers/{advId}/campaigns/{campaignId}/status",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "campaignId",
+              "desiredStatus",
+              "idempotencyKey"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "desiredStatus": {
+                "type": "string",
+                "enum": [
+                  "ENABLE",
+                  "DISABLE"
+                ]
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "idempotencyKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "Idempotency-Key value"
+              }
+            }
+          },
+          "cliCommand": "adrate ads campaigns status",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": true,
+              "description": "TikTok campaign ID"
+            },
+            {
+              "name": "--status",
+              "inputPath": "desiredStatus",
+              "required": true,
+              "description": "ENABLE or DISABLE"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Stable retry identity"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads campaigns status --adv-id 70001 --campaign-id 80001 --status DISABLE --idempotency-key campaign-80001-disable --json",
+              "advId": "70001",
+              "campaignId": "80001",
+              "desiredStatus": "DISABLE",
+              "idempotencyKey": "campaign-80001-disable"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        }
+      ]
+    },
+    {
+      "capabilityId": "ads.campaign.budget.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "high",
+      "rateClass": "public_write",
+      "operationUnits": 3,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "ads.campaigns.budget",
+          "method": "POST",
+          "pathTemplate": "/public/v1/ads/advertisers/{advId}/campaigns/{campaignId}/budget",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "campaignId",
+              "mode",
+              "value",
+              "idempotencyKey"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "set",
+                  "increase_amount",
+                  "decrease_amount",
+                  "increase_percent",
+                  "decrease_percent"
+                ],
+                "description": "Budget adjustment mode"
+              },
+              "value": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Budget value (>0, max 2 decimal places)"
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "idempotencyKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "Idempotency-Key value"
+              }
+            }
+          },
+          "cliCommand": "adrate ads campaigns budget",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": true,
+              "description": "TikTok campaign ID"
+            },
+            {
+              "name": "--mode",
+              "inputPath": "mode",
+              "required": true,
+              "description": "set | increase_amount | decrease_amount | increase_percent | decrease_percent"
+            },
+            {
+              "name": "--value",
+              "inputPath": "value",
+              "required": true,
+              "description": "Budget value (>0)"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Stable retry identity"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate ads campaigns budget --adv-id 70001 --campaign-id 80001 --mode set --value 300 --idempotency-key campaign-80001-budget-300 --json",
+              "advId": "70001",
+              "campaignId": "80001",
+              "mode": "set",
+              "value": "300",
+              "idempotencyKey": "campaign-80001-budget-300"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        }
+      ]
+    },
+    {
+      "capabilityId": "feedback.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "low",
+      "rateClass": "feedback_write",
+      "operationUnits": 0,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "feedback.submit",
+          "method": "POST",
+          "pathTemplate": "/public/v1/feedback",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "category",
+              "message",
+              "cliVersion",
+              "platform",
+              "nodeVersion",
+              "idempotencyKey"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "blocked",
+                  "bug",
+                  "suggestion",
+                  "other"
+                ],
+                "description": "Feedback category"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000,
+                "description": "Feedback message (Unicode code points, max 16 KiB UTF-8)"
+              },
+              "cliVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "pattern": "^[\\x20-\\x7e]+$",
+                "description": "Client-reported CLI version"
+              },
+              "platform": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "pattern": "^[\\x20-\\x7e]+$",
+                "description": "Client-reported platform-arch (e.g. darwin-arm64)"
+              },
+              "nodeVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "pattern": "^[\\x20-\\x7e]+$",
+                "description": "Client-reported Node.js version"
+              },
+              "idempotencyKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "Idempotency-Key value"
+              }
+            }
+          },
+          "cliCommand": "adrate feedback",
+          "cliFlags": [
+            {
+              "name": "--category",
+              "inputPath": "category",
+              "required": true,
+              "description": "blocked, bug, suggestion, or other"
+            },
+            {
+              "name": "--message",
+              "inputPath": "message",
+              "required": false,
+              "description": "Feedback text; exactly one of --message or --message-stdin"
+            },
+            {
+              "name": "--message-stdin",
+              "inputPath": "message",
+              "required": false,
+              "description": "Read feedback text from stdin; preferred for Agent use"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": false,
+              "description": "Retry identity (auto-generated if omitted)"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate feedback --category blocked --message \"Error tells me to retry but does not say whether the prior request succeeded\" --json",
+              "category": "blocked",
+              "message": "Error tells me to retry but does not say whether the prior request succeeded"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        }
+      ]
+    },
+    {
+      "capabilityId": "rules.read",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "medium",
+      "rateClass": "public_read",
+      "operationUnits": 0,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "rules.options.get",
+          "method": "GET",
+          "pathTemplate": "/public/v1/rules/options",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ruleType",
+              "scope"
+            ],
+            "properties": {
+              "ruleType": {
+                "type": "string",
+                "enum": [
+                  "ads",
+                  "gmv_max_product",
+                  "gmv_max_live"
+                ],
+                "description": "Rule type filter"
+              },
+              "scope": {
+                "type": "string",
+                "description": "Rule scope (e.g. campaign, adgroup, ad, material, product, creative)"
+              }
+            }
+          },
+          "cliCommand": "adrate rules options",
+          "cliFlags": [
+            {
+              "name": "--rule-type",
+              "inputPath": "ruleType",
+              "required": true,
+              "description": "ads, gmv_max_product, or gmv_max_live"
+            },
+            {
+              "name": "--scope",
+              "inputPath": "scope",
+              "required": true,
+              "description": "Rule scope (e.g. campaign, adgroup, ad, material)"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules options --rule-type ads --scope campaign --json",
+              "ruleType": "ads",
+              "scope": "campaign"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "rules.list",
+          "method": "GET",
+          "pathTemplate": "/public/v1/rules",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ruleType": {
+                "type": "string",
+                "enum": [
+                  "ads",
+                  "gmv_max_product",
+                  "gmv_max_live"
+                ],
+                "description": "Rule type filter"
+              },
+              "keyword": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Search keyword for rule name"
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "default": 1
+              },
+              "pageSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20
+              }
+            }
+          },
+          "cliCommand": "adrate rules list",
+          "cliFlags": [
+            {
+              "name": "--rule-type",
+              "inputPath": "ruleType",
+              "required": false,
+              "description": "ads, gmv_max_product, or gmv_max_live"
+            },
+            {
+              "name": "--keyword",
+              "inputPath": "keyword",
+              "required": false,
+              "description": "Search keyword for rule name"
+            },
+            {
+              "name": "--page",
+              "inputPath": "page",
+              "required": false,
+              "description": "Page number"
+            },
+            {
+              "name": "--page-size",
+              "inputPath": "pageSize",
+              "required": false,
+              "description": "Rows per page (max 100)"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules list --rule-type ads --json",
+              "ruleType": "ads"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "rules.get",
+          "method": "GET",
+          "pathTemplate": "/public/v1/rules/{ruleId}",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ruleId"
+            ],
+            "properties": {
+              "ruleId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Rule ID"
+              }
+            }
+          },
+          "cliCommand": "adrate rules get",
+          "cliFlags": [
+            {
+              "name": "--rule-id",
+              "inputPath": "ruleId",
+              "required": true,
+              "description": "Rule ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules get --rule-id 42 --json",
+              "ruleId": 42
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "rules.executions.list",
+          "method": "GET",
+          "pathTemplate": "/public/v1/rules/executions",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "ruleId"
+                ]
+              },
+              {
+                "required": [
+                  "scopeId"
+                ]
+              }
+            ],
+            "properties": {
+              "ruleId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Rule ID"
+              },
+              "scopeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "Filter by scope object ID (e.g. campaign ID)"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "failed",
+                  "partial",
+                  "skipped"
+                ],
+                "description": "Execution result filter"
+              },
+              "from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+              },
+              "to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "default": 1
+              },
+              "pageSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20
+              }
+            }
+          },
+          "cliCommand": "adrate rules executions list",
+          "cliFlags": [
+            {
+              "name": "--rule-id",
+              "inputPath": "ruleId",
+              "required": false,
+              "description": "Filter by rule ID"
+            },
+            {
+              "name": "--scope-id",
+              "inputPath": "scopeId",
+              "required": false,
+              "description": "Filter by scope object ID"
+            },
+            {
+              "name": "--result",
+              "inputPath": "result",
+              "required": false,
+              "description": "success, failed, partial, or skipped"
+            },
+            {
+              "name": "--from",
+              "inputPath": "from",
+              "required": false,
+              "description": "Start date (YYYY-MM-DD)"
+            },
+            {
+              "name": "--to",
+              "inputPath": "to",
+              "required": false,
+              "description": "End date (YYYY-MM-DD)"
+            },
+            {
+              "name": "--page",
+              "inputPath": "page",
+              "required": false,
+              "description": "Page number"
+            },
+            {
+              "name": "--page-size",
+              "inputPath": "pageSize",
+              "required": false,
+              "description": "Rows per page (max 100)"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules executions list --rule-id 42 --result failed --json",
+              "ruleId": 42,
+              "result": "failed"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "rules.executions.get",
+          "method": "GET",
+          "pathTemplate": "/public/v1/rules/executions/{executionId}",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "executionId"
+            ],
+            "properties": {
+              "executionId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Rule execution record ID"
+              }
+            }
+          },
+          "cliCommand": "adrate rules executions get",
+          "cliFlags": [
+            {
+              "name": "--execution-id",
+              "inputPath": "executionId",
+              "required": true,
+              "description": "Execution record ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules executions get --execution-id 1001 --json",
+              "executionId": 1001
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "rules.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "high",
+      "rateClass": "public_write",
+      "operationUnits": 1,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "rules.create",
+          "method": "POST",
+          "pathTemplate": "/public/v1/rules/create",
+          "inputSchema": {
+            "type": "object",
+            "description": "PublicRuleCreateInput JSON body"
+          },
+          "cliCommand": "adrate rules create",
+          "cliFlags": [
+            {
+              "name": "--file",
+              "inputPath": "body",
+              "required": false,
+              "description": "Exactly one of --file or --stdin; PublicRuleCreateInput JSON file"
+            },
+            {
+              "name": "--stdin",
+              "inputPath": "body",
+              "required": false,
+              "description": "Exactly one of --file or --stdin; read PublicRuleCreateInput JSON from stdin"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Idempotency-Key value"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules create --file rule.json --json"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        },
+        {
+          "operationId": "rules.update",
+          "method": "POST",
+          "pathTemplate": "/public/v1/rules/{ruleId}/update",
+          "inputSchema": {
+            "type": "object",
+            "description": "PublicRuleUpdatePatch JSON body"
+          },
+          "cliCommand": "adrate rules update",
+          "cliFlags": [
+            {
+              "name": "--rule-id",
+              "inputPath": "ruleId",
+              "required": true,
+              "description": "Rule ID"
+            },
+            {
+              "name": "--file",
+              "inputPath": "body",
+              "required": true,
+              "description": "PublicRuleUpdatePatch JSON file"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Idempotency-Key value"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules update --rule-id 42 --file patch.json --json",
+              "ruleId": 42
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        },
+        {
+          "operationId": "rules.enable",
+          "method": "POST",
+          "pathTemplate": "/public/v1/rules/{ruleId}/enable",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "cliCommand": "adrate rules enable",
+          "cliFlags": [
+            {
+              "name": "--rule-id",
+              "inputPath": "ruleId",
+              "required": true,
+              "description": "Rule ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Idempotency-Key value"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules enable --rule-id 42 --json",
+              "ruleId": 42
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        },
+        {
+          "operationId": "rules.disable",
+          "method": "POST",
+          "pathTemplate": "/public/v1/rules/{ruleId}/disable",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "cliCommand": "adrate rules disable",
+          "cliFlags": [
+            {
+              "name": "--rule-id",
+              "inputPath": "ruleId",
+              "required": true,
+              "description": "Rule ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Idempotency-Key value"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules disable --rule-id 42 --json",
+              "ruleId": 42
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        },
+        {
+          "operationId": "rules.delete",
+          "method": "POST",
+          "pathTemplate": "/public/v1/rules/{ruleId}/delete",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "cliCommand": "adrate rules delete",
+          "cliFlags": [
+            {
+              "name": "--rule-id",
+              "inputPath": "ruleId",
+              "required": true,
+              "description": "Rule ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Idempotency-Key value"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules delete --rule-id 42 --json",
+              "ruleId": 42
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        }
+      ]
+    },
+    {
+      "capabilityId": "rules.dryrun",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "medium",
+      "rateClass": "upstream_read",
+      "operationUnits": 2,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "rules.dryrun.execute",
+          "method": "POST",
+          "pathTemplate": "/public/v1/rules/{ruleId}/dryrun",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ruleId",
+              "advId"
+            ],
+            "properties": {
+              "ruleId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Rule ID"
+              },
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "shopId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "TikTok Shop store ID"
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              }
+            }
+          },
+          "cliCommand": "adrate rules dryrun",
+          "cliFlags": [
+            {
+              "name": "--rule-id",
+              "inputPath": "ruleId",
+              "required": true,
+              "description": "Rule ID"
+            },
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "Bound advertiser ID"
+            },
+            {
+              "name": "--shop-id",
+              "inputPath": "shopId",
+              "required": false,
+              "description": "GMV Max shop ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": false,
+              "description": "GMV Max campaign ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate rules dryrun --rule-id 42 --adv-id 70001 --json",
+              "ruleId": 42,
+              "advId": "70001"
+            },
+            {
+              "command": "adrate rules dryrun --rule-id 43 --adv-id 70001 --shop-id shop-1 --campaign-id 80001 --json",
+              "ruleId": 43,
+              "advId": "70001",
+              "shopId": "shop-1",
+              "campaignId": "80001"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "gmvmax.read",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "medium",
+      "rateClass": "upstream_read",
+      "operationUnits": 2,
+      "idempotencyRequired": false,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "gmvmax.stores.list",
+          "method": "GET",
+          "pathTemplate": "/public/v1/gmvmax/stores",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              }
+            }
+          },
+          "cliCommand": "adrate gmvmax stores",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate gmvmax stores --adv-id 70001 --json",
+              "advId": "70001"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "gmvmax.campaigns.list",
+          "method": "GET",
+          "pathTemplate": "/public/v1/gmvmax/advertisers/{advId}/campaigns",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "storeId",
+              "promotionType"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "storeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "TikTok Shop store ID"
+              },
+              "promotionType": {
+                "type": "string",
+                "enum": [
+                  "product",
+                  "live"
+                ]
+              },
+              "from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+              },
+              "to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+              },
+              "includeTrend": {
+                "type": "boolean"
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              }
+            }
+          },
+          "cliCommand": "adrate gmvmax campaigns list",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--store-id",
+              "inputPath": "storeId",
+              "required": true,
+              "description": "TikTok Shop store ID"
+            },
+            {
+              "name": "--promotion-type",
+              "inputPath": "promotionType",
+              "required": true,
+              "description": "product or live"
+            },
+            {
+              "name": "--from",
+              "inputPath": "from",
+              "required": false,
+              "description": "Start date (YYYY-MM-DD)"
+            },
+            {
+              "name": "--to",
+              "inputPath": "to",
+              "required": false,
+              "description": "End date (YYYY-MM-DD)"
+            },
+            {
+              "name": "--include-trend",
+              "inputPath": "includeTrend",
+              "required": false,
+              "description": "Include daily trend in the response"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate gmvmax campaigns list --adv-id 70001 --store-id shop-1 --promotion-type product --json",
+              "advId": "70001",
+              "storeId": "shop-1",
+              "promotionType": "product"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        },
+        {
+          "operationId": "gmvmax.campaigns.get",
+          "method": "GET",
+          "pathTemplate": "/public/v1/gmvmax/advertisers/{advId}/campaigns/{campaignId}",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "campaignId",
+              "storeId"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "storeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "TikTok Shop store ID"
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              }
+            }
+          },
+          "cliCommand": "adrate gmvmax campaigns get",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": true,
+              "description": "GMV Max campaign ID"
+            },
+            {
+              "name": "--store-id",
+              "inputPath": "storeId",
+              "required": true,
+              "description": "TikTok Shop store ID"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": false,
+              "description": "TikTok authorization ID"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate gmvmax campaigns get --adv-id 70001 --campaign-id 80001 --store-id shop-1 --json",
+              "advId": "70001",
+              "campaignId": "80001",
+              "storeId": "shop-1"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": false
+        }
+      ]
+    },
+    {
+      "capabilityId": "gmvmax.campaign.status.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "high",
+      "rateClass": "public_write",
+      "operationUnits": 3,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "gmvmax.campaigns.status",
+          "method": "POST",
+          "pathTemplate": "/public/v1/gmvmax/advertisers/{advId}/campaigns/{campaignId}/status",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "campaignId",
+              "status",
+              "authId",
+              "idempotencyKey"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ENABLE",
+                  "DISABLE"
+                ]
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "idempotencyKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "Idempotency-Key value"
+              }
+            }
+          },
+          "cliCommand": "adrate gmvmax campaigns status",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": true,
+              "description": "GMV Max campaign ID"
+            },
+            {
+              "name": "--set",
+              "inputPath": "status",
+              "required": true,
+              "description": "enable or disable"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": true,
+              "description": "TikTok authorization ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Stable retry identity"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate gmvmax campaigns status --adv-id 70001 --campaign-id 80001 --set disable --auth-id 9 --idempotency-key gmv-80001-disable --json",
+              "advId": "70001",
+              "campaignId": "80001",
+              "status": "DISABLE",
+              "authId": 9,
+              "idempotencyKey": "gmv-80001-disable"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        }
+      ]
+    },
+    {
+      "capabilityId": "gmvmax.campaign.budget.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "high",
+      "rateClass": "public_write",
+      "operationUnits": 3,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "gmvmax.campaigns.budget",
+          "method": "POST",
+          "pathTemplate": "/public/v1/gmvmax/advertisers/{advId}/campaigns/{campaignId}/budget",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "campaignId",
+              "mode",
+              "value",
+              "authId",
+              "idempotencyKey"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "set",
+                  "increase_amount",
+                  "decrease_amount",
+                  "increase_percent",
+                  "decrease_percent"
+                ],
+                "description": "Budget adjustment mode"
+              },
+              "value": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Budget value (>0, max 2 decimal places)"
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "idempotencyKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "Idempotency-Key value"
+              }
+            }
+          },
+          "cliCommand": "adrate gmvmax campaigns budget",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": true,
+              "description": "GMV Max campaign ID"
+            },
+            {
+              "name": "--mode",
+              "inputPath": "mode",
+              "required": true,
+              "description": "Budget adjustment mode"
+            },
+            {
+              "name": "--value",
+              "inputPath": "value",
+              "required": true,
+              "description": "Budget adjustment value"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": true,
+              "description": "TikTok authorization ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Stable retry identity"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate gmvmax campaigns budget --adv-id 70001 --campaign-id 80001 --mode set --value 500 --auth-id 9 --idempotency-key gmv-80001-budget-500 --json",
+              "advId": "70001",
+              "campaignId": "80001",
+              "mode": "set",
+              "value": 500,
+              "authId": 9,
+              "idempotencyKey": "gmv-80001-budget-500"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        }
+      ]
+    },
+    {
+      "capabilityId": "gmvmax.campaign.roas.write",
+      "granted": true,
+      "available": true,
+      "unavailableReason": null,
+      "risk": "high",
+      "rateClass": "public_write",
+      "operationUnits": 3,
+      "idempotencyRequired": true,
+      "availabilityMode": "uniform",
+      "apiVersion": "v1",
+      "schemaVersion": "1.0",
+      "operations": [
+        {
+          "operationId": "gmvmax.campaigns.roas",
+          "method": "POST",
+          "pathTemplate": "/public/v1/gmvmax/advertisers/{advId}/campaigns/{campaignId}/roas",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "advId",
+              "campaignId",
+              "mode",
+              "value",
+              "authId",
+              "idempotencyKey"
+            ],
+            "properties": {
+              "advId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "campaignId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+                "description": "Canonical CLI raw-path TikTok resource ID segment. It must satisfy the opaque ID boundary, remain unchanged by encodeURIComponent, and not be '.' or '..'. Values requiring percent-encoding are unsupported."
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "set",
+                  "increase_amount",
+                  "decrease_amount",
+                  "increase_percent",
+                  "decrease_percent"
+                ],
+                "description": "Budget adjustment mode"
+              },
+              "value": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "ROAS value (>0, max 1 decimal place)"
+              },
+              "authId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "TikTok authorization ID"
+              },
+              "idempotencyKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "Idempotency-Key value"
+              }
+            }
+          },
+          "cliCommand": "adrate gmvmax campaigns roas",
+          "cliFlags": [
+            {
+              "name": "--adv-id",
+              "inputPath": "advId",
+              "required": true,
+              "description": "TikTok advertiser ID"
+            },
+            {
+              "name": "--campaign-id",
+              "inputPath": "campaignId",
+              "required": true,
+              "description": "GMV Max campaign ID"
+            },
+            {
+              "name": "--mode",
+              "inputPath": "mode",
+              "required": true,
+              "description": "ROAS adjustment mode"
+            },
+            {
+              "name": "--value",
+              "inputPath": "value",
+              "required": true,
+              "description": "ROAS adjustment value"
+            },
+            {
+              "name": "--auth-id",
+              "inputPath": "authId",
+              "required": true,
+              "description": "TikTok authorization ID"
+            },
+            {
+              "name": "--idempotency-key",
+              "inputPath": "idempotencyKey",
+              "required": true,
+              "description": "Stable retry identity"
+            }
+          ],
+          "examples": [
+            {
+              "command": "adrate gmvmax campaigns roas --adv-id 70001 --campaign-id 80001 --mode set --value 2.5 --auth-id 9 --idempotency-key gmv-80001-roas-25 --json",
+              "advId": "70001",
+              "campaignId": "80001",
+              "mode": "set",
+              "value": 2.5,
+              "authId": 9,
+              "idempotencyKey": "gmv-80001-roas-25"
+            }
+          ],
+          "available": true,
+          "unavailableReason": null,
+          "idempotencyRequired": true
+        }
+      ]
+    }
+  ]
+}

@@ -54,9 +54,13 @@
 | 2026-09-08 | **B10** TanStack AI 适配器：循环归 TanStack，**日志仍是唯一真源** —— 每轮 `onConfig` 用日志投影产出 `providerMessages`，TanStack 自己的 `messages` 只给客户端 UI 与它的内部对账（pending 调用、审批状态）；客户端历史只在日志为空时整段接管，否则只导入末尾连续的新用户消息 | 宪法二；S2 核实 `onConfig` 可同时改 providerMessages / systemPrompts / tools；两份历史并存时必须有且只有一个真源，否则 compact / spill / pin 的效果会被客户端重发的全文覆盖 | 中（宿主想让客户端历史为真源就不该用本适配器） |
 | 2026-09-08 | **B10** reins 动态审批（Socket.beforeTool 返回 defer）在 TanStack 里落成**通用中断** `reinsApprovalInterrupt`（`defineInterrupt`，schema 手写 Standard Schema 不引 zod），在 `beforeTools` 边界发出、`onInterruptResolution` 记 `approval_decision`；宿主须登记到 `chat({ interrupts })`。TanStack 原生 `needsApproval`（静态）保留其自身审批流，只把请求 / 结论镜像进日志（policyId `tanstack.needsApproval`，答复者 `tanstack`） | TanStack 审批只认工具上的静态布尔，动态判定只能在边界以通用中断表达；两套审批并存但日志形状同一，前端与回放不分路径 | 中 |
 | 2026-09-08 | **B10** TanStack 路径与默认循环的已知差异（有损声明）：① ModelMessage 无 system 角色，system_note 以 `<system_note>` 标签走 user，compaction 走 user 文本；② thinking 无同源签名不下发；③ defer 让整轮工具都等审批（TanStack 在边界暂停不执行任何调用），默认循环会先执行不需审批的；④ onTurnEnd 的 continue 只在 TanStack 自己也想继续时生效，pause 表现为 run 正常结束 + `run_paused` 事件；⑤ handoff 只做记录与新会话开头，宿主下一次请求改用新 sessionId；⑥ 落在 tool_call 与 tool_result 之间的 user 角色说明后移到同批结果之后 | 这些都是 TanStack 引擎的形状决定的，不在适配器里绕；⑥ 是 Anthropic 硬规则（tool_result 必须紧跟调用），lowering-pi 靠 pi-ai 归位而 TanStack 路径由我们翻译时后移 | 中（③④ 若 dogfood 反馈明显可改为在 afterTools 边界发 `reins.pause` 中断） |
+| 2026-09-08 | **B11** 投放工具（AdRate）接入走官方 CLI `@adrate/cli`，不读服务层：工具从服务端 `schema` 生成（`examples/adrate/tools.ts`），幂等键 = `reins-<toolCallId>`，带幂等键的写操作 risk=high 交 approval 按风险问人，`feedback` 不给模型，两份官方 Agent Skill 全文作系统提示；子进程只在示例里，core / brain 零 node:* 不变 | CLI 本身按 Agent 设计（信封 / 退出码 / 幂等 / 自描述），与 reins 的审批、时间线、幂等语义天然对齐；reins 的 toolCallId 在审批暂停前后不变，正好满足"一个键一次不可变的写"；schema 生成比手抄 CLI 帮助准且可重同步 | 高 |
+| 2026-09-08 | **B11** dogfood 的模型来源改为 DeepSeek 直连（`REINS_PROVIDER=deepseek`），aireiter 网关只留给单轮探测 | 网关对带工具结果的多轮请求两次掐断（第一次 15 s 后 Connection error，第二次返回了用量却在正文前 terminated），而 20k / 60k 字符的单轮大请求都能过；DeepSeek 小请求 3 s、大请求 5 s 稳定且接受中途 system、缓存命中 85% | 中（网关修好可切回） |
+| 2026-09-08 | **B11 附** tsup 配置 `removeNodeProtocol: false`（store-sqlite），并把"跑一次 dist 产物"列入每个含 `node:*` 子路径包的验收 | tsup 8 缺省剥掉 `node:` 前缀，`node:sqlite` 不在 esbuild 内置清单里就成了裸的 `sqlite` 包名，只在真跑 dist 时才暴露；vitest 与 tsc 走源码路径全绿掩盖了它 | 高 |
+| 2026-09-08 | **B11 附** lowering-pi 工厂 `BoundModelOptions.midConversationSystem?` 透传到 ModelDefinition；示例对 DeepSeek 置 true | B1 附加的字段只有直接构造 PiAiLowering 才能用，走 `anthropic()` 工厂的第三方上游被迫 lossy；透传后 dogfood 后半程全部 exact | 高 |
 
 ## 待 Boss 本人操作
 
 - [ ] M2 发布前：在 GitHub 创建组织 `reins` 并授权推送（或授权我用现有账号创建并转移）
 - [ ] M2 发布前：在 npm 创建组织 `reins`
-- [ ] M1 B11：从投放工具里选一条真实长任务流程作为 dogfood
+- [x] M1 B11：从投放工具里选一条真实长任务流程作为 dogfood —— 2026-09-08 Boss 定 CLI 接入 + 测试广告主 7000000000000000001；第一条"巡检降本"已跑通。**待 Boss 转达 AdRate 团队**：服务端 schema `ads.campaign.status.write` 的 cliFlags（`--status ENABLE|DISABLE`）与 CLI 0.1.0 实际（`--set enable|disable`）不一致；gmvmax 状态命令枚举大小写同样不一致

@@ -1,0 +1,21 @@
+{
+  "name": "@reins-examples/adrate",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "reins dogfood：用 AdRate 官方 CLI（@adrate/cli）把投放工具接成 agent 工具，跑真实长任务（B11）",
+  "scripts": {
+    "sync": "node sync.ts",
+    "tools": "node tools.ts",
+    "run": "node run.ts"
+  },
+  "dependencies": {
+    "@reins/brain": "workspace:*",
+    "@reins/lowering-pi": "workspace:*",
+    "@reins/store-sqlite": "workspace:*",
+    "reins": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

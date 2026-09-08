@@ -10,3 +10,5 @@ spikes/gateway-check/out/
 spikes/b1-perception-cache/out/
 spikes/b2-compact-live/out/
 spikes/deepseek-anthropic-check/out/
+examples/adrate/data/
+examples/adrate/recordings/*.log

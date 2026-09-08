@@ -19,11 +19,11 @@ import {
   replayTurns,
   toolSpecOf,
 } from "reins"
-import { agent } from "./agent.ts"
+import { pathToFileURL } from "node:url"
 
 const [, , input, ...rest] = process.argv
 if (!input) {
-  console.error("用法：node examples/minimal/replay.ts <session.jsonl> [--html 输出.html]")
+  console.error("用法：node examples/minimal/replay.ts <session.jsonl> [--html 输出.html] [--agent <agent 模块路径>]")
   process.exit(1)
 }
 const htmlOut = rest[rest.indexOf("--html") + 1]
@@ -31,6 +31,9 @@ if (rest.includes("--html") && !htmlOut) {
   console.error("--html 后面要跟输出路径")
   process.exit(1)
 }
+// 回放要用录制时同一个 agent 的降级层、工具表、系统提示重算落点；缺省本目录的 agent.ts，别的示例传 --agent
+const agentPath = rest.includes("--agent") ? rest[rest.indexOf("--agent") + 1] : undefined
+const { agent } = (await import(agentPath ? pathToFileURL(agentPath).href : "./agent.ts")) as typeof import("./agent.ts")
 
 // ---- 1. 读 + 升级 ----
 const registry = createCoreRegistry()

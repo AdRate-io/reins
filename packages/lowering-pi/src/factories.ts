@@ -20,6 +20,8 @@ export interface BoundModelOptions {
   maxOutputTokens?: number
   reasoning?: boolean
   images?: boolean
+  /** 仅 baseUrl 模式：上游是否接受中途 `role:"system"`（system_note 的 exact 落点）。第三方 Anthropic 兼容端口（如 DeepSeek）实测接受时置 true；缺省按不支持、以标签走 user */
+  midConversationSystem?: boolean
   fetch?: typeof globalThis.fetch
   headers?: Record<string, string | null>
 }
@@ -41,6 +43,9 @@ function bound(
           contextWindow: opts.contextWindow ?? 200_000,
           maxOutputTokens: opts.maxOutputTokens ?? 16_000,
           images: opts.images ?? true,
+          ...(opts.midConversationSystem !== undefined
+            ? { midConversationSystem: opts.midConversationSystem }
+            : {}),
         },
       ]
     : []
