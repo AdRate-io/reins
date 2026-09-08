@@ -16,7 +16,7 @@ import type { Event } from "../events/base.js"
 import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { estimateTotal } from "./estimate.js"
-import { isCompaction, isPinNote } from "./fold.js"
+import { isCompaction, isPinNote, supersededIds } from "./fold.js"
 import type { ProjectionContext, ProjectionStrategy } from "./types.js"
 
 const ASSISTANT_TYPES: ReadonlySet<string> = new Set([
@@ -154,7 +154,7 @@ export function budgetTruncate(opts: BudgetTruncateOptions = {}): ProjectionStra
   }
 }
 
-/** 给定要裁掉的前缀，算出幸存者与新 compaction 事件。折叠与裁剪对"幸存"的定义一致 */
+/** 给定要裁掉的前缀，算出幸存者与新 compaction 事件。折叠与裁剪对"幸存"的定义一致（含"被取代者不幸存"） */
 function plan(
   removed: readonly Event[],
   ctx: ProjectionContext,
@@ -162,9 +162,11 @@ function plan(
   summarize: ThresholdSummarizer,
 ) {
   const priorCompactions = removed.filter(isCompaction)
+  const superseded = supersededIds(ctx.timeline)
   const survivors = removed.filter(
     (e) =>
       !isCompaction(e) &&
+      !superseded.has(e.id) &&
       ((autoKeep && isPinNote(e)) || priorCompactions.some((c) => c.payload.pinsKept.includes(e.id))),
   )
   const from = Math.min(minSeq(removed), ...priorCompactions.map((c) => c.payload.coversSeq[0]))

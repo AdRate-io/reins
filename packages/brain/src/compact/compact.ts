@@ -139,7 +139,10 @@ export function compact(opts: CompactOptions = {}): Socket {
       // 入参已由 validate 校验过；这里重新解析一遍拿到规范形态（循环不把校验后的入参传给 afterTool）
       let plan: CompactPlan
       try {
-        plan = planCompaction(ctx.events, parseCompactArgs(call.payload.args), { protectCallId: call.id })
+        plan = planCompaction(ctx.events, parseCompactArgs(call.payload.args), {
+          protectCallId: call.id,
+          timeline: ctx.timeline,
+        })
       } catch (err) {
         return replaceResult(result, err instanceof Error ? err.message : String(err), true)
       }

@@ -7,12 +7,20 @@
  *    Anthropic 要求带 tool_use 的 assistant 轮连同 thinking 一起原样回放，拆开就是 400。
  * 2. seq 封闭：被覆盖的 seq 区间不能碰到保留部分。视图里唯一可能破坏它的是旧 compaction（它的 seq 大于自己覆盖的范围，
  *    位置却排在前面）。这种旧摘要不并入本次范围，留在视图里继续可见；只有保留部分为空（全部折叠）时才把它们一起吸收。
- * 3. 被覆盖事件里的 pin 说明与旧 compaction 已保留的事件继续幸存，记进 pinsKept —— 与 fold / truncate 的幸存定义一致。
+ * 3. 被覆盖事件里的 pin 说明与旧 compaction 已保留的事件继续幸存，记进 pinsKept —— 与 fold / truncate 的幸存定义一致；
+ *    被后来说明 `supersedes` 取代的不幸存（B3：模型替换过的 pin、宿主抽取式 pin 的旧值）。
  * 4. 被折叠范围内**最近的一条用户消息**缺省也幸存。真模型实测（spikes/b2-compact-live）：用户说"先整理，然后做 X"，
  *    模型先整理、把这条消息也折了进去，摘要里只写"接着做第二部分"，整理完反问"第二部分要做什么"。模型没法复述
  *    它还没开始处理的指令，所以这条由库保住；长任务里它就是原始任务陈述，留着只多一条消息。
  */
-import { type CompactionPayload, type Event, isCompaction, isPinNote, splitTurns } from "@reins/core"
+import {
+  type CompactionPayload,
+  type Event,
+  isCompaction,
+  isPinNote,
+  splitTurns,
+  supersededIds,
+} from "@reins/core"
 
 export interface CompactArgs {
   summary: string
@@ -83,6 +91,8 @@ export interface PlanOptions {
   protectCallId?: string
   /** 被折叠范围内最近的一条用户消息原样幸存（进 pinsKept）。缺省 true，见文件头第 4 条 */
   keepLatestUserMessage?: boolean
+  /** 完整时间线：取代关系（system_note.supersedes）在这里找，取代者可能已不在视图里。缺省只看视图 */
+  timeline?: readonly Event[]
 }
 
 export function planCompaction(
@@ -134,7 +144,10 @@ export function planCompaction(
       if (folded[i]?.type === "core.user_message") latestUser = folded[i]
     }
   }
-  const survivors = folded.filter((e) => isPinNote(e) || priorKept.has(e.id) || e === latestUser)
+  const superseded = supersededIds(opts.timeline ?? visible)
+  const survivors = folded.filter(
+    (e) => !superseded.has(e.id) && (isPinNote(e) || priorKept.has(e.id) || e === latestUser),
+  )
   const from = Math.min(
     minSeq(folded),
     ...absorbed.map((c) => (isCompaction(c) ? c.payload.coversSeq[0] : Number.POSITIVE_INFINITY)),

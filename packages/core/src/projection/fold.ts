@@ -7,6 +7,9 @@
  * - 幸存判定：一条被覆盖的事件，只有当**每一条**覆盖它的 compaction 都保留它时才幸存。
  *   保留 = 出现在该 compaction 的 pinsKept 里，或（默认开启）它本身是 kind=pin 的 system_note。
  *   模型 pin 过的东西默认穿越折叠，除非某次 compaction 明确不再保留它。
+ * - 取代（B3）：被后来某条 system_note 的 `supersedes` 指到的事件，一旦被覆盖就不再幸存，不论谁保留过它。
+ *   这是 append-only 日志里撤销一条钉住的唯一表达（宿主抽取式 pin 换了内容、模型用新 pin 替换旧 pin）。
+ *   取代者在完整时间线里找，不只在视图里：取代者自己也可能已被折叠。
  * - 摘要放在被覆盖区间的位置（第一条 seq 大于区间上界的可见事件之前），而不是 compaction 自己的 seq 位置。
  *   模型多数时候折叠的是"直到现在"的前缀，两者重合；折叠旧的中间段时，摘要出现在原段的位置读起来才顺。
  *   所以投影输出的顺序可以与 seq 不一致 —— 投影是给模型看的视图，日志才按 seq。
@@ -31,8 +34,28 @@ export function covers(c: CompactionEvent, e: Event): boolean {
   return e.id !== c.id && e.seq >= from && e.seq <= to && e.seq < c.seq
 }
 
-/** 一次 compaction 是否保留某条被它覆盖的事件。折叠与裁剪共用这一条规则 */
-export function keptBy(c: CompactionEvent, e: Event, autoKeepPinNotes: boolean): boolean {
+/** 被 `system_note.supersedes` 指到的事件 id 集合。传完整时间线；取代者本身是否可见不影响取代 */
+export function supersededIds(timeline: readonly Event[]): Set<string> {
+  const out = new Set<string>()
+  for (const e of timeline) {
+    if (e.type !== "core.system_note") continue
+    const s = (e as CoreEventOf<"core.system_note">).payload.supersedes
+    if (s) for (const id of s) if (id !== e.id) out.add(id)
+  }
+  return out
+}
+
+/**
+ * 一次 compaction 是否保留某条被它覆盖的事件。折叠与裁剪共用这一条规则。
+ * 被取代的事件一律不保留：pinsKept 记录的是**当时**的契约，后来的取代说明优先。
+ */
+export function keptBy(
+  c: CompactionEvent,
+  e: Event,
+  autoKeepPinNotes: boolean,
+  superseded: ReadonlySet<string> = new Set(),
+): boolean {
+  if (superseded.has(e.id)) return false
   return c.payload.pinsKept.includes(e.id) || (autoKeepPinNotes && isPinNote(e))
 }
 
@@ -45,15 +68,17 @@ export function foldCompactions(opts: FoldOptions = {}): ProjectionStrategy {
   const autoKeep = opts.autoKeepPinNotes ?? true
   return {
     name: "fold-compactions",
-    apply(events) {
+    apply(events, ctx) {
       const compactions = events.filter(isCompaction)
       if (compactions.length === 0) return { events: [...events] }
 
-      // 1. 判定隐藏：被覆盖且并非所有覆盖者都保留它
+      // 1. 判定隐藏：被覆盖且（被取代，或并非所有覆盖者都保留它）
+      const superseded = supersededIds(ctx.timeline)
       const hidden = new Set<string>()
       for (const e of events) {
         const covering = compactions.filter((c) => covers(c, e))
-        if (covering.length > 0 && !covering.every((c) => keptBy(c, e, autoKeep))) hidden.add(e.id)
+        if (covering.length > 0 && !covering.every((c) => keptBy(c, e, autoKeep, superseded)))
+          hidden.add(e.id)
       }
 
       // 2. 可见的普通事件按原顺序排好；可见的 compaction 插到其区间位置

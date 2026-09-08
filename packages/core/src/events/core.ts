@@ -59,6 +59,12 @@ export interface SystemNotePayload {
    * 给回放界面与 eval 用，免得从文本里反解。可选字段，不升版本。
    */
   meta?: Record<string, unknown>
+  /**
+   * 本条说明**取代**的旧说明 id（B3）。被取代的 pin 在折叠 / 裁剪时不再自动幸存，也不再因出现在
+   * 旧 compaction 的 pinsKept 里而幸存 —— 这是 append-only 日志里"撤销一条钉住"的唯一表达。
+   * 折叠之前它照常可见（未折叠的历史原样展示）。可选字段，不升版本。
+   */
+  supersedes?: string[]
 }
 
 // ---- 审批 ----

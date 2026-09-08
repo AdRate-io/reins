@@ -511,3 +511,56 @@ describe("project（默认链端到端）", () => {
     expect(r.emitted[0]?.schemaVersion).toBe(1)
   })
 })
+
+describe("supersedes：被后来说明取代的事件不再幸存（B3）", () => {
+  const pinOver = (seq: number, t: string, old: number) =>
+    ev(seq, "core.system_note", { kind: "pin", text: t, supersedes: [idOf(old)] })
+
+  it("折叠：被取代的 pin 即便出现在 pinsKept、又是 kind=pin，也被隐藏；取代者照常幸存", () => {
+    const timeline = [
+      pin(1, "old"),
+      text(2, "x"),
+      compaction(3, [1, 2], "S", [idOf(1)]),
+      user(4, "y"),
+      pinOver(5, "new", 1),
+    ]
+    const { events } = foldCompactions().apply(timeline, ctxOf(timeline))
+    expect(seqs(events)).toEqual([3, 4, 5])
+  })
+
+  it("取代者自己也被折叠时取代仍然生效（在完整时间线里找），默认链输出：摘要 → 幸存的新 pin", () => {
+    const timeline = [
+      pin(1, "old"),
+      text(2, "x"),
+      pinOver(3, "new", 1),
+      text(4, "y"),
+      compaction(5, [1, 4], "S"),
+    ]
+    const r = project({ timeline, budget: { contextLimit: 10_000, reserveTokens: 0 }, now: NOW })
+    expect(seqs(r.events)).toEqual([5, 3])
+  })
+
+  it("未折叠时取代不隐藏任何东西：历史原样展示，新旧两条都在", () => {
+    const timeline = [pin(1, "old"), user(2, "a"), pinOver(3, "new", 1), user(4, "b")]
+    const r = project({ timeline, budget: { contextLimit: 10_000, reserveTokens: 0 }, now: NOW })
+    expect(seqs(r.events)).toEqual([1, 2, 3, 4])
+  })
+
+  it("裁剪：被取代的 pin 不进 pinsKept、不重注入；取代者幸存", () => {
+    const tl = [
+      pin(1, "old"),
+      text(2, "x"),
+      user(3, "a"),
+      pinOver(4, "new", 1),
+      text(5, "y"),
+      user(6, "b"),
+      text(7, "z"),
+      user(8, "c"),
+    ]
+    const ctx = ctxOf(tl, { budget: { contextLimit: 15, reserveTokens: 0 } })
+    const step = budgetTruncate().apply(tl, ctx)
+    const c = step.events[0] as CoreEventOf<"core.compaction">
+    expect(c.payload.pinsKept).toEqual([idOf(4)])
+    expect(seqs(step.events)).toEqual([9, 4, 8])
+  })
+})
