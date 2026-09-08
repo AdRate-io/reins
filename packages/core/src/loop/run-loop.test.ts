@@ -446,6 +446,84 @@ describe("runLoop：Socket 五个钩子", () => {
     expect(res.payload.content).toEqual([{ type: "text", text: "[已外溢] 20" }])
   })
 
+  it("beforeTool rewrite 后，后面的钩子在 call.payload.args 里看到改写后的入参（B7：策略判定的是真正执行的那份）", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 1 })] },
+      { drafts: [say("好")] },
+    ])
+    const seen: unknown[] = []
+    const sockets: Socket[] = [
+      { beforeTool: () => ({ rewrite: { a: 5, b: 5 } }) },
+      {
+        beforeTool: (_ctx, call) => {
+          seen.push(call.payload.args)
+          return undefined
+        },
+      },
+    ]
+    await drain(runLoop(baseConfig(lowering, log, { input: "算", sockets })))
+    expect(seen).toEqual([{ a: 5, b: 5 }])
+    // 日志里的 tool_call 原样，没被改写
+    const call = (await all(log)).find((e) => e.type === "core.tool_call") as CoreEventOf<"core.tool_call">
+    expect(call.payload.args).toEqual({ a: 1, b: 1 })
+  })
+
+  it("beforeTool 里 emit 的留痕排在 block 结果之前（每条结果路径都先 flush）", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 1 })] },
+      { drafts: [say("好")] },
+    ])
+    const socket: Socket = {
+      beforeTool: (ctx, call) => {
+        ctx.emit({
+          type: "core.approval_decision",
+          actor: "system",
+          parentId: call.id,
+          payload: { toolCallId: "c1", approved: false, by: "policy.x" },
+        })
+        return { block: "策略拒绝" }
+      },
+    }
+    await drain(runLoop(baseConfig(lowering, log, { input: "算", sockets: [socket] })))
+    const tl = (await all(log)).map((e) => e.type)
+    expect(tl.indexOf("core.approval_decision")).toBe(tl.indexOf("core.tool_result") - 1)
+  })
+
+  it("宿主已批准的调用：前面钩子的 defer 被略过，后面的钩子仍可 block（deny 不可被覆盖）", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "deploy", { env: "prod" })] },
+      { drafts: [say("好")] },
+    ])
+    const gate: Socket = { beforeTool: () => ({ defer: { policyId: "gate", summary: "问一下" } }) }
+    const deploy: Tool = {
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object" },
+      execute: () => "已上线",
+    }
+    const cfg = baseConfig(lowering, log, { tools: [deploy], sockets: [gate] })
+    const first = await drain(runLoop({ ...cfg, input: "上线" }))
+    expect(first.result.status).toBe("paused")
+    if (first.result.status !== "paused") throw new Error("unreachable")
+
+    const wall: Socket = { beforeTool: () => ({ block: "冻结期" }) }
+    const second = await drain(
+      runLoop({
+        ...cfg,
+        sockets: [gate, wall],
+        resume: first.result.state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(second.result.status).toBe("done")
+    const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+    expect(res.payload.isError).toBe(true)
+    expect(res.payload.content[0]).toEqual({ type: "text", text: "工具调用被拦截：冻结期" })
+  })
+
   it("onTurnEnd continue 强行再来一轮；stop 在有工具调用时也能结束", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([

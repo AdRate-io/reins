@@ -10,8 +10,10 @@
  * - spill/：结果外溢（B4）。超限的工具结果全文进 BlobStore，模型看首尾预览 + blob id，用 fetch_blob 分段取回
  * - handoff/：会话交接（B5）。handoff 工具把摘要、下一步、可见的 pin 带进新会话；机械部分在 core 循环
  * - memory/：记忆（B6）。memory 工具（形状对齐 memory_20250818）读写宿主的 MemoryStore，路径限定 /memories，每次读写留 memory_op
- * - approval / budget：M1 后续任务
+ * - approval/：审批与权限（B7）。deny → ask → allow 策略管线在 beforeTool 里跑：deny 留 approval_decision 再拦，ask 转审批暂停，allow 放行；fail-closed
+ * - budget：M1 后续任务
  */
+export * from "./approval/index.js"
 export * from "./compact/index.js"
 export * from "./handoff/index.js"
 export * from "./memory/index.js"

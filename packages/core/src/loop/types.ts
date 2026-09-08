@@ -213,7 +213,11 @@ export interface Socket {
   systemPrompt?: StaticContribution<string>
   beforeModel?(ctx: TurnContext): MaybePromise<BeforeModelPatch | undefined>
   afterModel?(ctx: TurnContext, events: Event[]): MaybePromise<void>
-  /** 任一 block / defer 即中止该调用；rewrite 替换入参后继续问下一个 Socket */
+  /**
+   * 任一 block / defer 即中止该调用；rewrite 替换入参后继续问下一个 Socket（后面的在 call.payload.args 里看到改写后的入参）。
+   * 宿主已批准（approval_decision.approved）的调用再遇到 defer 只是略过、继续问后面的 Socket：批准解决的是"要不要问人"，
+   * 排在后面的审批策略仍可 block —— deny 不可被覆盖（§9.7）。
+   */
   beforeTool?(
     ctx: TurnContext,
     call: ToolCallEvent,

@@ -468,6 +468,11 @@ async function* executeToolCalls(
   }
 
   const summary: ExecuteSummary = { executed: 0, interruptions: [] }
+  /** 先落工具与钩子留的痕（memory_op、approval_decision 等），再落这条结果 —— 每条结果路径都走这里，留痕永远排在结果前 */
+  const settle = async (draft: EventDraft): Promise<Event[]> => [
+    ...(await flush()),
+    ...(await append([draft])),
+  ]
 
   for (const call of calls) {
     const { toolCallId, name } = call.payload
@@ -486,26 +491,31 @@ async function* executeToolCalls(
       continue
     }
 
-    // beforeTool：任一 block / defer 即定；rewrite 替换入参后继续问下一个
+    // beforeTool：任一 block / defer 即定；rewrite 替换入参后继续问下一个 ——
+    // 后续钩子看到的 call 带改写后的入参（策略判定的必须是真正要执行的那份，B7）；
+    // 宿主已批准的调用再遇到 defer 不短路：批准只是"不用再问"，排在后面的钩子（如审批策略）仍有权拦。
     let args: unknown = call.payload.args
+    let seen: ToolCallEvent = call
     let verdict: BeforeToolDecision = "proceed"
     for (const s of sockets) {
-      const d = await s.beforeTool?.(ctx, call, tool)
+      const d = await s.beforeTool?.(ctx, seen, tool)
       if (d === undefined || d === "proceed") continue
       if ("rewrite" in d) {
         args = d.rewrite
+        seen = { ...seen, payload: { ...seen.payload, args } }
         continue
       }
+      if ("defer" in d && decided?.approved) continue
       verdict = d
       break
     }
     if (typeof verdict === "object" && "block" in verdict) {
-      yield* await append([errorResult(`工具调用被拦截：${verdict.block}`)])
+      yield* await settle(errorResult(`工具调用被拦截：${verdict.block}`))
       continue
     }
 
     if (!tool) {
-      yield* await append([errorResult(`未知工具：${name}`)])
+      yield* await settle(errorResult(`未知工具：${name}`))
       continue
     }
 
@@ -534,9 +544,12 @@ async function* executeToolCalls(
     if (approval && !decided?.approved) {
       const request = { toolCallId, policyId: approval.policyId, summary: approval.summary }
       if (!requested.has(toolCallId)) {
-        yield* await append([
-          { type: "core.approval_request", actor: "system", parentId: call.id, payload: request },
-        ])
+        yield* await settle({
+          type: "core.approval_request",
+          actor: "system",
+          parentId: call.id,
+          payload: request,
+        })
       }
       summary.interruptions.push({ kind: "approval", toolCallId, request, call: call.payload })
       continue
@@ -552,7 +565,7 @@ async function* executeToolCalls(
     try {
       if (tool.validate) args = tool.validate(args)
     } catch (err) {
-      yield* await append([errorResult(`入参不合法：${errorMessageOf(err)}`)])
+      yield* await settle(errorResult(`入参不合法：${errorMessageOf(err)}`))
       continue
     }
     try {
@@ -575,9 +588,7 @@ async function* executeToolCalls(
       const replaced = await s.afterTool?.(ctx, call, result)
       if (replaced) result = replaced
     }
-    // 工具与钩子留的痕（memory_op 等）排在结果前面
-    yield* await flush()
-    yield* await append([result])
+    yield* await settle(result)
     if (cfg.signal?.aborted) break
   }
   return summary
