@@ -33,7 +33,7 @@
 
 - [x] T9 `runLoop` 异步生成器 + Socket 五个钩子 + RunResult 四态 —— 验收：一个带工具的 agent 跑三轮并结束；日志可完整回放（2026-09-08 完成：`packages/core/src/loop/`，539 行生成器 + Socket / Tool / RunResult 类型 + `defineTool`；`@reins/core/testing` 新增 `ScriptedLowering` 剧本式假模型。28 用例全绿：三轮带工具结束、每轮模型看到的恰是日志前缀的投影、整段日志可重放、五钩子调用顺序、block / rewrite / defer、审批暂停→再跑不重复请求→批准后续跑→拒绝走 isError、客户端工具暂停回填、工具三类失败不崩、error / aborted / maxTurns / handoff、确定性双跑逐字相同、阈值 compaction 先入日志。续跑统一为"先补齐无结果的 tool_call"，T10 只剩序列化签名与 decisions 参数）
 - [x] T10 RunState 序列化 / 恢复 + 审批暂停（`paused`）跨进程续跑 —— 验收：进程 A 暂停、进程 B 恢复的测试（2026-09-08 完成：`loop/state.ts` 加 `pendingDigest`、HMAC-SHA256 签名、`validateResume` 八种拒绝码；`LoopConfig` 加 `resume` / `decisions` / `secret` / `allowConfigDrift`。`run-state.test.ts` 17 用例：进程 A 暂停→状态 JSON 不到 400 字节→进程 B 新实例批准恢复到 done / 拒绝走 isError / 无结论再暂停；篡改 pending 或 lastSeq、换密钥、去签名、换会话、换工具集或系统提示、空日志、pending 被回填、decisions 指错、形状不对共 10 条拒绝路径全部在写日志前抛错。全仓 212 用例绿）
-- [ ] T11 fork：任意 seq 分叉出新会话 —— 验收：分叉后两条会话独立演进
+- [x] T11 fork：任意 seq 分叉出新会话 —— 验收：分叉后两条会话独立演进（2026-09-08 完成：`loop/fork.ts` 的 `forkSession` 包一层 `EventLog.fork`（缺省生成新 id）；3 用例：轮边界分叉后两线各自追加、事件 id 保留、seq 各自续编、分叉线看不到主线后来的话；切在 tool_call 与 tool_result 之间时新会话把该调用当 pending 重新执行、原会话一条不变；越界与目标非空由存储层拒绝。全仓 215 用例绿，阶段 4 收口）
 
 ### 阶段 5：服务端与前端
 
