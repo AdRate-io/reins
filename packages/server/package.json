@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "files": [
@@ -22,7 +26,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
-    "miniflare": "4.20260730.0"
+    "miniflare": "4.20260730.0",
+    "@types/node": "^22.0.0"
   },
   "engines": {
     "node": ">=22"

@@ -15,6 +15,15 @@ The loop is a few hundred lines you can read and copy. Nothing is hidden. Every 
 
 Pre-alpha. Under construction. See `docs/` once published.
 
+## Try it
+
+```bash
+pnpm install && pnpm build
+ANTHROPIC_API_KEY=… node examples/minimal/server.ts   # then open http://localhost:8787
+```
+
+`examples/minimal/agent.ts` is the whole five-minute experience: one model, two tools (one needs approval), an in-memory store, and a Web-standard handler you can drop into any route.
+
 ## Packages
 
 | package | what |
@@ -22,6 +31,9 @@ Pre-alpha. Under construction. See `docs/` once published.
 | `@reins/core` | event timeline, store interfaces, projection, loop, run state, socket |
 | `@reins/brain` | perception, compact, pins, spill, handoff, memory, approval, budget |
 | `@reins/lowering-pi` | provider lowering on top of pi-ai |
+| `@reins/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
+| `@reins/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
+| `reins` | `createAgent()` plus re-exports of core / server / ui-agui |
 
 ## License
 

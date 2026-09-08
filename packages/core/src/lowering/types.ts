@@ -115,6 +115,15 @@ export interface LoweringOutcome {
   responseModel?: string
 }
 
+/**
+ * 绑定了降级层的模型：`anthropic("claude-opus-5", { apiKey })` 这类工厂的返回值，
+ * 给 `createAgent({ model })` 一个参数就够。循环本身仍分开接收 model 与 lowering。
+ */
+export interface BoundModel {
+  model: ModelRef
+  lowering: Lowering
+}
+
 export interface Lowering<TPayload = unknown> {
   capabilities(model: ModelRef): LoweringCapabilities
   toRequest(input: ToRequestInput): LoweredRequest<TPayload>

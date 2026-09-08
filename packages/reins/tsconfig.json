@@ -3,13 +3,8 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": ".tsc",
-    "composite": true,
-    "types": ["node"]
+    "composite": true
   },
   "include": ["src"],
-  "references": [
-    {
-      "path": "../core"
-    }
-  ]
+  "references": [{ "path": "../core" }, { "path": "../server" }, { "path": "../ui-agui" }]
 }

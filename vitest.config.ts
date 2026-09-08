@@ -9,7 +9,9 @@ export default defineConfig({
     alias: [
       { find: "@reins/core/testing", replacement: src("core/src/testing/index.ts") },
       { find: "@reins/core", replacement: src("core/src/index.ts") },
+      { find: "@reins/server/node", replacement: src("server/src/node.ts") },
       { find: "@reins/server", replacement: src("server/src/index.ts") },
+      { find: "reins", replacement: src("reins/src/index.ts") },
       { find: "@reins/ui-agui", replacement: src("ui-agui/src/index.ts") },
     ],
   },

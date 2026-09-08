@@ -1,7 +1,7 @@
 {
-  "name": "@reins/ui-agui",
+  "name": "reins",
   "version": "0.0.0",
-  "description": "reins — timeline events → AG-UI protocol events (encoder for @reins/server, or standalone mapper)",
+  "description": "reins — hand the reins to the model. createAgent() + re-exports of @reins/core, @reins/server and @reins/ui-agui",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -9,22 +9,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./demo/index.html": "./demo/index.html"
+    }
   },
   "files": [
-    "dist",
-    "demo"
+    "dist"
   ],
   "scripts": {
     "build": "tsup"
   },
   "dependencies": {
     "@reins/core": "workspace:*",
-    "@reins/server": "workspace:*"
-  },
-  "devDependencies": {
-    "@ag-ui/core": "0.0.59"
+    "@reins/server": "workspace:*",
+    "@reins/ui-agui": "workspace:*"
   },
   "engines": {
     "node": ">=22"

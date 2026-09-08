@@ -68,3 +68,10 @@ export interface MemoryStore {
   /** 幂等：不存在也不报错 */
   delete(path: string): Promise<void>
 }
+
+/** 一套存储：只有 log 是必需的（§5 允许部分实现），`createAgent({ store })` 接收的就是它 */
+export interface Stores {
+  log: EventLog
+  blobs?: BlobStore
+  memory?: MemoryStore
+}

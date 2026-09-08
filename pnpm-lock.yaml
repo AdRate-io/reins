@@ -24,6 +24,25 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@26.5.0)
 
+  examples/minimal:
+    dependencies:
+      '@reins/lowering-pi':
+        specifier: workspace:*
+        version: link:../../packages/lowering-pi
+      '@reins/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+      '@reins/ui-agui':
+        specifier: workspace:*
+        version: link:../../packages/ui-agui
+      reins:
+        specifier: workspace:*
+        version: link:../../packages/reins
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+
   packages/brain: {}
 
   packages/core: {}
@@ -37,12 +56,27 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/reins:
+    dependencies:
+      '@reins/core':
+        specifier: workspace:*
+        version: link:../core
+      '@reins/server':
+        specifier: workspace:*
+        version: link:../server
+      '@reins/ui-agui':
+        specifier: workspace:*
+        version: link:../ui-agui
+
   packages/server:
     dependencies:
       '@reins/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
@@ -1261,6 +1295,9 @@ packages:
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
 
+  '@types/node@22.20.1':
+    resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
+
   '@types/node@26.5.0':
     resolution: {integrity: sha512-dVSGpriSoCgz8WnDNTuSSuSv1PC/ALXihO4ulRZt7Md8k9mlbdin3lGOcDE8SnWOgf513ByWlXd7BK4azmyg/A==}
 
@@ -2002,6 +2039,9 @@ packages:
 
   ufo@1.6.4:
     resolution: {integrity: sha512-JFNbkD1Svwe0KvGi8GOeLcP4kAWQ609twvCdcHxq1oSL8svv39ZuSvajcD8B+5D0eL4+s1Is2D/O6KN3qcTeRA==}
+
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
@@ -3177,9 +3217,14 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
+  '@types/node@22.20.1':
+    dependencies:
+      undici-types: 6.21.0
+
   '@types/node@26.5.0':
     dependencies:
       undici-types: 8.9.0
+    optional: true
 
   '@types/retry@0.12.0': {}
 
@@ -3757,7 +3802,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 26.5.0
+      '@types/node': 22.20.1
       long: 5.3.2
 
   quansync@0.2.11: {}
@@ -3978,7 +4023,10 @@ snapshots:
 
   ufo@1.6.4: {}
 
-  undici-types@8.9.0: {}
+  undici-types@6.21.0: {}
+
+  undici-types@8.9.0:
+    optional: true
 
   undici@7.28.0: {}
 

@@ -12,6 +12,7 @@ import {
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reins/core/testing"
 import { afterEach, describe, expect, it } from "vitest"
 import { createAgentHandler, SESSION_HEADER } from "./handler.js"
+import { nodeListener } from "./node.js"
 import { RunRegistry } from "./runs.js"
 import {
   eventsOf,
@@ -503,29 +504,7 @@ describe("真实 Node HTTP 服务：经 TCP 用 fetch 读 SSE", () => {
       [waitTool],
     )
 
-    // 十几行的 node:http → Web Request/Response 适配（宿主框架通常自带，这里只为证明 handler 与真实 socket 相处得好）
-    const server = createServer(async (req, res) => {
-      const chunks: Buffer[] = []
-      for await (const c of req) chunks.push(c as Buffer)
-      const headers = new Headers()
-      for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v)
-      const request = new Request(`http://${req.headers.host}${req.url}`, {
-        method: req.method ?? "GET",
-        headers,
-        ...(req.method === "POST" ? { body: Buffer.concat(chunks) } : {}),
-      })
-      const response = await handler(request)
-      res.writeHead(response.status, Object.fromEntries(response.headers))
-      const reader = response.body?.getReader()
-      if (!reader) return res.end()
-      res.on("close", () => void reader.cancel().catch(() => {}))
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        res.write(value)
-      }
-      res.end()
-    })
+    const server = createServer(nodeListener(handler))
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
     close = () => new Promise((r) => server.close(() => r()))
     const port = (server.address() as AddressInfo).port

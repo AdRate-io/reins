@@ -5,7 +5,7 @@ import { defineConfig } from "tsup"
  * 否则 @reins/core 的类型会被内联进本包的声明文件，而不是保留为 import。
  */
 export default defineConfig({
-  entry: { index: "src/index.ts", node: "src/node.ts" },
+  entry: { index: "src/index.ts" },
   format: ["esm"],
   dts: { compilerOptions: { composite: false, paths: {} } },
   clean: true,

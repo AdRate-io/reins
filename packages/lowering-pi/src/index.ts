@@ -5,6 +5,7 @@
  * 每种事件在每家 API 的落点见 LOSS_MATRIX，禁止静默丢弃。
  */
 export { capabilitiesOf } from "./capabilities.js"
+export { anthropic, type BoundModelOptions, openai } from "./factories.js"
 export { consumeStream, draftsOf } from "./from-stream.js"
 export { declaredLandings, LOSS_MATRIX } from "./loss-matrix.js"
 export { definitionToModel, type ModelDefinition, resolveModel, SUPPORTED_APIS } from "./models.js"

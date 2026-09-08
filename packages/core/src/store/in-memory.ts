@@ -9,7 +9,7 @@
 import type { Event } from "../events/base.js"
 import { uuidv7 } from "../events/id.js"
 import { StoreError } from "./errors.js"
-import type { BlobMeta, BlobStore, EventLog, MemoryStore, ReadOptions } from "./types.js"
+import type { BlobMeta, BlobStore, EventLog, MemoryStore, ReadOptions, Stores } from "./types.js"
 
 export class InMemoryEventLog implements EventLog {
   private readonly sessions = new Map<string, Event[]>()
@@ -126,4 +126,9 @@ export class InMemoryMemoryStore implements MemoryStore {
   async delete(path: string): Promise<void> {
     this.files.delete(path)
   }
+}
+
+/** 一套全内存的存储，五分钟体验与测试用；进程结束即清空 */
+export function memoryStore(): Stores {
+  return { log: new InMemoryEventLog(), blobs: new InMemoryBlobStore(), memory: new InMemoryMemoryStore() }
 }

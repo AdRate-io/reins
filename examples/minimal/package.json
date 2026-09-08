@@ -1,0 +1,19 @@
+{
+  "name": "@reins-examples/minimal",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "reins 五分钟体验：PRD §5.1 那段代码原样可跑",
+  "scripts": {
+    "start": "node server.ts"
+  },
+  "dependencies": {
+    "@reins/lowering-pi": "workspace:*",
+    "@reins/server": "workspace:*",
+    "@reins/ui-agui": "workspace:*",
+    "reins": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

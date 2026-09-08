@@ -6,7 +6,7 @@
  *   ANTHROPIC_API_KEY=… REINS_GATEWAY_BASE=https://host/api node packages/ui-agui/demo/serve.mjs   # 真模型
  * 可选：REINS_ANTHROPIC_MODEL（缺省 claude-opus-5）、PORT（缺省 8787）。
  *
- * 这里的 node:http → Web Request/Response 适配只有十几行；正式项目用 Hono / TanStack Start 等自带的即可。
+ * node:http 适配用 @reins/server/node 的 nodeListener；用框架的话用框架自带的即可。
  * 存储用内存实现：重启即清空，演示"重连补发"要在同一进程内做。
  */
 import { readFile } from "node:fs/promises"
@@ -16,6 +16,7 @@ import { defineTool, InMemoryEventLog } from "../../core/dist/index.js"
 import { callTool, ScriptedLowering, say, think } from "../../core/dist/testing/index.js"
 import { PiAiLowering } from "../../lowering-pi/dist/index.js"
 import { createAgentHandler } from "../../server/dist/index.js"
+import { nodeListener } from "../../server/dist/node.js"
 import { aguiEncoding } from "../dist/index.js"
 
 // ---- 工具：一个普通的、一个要审批的 ----
@@ -87,6 +88,7 @@ const handler = createAgentHandler(
   { encode: aguiEncoding() },
 )
 
+const handleAgent = nodeListener(handler)
 const html = await readFile(fileURLToPath(new URL("./index.html", import.meta.url)))
 
 const server = createServer(async (req, res) => {
@@ -98,26 +100,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(404)
     return res.end()
   }
-  const chunks = []
-  for await (const c of req) chunks.push(c)
-  const headers = new Headers()
-  for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v)
-  const request = new Request(`http://${req.headers.host}${req.url}`, {
-    method: req.method ?? "GET",
-    headers,
-    ...(req.method === "POST" ? { body: Buffer.concat(chunks) } : {}),
-  })
-  const response = await handler(request)
-  res.writeHead(response.status, Object.fromEntries(response.headers))
-  const reader = response.body?.getReader()
-  if (!reader) return res.end()
-  res.on("close", () => void reader.cancel().catch(() => {}))
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    res.write(value)
-  }
-  res.end()
+  await handleAgent(req, res)
 })
 
 const port = Number(process.env.PORT ?? 8787)

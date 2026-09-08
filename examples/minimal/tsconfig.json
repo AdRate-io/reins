@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": ".tsc",
+    "composite": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts"],
+  "references": [
+    { "path": "../../packages/reins" },
+    { "path": "../../packages/lowering-pi" },
+    { "path": "../../packages/server" },
+    { "path": "../../packages/ui-agui" }
+  ]
+}
