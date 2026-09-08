@@ -4,15 +4,48 @@
  *
  * 运行：先在仓库根 `pnpm build`，然后
  *   ANTHROPIC_API_KEY=... OPENAI_API_KEY=... node spikes/t7-live-roundtrip/live.mjs
- * 只设一个 key 就只跑那一家。
+ * 只设一个 key 就只跑那一家。走聚合网关：再加 REINS_GATEWAY_BASE=https://host/api（两家 key 可相同）。
  */
 import { createCoreEvent, createCoreRegistry } from "../../packages/core/dist/index.js"
 import { PiAiLowering } from "../../packages/lowering-pi/dist/index.js"
 
 const registry = createCoreRegistry()
 const keys = { anthropic: process.env.ANTHROPIC_API_KEY, openai: process.env.OPENAI_API_KEY }
+/**
+ * 可选：走聚合网关。设 REINS_GATEWAY_BASE=https://host/api 时，两家模型都用 ModelDefinition 指到网关。
+ * Anthropic SDK 在 baseUrl 后接 /v1/messages，OpenAI SDK 在 baseUrl 后接 /responses，所以两者后缀不同。
+ * REINS_ANTHROPIC_MODEL / REINS_OPENAI_MODEL 可覆盖模型 id（带 REINS_ 前缀是为了不撞上 Claude Code 等工具预置的 ANTHROPIC_MODEL）。
+ */
+const gateway = process.env.REINS_GATEWAY_BASE
+const anthropicId = process.env.REINS_ANTHROPIC_MODEL ?? "claude-opus-5"
+const openaiId = process.env.REINS_OPENAI_MODEL ?? "gpt-5.4"
+const models = gateway
+  ? [
+      {
+        provider: "anthropic",
+        id: anthropicId,
+        api: "anthropic-messages",
+        baseUrl: gateway,
+        reasoning: true,
+        contextWindow: 200_000,
+        maxOutputTokens: 32_000,
+        images: true,
+      },
+      {
+        provider: "openai",
+        id: openaiId,
+        api: "openai-responses",
+        baseUrl: `${gateway}/v1`,
+        reasoning: true,
+        contextWindow: 272_000,
+        maxOutputTokens: 32_000,
+        images: true,
+      },
+    ]
+  : []
 const lowering = new PiAiLowering({
   apiKey: (provider) => keys[provider],
+  models,
   requestOptions: (ref) =>
     ref.provider === "openai" ? { reasoningEffort: "medium" } : { thinkingEnabled: true },
 })
@@ -90,7 +123,7 @@ async function roundTrip(model) {
   await run("第二轮（回放第一轮 thinking + 工具结果 + 中途 system_note）")
 }
 
-if (keys.anthropic) await roundTrip({ provider: "anthropic", id: "claude-opus-5" })
+if (keys.anthropic) await roundTrip({ provider: "anthropic", id: anthropicId })
 else console.log("未设 ANTHROPIC_API_KEY，跳过 Anthropic")
-if (keys.openai) await roundTrip({ provider: "openai", id: "gpt-5.4" })
+if (keys.openai) await roundTrip({ provider: "openai", id: openaiId })
 else console.log("未设 OPENAI_API_KEY，跳过 OpenAI")

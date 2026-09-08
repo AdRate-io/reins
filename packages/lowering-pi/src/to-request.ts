@@ -78,6 +78,14 @@ function sameOrigin(a: ModelOrigin, b: ModelOrigin): boolean {
   return a.provider === b.provider && a.api === b.api && a.model === b.model
 }
 
+/**
+ * 是否来自别家：只比 provider 与 api。响应里报告的模型 id 常与请求的不同（带日期后缀、别名、网关改名），
+ * 同家同协议下签名仍可回放，不算有损，只在落点备注里留痕。
+ */
+function foreignOrigin(a: ModelOrigin, target: ModelOrigin): boolean {
+  return a.provider !== target.provider || a.api !== target.api
+}
+
 export interface ToContextInput {
   events: readonly Event[]
   tools?: readonly ToolSpec[]
@@ -140,12 +148,19 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         assistant(e, origin).content.push(block)
         if (!block.thinkingSignature)
           land(e, "lossy", "text-or-drop", "无签名的 thinking 由 pi-ai 降为文本或丢弃")
-        else if (!sameOrigin(origin, target))
+        else if (foreignOrigin(origin, target))
           land(
             e,
             "lossy",
             "provider-dependent",
             `来自 ${origin.provider}/${origin.model} 的 thinking，厂商可能忽略或拒收`,
+          )
+        else if (origin.model !== target.model)
+          land(
+            e,
+            "exact",
+            isAnthropic ? "thinking-block" : "reasoning-item",
+            `签名来自 ${origin.model}，当前请求 ${target.model}`,
           )
         else land(e, "exact", isAnthropic ? "thinking-block" : "reasoning-item")
         break

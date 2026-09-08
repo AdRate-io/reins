@@ -276,22 +276,29 @@ describe("PiAiLowering — Anthropic Messages", () => {
     expect(noteMsg?.content).toBe('<system_note kind="perception">\nContext 50-70% used.\n</system_note>')
   })
 
-  it("无签名 thinking 与来自别家模型的 thinking 都记为 lossy，而不是静默处理", () => {
+  it("无签名 thinking 与来自别家的 thinking 记为 lossy；同家不同模型 id 仍 exact 但留备注", () => {
     seq = 0
     const events = [
       ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
       ev("core.model_thinking", { text: "无签名" }),
       ev("core.model_thinking", { text: "别家的" }, { replay: { ...OPENAI, thinkingSignature: "{}" } }),
+      ev(
+        "core.model_thinking",
+        { text: "带日期的同款" },
+        { replay: { ...ANTHROPIC, model: "claude-opus-5-20260301", thinkingSignature: "s" } },
+      ),
       ev("core.model_text", { text: "ok" }, { replay: { ...ANTHROPIC } }),
     ]
     const req = lowering.toRequest({ events, model })
-    expect(req.landings.slice(1, 3).map((l) => [l.kind, l.landing])).toEqual([
+    expect(req.landings.slice(1, 4).map((l) => [l.kind, l.landing])).toEqual([
       ["lossy", "text-or-drop"],
       ["lossy", "provider-dependent"],
+      ["exact", "thinking-block"],
     ])
+    expect(req.landings[3]?.note).toContain("claude-opus-5-20260301")
     // 来源不同的 model 事件不合并进同一条 assistant 消息
     const roles = (req.payload.context.messages as { role: string }[]).map((m) => m.role)
-    expect(roles).toEqual(["user", "assistant", "assistant", "assistant"])
+    expect(roles).toEqual(["user", "assistant", "assistant", "assistant", "assistant"])
   })
 })
 
