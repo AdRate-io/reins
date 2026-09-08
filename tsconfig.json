@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/brain" },
-    { "path": "packages/lowering-pi" }
+    { "path": "packages/lowering-pi" },
+    { "path": "packages/server" }
   ]
 }

@@ -19,7 +19,8 @@
       "@reins/core": ["./packages/core/src/index.ts"],
       "@reins/core/testing": ["./packages/core/src/testing/index.ts"],
       "@reins/brain": ["./packages/brain/src/index.ts"],
-      "@reins/lowering-pi": ["./packages/lowering-pi/src/index.ts"]
+      "@reins/lowering-pi": ["./packages/lowering-pi/src/index.ts"],
+      "@reins/server": ["./packages/server/src/index.ts"]
     }
   }
 }

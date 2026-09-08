@@ -1,0 +1,30 @@
+{
+  "name": "@reins/server",
+  "version": "0.0.0",
+  "description": "reins — Web-standard (Request) => Response handler: runs the loop, streams the timeline as SSE, replays from lastSeq on reconnect",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@reins/core": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "miniflare": "4.20260730.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
