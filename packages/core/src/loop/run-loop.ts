@@ -29,7 +29,13 @@ import { createCoreRegistry } from "../events/registry.js"
 import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../lowering/types.js"
 import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
-import { computeConfigHash, pendingToolCalls, serializeRunState } from "./state.js"
+import {
+  computeConfigHash,
+  pendingToolCalls,
+  RunStateError,
+  serializeRunState,
+  validateResume,
+} from "./state.js"
 import { errorMessageOf, normalizeToolOutput, toolSpecOf } from "./tools.js"
 import type {
   BeforeToolDecision,
@@ -101,10 +107,17 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   const pause = async (
     reason: PauseReason,
     interruptions: Interruption[],
-    pendingIds: readonly string[],
   ): Promise<{ events: Event[]; result: RunResult }> => {
     const events = await append([{ type: "core.run_paused", actor: "system", payload: { reason } }])
-    const state = serializeRunState({ sessionId, lastSeq, pendingToolCallIds: pendingIds, configHash })
+    // pending 以日志为准（而不是本轮内存里的列表），恢复时对账的也是日志
+    const pending = pendingToolCalls(await collect(log.read(sessionId)))
+    const state = await serializeRunState({
+      sessionId,
+      lastSeq,
+      pending,
+      configHash,
+      ...(cfg.secret !== undefined ? { secret: cfg.secret } : {}),
+    })
     return { events, result: { status: "paused", sessionId, lastSeq, reason, interruptions, state } }
   }
 
@@ -112,6 +125,49 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     const events = await append([{ type: "core.error", actor: "system", payload }])
     const error = events[0] as CoreEventOf<"core.error">
     return { events, result: { status: "error", sessionId, lastSeq, error } }
+  }
+
+  // ---- 恢复与审批结论：先做完全部校验（不通过就抛，一条日志都不写），再写 run_resumed 与 approval_decision ----
+  if (cfg.resume !== undefined || (cfg.decisions && cfg.decisions.length > 0)) {
+    const timeline = await collect(log.read(sessionId))
+    if (cfg.resume !== undefined) {
+      await validateResume({
+        state: cfg.resume,
+        sessionId,
+        timeline,
+        configHash,
+        ...(cfg.secret !== undefined ? { secret: cfg.secret } : {}),
+        ...(cfg.allowConfigDrift !== undefined ? { allowConfigDrift: cfg.allowConfigDrift } : {}),
+      })
+    }
+    const decisions = cfg.decisions ?? []
+    const pendingIds = new Set(pendingToolCalls(timeline).map((c) => c.payload.toolCallId))
+    for (const d of decisions) {
+      if (!pendingIds.has(d.toolCallId)) {
+        throw new RunStateError("unknown_tool_call", `审批结论指向的调用 ${d.toolCallId} 并不在等待中`, {
+          toolCallId: d.toolCallId,
+        })
+      }
+    }
+    if (cfg.resume !== undefined) {
+      const by = decisions[0]?.by
+      yield* await append([
+        { type: "core.run_resumed", actor: "host", payload: by !== undefined ? { by } : {} },
+      ])
+    }
+    // 结论记成事件，之后"补齐 pending 调用"按它办
+    yield* await append(
+      decisions.map((d) => ({
+        type: "core.approval_decision" as const,
+        actor: "host" as const,
+        payload: {
+          toolCallId: d.toolCallId,
+          approved: d.approved,
+          by: d.by,
+          ...(d.reason !== undefined ? { reason: d.reason } : {}),
+        },
+      })),
+    )
   }
 
   // ---- 新输入 ----
@@ -178,7 +234,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       toolCallsTotal += settled.executed
       if (settled.interruptions.length > 0) {
         const reason = pauseReasonOf(settled.interruptions)
-        const { events, result } = await pause(reason, settled.interruptions, settled.pendingIds)
+        const { events, result } = await pause(reason, settled.interruptions)
         yield* events
         return result
       }
@@ -186,13 +242,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     }
 
     if (cfg.signal?.aborted) {
-      const { events, result } = await pause("host", [{ kind: "host", note: "宿主在本轮开始前中止" }], [])
+      const { events, result } = await pause("host", [{ kind: "host", note: "宿主在本轮开始前中止" }])
       yield* events
       return result
     }
     if (turns >= maxTurns) {
       const note = `单次 run 轮数达到上限 ${maxTurns}`
-      const { events, result } = await pause("budget", [{ kind: "budget", note }], [])
+      const { events, result } = await pause("budget", [{ kind: "budget", note }])
       yield* events
       return result
     }
@@ -275,14 +331,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
 
     if (outcome.stopReason === "aborted") {
       // 已完整的内容块都入了日志；未回答的 tool_call 留给恢复时补齐
-      const pendingIds = modelEvents
-        .filter((e): e is ToolCallEvent => e.type === "core.tool_call")
-        .map((e) => e.payload.toolCallId)
-      const { events, result } = await pause(
-        "host",
-        [{ kind: "host", note: "宿主中止了模型响应" }],
-        pendingIds,
-      )
+      const { events, result } = await pause("host", [{ kind: "host", note: "宿主中止了模型响应" }])
       yield* events
       return result
     }
@@ -290,7 +339,6 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // ---- 执行工具 ----
     const calls = modelEvents.filter((e): e is ToolCallEvent => e.type === "core.tool_call")
     let interruptions: Interruption[] = []
-    let pendingIds: string[] = []
     if (calls.length > 0) {
       const settled = yield* executeToolCalls(ctx, calls, [...timeline, ...injected, ...modelEvents], {
         cfg,
@@ -301,7 +349,6 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       toolCallsTotal += settled.executed
       ctx.budget.toolCalls = toolCallsTotal
       interruptions = settled.interruptions
-      pendingIds = settled.pendingIds
     }
 
     yield* await append([
@@ -317,7 +364,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     ])
 
     if (interruptions.length > 0) {
-      const { events, result } = await pause(pauseReasonOf(interruptions), interruptions, pendingIds)
+      const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
       yield* events
       return result
     }
@@ -338,7 +385,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     if ("pause" in decision) {
       const note = decision.pause.note ?? `Socket 要求暂停（${decision.pause.reason}）`
       const kind = decision.pause.reason
-      const { events, result } = await pause(kind, [{ kind, note }], [])
+      const { events, result } = await pause(kind, [{ kind, note }])
       yield* events
       return result
     }
@@ -397,8 +444,6 @@ interface ExecuteSummary {
   /** 真正跑了 execute 的次数 */
   executed: number
   interruptions: Interruption[]
-  /** 仍没有结果的 toolCallId */
-  pendingIds: string[]
 }
 
 /**
@@ -420,7 +465,7 @@ async function* executeToolCalls(
     if (e.type === "core.approval_request") requested.add(e.payload.toolCallId)
   }
 
-  const summary: ExecuteSummary = { executed: 0, interruptions: [], pendingIds: [] }
+  const summary: ExecuteSummary = { executed: 0, interruptions: [] }
 
   for (const call of calls) {
     const { toolCallId, name } = call.payload
@@ -492,14 +537,12 @@ async function* executeToolCalls(
         ])
       }
       summary.interruptions.push({ kind: "approval", toolCallId, request, call: call.payload })
-      summary.pendingIds.push(toolCallId)
       continue
     }
 
     // 客户端工具：本循环不执行，等宿主回填 tool_result 后续跑
     if (!tool.execute || tool.side === "client") {
       summary.interruptions.push({ kind: "client_tool", toolCallId, call: call.payload })
-      summary.pendingIds.push(toolCallId)
       continue
     }
 

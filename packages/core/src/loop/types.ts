@@ -204,7 +204,7 @@ export type Interruption =
 
 /**
  * 可序列化的 run 状态。只含引用，内容全部从 EventLog 重读，小到能放 URL 参数或 KV。
- * sig 为宿主密钥的 HMAC（T10），恢复时校验 pending 调用的入参未被篡改。
+ * 配置了密钥时 sig 为 HMAC-SHA256；恢复时先验签，再与日志对账（pending 调用的 ID 与入参摘要）。
  */
 export interface SerializedRunState {
   v: 1
@@ -213,7 +213,18 @@ export interface SerializedRunState {
   pendingToolCallIds: string[]
   /** 模型、工具集、系统提示的摘要；恢复时配置变了要能察觉 */
   configHash: string
+  /** pending 调用（id、名、入参）的 SHA-256；批下去的必须是当时看到的那次调用 */
+  pendingDigest: string
   sig?: string
+}
+
+/** 宿主对某次 pending 调用的审批结论；循环记成 approval_decision 事件后按它办 */
+export interface ApprovalDecisionInput {
+  toolCallId: string
+  approved: boolean
+  /** 谁批的：用户标识或策略 ID */
+  by: string
+  reason?: string
 }
 
 export type RunResult =
@@ -269,6 +280,18 @@ export interface LoopConfig {
   onLandings?: (records: LandingRecord[], request: LoweredRequest) => void
   /** 交接后宿主重绑对话锚点（聊天窗口、频道等） */
   onHandoff?: (fromSessionId: string, toSessionId: string) => MaybePromise<void>
+  /**
+   * 恢复：上一次 paused 返回的状态（可来自 URL 参数 / KV）。循环先校验（形状、会话、签名、配置、与日志对账），
+   * 不通过抛 RunStateError 且不写日志；通过则 append run_resumed，再从"补齐 pending 调用"接上。
+   * 不传也能续跑（同一 sessionId 再跑一次），只是少了这层校验。
+   */
+  resume?: SerializedRunState
+  /** 宿主给 pending 调用的审批结论，先记成 approval_decision 再执行；指向非 pending 调用即拒绝 */
+  decisions?: readonly ApprovalDecisionInput[]
+  /** 状态签名密钥。给了就签发与校验；没给则状态不签名、恢复不验签（只适合可信环境） */
+  secret?: string
+  /** 允许在模型 / 工具集 / 系统提示变了之后恢复；缺省拒绝 */
+  allowConfigDrift?: boolean
   /** 测试注入：时间与 id 工厂 */
   now?: () => number
   newId?: (at: number) => string
