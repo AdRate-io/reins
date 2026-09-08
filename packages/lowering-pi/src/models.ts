@@ -33,6 +33,11 @@ export interface ModelDefinition {
   cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }
   /** 额外请求头，如私有网关的鉴权 */
   headers?: Record<string, string>
+  /**
+   * 是否接受 messages 里的中途 `role:"system"` 消息（system_note 的 exact 落点）。内置 Anthropic 模型按 id 判定；
+   * 第三方 Anthropic 协议上游（如 DeepSeek 的兼容端口，2026-09-08 实测接受）由宿主在此声明，缺省按不支持处理。
+   */
+  midConversationSystem?: boolean
 }
 
 const BUILTIN: Readonly<Record<string, Readonly<Record<string, PiModel>>>> = {

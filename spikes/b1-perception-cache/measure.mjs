@@ -38,6 +38,8 @@ const model =
         contextWindow: 200_000,
         maxOutputTokens: 32_000,
         images: true,
+        // 第三方 Anthropic 协议上游（DeepSeek 等）要显式声明才走中途 system 落点
+        ...(process.env.REINS_MID_SYSTEM === "1" ? { midConversationSystem: true } : {}),
       }
     : {
         provider: "openai",

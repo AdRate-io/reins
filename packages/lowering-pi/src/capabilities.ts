@@ -22,10 +22,23 @@ function openaiReasoningRequested(requestOptions: Record<string, unknown>): bool
   return Boolean(requestOptions.reasoningEffort || requestOptions.reasoningSummary)
 }
 
+/** 宿主在 ModelDefinition 里声明的能力，覆盖按 id 的推断 */
+export interface CapabilityOverrides {
+  midConversationSystem?: boolean
+}
+
 export function capabilitiesOf(
   model: PiModel,
   requestOptions: Record<string, unknown> = {},
+  overrides: CapabilityOverrides = {},
 ): LoweringCapabilities {
+  const caps = inferCapabilities(model, requestOptions)
+  return overrides.midConversationSystem === undefined
+    ? caps
+    : { ...caps, midConversationSystem: overrides.midConversationSystem }
+}
+
+function inferCapabilities(model: PiModel, requestOptions: Record<string, unknown>): LoweringCapabilities {
   const base = {
     api: model.api,
     thinkingReplay: model.reasoning,

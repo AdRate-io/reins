@@ -18,7 +18,7 @@ import {
   type ModelRef,
   type ToRequestInput,
 } from "@reins/core"
-import { capabilitiesOf } from "./capabilities.js"
+import { type CapabilityOverrides, capabilitiesOf } from "./capabilities.js"
 import { consumeStream } from "./from-stream.js"
 import { definitionToModel, type ModelDefinition, type PiModel, resolveModel } from "./models.js"
 import {
@@ -63,13 +63,24 @@ export interface PiLoweredPayload {
 
 export class PiAiLowering implements Lowering<PiLoweredPayload> {
   private readonly extraModels: PiModel[]
+  /** 宿主自定义模型声明的能力覆盖，键 provider/id；pi-ai 的 Model 上放不下这些字段 */
+  private readonly overrides = new Map<string, CapabilityOverrides>()
 
   constructor(private readonly opts: PiAiLoweringOptions) {
     this.extraModels = (opts.models ?? []).map(definitionToModel)
+    for (const def of opts.models ?? []) {
+      if (def.midConversationSystem !== undefined) {
+        this.overrides.set(`${def.provider}/${def.id}`, { midConversationSystem: def.midConversationSystem })
+      }
+    }
   }
 
   capabilities(ref: ModelRef): LoweringCapabilities {
-    return capabilitiesOf(resolveModel(ref, this.extraModels), this.requestOptionsFor(ref))
+    return this.capabilitiesFor(ref, resolveModel(ref, this.extraModels))
+  }
+
+  private capabilitiesFor(ref: ModelRef, model: PiModel): LoweringCapabilities {
+    return capabilitiesOf(model, this.requestOptionsFor(ref), this.overrides.get(`${ref.provider}/${ref.id}`))
   }
 
   private requestOptionsFor(ref: ModelRef): Record<string, unknown> {
@@ -78,7 +89,7 @@ export class PiAiLowering implements Lowering<PiLoweredPayload> {
 
   toRequest(input: ToRequestInput): LoweredRequest<PiLoweredPayload> {
     const model = resolveModel(input.model, this.extraModels)
-    const capabilities = capabilitiesOf(model, this.requestOptionsFor(input.model))
+    const capabilities = this.capabilitiesFor(input.model, model)
     const { context, landings } = eventsToContext({
       events: input.events,
       model,

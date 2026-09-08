@@ -48,3 +48,12 @@
 1. 分档感知注入满足验收：Anthropic 与 OpenAI 上命中占比都不下降（前提是断点按 `automatic` 处置）。
 2. 降级层默认 `midSystemCacheBreakpoint: "automatic"`；`previous-user` 与 `drop` 保留为选项；"留在 system 消息上"有害，不提供。
 3. 未做：直连官方 Anthropic API 的对照（没有官方 key）。若将来直连实测 `automatic` 不如预期，改缺省即可，一行配置。
+
+### 第二家上游：DeepSeek Anthropic 兼容端口（deepseek-v4-flash，1 次）
+
+| 说明落点 | baseline | default（3 条） | stress（10 条） |
+| --- | --- | --- | --- |
+| user 文本（未声明 midConversationSystem） | 94.3% | 93.9% | 93.1% |
+| 中途 system + 顶层自动缓存 | 94.5% | 94.2% | 94.1% |
+
+DeepSeek 的缓存全自动、按 128 token 块计，`cache_creation` 恒为 0；它分辨不出断点处置的差别，只能证明注入不拉低命中、我们发的请求它都接受。详见 `spikes/deepseek-anthropic-check/README.md`。

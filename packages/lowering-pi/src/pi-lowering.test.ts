@@ -684,6 +684,47 @@ describe("PiAiLowering — 错误与矩阵", () => {
     })
   })
 
+  it("自定义模型可声明 midConversationSystem：第三方 Anthropic 协议上游的 system_note 走 exact 落点", () => {
+    const lowering = new PiAiLowering({
+      apiKey: () => "k",
+      models: [
+        {
+          provider: "deepseek",
+          id: "deepseek-v4-flash",
+          api: "anthropic-messages",
+          baseUrl: "https://api.deepseek.com/anthropic",
+          reasoning: true,
+          contextWindow: 128_000,
+          maxOutputTokens: 8192,
+          midConversationSystem: true,
+        },
+        {
+          provider: "deepseek",
+          id: "plain",
+          api: "anthropic-messages",
+          baseUrl: "https://api.deepseek.com/anthropic",
+          reasoning: false,
+          contextWindow: 128_000,
+          maxOutputTokens: 8192,
+        },
+      ],
+    })
+    expect(
+      lowering.capabilities({ provider: "deepseek", id: "deepseek-v4-flash" }).midConversationSystem,
+    ).toBe(true)
+    // 未声明的仍按不支持处理
+    expect(lowering.capabilities({ provider: "deepseek", id: "plain" }).midConversationSystem).toBe(false)
+    seq = 0
+    const req = lowering.toRequest({
+      events: [
+        ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
+        ev("core.system_note", { kind: "perception", text: "status" }),
+      ],
+      model: { provider: "deepseek", id: "deepseek-v4-flash" },
+    })
+    expect(req.landings.map((l) => `${l.kind}:${l.landing}`)).toEqual(["exact:user", "exact:system"])
+  })
+
   it("有损矩阵覆盖全部 15 种 core 事件与 ext.*，两家 API 各一份", () => {
     const coreTypes = [
       "core.user_message",
