@@ -6,7 +6,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 
 const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const block = info.slice(info.indexOf("deepseek官方"))
+// 原始字段块放在文件末尾（前面还有一段说明文字会提到同样的字样），所以取最后一次出现
+const block = info.slice(info.lastIndexOf("deepseek官方"))
 const key = block.match(/key:\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
 const model = block.match(/模型：\s*(\S+)/)?.[1] ?? "deepseek-v4-flash"
 const base = block.match(/anthropic 协议 baseurl：\s*(\S+)/)?.[1]
