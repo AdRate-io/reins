@@ -48,7 +48,7 @@
 
 ## M1 脑子 v1（目标 3 周）
 
-- [ ] B1 perception（分档注入、每档一次）—— 验收：注入内容按档位离散化；遵守技术方案 §9.1 的五条 prompt cache 约束（只追加在末尾、旧说明不删不隐藏、系统提示与工具表稳定）；用 `budget_usage.tokens.cacheRead` 对比注入前后，命中占比不下降，并关闭 §17 对应待核实项
+- [x] B1 perception（分档注入、每档一次）—— 验收：注入内容按档位离散化；遵守技术方案 §9.1 的五条 prompt cache 约束（只追加在末尾、旧说明不删不隐藏、系统提示与工具表稳定）；用 `budget_usage.tokens.cacheRead` 对比注入前后，命中占比不下降，并关闭 §17 对应待核实项（2026-09-08 完成：`packages/brain/src/perception/`，`perception(options): Socket`，beforeModel 里算读数 → 渲染 → 与模型当前可见的最后一条感知说明逐字比对 → 不同才 emit 一条 `system_note(kind=perception, meta.reading)`，永不返回补丁。读数七项全部分档（上下文使用率、阈值兜底触发点、未折叠轮数、整理次数、会话累计 token、外溢结果数、配置 limits 时最紧一维余量）。core：投影链删掉 `perception` 插槽（感知是 Socket 不是策略）、`TurnContext.budget.targetTokens`、`SystemNotePayload.meta` 可选字段。13 个 brain 用例：首轮注入在 user 之后模型输出之前、三轮系统提示与工具表逐字相同、同档不重复、变档只追加旧的留原位、余量跨档、折叠后重注入、自定义文案判重、非法边界拒绝。**顺带发现并修了降级层的问题**：感知说明殿后时 pi-ai 打在它上面的 Anthropic 缓存断点会在改写成 system 时丢失，官方规则是断点之后一律不缓存；做成 `midSystemCacheBreakpoint`，缺省 `automatic`（去块级断点、顶层补自动缓存）。实测经网关 claude-opus-5：不注入 91.8%~93.3%，默认档位 92.9%、每轮变档 93.9%，不降；`previous-user` 低 3~6 个点，留在 system 消息上崩到 18.6%；gpt-5.5 基线 16.5% → 32.9% / 38.2%，亦不降。§17 对应项关闭。全仓 299 用例绿）
 - [ ] B2 compact 工具 + 规则提示 + 阈值兜底 + 连续上限
 - [ ] B3 pins 幸存契约 + 折叠后重注入
 - [ ] B4 spill 外溢 + `fetch_blob`

@@ -54,6 +54,11 @@ export interface ToolResultPayload {
 export interface SystemNotePayload {
   kind: "perception" | "pin" | "budget" | "host"
   text: string
+  /**
+   * 注入者附带的结构化数据（如感知的各档位读数），**不进模型上下文**：降级层只翻译 text。
+   * 给回放界面与 eval 用，免得从文本里反解。可选字段，不升版本。
+   */
+  meta?: Record<string, unknown>
 }
 
 // ---- 审批 ----

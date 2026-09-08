@@ -1,8 +1,9 @@
 /**
  * 策略链执行器与默认链。
  *
- * 默认链（技术方案 §8）：过滤 → 折叠 → 钉住 → [感知注入] → 预算裁剪。
- * 感知注入（§9.1）在 M1 B1 作为 `@reins/brain` 的策略插到钉住与裁剪之间；这里用 `perception` 插槽占位。
+ * 默认链（技术方案 §8）：过滤 → 折叠 → 钉住 → 预算裁剪。
+ * 感知注入（§9.1）不在这条链上：它是 `@reins/brain` 的 Socket，在 beforeModel 里把 system_note 作为新事件
+ * 追加到时间线末尾（prompt cache 约束：只追加、不改前缀）。投影只负责"看历史"，不负责"说话"。
  */
 import type { Event } from "../events/base.js"
 import { uuidv7 } from "../events/id.js"
@@ -26,20 +27,16 @@ export const DEFAULT_RESERVE_RATIO = 0.15
 export interface DefaultChainOptions {
   filter?: VisibilityFilterOptions
   fold?: FoldOptions
-  /** 感知注入策略（B1）；未提供则跳过 */
-  perception?: ProjectionStrategy
   truncate?: BudgetTruncateOptions
 }
 
 export function defaultProjectionChain(opts: DefaultChainOptions = {}): ProjectionStrategy[] {
-  const chain: ProjectionStrategy[] = [
+  return [
     visibilityFilter(opts.filter),
     foldCompactions(opts.fold),
     reinjectPins(),
+    budgetTruncate({ autoKeepPinNotes: opts.fold?.autoKeepPinNotes ?? true, ...opts.truncate }),
   ]
-  if (opts.perception) chain.push(opts.perception)
-  chain.push(budgetTruncate({ autoKeepPinNotes: opts.fold?.autoKeepPinNotes ?? true, ...opts.truncate }))
-  return chain
 }
 
 export interface ProjectOptions {

@@ -263,6 +263,33 @@ describe("PiAiLowering — Anthropic Messages", () => {
     ])
   })
 
+  it("殿后的 system_note 经 onPayload 改写后：请求顶层带自动缓存字段，块级断点不落在 system 与前一条 user 上", async () => {
+    const { fetch: f, captured: c } = fakeFetch(anthropicSse)
+    const lo = new PiAiLowering({ apiKey: () => "sk-test", fetch: f })
+    seq = 0
+    const events: Event[] = [
+      ev("core.user_message", { content: [{ type: "text", text: "帮我查上海天气" }] }),
+      ev("core.system_note", { kind: "perception", text: "Context <50% used." }),
+    ]
+    const req = lo.toRequest({ events, tools: TOOLS, model, systemPrompt: "你是天气助手" })
+    await collect(lo.stream(req))
+    const body = c[0]?.body as {
+      cache_control?: unknown
+      system?: { cache_control?: unknown }[]
+      messages: { role: string; content: { type: string; cache_control?: unknown }[] | string }[]
+    }
+    expect(body.cache_control).toEqual({ type: "ephemeral" })
+    // 末尾可能还有 pi-ai 为 Opus 5 追加的空 effort system 消息，与我们的 system 相邻成组
+    expect(body.messages.slice(0, 2).map((m) => m.role)).toEqual(["user", "system"])
+    expect(body.messages[1]?.content).toEqual([{ type: "text", text: "Context <50% used." }])
+    for (const m of body.messages) {
+      const blocks = typeof m.content === "string" ? [] : m.content
+      expect(blocks.some((b) => b.cache_control !== undefined)).toBe(false)
+    }
+    // pi-ai 原有的系统提示断点还在，总断点数不超过 4
+    expect(body.system?.some((b) => b.cache_control !== undefined)).toBe(true)
+  })
+
   it("不支持中途 system 的模型：system_note 以标签包住走 user，声明 lossy", () => {
     const req = lowering.toRequest({
       events: timeline(ANTHROPIC, "sig-1", "toolu_1"),
@@ -336,6 +363,110 @@ describe("rewriteAnthropicPayload 归位规则", () => {
 
   it("没有标记消息时返回 undefined，请求体原样", () => {
     expect(rewriteAnthropicPayload({ messages: [u("a"), a("b")] })).toBeUndefined()
+  })
+
+  // pi-ai 给最后一条 user（字符串内容）打断点时会把它转成单块数组，这正是我们标记消息殿后时的形状
+  const cc = { type: "ephemeral" }
+  const markedLast = { role: "user", content: [{ type: "text", text: `${MARK}status`, cache_control: cc }] }
+
+  it("缺省 automatic：殿后 system_note 带着 pi-ai 打的缓存断点时，块级断点去掉、请求顶层补 cache_control", () => {
+    const input = {
+      system: [{ type: "text", text: "sys", cache_control: cc }],
+      messages: [u("a"), a("b"), u("c"), markedLast],
+    }
+    const out = rewriteAnthropicPayload(input) as {
+      cache_control?: unknown
+      messages: { role: string; content: unknown }[]
+    }
+    expect(roles(out)).toEqual(["user", "assistant", "user", "system"])
+    expect(out.messages[2]?.content).toBe("c")
+    expect(out.messages[3]?.content).toEqual([{ type: "text", text: "status" }])
+    expect(out.cache_control).toEqual(cc)
+    // 传入的请求体没有被改动
+    expect(input.messages[3]).toEqual(markedLast)
+    expect(input).not.toHaveProperty("cache_control")
+  })
+
+  it("automatic：不殿后（没带断点）的 system_note 不动顶层；已有顶层 cache_control 不覆盖；块级断点满 4 个就放弃", () => {
+    const plain = rewriteAnthropicPayload({ messages: [u("a"), a("b"), s("n"), u("c")] }) as Record<
+      string,
+      unknown
+    >
+    expect(plain).not.toHaveProperty("cache_control")
+
+    const existing = { type: "ephemeral", ttl: "1h" }
+    const kept = rewriteAnthropicPayload({
+      cache_control: existing,
+      messages: [u("a"), a("b"), u("c"), markedLast],
+    }) as {
+      cache_control: unknown
+    }
+    expect(kept.cache_control).toEqual(existing)
+
+    const full = rewriteAnthropicPayload({
+      system: [
+        { type: "text", text: "s1", cache_control: cc },
+        { type: "text", text: "s2", cache_control: cc },
+      ],
+      tools: [{ name: "t", cache_control: cc }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "a", cache_control: cc }] },
+        a("b"),
+        markedLast,
+      ],
+    }) as Record<string, unknown>
+    expect(full).not.toHaveProperty("cache_control")
+  })
+
+  it("previous-user：断点挪到前一条 user 的末块，system 消息本身不带", () => {
+    const input = { messages: [u("a"), a("b"), u("c"), markedLast] }
+    const out = rewriteAnthropicPayload(input, { cacheBreakpoint: "previous-user" }) as {
+      messages: { role: string; content: unknown }[]
+    }
+    expect(out.messages[2]?.content).toEqual([{ type: "text", text: "c", cache_control: cc }])
+    expect(out.messages[3]?.content).toEqual([{ type: "text", text: "status" }])
+    expect(input.messages[2]).toEqual(u("c"))
+  })
+
+  it("drop：断点丢弃，块级与顶层都不带", () => {
+    const out = rewriteAnthropicPayload(
+      { messages: [u("a"), a("b"), u("c"), markedLast] },
+      { cacheBreakpoint: "drop" },
+    ) as {
+      cache_control?: unknown
+      messages: { content: unknown }[]
+    }
+    expect(out.messages[2]?.content).toBe("c")
+    expect(out.messages[3]?.content).toEqual([{ type: "text", text: "status" }])
+    expect(out).not.toHaveProperty("cache_control")
+  })
+
+  it("previous-user 且前一条是 tool_result 的 user 消息时，断点打在最后一个 tool_result 块上", () => {
+    const results = {
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "t1", content: "r1" },
+        { type: "tool_result", tool_use_id: "t2", content: "r2" },
+      ],
+    }
+    const out = rewriteAnthropicPayload(
+      { messages: [u("a"), a("b"), results, markedLast] },
+      { cacheBreakpoint: "previous-user" },
+    ) as { messages: { content: Record<string, unknown>[] }[] }
+    expect(out.messages[2]?.content[0]).not.toHaveProperty("cache_control")
+    expect(out.messages[2]?.content[1]).toEqual({
+      type: "tool_result",
+      tool_use_id: "t2",
+      content: "r2",
+      cache_control: cc,
+    })
+  })
+
+  it("不带断点的标记消息改写后前一条 user 不多出 cache_control", () => {
+    const out = rewriteAnthropicPayload({ messages: [u("a"), a("b"), u("c"), s("status")] }) as {
+      messages: { content: unknown }[]
+    }
+    expect(out.messages[2]?.content).toBe("c")
   })
 })
 

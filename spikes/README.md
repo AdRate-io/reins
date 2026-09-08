@@ -7,6 +7,7 @@
 | --- | --- | --- | --- |
 | `gateway-check/` | T7 附带 | `node spikes/gateway-check/probe.mjs <messages\|chat\|responses>` | 聚合网关 aireiter.com 三协议核实：依赖特性全部标准；伪造 thinking 签名 / encrypted_content 被接受，说明网关不校验历史推理块。详见目录内 README |
 | `t7-live-roundtrip/` | T7 | 仓库根 `pnpm build`，然后 `ANTHROPIC_API_KEY=... OPENAI_API_KEY=... node spikes/t7-live-roundtrip/live.mjs` | 真实联网跑两轮：模型调工具 → 回传结果 + 中途 system_note → 回放上一轮 thinking 再作答。单测已用假 fetch 覆盖请求体与响应；此脚本用于带 key 的最终核实 |
+| `b1-perception-cache/` | B1 | 仓库根 `pnpm build`，然后 `REINS_GATEWAY_BASE=… ANTHROPIC_API_KEY=… node spikes/b1-perception-cache/measure.mjs anthropic <标签>`；`summarize.mjs` 汇总 | 分档感知注入对 prompt cache 的实测：Anthropic 不注入 91.8%~93.3%，默认档位 92.9%、每轮变档 93.9%，不降；OpenAI 亦不降。顺带比较殿后 system_note 的三种断点处置，定缺省 `automatic`。详见目录内 README |
 | `s1-mid-system/` | S1 | `cd spikes/s1-mid-system && pnpm i --ignore-workspace && pnpm start` | pi-ai 0.85.1 无 system 角色，只把注入内容当 user 发出；用其公开的 `onPayload` 钩子可改写为 Anthropic 官方支持的中途 `role:"system"` 文本消息，摆放规则需降级层保证 |
 
 ## S1 实测输出（2026-09-08，pi-ai 0.85.1，模型 claude-opus-5）

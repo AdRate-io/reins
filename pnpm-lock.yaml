@@ -43,7 +43,11 @@ importers:
         specifier: ^22.0.0
         version: 22.20.1
 
-  packages/brain: {}
+  packages/brain:
+    dependencies:
+      '@reins/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/core: {}
 

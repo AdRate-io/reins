@@ -21,7 +21,12 @@ import {
 import { capabilitiesOf } from "./capabilities.js"
 import { consumeStream } from "./from-stream.js"
 import { definitionToModel, type ModelDefinition, type PiModel, resolveModel } from "./models.js"
-import { rewriteAnthropicPayload, rewriteOpenAIResponsesPayload } from "./system-note.js"
+import {
+  type MidSystemCacheBreakpoint,
+  type RewriteAnthropicOptions,
+  rewriteAnthropicPayload,
+  rewriteOpenAIResponsesPayload,
+} from "./system-note.js"
 import { eventsToContext } from "./to-request.js"
 
 export interface PiAiLoweringOptions {
@@ -39,6 +44,11 @@ export interface PiAiLoweringOptions {
    * 注意：OpenAI Responses 不给 reasoningEffort 就不开 reasoning，也就没有 thinking 可回放，capabilities 会如实报 false。
    */
   requestOptions?: (model: ModelRef) => Record<string, unknown>
+  /**
+   * Anthropic：system_note 殿后时 pi-ai 打在它上面的缓存断点怎么处置（见 system-note.ts）。
+   * 缺省 "automatic"（去掉块级断点、请求顶层补自动缓存）；"previous-user" / "drop" 供对照或特殊上游。
+   */
+  midSystemCacheBreakpoint?: MidSystemCacheBreakpoint
 }
 
 /** 对外暴露的请求体：pi-ai Context 的结构描述，不引用 pi-ai 类型 */
@@ -98,7 +108,12 @@ export class PiAiLowering implements Lowering<PiLoweredPayload> {
       ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
       ...(this.opts.headers ? { headers: this.opts.headers } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
-      onPayload: (payload: unknown, m: Model<Api>) => rewritePayload(model.api, payload, m),
+      onPayload: (payload: unknown, m: Model<Api>) =>
+        rewritePayload(model.api, payload, m, {
+          ...(this.opts.midSystemCacheBreakpoint
+            ? { cacheBreakpoint: this.opts.midSystemCacheBreakpoint }
+            : {}),
+        }),
     }
     const fn = streamFunctionFor(model.api)
     return yield* consumeStream(fn(model, context, options), ctx)
@@ -117,8 +132,13 @@ function streamFunctionFor(api: string): StreamFunction<Api, StreamOptions> {
 }
 
 /** 把带标记的 system_note 改写成各 API 的 system 消息；返回 undefined 表示请求体不变 */
-export function rewritePayload(api: string, payload: unknown, model: { reasoning: boolean }): unknown {
-  if (api === "anthropic-messages") return rewriteAnthropicPayload(payload)
+export function rewritePayload(
+  api: string,
+  payload: unknown,
+  model: { reasoning: boolean },
+  opts: RewriteAnthropicOptions = {},
+): unknown {
+  if (api === "anthropic-messages") return rewriteAnthropicPayload(payload, opts)
   if (api === "openai-responses") return rewriteOpenAIResponsesPayload(payload, model)
   return undefined
 }

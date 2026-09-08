@@ -482,15 +482,11 @@ describe("project（默认链端到端）", () => {
     expect(seqs(r.events)).toEqual([14, 1, 2, 13])
   })
 
-  it("感知插槽：提供 perception 策略时插在钉住与裁剪之间", () => {
-    const chain = defaultProjectionChain({
-      perception: { name: "perception", apply: (events) => ({ events: [...events] }) },
-    })
-    expect(chain.map((s) => s.name)).toEqual([
+  it("默认链四步：过滤 → 折叠 → 钉住 → 裁剪（感知是 Socket，不在链上）", () => {
+    expect(defaultProjectionChain().map((s) => s.name)).toEqual([
       "visibility-filter",
       "fold-compactions",
       "reinject-pins",
-      "perception",
       "budget-truncate",
     ])
   })

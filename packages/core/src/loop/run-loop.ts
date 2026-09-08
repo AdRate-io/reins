@@ -5,8 +5,8 @@
  *
  *   timeline  = readTimeline(log, session, { registry }) ← 时间线是唯一真源（宪法二）；读时按注册表升级（P9）
  *   补齐日志里还没结果的 tool_call                       ← 进程死亡 / 审批恢复 / 客户端工具回填后的续跑
- *   view      = project(timeline)                        ← 过滤 → 折叠 → 钉住 → 感知 → 预算裁剪
- *   beforeModel 钩子                                     ← 脑子注入 system_note、改投影、增删工具
+ *   view      = project(timeline)                        ← 过滤 → 折叠 → 钉住 → 预算裁剪
+ *   beforeModel 钩子                                     ← 脑子注入 system_note（感知等）、改投影、增删工具
  *   request   = lowering.toRequest(view, tools)          ← 事件 → 某家 API 请求（角色只在这里出现）
  *   for draft of lowering.stream(request): append        ← 模型说的每一块都立刻入日志
  *   afterModel 钩子
@@ -209,6 +209,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       capabilities,
       budget: {
         contextLimit: capabilities.contextWindow,
+        targetTokens: projected.stats.targetTokens,
         used: projected.stats.estimatedTokens,
         tokensSpent,
         turns,
