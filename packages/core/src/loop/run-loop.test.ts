@@ -829,6 +829,35 @@ describe("runLoop：错误、中止、上限、交接", () => {
     expect(events.filter((e) => e.sessionId === result.toSessionId)).toHaveLength(2)
   })
 
+  it("handoff：intent.opening 排在摘要说明之后、触发消息之前，循环只补齐壳字段", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([{ drafts: [say("交接")] }])
+    const socket: Socket = {
+      onTurnEnd: () => ({
+        handoff: {
+          summary: "摘要",
+          triggerMessage: "继续",
+          reason: "test",
+          opening: [
+            { type: "core.system_note", actor: "model", payload: { kind: "pin", text: "钉住的" } },
+            { type: "core.system_note", actor: "system", payload: { kind: "pin", text: "宿主的" } },
+          ],
+        },
+      }),
+    }
+    const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "做", sockets: [socket] })))
+    if (result.status !== "handoff") throw new Error(result.status)
+    const fresh = await all(log, result.toSessionId)
+    expect(fresh.map((e) => [e.seq, e.type, e.actor, e.trust])).toEqual([
+      [1, "core.system_note", "host", "system"],
+      [2, "core.system_note", "model", "model"],
+      [3, "core.system_note", "system", "system"],
+      [4, "core.user_message", "user", "principal"],
+    ])
+    expect((fresh[1] as CoreEventOf<"core.system_note">).payload).toEqual({ kind: "pin", text: "钉住的" })
+    expect(fresh.every((e) => e.sessionId === result.toSessionId && typeof e.id === "string")).toBe(true)
+  })
+
   it("投影新造的阈值 compaction 先入日志再问模型", async () => {
     const log = new InMemoryEventLog()
     // 先灌一段长历史

@@ -391,7 +391,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       return result
     }
 
-    // ---- 交接：旧会话记 handoff，新会话首条带摘要与触发消息 ----
+    // ---- 交接：旧会话记 handoff，新会话开头 = 摘要说明 + 脑子带来的开场事件（如 pin）+ 触发消息 ----
     const intent = decision.handoff
     const toSessionId = intent.toSessionId ?? newId(now())
     yield* await append([
@@ -409,6 +409,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     const at = now()
     const opening: EventDraft[] = [
       { type: "core.system_note", actor: "host", payload: { kind: "host", text: intent.summary } },
+      ...(intent.opening ?? []),
     ]
     if (intent.triggerMessage !== undefined) {
       opening.push({

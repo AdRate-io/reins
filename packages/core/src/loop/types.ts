@@ -127,6 +127,11 @@ export interface HandoffIntent {
   reason: string
   /** 谁决定交接：模型（默认，经 handoff 工具）或宿主 */
   by?: "model" | "host"
+  /**
+   * 新会话开头额外追加的事件草稿（B5）：排在摘要说明（seq 1）之后、触发消息之前，如带过去的 pin。
+   * 循环只补齐 id / seq / at / sessionId，不解释内容。
+   */
+  opening?: EventDraft[]
 }
 
 export type TurnDecision =
