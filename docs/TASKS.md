@@ -62,7 +62,7 @@
 
 ## M2 数字（目标 2 周）
 
-- [ ] E1 eval 运行器与指标
+- [x] E1 eval 运行器与指标（2026-09-09 完成：新包 `@reins/eval`，只依赖 core、零 node:*。**fixture** = 种子日志（可选）+ 任务（首条 user 消息、系统提示）+ 工具 + 预埋事实（问答判召回）+ 预埋约束（判违规）+ 完成判定；`recordedTools(recording)` 把录像里的 tool_call → tool_result 变成确定性工具（同名同参逐字匹配、同参多次按序轮给、可 fallback / sequence、没数据给 isError 说明），三个臂面对同一个世界。**臂** = LoopConfig 片段（sockets + projection + 追加系统提示）：内置 `noneArm`（连阈值裁剪也拆掉）、`thresholdArm`（只有 core 的 budgetTruncate），模型自决臂由调用方用 @reins/brain 组；`withContextWindow(lowering, n)` 缩窗口让中等任务也触发整理。**runner** `runEval({ fixtures, arms, lowering, model, repeats })`：每格独立存储与会话，审批由 fixture.approve 代答后续跑、预算暂停按 maxResumes 续、handoff 跟到新会话；跑完后对每条预埋事实从主会话末尾 **fork** 一条探针会话去掉宿主工具（脑子工具保留）只问一句，按 expect（包含 / 正则 / 函数）或 judge 打分，探针用量另记。**指标**全部是时间线纯函数：总 token（含缓存读写）、缓存命中率、轮 / 工具 / 工具错误 / 同参重复调用（死循环计数）、整理次数（模型 / 阈值 / 最长连续）、治理衰减（第一次整理前后的违规率）、完成度、召回、墙钟。**门禁** `checkGate(report, { reference: "threshold", candidate: "brain" })` 落 PRD §7 门槛 2 四条；`renderReport` 出 Markdown 表。**顺带修 core**：`replayTurns` 按 actor 切轮，模型自决 compaction / 模型 pin / memory_op 的 actor 也是 model，并行工具时落在 tool_result 之后会被误切成一轮，改按模型输出类型判（导出 `isModelOutput`），回归用例 1 个。eval 20 个用例 + core 1，全仓 577 用例绿；dist 构建并 import 验证）
 - [ ] E2 首批 fixture（投放工具脱敏）
 - [ ] E3 三组对照跑数 → 决定默认开关
 - [ ] E4 文档、CHANGELOG、0.1 发布准备（远程仓库与 npm 组织在此之前建）

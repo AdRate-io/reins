@@ -86,6 +86,16 @@ importers:
 
   packages/core: {}
 
+  packages/eval:
+    dependencies:
+      '@reins/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@reins/brain':
+        specifier: workspace:*
+        version: link:../brain
+
   packages/lowering-pi:
     dependencies:
       '@earendil-works/pi-ai':

@@ -1,0 +1,29 @@
+{
+  "name": "@reins/eval",
+  "version": "0.0.0",
+  "description": "reins — eval harness: fixtures from event logs, recorded-tool replay, metrics, arm-vs-arm runner and the P8 gate",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@reins/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@reins/brain": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

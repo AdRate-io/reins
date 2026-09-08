@@ -214,3 +214,48 @@ describe("replayTurns：只凭日志重算每轮模型看到了什么", () => {
     expect(ids(r.preamble)).toEqual(["e1"])
   })
 })
+
+describe("replayTurns：轮边界按模型输出类型而不是 actor（E1 修）", () => {
+  /** 手工拼一条时间线：并行两个工具，第二个是 memory，它在自己的 tool_result 之前留了 actor=model 的 memory_op */
+  function mk<T extends CoreEventType>(
+    seq: number,
+    type: T,
+    actor: Event["actor"],
+    payload: CoreEventPayloads[T],
+  ) {
+    return createCoreEvent(registry, {
+      sessionId: "replay-s2",
+      seq,
+      at: 1_800_000_000_000 + seq,
+      type,
+      actor,
+      payload,
+    })
+  }
+  const text = (s: string) => [{ type: "text" as const, text: s }]
+  const timeline: Event[] = [
+    mk(1, "core.user_message", "user", { content: text("记一下 3") }),
+    mk(2, "core.tool_call", "model", { toolCallId: "a", name: "add", args: { a: 1, b: 2 } }),
+    mk(3, "core.tool_call", "model", { toolCallId: "m", name: "memory", args: { command: "create" } }),
+    mk(4, "core.tool_result", "tool", { toolCallId: "a", name: "add", content: text("3"), isError: false }),
+    mk(5, "core.memory_op", "model", { op: "create", path: "/memories/n.md" }),
+    mk(6, "core.tool_result", "tool", {
+      toolCallId: "m",
+      name: "memory",
+      content: text("ok"),
+      isError: false,
+    }),
+    mk(7, "core.budget_usage", "system", { tokens: { input: 10, output: 5 }, toolCalls: 2, wallMs: 1 }),
+    mk(8, "core.model_text", "model", { text: "记好了" }),
+    mk(9, "core.budget_usage", "system", { tokens: { input: 12, output: 3 }, toolCalls: 0, wallMs: 1 }),
+  ]
+
+  it("tool_result 之后的 actor=model 留痕事件归入 aftermath，不另起一轮", () => {
+    const { turns } = replayTurns(timeline, { budget: BUDGET })
+    expect(turns).toHaveLength(2)
+    expect(turns[0]?.output.map((e) => e.seq)).toEqual([2, 3])
+    expect(turns[0]?.aftermath.map((e) => e.seq)).toEqual([4, 5, 6, 7])
+    expect(turns[1]?.output.map((e) => e.seq)).toEqual([8])
+    expect(turns[1]?.usage?.tokens.input).toBe(12)
+  })
+})

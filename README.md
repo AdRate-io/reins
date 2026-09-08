@@ -40,6 +40,7 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 | `@reins/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
 | `@reins/store-sqlite` | SQLite-backed stores; one SQL layer, driver from the runtime (`node:sqlite`, `bun:sqlite`) |
 | `@reins/store-pg` | Postgres-backed stores; any `query(text, params)` client (pg, PGlite) |
+| `@reins/eval` | Eval harness: fixtures from event logs, recorded-tool replay, metrics, arm-vs-arm runner, the P8 gate |
 | `@reins/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
 | `reins` | `createAgent()` plus re-exports of core / server / ui-agui |
 

@@ -8,6 +8,10 @@
  *
  * 用途：审计界面（examples/minimal/replay.ts）、eval 的逐轮对比（M2 E1）、排查"模型当时为什么这么做"。
  *
+ * 轮边界按**模型输出类型**（model_thinking / model_text / tool_call）判，不按 actor：脑子模块在工具执行期间
+ * 留下的事件（模型自决的 compaction、模型钉的 pin、memory_op）actor 也是 model，并行工具时它们会落在
+ * 某条 tool_result 之后，按 actor 切会被误当成一个新的模型轮（E1 修）。
+ *
  * 边界（如实声明）：
  * - Socket 在 beforeModel 里直接替换投影（patch.events）的部分无法重算，回放给出的是缺省路径的结果；
  *   脑子模块新造的事件（system_note、compaction）都在日志里，不受影响。
@@ -56,9 +60,20 @@ export interface ReplayOptions {
   registry?: EventSchemaRegistry
 }
 
+const MODEL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
+  "core.model_thinking",
+  "core.model_text",
+  "core.tool_call",
+])
+
+/** 是否为模型这一轮的直接输出（降级层吐出的三种事件）。与投影裁剪切轮（splitTurns）同口径 */
+export function isModelOutput(e: Event): boolean {
+  return MODEL_OUTPUT_TYPES.has(e.type)
+}
+
 /**
  * 把一条时间线切成若干"模型轮"。时间线须按 seq 升序、同一会话（日志读出来就是这样）。
- * 请求边界 = 一条 actor 为 model 的事件紧跟在非 model 事件之后（或位于时间线开头）。
+ * 请求边界 = 一条模型输出事件紧跟在非输出事件之后（或位于时间线开头）。
  */
 export function replayTurns(timeline: readonly Event[], opts: ReplayOptions): ReplayResult {
   const sessionId = timeline[0]?.sessionId
@@ -67,15 +82,15 @@ export function replayTurns(timeline: readonly Event[], opts: ReplayOptions): Re
 
   let i = 0
   // 第一轮之前
-  while (i < timeline.length && timeline[i]?.actor !== "model") preamble.push(timeline[i++] as Event)
+  while (i < timeline.length && !isModelOutput(timeline[i] as Event)) preamble.push(timeline[i++] as Event)
 
   while (i < timeline.length) {
     const first = timeline[i] as Event
     const requestAtSeq = first.seq - 1
     const output: Event[] = []
-    while (i < timeline.length && timeline[i]?.actor === "model") output.push(timeline[i++] as Event)
+    while (i < timeline.length && isModelOutput(timeline[i] as Event)) output.push(timeline[i++] as Event)
     const aftermath: Event[] = []
-    while (i < timeline.length && timeline[i]?.actor !== "model") aftermath.push(timeline[i++] as Event)
+    while (i < timeline.length && !isModelOutput(timeline[i] as Event)) aftermath.push(timeline[i++] as Event)
 
     const prefix = timeline.slice(0, requestAtSeq)
     const projected = project({

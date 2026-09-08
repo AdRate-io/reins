@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/brain" },
+    { "path": "packages/eval" },
     { "path": "packages/lowering-pi" },
     { "path": "packages/server" },
     { "path": "packages/store-sqlite" },

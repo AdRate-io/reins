@@ -10,6 +10,7 @@ export default defineConfig({
       { find: "@reins/core/testing", replacement: src("core/src/testing/index.ts") },
       { find: "@reins/core", replacement: src("core/src/index.ts") },
       { find: "@reins/brain", replacement: src("brain/src/index.ts") },
+      { find: "@reins/eval", replacement: src("eval/src/index.ts") },
       { find: "@reins/server/node", replacement: src("server/src/node.ts") },
       { find: "@reins/server", replacement: src("server/src/index.ts") },
       { find: "@reins/store-sqlite/node", replacement: src("store-sqlite/src/node.ts") },
