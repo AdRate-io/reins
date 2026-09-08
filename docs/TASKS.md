@@ -49,13 +49,13 @@
 ## M1 脑子 v1（目标 3 周）
 
 - [x] B1 perception（分档注入、每档一次）—— 验收：注入内容按档位离散化；遵守技术方案 §9.1 的五条 prompt cache 约束（只追加在末尾、旧说明不删不隐藏、系统提示与工具表稳定）；用 `budget_usage.tokens.cacheRead` 对比注入前后，命中占比不下降，并关闭 §17 对应待核实项（2026-09-08 完成：`packages/brain/src/perception/`，`perception(options): Socket`，beforeModel 里算读数 → 渲染 → 与模型当前可见的最后一条感知说明逐字比对 → 不同才 emit 一条 `system_note(kind=perception, meta.reading)`，永不返回补丁。读数七项全部分档（上下文使用率、阈值兜底触发点、未折叠轮数、整理次数、会话累计 token、外溢结果数、配置 limits 时最紧一维余量）。core：投影链删掉 `perception` 插槽（感知是 Socket 不是策略）、`TurnContext.budget.targetTokens`、`SystemNotePayload.meta` 可选字段。13 个 brain 用例：首轮注入在 user 之后模型输出之前、三轮系统提示与工具表逐字相同、同档不重复、变档只追加旧的留原位、余量跨档、折叠后重注入、自定义文案判重、非法边界拒绝。**顺带发现并修了降级层的问题**：感知说明殿后时 pi-ai 打在它上面的 Anthropic 缓存断点会在改写成 system 时丢失，官方规则是断点之后一律不缓存；做成 `midSystemCacheBreakpoint`，缺省 `automatic`（去块级断点、顶层补自动缓存）。实测经网关 claude-opus-5：不注入 91.8%~93.3%，默认档位 92.9%、每轮变档 93.9%，不降；`previous-user` 低 3~6 个点，留在 system 消息上崩到 18.6%；gpt-5.5 基线 16.5% → 32.9% / 38.2%，亦不降。§17 对应项关闭。全仓 299 用例绿）
-- [ ] B2 compact 工具 + 规则提示 + 阈值兜底 + 连续上限
+- [x] B2 compact 工具 + 规则提示 + 阈值兜底 + 连续上限（2026-09-08 完成：`packages/brain/src/compact/`，`compact(options): Socket`。core 新增 **Socket 静态贡献** `tools` / `systemPrompt`（循环起步并入、整个 run 不变、计入 configHash、续跑补齐 pending 时在场），beforeModel 补丁改顺序合并。工具 `compact({ summary, keep, keepRecentTurns? })`：afterTool 按视图算出 `compaction(decidedBy=model)` 经 emit 入日志（tool_call → compaction → 回执），切点与投影裁剪同口径（模型轮边界、发起调用所在轮永不折、seq 封闭），pin / 旧摘要已保留项 / **最近一条用户消息**进 pinsKept 幸存。阈值兜底复用 core `budgetTruncate`；连续上限缺省 3（模型 + 阈值合计，按轮分段计数，收尾轮不拦）→ `pause(budget)`。16 个 brain 用例 + core 3 个（静态贡献、pending 在场、补丁合并），全仓 319 用例绿。真模型核实 `spikes/b2-compact-live`（claude-opus-5 经网关，5 种情形 26 次请求全 200）：模型入参全部合法；整理后请求形状 `user(摘要) → user(幸存用户消息) → assistant(thinking+tool_use) → user(回执)` 被接受；阈值兜底摘要作首条 user 文本也被接受；整理后模型记住 keep 里的总重并接着干活。**实测抓到并修了一个缺陷**：模型把"先整理，然后做 X"这条指令一起折进摘要、整理完反问 X 是什么 → 最近一条用户消息缺省幸存。附带发现两项待核实写入技术方案 §17：感知使用率按视图粗估偏低（B8 校准）、网关在 system 收尾时疑补占位消息）
 - [ ] B3 pins 幸存契约 + 折叠后重注入
 - [ ] B4 spill 外溢 + `fetch_blob`
 - [ ] B5 handoff + `onHandoff` 回调
 - [ ] B6 memory 工具（memory_20250818 形状）+ 路径防穿越
 - [ ] B7 approval Policy 管线（deny→ask→allow、fail-closed、HMAC）
-- [ ] B8 budget 上限 + `budget_usage` 事件
+- [ ] B8 budget 上限 + `budget_usage` 事件（附带：perception 的上下文使用率改用上一请求真实用量校准，见技术方案 §17 B2 实测发现）
 - [ ] B9 `@reins/store-sqlite` 与 `@reins/store-pg`（投放工具用 pg，dogfood 直接落 pg；两者共跑 `@reins/core/testing` 套件）
 - [ ] B10 `@reins/adapter-tanstack-ai`
 - [ ] B11 投放工具接入（Boss 参与：选一条真实长任务流程）

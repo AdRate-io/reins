@@ -172,10 +172,20 @@ export interface TurnContext {
 /**
  * 脑子与底盘之间唯一的契约。多个 Socket 按注册顺序执行。
  * 钩子可以不返回（无意见），返回值的合并规则见 runLoop 各处注释。
+ *
+ * 静态贡献与动态补丁分两条路：
+ * - `tools` / `systemPrompt` 是模块给整个 run 的**静态**贡献（如 compact 工具与它的规则提示）。循环起步时并进
+ *   工具表与系统提示，整个 run 不变 —— 满足 prompt cache 约束（系统提示与工具表每轮稳定，§9.1），
+ *   续跑补齐 pending 调用时也在场，并计入 configHash（恢复时能察觉模块被拆装）。
+ * - `beforeModel` 的补丁是**动态**改动（宿主换场景、按 principal 增删工具），每改一次缓存前缀重算，别拿它做每轮的事。
  */
 export interface Socket {
   /** 便于日志与排错 */
   name?: string
+  /** 模块带给模型的工具，整个 run 不变；与 LoopConfig.tools 同名时以后者为准 */
+  tools?: readonly Tool[]
+  /** 模块的规则提示片段，追加在宿主系统提示之后（空行分隔），整个 run 不变 */
+  systemPrompt?: string
   beforeModel?(ctx: TurnContext): MaybePromise<BeforeModelPatch | undefined>
   afterModel?(ctx: TurnContext, events: Event[]): MaybePromise<void>
   /** 任一 block / defer 即中止该调用；rewrite 替换入参后继续问下一个 Socket */

@@ -262,6 +262,99 @@ describe("runLoop：Socket 五个钩子", () => {
     expect(req?.events).toHaveLength(1)
   })
 
+  it("beforeModel 补丁顺序合并：后一个 Socket 在 ctx 里看到前一个改过的工具表与视图", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([{ drafts: [say("好")] }])
+    const extra: Tool = { name: "extra", description: "", inputSchema: {}, execute: () => "" }
+    const seen: string[][] = []
+    await drain(
+      runLoop(
+        baseConfig(lowering, log, {
+          input: "问",
+          sockets: [
+            { beforeModel: (ctx) => ({ tools: [...ctx.tools, extra], events: ctx.events.slice(-1) }) },
+            {
+              beforeModel: (ctx) => {
+                seen.push(ctx.tools.map((t) => t.name))
+                expect(ctx.events).toHaveLength(1)
+                return { tools: [...ctx.tools, { ...extra, name: "third" }] }
+              },
+            },
+          ],
+        }),
+      ),
+    )
+    expect(seen).toEqual([["add", "extra"]])
+    expect(lowering.requests[0]?.tools?.map((t) => t.name)).toEqual(["add", "extra", "third"])
+  })
+
+  it("Socket 静态贡献：tools 并入工具表、systemPrompt 追加在宿主提示之后，每轮逐字相同；同名以宿主为准", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "brain_tool", { x: 1 })] },
+      { drafts: [say("好")] },
+    ])
+    const brainTool: Tool = {
+      name: "brain_tool",
+      description: "脑子的工具",
+      inputSchema: {},
+      execute: () => "脑子答",
+    }
+    const shadowed: Tool = {
+      name: "add",
+      description: "模块想覆盖 add",
+      inputSchema: {},
+      execute: () => "不该跑",
+    }
+    const socket: Socket = { name: "m", tools: [brainTool, shadowed], systemPrompt: "模块规则" }
+    const { result } = await drain(
+      runLoop(
+        baseConfig(lowering, log, {
+          input: "问",
+          systemPrompt: "宿主提示",
+          sockets: [{ systemPrompt: "   " }, socket],
+        }),
+      ),
+    )
+    expect(result.status).toBe("done")
+    for (const req of lowering.requests) {
+      expect(req.systemPrompt).toBe("宿主提示\n\n模块规则")
+      expect(req.tools?.map((t) => [t.name, t.description])).toEqual([
+        ["add", "两数相加"],
+        ["brain_tool", "脑子的工具"],
+      ])
+    }
+    const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+    expect(res.payload.content).toEqual([{ type: "text", text: "脑子答" }])
+  })
+
+  it("Socket 静态工具在续跑补齐 pending 调用时也在场（beforeModel 补丁做不到这点）", async () => {
+    const log = new InMemoryEventLog()
+    // 模拟上一进程在 tool_call 之后、tool_result 之前死掉
+    await log.append([
+      createCoreEvent(registry, {
+        type: "core.user_message",
+        actor: "user",
+        sessionId: SESSION,
+        seq: 1,
+        payload: { content: [{ type: "text", text: "问" }] },
+      }),
+      createCoreEvent(registry, {
+        type: "core.tool_call",
+        actor: "model",
+        sessionId: SESSION,
+        seq: 2,
+        payload: { toolCallId: "c1", name: "brain_tool", args: {} },
+      }),
+    ])
+    const brainTool: Tool = { name: "brain_tool", description: "", inputSchema: {}, execute: () => "补齐了" }
+    const lowering = new ScriptedLowering([{ drafts: [say("好")] }])
+    await drain(runLoop(baseConfig(lowering, log, { sockets: [{ tools: [brainTool] }] })))
+    const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+    expect(res.payload.isError).toBe(false)
+    expect(res.payload.content).toEqual([{ type: "text", text: "补齐了" }])
+  })
+
   it("beforeTool block：结果为 isError 并说明原因，模型下一轮看得到", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([
