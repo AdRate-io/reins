@@ -31,7 +31,7 @@
 
 ### 阶段 4：循环与运行状态
 
-- [ ] T9 `runLoop` 异步生成器 + Socket 五个钩子 + RunResult 四态 —— 验收：一个带工具的 agent 跑三轮并结束；日志可完整回放
+- [x] T9 `runLoop` 异步生成器 + Socket 五个钩子 + RunResult 四态 —— 验收：一个带工具的 agent 跑三轮并结束；日志可完整回放（2026-09-08 完成：`packages/core/src/loop/`，539 行生成器 + Socket / Tool / RunResult 类型 + `defineTool`；`@reins/core/testing` 新增 `ScriptedLowering` 剧本式假模型。28 用例全绿：三轮带工具结束、每轮模型看到的恰是日志前缀的投影、整段日志可重放、五钩子调用顺序、block / rewrite / defer、审批暂停→再跑不重复请求→批准后续跑→拒绝走 isError、客户端工具暂停回填、工具三类失败不崩、error / aborted / maxTurns / handoff、确定性双跑逐字相同、阈值 compaction 先入日志。续跑统一为"先补齐无结果的 tool_call"，T10 只剩序列化签名与 decisions 参数）
 - [ ] T10 RunState 序列化 / 恢复 + 审批暂停（`paused`）跨进程续跑 —— 验收：进程 A 暂停、进程 B 恢复的测试
 - [ ] T11 fork：任意 seq 分叉出新会话 —— 验收：分叉后两条会话独立演进
 

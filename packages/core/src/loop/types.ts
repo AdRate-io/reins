@@ -1,0 +1,275 @@
+/**
+ * 循环与插座的类型（技术方案 §6、§7、§10）。
+ *
+ * 三组契约：
+ * - Tool：宿主给模型的能力（§10 四个正交维度）；循环只用 name / inputSchema / execute / needsApproval 等少数字段，
+ *   其余维度（lazy、resultPolicy、ui…）留给脑子模块与后续期次消费，先把形状定下来。
+ * - Socket：脑子与底盘之间唯一的契约，五个钩子。脑子只依赖它，不依赖 runLoop 的实现（P3、P4）。
+ * - RunResult / SerializedRunState：暂停是显式返回值，状态小到能放 URL 参数（P6）。
+ */
+import type { ContentPart, Event } from "../events/base.js"
+import type {
+  ApprovalRequestPayload,
+  CoreEventOf,
+  ErrorPayload,
+  ToolCallPayload,
+  ToolResultPayload,
+} from "../events/core.js"
+import type { EventDraft } from "../events/create.js"
+import type { EventSchemaRegistry } from "../events/registry.js"
+import type {
+  LandingRecord,
+  LoweredRequest,
+  Lowering,
+  LoweringCapabilities,
+  LoweringDelta,
+  ModelRef,
+} from "../lowering/types.js"
+import type { ProjectionStrategy, TokenEstimator } from "../projection/types.js"
+import type { BlobStore, EventLog, MemoryStore } from "../store/types.js"
+
+// ---- 参与者 ----
+
+/** 主事人：本次 run 代表谁。库只透传给钩子与工具，不解释其字段 */
+export interface Principal {
+  id: string
+  [key: string]: unknown
+}
+
+export interface SessionInfo {
+  id: string
+  /** 本次 run 内的第几轮（从 1 起） */
+  turn: number
+}
+
+// ---- 工具（§10）----
+
+export type ToolSide = "server" | "client" | "sandbox" | "provider"
+
+/** 工具执行结果的规范形态；execute 可以返回任何值，循环用 normalizeToolOutput 归一 */
+export interface ToolResult {
+  content: ContentPart[]
+  isError?: boolean
+}
+
+export interface ToolContext {
+  sessionId: string
+  toolCallId: string
+  principal?: Principal
+  log: EventLog
+  blobs?: BlobStore
+  memory?: MemoryStore
+  signal?: AbortSignal
+  /** 工具想留痕（如 memory_op）：草稿由循环补齐后、在 tool_result 之前 append */
+  emit(draft: EventDraft): void
+}
+
+/**
+ * 工具。execute / validate 用"方法签名"而非属性函数：TS 对方法参数做双变检查，
+ * 这样 Tool<{ path: string }> 才能放进 Tool[]（即 Tool<unknown>[]）里。
+ * needsApproval 是 boolean | 函数 的联合，无法写成方法，带类型入参的工具请用 defineTool() 定义。
+ */
+export interface Tool<TInput = unknown> {
+  name: string
+  description: string
+  /** JSON Schema 对象，原样交给模型；不绑任何校验库 */
+  inputSchema: Record<string, unknown>
+  /** 可选的入参校验/转换：返回规范化入参，抛错即视为入参不合法（结果以 isError 告知模型） */
+  validate?(input: unknown): TInput
+  /** 执行位置；缺省 server。client 表示由宿主前端执行，循环遇到即暂停等结果 */
+  side?: ToolSide
+  /** 缺省表示本循环不执行（转客户端） */
+  execute?(input: TInput, ctx: ToolContext): Promise<unknown> | unknown
+  /** 把 execute 的返回值翻译成模型看到的内容片段；缺省规则见 normalizeToolOutput */
+  toModelOutput?(output: unknown): ContentPart[]
+  /** 结果处置：超限截断或外溢（B4 消费） */
+  resultPolicy?: { maxTokens?: number; overflow: "truncate" | "spill" }
+  /** 执行前是否要人审批。循环内置兜底：为真且没有任何 Socket 做主时，直接转审批暂停（安全默认值） */
+  needsApproval?: boolean | ((input: TInput, ctx: ToolContext) => Promise<boolean> | boolean)
+  risk?: "low" | "medium" | "high"
+  /** 暴露策略：延迟加载/发现（后续期次） */
+  lazy?: boolean
+  allowedCallers?: ("direct" | "code")[]
+  /** MCP Apps 形态（第三期） */
+  ui?: { resourceUri: string }
+}
+
+export type ToolCallEvent = CoreEventOf<"core.tool_call">
+export type ToolResultDraft = EventDraft<"core.tool_result", ToolResultPayload>
+
+// ---- 插座（§7）----
+
+/** beforeModel 的返回：改投影、增删工具、换系统提示；缺省字段表示不改 */
+export interface BeforeModelPatch {
+  events?: Event[]
+  tools?: Tool[]
+  systemPrompt?: string
+}
+
+/** 审批请求的规格；toolCallId 由循环填 */
+export interface ApprovalRequestSpec {
+  policyId: string
+  summary: string
+}
+
+export type BeforeToolDecision =
+  | "proceed"
+  | { block: string }
+  | { defer: ApprovalRequestSpec }
+  | { rewrite: unknown }
+
+export interface HandoffIntent {
+  /** 缺省由循环生成 */
+  toSessionId?: string
+  summary: string
+  /** 触发交接的那条用户消息，新会话据此续做 */
+  triggerMessage?: string
+  reason: string
+  /** 谁决定交接：模型（默认，经 handoff 工具）或宿主 */
+  by?: "model" | "host"
+}
+
+export type TurnDecision =
+  | "continue"
+  | "stop"
+  | { handoff: HandoffIntent }
+  | { pause: { reason: "budget" | "host"; note?: string } }
+
+export type MaybePromise<T> = T | Promise<T>
+
+export interface TurnContext {
+  session: SessionInfo
+  principal?: Principal
+  /** 当前投影结果，即模型本轮将看到的事件（可读） */
+  events: Event[]
+  /** 完整时间线快照（脑子模块回看被折叠的事件时用） */
+  timeline: readonly Event[]
+  log: EventLog
+  blobs?: BlobStore
+  memory?: MemoryStore
+  /** 本轮可用工具 */
+  tools: readonly Tool[]
+  model: ModelRef
+  /** 本模型支持什么（中途 system、thinking 回放、并行工具…） */
+  capabilities: LoweringCapabilities
+  budget: {
+    contextLimit: number
+    /** 本轮投影的估算 token */
+    used: number
+    /** 本次 run 累计消耗（输入 + 输出） */
+    tokensSpent: number
+    turns: number
+    toolCalls: number
+    wallMs: number
+  }
+  signal?: AbortSignal
+  /** 草稿：无 id / seq / at / sessionId，循环补齐后 append。beforeModel 期间 emit 的本轮即可见 */
+  emit(draft: EventDraft): void
+}
+
+/**
+ * 脑子与底盘之间唯一的契约。多个 Socket 按注册顺序执行。
+ * 钩子可以不返回（无意见），返回值的合并规则见 runLoop 各处注释。
+ */
+export interface Socket {
+  /** 便于日志与排错 */
+  name?: string
+  beforeModel?(ctx: TurnContext): MaybePromise<BeforeModelPatch | undefined>
+  afterModel?(ctx: TurnContext, events: Event[]): MaybePromise<void>
+  /** 任一 block / defer 即中止该调用；rewrite 替换入参后继续问下一个 Socket */
+  beforeTool?(
+    ctx: TurnContext,
+    call: ToolCallEvent,
+    tool: Tool | undefined,
+  ): MaybePromise<BeforeToolDecision | undefined>
+  /** 返回新草稿即替换（如外溢后的指引），结果此时尚未 append */
+  afterTool?(
+    ctx: TurnContext,
+    call: ToolCallEvent,
+    result: ToolResultDraft,
+  ): MaybePromise<ToolResultDraft | undefined>
+  /** 第一个给出意见的 Socket 决定；都无意见时：本轮有工具调用则继续，否则结束 */
+  onTurnEnd?(ctx: TurnContext): MaybePromise<TurnDecision | undefined>
+}
+
+// ---- 运行状态（§6）----
+
+export type PauseReason = "approval" | "budget" | "host"
+
+export type Interruption =
+  | { kind: "approval"; toolCallId: string; request: ApprovalRequestPayload; call: ToolCallPayload }
+  | { kind: "client_tool"; toolCallId: string; call: ToolCallPayload }
+  | { kind: "budget"; note: string }
+  | { kind: "host"; note: string }
+
+/**
+ * 可序列化的 run 状态。只含引用，内容全部从 EventLog 重读，小到能放 URL 参数或 KV。
+ * sig 为宿主密钥的 HMAC（T10），恢复时校验 pending 调用的入参未被篡改。
+ */
+export interface SerializedRunState {
+  v: 1
+  sessionId: string
+  lastSeq: number
+  pendingToolCallIds: string[]
+  /** 模型、工具集、系统提示的摘要；恢复时配置变了要能察觉 */
+  configHash: string
+  sig?: string
+}
+
+export type RunResult =
+  | { status: "done"; sessionId: string; lastSeq: number }
+  | {
+      status: "paused"
+      sessionId: string
+      lastSeq: number
+      reason: PauseReason
+      interruptions: Interruption[]
+      state: SerializedRunState
+    }
+  | { status: "handoff"; sessionId: string; lastSeq: number; toSessionId: string }
+  | { status: "error"; sessionId: string; lastSeq: number; error: CoreEventOf<"core.error"> }
+
+export type ErrorEventPayload = ErrorPayload
+
+// ---- 循环配置 ----
+
+export interface LoopConfig {
+  sessionId: string
+  log: EventLog
+  blobs?: BlobStore
+  memory?: MemoryStore
+  lowering: Lowering
+  model: ModelRef
+  tools?: readonly Tool[]
+  sockets?: readonly Socket[]
+  systemPrompt?: string
+  /**
+   * 本次 run 要追加的新输入：字符串 / 内容片段 → user_message；也可直接给草稿（如宿主注入 system_note）。
+   * 缺省不追加（续跑：日志里有未完成的工具调用就先补齐，再问模型）。
+   */
+  input?: string | ContentPart[] | EventDraft
+  principal?: Principal
+  projection?: {
+    strategies?: readonly ProjectionStrategy[]
+    estimate?: TokenEstimator
+    reserveTokens?: number
+  }
+  /** 缺省内置 core 注册表；有 ext.* 事件时传自己的 */
+  registry?: EventSchemaRegistry
+  /**
+   * 单次 run 的轮数上限，触顶以 paused(budget) 返回。这是循环层的兜底，不是预算模块（B8 才做细粒度预算）。
+   * 缺省 100。
+   */
+  maxTurns?: number
+  /** 宿主中止：当前请求停止后以 paused(host) 返回，已产出的内容仍入日志 */
+  signal?: AbortSignal
+  /** 流式增量，只给 UI 用；日志里只有完整内容块 */
+  onDelta?: (delta: LoweringDelta) => void
+  /** 每次请求的落点记录（有损与丢弃在此可见），供宿主告警或统计 */
+  onLandings?: (records: LandingRecord[], request: LoweredRequest) => void
+  /** 交接后宿主重绑对话锚点（聊天窗口、频道等） */
+  onHandoff?: (fromSessionId: string, toSessionId: string) => MaybePromise<void>
+  /** 测试注入：时间与 id 工厂 */
+  now?: () => number
+  newId?: (at: number) => string
+}

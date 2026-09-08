@@ -1,0 +1,539 @@
+/**
+ * runLoop：reins 的默认循环（技术方案 §2、§6、§7）。
+ *
+ * 这是一个导出的普通异步生成器，没有私有状态，用户可以整个复制去改（P3）。它每一轮做的事：
+ *
+ *   timeline  = log.read(session)                       ← 时间线是唯一真源（宪法二）
+ *   补齐日志里还没结果的 tool_call                       ← 进程死亡 / 审批恢复 / 客户端工具回填后的续跑
+ *   view      = project(timeline)                        ← 过滤 → 折叠 → 钉住 → 感知 → 预算裁剪
+ *   beforeModel 钩子                                     ← 脑子注入 system_note、改投影、增删工具
+ *   request   = lowering.toRequest(view, tools)          ← 事件 → 某家 API 请求（角色只在这里出现）
+ *   for draft of lowering.stream(request): append        ← 模型说的每一块都立刻入日志
+ *   afterModel 钩子
+ *   for call of toolCalls: beforeTool → execute → afterTool → append tool_result
+ *   append budget_usage
+ *   onTurnEnd 钩子 → continue | stop | handoff | pause
+ *
+ * 生成器 yield 的是每一条刚 append 进日志的事件（宿主拿去推给前端）；返回值是 RunResult 四态之一。
+ * 暂停是显式返回值（P6）：审批、预算、宿主中止、客户端工具都走同一条路 —— 写 run_paused、返回可序列化状态；
+ * 恢复就是用同一个 sessionId 再跑一次 runLoop，第一步"补齐未完成的 tool_call"会接上。
+ *
+ * 决策权在模型（宪法一）：循环自己不判断"该不该继续"以外的任何事。它只在两处兜底 ——
+ * 工具声明 needsApproval 而没有 Socket 做主时转审批；轮数超过 maxTurns 时暂停。
+ */
+import type { ContentPart, Event } from "../events/base.js"
+import type { ApprovalDecisionPayload, CoreEvent, CoreEventOf, ErrorPayload } from "../events/core.js"
+import { createEvent, type EventDraft } from "../events/create.js"
+import { uuidv7 } from "../events/id.js"
+import { createCoreRegistry } from "../events/registry.js"
+import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../lowering/types.js"
+import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
+import { project } from "../projection/project.js"
+import { computeConfigHash, pendingToolCalls, serializeRunState } from "./state.js"
+import { errorMessageOf, normalizeToolOutput, toolSpecOf } from "./tools.js"
+import type {
+  BeforeToolDecision,
+  Interruption,
+  LoopConfig,
+  PauseReason,
+  RunResult,
+  Socket,
+  Tool,
+  ToolCallEvent,
+  ToolContext,
+  ToolResultDraft,
+  TurnContext,
+  TurnDecision,
+} from "./types.js"
+
+export const DEFAULT_MAX_TURNS = 100
+
+/** 循环内置的审批策略标识：工具自己声明 needsApproval 且没有 Socket 做主 */
+export const BUILTIN_APPROVAL_POLICY = "tool.needsApproval"
+
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = []
+  for await (const x of iter) out.push(x)
+  return out
+}
+
+function inputDraft(input: NonNullable<LoopConfig["input"]>): EventDraft {
+  if (typeof input === "string")
+    return { type: "core.user_message", actor: "user", payload: { content: [{ type: "text", text: input }] } }
+  if (Array.isArray(input))
+    return { type: "core.user_message", actor: "user", payload: { content: input as ContentPart[] } }
+  return input
+}
+
+export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult> {
+  const { sessionId, log, lowering, model } = cfg
+  const registry = cfg.registry ?? createCoreRegistry()
+  const now = cfg.now ?? (() => Date.now())
+  const newId = cfg.newId ?? uuidv7
+  const sockets = cfg.sockets ?? []
+  const baseTools: readonly Tool[] = cfg.tools ?? []
+  const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS
+  const capabilities = lowering.capabilities(model)
+  const configHash = await computeConfigHash({
+    model,
+    tools: baseTools,
+    ...(cfg.systemPrompt !== undefined ? { systemPrompt: cfg.systemPrompt } : {}),
+  })
+
+  const startedAt = now()
+  let lastSeq = (await log.tail(sessionId, 1))[0]?.seq ?? 0
+  let turns = 0
+  let tokensSpent = 0
+  let toolCallsTotal = 0
+
+  // ---- 基础动作：草稿 → 事件 → append。seq 只在这里分配 ----
+  const append = async (drafts: readonly EventDraft[]): Promise<Event[]> => {
+    if (drafts.length === 0) return []
+    const at = now()
+    const events = drafts.map((d, i) =>
+      createEvent(registry, { ...d, sessionId, seq: lastSeq + 1 + i, at, id: newId(at) }),
+    )
+    await log.append(events)
+    lastSeq += events.length
+    return events
+  }
+
+  const pause = async (
+    reason: PauseReason,
+    interruptions: Interruption[],
+    pendingIds: readonly string[],
+  ): Promise<{ events: Event[]; result: RunResult }> => {
+    const events = await append([{ type: "core.run_paused", actor: "system", payload: { reason } }])
+    const state = serializeRunState({ sessionId, lastSeq, pendingToolCallIds: pendingIds, configHash })
+    return { events, result: { status: "paused", sessionId, lastSeq, reason, interruptions, state } }
+  }
+
+  const fail = async (payload: ErrorPayload): Promise<{ events: Event[]; result: RunResult }> => {
+    const events = await append([{ type: "core.error", actor: "system", payload }])
+    const error = events[0] as CoreEventOf<"core.error">
+    return { events, result: { status: "error", sessionId, lastSeq, error } }
+  }
+
+  // ---- 新输入 ----
+  if (cfg.input !== undefined) yield* await append([inputDraft(cfg.input)])
+
+  while (true) {
+    const turnStartedAt = now()
+    const timeline = await collect(log.read(sessionId))
+
+    // 投影：模型本轮看什么。策略新造的事件（阈值 compaction）先入日志 —— 模型可见 ⟺ 已记录
+    const projected = project({
+      timeline,
+      budget: {
+        contextLimit: capabilities.contextWindow,
+        ...(cfg.projection?.reserveTokens !== undefined
+          ? { reserveTokens: cfg.projection.reserveTokens }
+          : {}),
+      },
+      registry,
+      sessionId,
+      now: turnStartedAt,
+      newId,
+      ...(cfg.projection?.strategies ? { strategies: cfg.projection.strategies } : {}),
+      ...(cfg.projection?.estimate ? { estimate: cfg.projection.estimate } : {}),
+    })
+    if (projected.emitted.length > 0) {
+      await log.append(projected.emitted)
+      lastSeq += projected.emitted.length
+      yield* projected.emitted
+    }
+
+    const emitted: EventDraft[] = []
+    const ctx: TurnContext = {
+      session: { id: sessionId, turn: turns + 1 },
+      ...(cfg.principal ? { principal: cfg.principal } : {}),
+      events: projected.events,
+      timeline,
+      log,
+      ...(cfg.blobs ? { blobs: cfg.blobs } : {}),
+      ...(cfg.memory ? { memory: cfg.memory } : {}),
+      tools: baseTools,
+      model,
+      capabilities,
+      budget: {
+        contextLimit: capabilities.contextWindow,
+        used: projected.stats.estimatedTokens,
+        tokensSpent,
+        turns,
+        toolCalls: toolCallsTotal,
+        wallMs: turnStartedAt - startedAt,
+      },
+      ...(cfg.signal ? { signal: cfg.signal } : {}),
+      emit: (d) => emitted.push(d),
+    }
+    const flush = async (): Promise<Event[]> => {
+      const events = await append(emitted.splice(0))
+      return events
+    }
+
+    // ---- 先补齐日志里没结果的 tool_call（上次暂停 / 崩溃留下的），再问模型 ----
+    const pending = pendingToolCalls(timeline)
+    if (pending.length > 0) {
+      const settled = yield* executeToolCalls(ctx, pending, timeline, { cfg, sockets, append, flush })
+      toolCallsTotal += settled.executed
+      if (settled.interruptions.length > 0) {
+        const reason = pauseReasonOf(settled.interruptions)
+        const { events, result } = await pause(reason, settled.interruptions, settled.pendingIds)
+        yield* events
+        return result
+      }
+      continue // 结果已入日志，重读时间线让模型看到
+    }
+
+    if (cfg.signal?.aborted) {
+      const { events, result } = await pause("host", [{ kind: "host", note: "宿主在本轮开始前中止" }], [])
+      yield* events
+      return result
+    }
+    if (turns >= maxTurns) {
+      const note = `单次 run 轮数达到上限 ${maxTurns}`
+      const { events, result } = await pause("budget", [{ kind: "budget", note }], [])
+      yield* events
+      return result
+    }
+    turns++
+    ctx.session.turn = turns
+    ctx.budget.turns = turns
+
+    // ---- beforeModel：脑子改投影、增删工具、注入 system_note ----
+    let visible = ctx.events
+    let tools = baseTools
+    let systemPrompt = cfg.systemPrompt
+    for (const s of sockets) {
+      const patch = await s.beforeModel?.(ctx)
+      if (!patch) continue
+      if (patch.events) visible = patch.events
+      if (patch.tools) tools = patch.tools
+      if (patch.systemPrompt !== undefined) systemPrompt = patch.systemPrompt
+    }
+    // 钩子期间 emit 的草稿：入日志，且本轮就让模型看到（运维类型除外）
+    const injected = await flush()
+    yield* injected
+    visible = [...visible, ...injected.filter((e) => !DEFAULT_MODEL_INVISIBLE_TYPES.has(e.type))]
+    ctx.events = visible
+    ctx.tools = tools
+
+    // ---- 问模型 ----
+    let outcome: LoweringOutcome
+    const modelEvents: Event[] = []
+    try {
+      const request = lowering.toRequest({
+        events: visible,
+        tools: tools.map(toolSpecOf),
+        model,
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+      })
+      cfg.onLandings?.(lossesOf(request), request)
+      const streamCtx: LoweringStreamContext = {
+        ...(cfg.signal ? { signal: cfg.signal } : {}),
+        ...(cfg.onDelta ? { onDelta: cfg.onDelta } : {}),
+      }
+      const stream = lowering.stream(request, streamCtx)
+      while (true) {
+        const step = await stream.next()
+        if (step.done) {
+          outcome = step.value
+          break
+        }
+        // 模型说的每一块立刻入日志，宿主随即拿到
+        const appended = await append([step.value])
+        modelEvents.push(...appended)
+        yield* appended
+      }
+    } catch (err) {
+      // 降级层异常（缺 key、翻译不出合法请求、网络断开）：记 error 事件，交宿主决定重试
+      const { events, result } = await fail({
+        category: "lowering",
+        message: errorMessageOf(err),
+        retryable: false,
+        detail: { name: (err as { name?: string }).name ?? "Error" },
+      })
+      yield* events
+      return result
+    }
+    tokensSpent += outcome.usage.input + outcome.usage.output
+    ctx.budget.tokensSpent = tokensSpent
+
+    if (outcome.stopReason === "error") {
+      const { events, result } = await fail({
+        category: "provider",
+        message: outcome.errorMessage ?? "模型响应出错",
+        retryable: false,
+        detail: { usage: outcome.usage },
+      })
+      yield* events
+      return result
+    }
+
+    for (const s of sockets) await s.afterModel?.(ctx, modelEvents)
+    yield* await flush()
+
+    if (outcome.stopReason === "aborted") {
+      // 已完整的内容块都入了日志；未回答的 tool_call 留给恢复时补齐
+      const pendingIds = modelEvents
+        .filter((e): e is ToolCallEvent => e.type === "core.tool_call")
+        .map((e) => e.payload.toolCallId)
+      const { events, result } = await pause(
+        "host",
+        [{ kind: "host", note: "宿主中止了模型响应" }],
+        pendingIds,
+      )
+      yield* events
+      return result
+    }
+
+    // ---- 执行工具 ----
+    const calls = modelEvents.filter((e): e is ToolCallEvent => e.type === "core.tool_call")
+    let interruptions: Interruption[] = []
+    let pendingIds: string[] = []
+    if (calls.length > 0) {
+      const settled = yield* executeToolCalls(ctx, calls, [...timeline, ...injected, ...modelEvents], {
+        cfg,
+        sockets,
+        append,
+        flush,
+      })
+      toolCallsTotal += settled.executed
+      ctx.budget.toolCalls = toolCallsTotal
+      interruptions = settled.interruptions
+      pendingIds = settled.pendingIds
+    }
+
+    yield* await append([
+      {
+        type: "core.budget_usage",
+        actor: "system",
+        payload: {
+          tokens: outcome.usage,
+          toolCalls: calls.length,
+          wallMs: now() - turnStartedAt,
+        },
+      },
+    ])
+
+    if (interruptions.length > 0) {
+      const { events, result } = await pause(pauseReasonOf(interruptions), interruptions, pendingIds)
+      yield* events
+      return result
+    }
+
+    // ---- 本轮结束：第一个给出意见的 Socket 决定；都无意见时按有没有工具调用 ----
+    let decision: TurnDecision = calls.length > 0 ? "continue" : "stop"
+    for (const s of sockets) {
+      const d = await s.onTurnEnd?.(ctx)
+      if (d !== undefined) {
+        decision = d
+        break
+      }
+    }
+    yield* await flush()
+
+    if (decision === "continue") continue
+    if (decision === "stop") return { status: "done", sessionId, lastSeq }
+    if ("pause" in decision) {
+      const note = decision.pause.note ?? `Socket 要求暂停（${decision.pause.reason}）`
+      const kind = decision.pause.reason
+      const { events, result } = await pause(kind, [{ kind, note }], [])
+      yield* events
+      return result
+    }
+
+    // ---- 交接：旧会话记 handoff，新会话首条带摘要与触发消息 ----
+    const intent = decision.handoff
+    const toSessionId = intent.toSessionId ?? newId(now())
+    yield* await append([
+      {
+        type: "core.handoff",
+        actor: intent.by ?? "model",
+        payload: {
+          toSessionId,
+          summary: intent.summary,
+          reason: intent.reason,
+          ...(intent.triggerMessage !== undefined ? { triggerMessage: intent.triggerMessage } : {}),
+        },
+      },
+    ])
+    const at = now()
+    const opening: EventDraft[] = [
+      { type: "core.system_note", actor: "host", payload: { kind: "host", text: intent.summary } },
+    ]
+    if (intent.triggerMessage !== undefined) {
+      opening.push({
+        type: "core.user_message",
+        actor: "user",
+        payload: { content: [{ type: "text", text: intent.triggerMessage }] },
+      })
+    }
+    const openingEvents = opening.map((d, i) =>
+      createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
+    )
+    await log.append(openingEvents)
+    yield* openingEvents
+    await cfg.onHandoff?.(sessionId, toSessionId)
+    return { status: "handoff", sessionId, lastSeq, toSessionId }
+  }
+}
+
+function pauseReasonOf(interruptions: readonly Interruption[]): PauseReason {
+  // 审批优先：宿主最需要知道的是"有东西等人批"
+  if (interruptions.some((i) => i.kind === "approval")) return "approval"
+  if (interruptions.some((i) => i.kind === "budget")) return "budget"
+  return "host"
+}
+
+interface ExecuteDeps {
+  cfg: LoopConfig
+  sockets: readonly Socket[]
+  append: (drafts: readonly EventDraft[]) => Promise<Event[]>
+  flush: () => Promise<Event[]>
+}
+
+interface ExecuteSummary {
+  /** 真正跑了 execute 的次数 */
+  executed: number
+  interruptions: Interruption[]
+  /** 仍没有结果的 toolCallId */
+  pendingIds: string[]
+}
+
+/**
+ * 逐个处理工具调用：beforeTool → 审批判定 → 校验 → 执行 → afterTool → append tool_result。
+ * 已有审批决定（timeline 里的 approval_decision）的调用按决定办；已有审批请求但没决定的不重复发请求。
+ */
+async function* executeToolCalls(
+  ctx: TurnContext,
+  calls: readonly ToolCallEvent[],
+  timeline: readonly Event[],
+  deps: ExecuteDeps,
+): AsyncGenerator<Event, ExecuteSummary> {
+  const { cfg, sockets, append, flush } = deps
+  const decisions = new Map<string, ApprovalDecisionPayload>()
+  const requested = new Set<string>()
+  for (const raw of timeline) {
+    const e = raw as CoreEvent
+    if (e.type === "core.approval_decision") decisions.set(e.payload.toolCallId, e.payload)
+    if (e.type === "core.approval_request") requested.add(e.payload.toolCallId)
+  }
+
+  const summary: ExecuteSummary = { executed: 0, interruptions: [], pendingIds: [] }
+
+  for (const call of calls) {
+    const { toolCallId, name } = call.payload
+    const tool = ctx.tools.find((t) => t.name === name)
+    const errorResult = (text: string): ToolResultDraft => ({
+      type: "core.tool_result",
+      actor: "tool",
+      parentId: call.id,
+      provenance: { source: name },
+      payload: { toolCallId, name, content: [{ type: "text", text }], isError: true },
+    })
+
+    const decided = decisions.get(toolCallId)
+    if (decided && !decided.approved) {
+      yield* await append([errorResult(`审批被拒绝${decided.reason ? `：${decided.reason}` : ""}`)])
+      continue
+    }
+
+    // beforeTool：任一 block / defer 即定；rewrite 替换入参后继续问下一个
+    let args: unknown = call.payload.args
+    let verdict: BeforeToolDecision = "proceed"
+    for (const s of sockets) {
+      const d = await s.beforeTool?.(ctx, call, tool)
+      if (d === undefined || d === "proceed") continue
+      if ("rewrite" in d) {
+        args = d.rewrite
+        continue
+      }
+      verdict = d
+      break
+    }
+    if (typeof verdict === "object" && "block" in verdict) {
+      yield* await append([errorResult(`工具调用被拦截：${verdict.block}`)])
+      continue
+    }
+
+    if (!tool) {
+      yield* await append([errorResult(`未知工具：${name}`)])
+      continue
+    }
+
+    const toolCtx: ToolContext = {
+      sessionId: ctx.session.id,
+      toolCallId,
+      ...(ctx.principal ? { principal: ctx.principal } : {}),
+      log: ctx.log,
+      ...(ctx.blobs ? { blobs: ctx.blobs } : {}),
+      ...(ctx.memory ? { memory: ctx.memory } : {}),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+      emit: ctx.emit,
+    }
+
+    // 审批：Socket 说 defer，或工具自己声明 needsApproval 且尚无批准 —— 都转审批暂停
+    let approval = typeof verdict === "object" && "defer" in verdict ? verdict.defer : undefined
+    if (!approval && !decided?.approved && tool.needsApproval !== undefined) {
+      const need =
+        typeof tool.needsApproval === "function"
+          ? await tool.needsApproval(args, toolCtx)
+          : tool.needsApproval
+      if (need) {
+        approval = { policyId: BUILTIN_APPROVAL_POLICY, summary: `${name}(${JSON.stringify(args) ?? ""})` }
+      }
+    }
+    if (approval && !decided?.approved) {
+      const request = { toolCallId, policyId: approval.policyId, summary: approval.summary }
+      if (!requested.has(toolCallId)) {
+        yield* await append([
+          { type: "core.approval_request", actor: "system", parentId: call.id, payload: request },
+        ])
+      }
+      summary.interruptions.push({ kind: "approval", toolCallId, request, call: call.payload })
+      summary.pendingIds.push(toolCallId)
+      continue
+    }
+
+    // 客户端工具：本循环不执行，等宿主回填 tool_result 后续跑
+    if (!tool.execute || tool.side === "client") {
+      summary.interruptions.push({ kind: "client_tool", toolCallId, call: call.payload })
+      summary.pendingIds.push(toolCallId)
+      continue
+    }
+
+    let result: ToolResultDraft
+    try {
+      if (tool.validate) args = tool.validate(args)
+    } catch (err) {
+      yield* await append([errorResult(`入参不合法：${errorMessageOf(err)}`)])
+      continue
+    }
+    try {
+      summary.executed++
+      const out = await tool.execute(args, toolCtx)
+      const normalized = tool.toModelOutput ? { content: tool.toModelOutput(out) } : normalizeToolOutput(out)
+      result = {
+        type: "core.tool_result",
+        actor: "tool",
+        parentId: call.id,
+        provenance: { source: name },
+        payload: { toolCallId, name, content: normalized.content, isError: normalized.isError ?? false },
+      }
+    } catch (err) {
+      result = errorResult(`工具执行失败：${errorMessageOf(err)}`)
+    }
+
+    // afterTool：脑子可替换结果（外溢、截断），此时尚未 append
+    for (const s of sockets) {
+      const replaced = await s.afterTool?.(ctx, call, result)
+      if (replaced) result = replaced
+    }
+    // 工具与钩子留的痕（memory_op 等）排在结果前面
+    yield* await flush()
+    yield* await append([result])
+    if (cfg.signal?.aborted) break
+  }
+  return summary
+}

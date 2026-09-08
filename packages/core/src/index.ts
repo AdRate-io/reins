@@ -10,9 +10,11 @@
  * - store/：EventLog / BlobStore / MemoryStore 接口与内存实现（T4）
  * - projection/：投影策略链，从时间线算出模型本轮看到什么（T6）
  * - lowering/：降级层接口与有损矩阵类型，实现在 @reins/lowering-pi（T7）
- * - testing/：存储一致性套件，单独入口 @reins/core/testing（T5）
+ * - loop/：runLoop 默认循环、Socket 插座、Tool 抽象、RunResult 与可序列化状态（T9）
+ * - testing/：存储一致性套件与脚本化降级层，单独入口 @reins/core/testing（T5）
  */
 export * from "./events/index.js"
+export * from "./loop/index.js"
 export * from "./lowering/index.js"
 export * from "./projection/index.js"
 export * from "./store/index.js"
