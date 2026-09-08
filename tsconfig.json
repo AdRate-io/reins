@@ -5,6 +5,8 @@
     { "path": "packages/brain" },
     { "path": "packages/lowering-pi" },
     { "path": "packages/server" },
+    { "path": "packages/store-sqlite" },
+    { "path": "packages/store-pg" },
     { "path": "packages/ui-agui" },
     { "path": "packages/reins" },
     { "path": "examples/minimal" }

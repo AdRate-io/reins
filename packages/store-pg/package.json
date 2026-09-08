@@ -1,0 +1,32 @@
+{
+  "name": "@reins/store-pg",
+  "version": "0.0.0",
+  "description": "reins — PostgreSQL-backed EventLog / BlobStore / MemoryStore. Works with any client exposing query(text, params) → { rows } (pg, PGlite, …)",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@reins/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.0",
+    "pg": "^8.23.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

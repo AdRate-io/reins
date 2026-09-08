@@ -22,6 +22,7 @@
 import {
   type BlobStore,
   type ContentPart,
+  type CoreEventOf,
   type Socket,
   StoreError,
   type Tool,
@@ -245,7 +246,8 @@ async function readBlobSlice(
 ): Promise<{ content: ContentPart[]; isError: boolean }> {
   if (!ctx.blobs)
     return fail("No blob store is configured for this session, so stored outputs cannot be read.")
-  const blob = await loadOwnBlob(ctx.blobs, args.id, ctx.sessionId)
+  if (!(await referencedHere(ctx, args.id))) return fail(`No blob with id "${args.id}" in this session.`)
+  const blob = await loadReferencedBlob(ctx.blobs, args.id)
   if (!blob) return fail(`No blob with id "${args.id}" in this session.`)
   if (!isTextMime(blob.mime)) {
     return fail(
@@ -275,15 +277,31 @@ async function readBlobSlice(
   return { content: [{ type: "text", text: `${header}\n${slice}` }], isError: false }
 }
 
-/** 取本会话的 blob；不存在或属于别的会话都返回 undefined（不泄露别的会话有没有这个 id） */
-async function loadOwnBlob(
+/**
+ * 授权：这个 blob 是否被**本会话时间线**引用过（某条 tool_result 的 spilled.blobId 指向它）。B9 决策——
+ * 授权从"blob.meta.sessionId 等于当前会话"改为"当前会话引用过"。理由：fork 出的会话复制了含 spilled.blobId
+ * 的 tool_result（blob 本身归属父会话、不复制字节），旧口径下模型看得见 id 却取不回；改按引用后 fork 的会话能读，
+ * 且不泄露——没被本会话引用的 id 一律当不存在（回执与"真不存在"同一句话）。handoff 不复制 tool_result，
+ * 所以新会话仍读不到外溢结果（规则提示已告知"把要紧的写进摘要"），与此一致。
+ *
+ * 读**本会话自己的**日志即可判定，不看别的会话。原始读取（不过注册表）足够：只查 core 稳定字段 spilled.blobId。
+ */
+async function referencedHere(ctx: ToolContext, id: string): Promise<boolean> {
+  for await (const e of ctx.log.read(ctx.sessionId)) {
+    if (e.type !== "core.tool_result") continue
+    const spilled = (e as CoreEventOf<"core.tool_result">).payload.spilled
+    if (spilled?.blobId === id) return true
+  }
+  return false
+}
+
+/** 取已授权的 blob；只在 referencedHere 通过后调。不存在（被清理等）时返回 undefined */
+async function loadReferencedBlob(
   blobs: BlobStore,
   id: string,
-  sessionId: string,
 ): Promise<{ bytes: Uint8Array; mime: string; size: number } | undefined> {
   try {
     const { bytes, meta } = await blobs.get(id)
-    if (meta.sessionId !== sessionId) return undefined
     return { bytes, mime: meta.mime, size: meta.size }
   } catch (err) {
     if (err instanceof StoreError && err.code === "not_found") return undefined

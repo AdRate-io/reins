@@ -31,7 +31,7 @@ export interface CreateAgentOptions
   extends Omit<AgentDefinition, "model" | "lowering" | "log" | "blobs" | "memory"> {
   /** `anthropic("claude-opus-5", { apiKey })` 之类工厂的返回值，或自己组的 { model, lowering } */
   model: BoundModel
-  /** `memoryStore()`、`sqliteStore(...)`（M1）或自己实现的一套接口；只有 log 必需 */
+  /** `memoryStore()`、`sqliteStores(db)`、`await pgStores(client)`（B9）或自己实现的一套接口；只有 log 必需 */
   store: Stores
   /** 传输层选项；缺省 AG-UI 编码（`encode: aguiEncoding()`），想推原始事件就传 `encode: () => rawEncoder` */
   handler?: HandlerOptions

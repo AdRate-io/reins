@@ -1,6 +1,8 @@
 import {
   type CoreEvent,
   type CoreEventOf,
+  createCoreEvent,
+  createCoreRegistry,
   defineTool,
   type Event,
   InMemoryBlobStore,
@@ -15,10 +17,11 @@ import { describe, expect, it } from "vitest"
 import { perception } from "../perception/index.js"
 import { clipEndByTokens, countLines, measureText, previewOf } from "./preview.js"
 import { SPILL_RULES } from "./rules.js"
-import { isTextMime, parseFetchBlobArgs, spill } from "./spill.js"
+import { isTextMime, parseFetchBlobArgs, SPILL_BLOB_MIME, spill } from "./spill.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
 const SESSION = "s1"
+const registry = createCoreRegistry()
 type ToolResult = CoreEventOf<"core.tool_result">
 type SystemNote = CoreEventOf<"core.system_note">
 
@@ -84,6 +87,16 @@ function config(
     ...deterministic(),
     ...extra,
   }
+}
+
+/** 造一个不追加新 user_message 的配置（种子日志已有内容），exactOptionalPropertyTypes 下不能写 input: undefined */
+function spillConfigNoInput(
+  lowering: ScriptedLowering,
+  log: InMemoryEventLog,
+  blobs: InMemoryBlobStore,
+): LoopConfig {
+  const { input: _input, ...rest } = config(lowering, log, { blobs })
+  return rest
 }
 
 const echo = (id: string, text: string, isError?: boolean) =>
@@ -252,7 +265,7 @@ describe("spill × runLoop：结果外溢", () => {
       expect(textOf(fetched)).toContain("at or beyond the end")
     })
 
-    it("不存在的 id、别的会话的 blob、二进制 blob 都拒绝；越权的当不存在", async () => {
+    it("不存在的 id、未被本会话引用的 blob、二进制 blob 都拒绝；越权的当不存在", async () => {
       const blobs = new InMemoryBlobStore()
       const foreign = await blobs.put("secret of s2", { mime: "text/plain", sessionId: "s2" })
       const binary = await blobs.put(new Uint8Array([0, 1, 2]), { mime: "image/png", sessionId: SESSION })
@@ -271,8 +284,40 @@ describe("spill × runLoop：结果外溢", () => {
       const logged = await all(log)
       expect(textOf(resultOf(logged, "f1"))).toBe(`No blob with id "nope" in this session.`)
       expect(textOf(resultOf(logged, "f2"))).toBe(`No blob with id "${foreign.id}" in this session.`)
-      expect(textOf(resultOf(logged, "f3"))).toContain("is image/png (3 bytes), not text")
+      // binary 虽属本会话，但没有任何 tool_result 引用它 → 也当不存在（授权按"本会话引用过"，不按 meta.sessionId）
+      expect(textOf(resultOf(logged, "f3"))).toBe(`No blob with id "${binary.id}" in this session.`)
       for (const id of ["f1", "f2", "f3"]) expect(resultOf(logged, id).payload.isError).toBe(true)
+    })
+
+    it("被本会话 tool_result.spilled 引用的 blob 可读，哪怕它属于别的会话（fork 场景）", async () => {
+      // 造一个属于父会话 s0 的 blob，内容够大；直接把它写进本会话日志的一条 tool_result.spilled（模拟 fork 复制过来的结果）
+      const blobs = new InMemoryBlobStore()
+      const parent = await blobs.put(lines(500), { mime: SPILL_BLOB_MIME, sessionId: "s0" })
+      const log = new InMemoryEventLog()
+      const seed = createCoreEvent(registry, {
+        type: "core.tool_result",
+        actor: "tool",
+        sessionId: SESSION,
+        seq: 1,
+        at: 1,
+        id: "seed",
+        payload: {
+          toolCallId: "old",
+          name: "echo",
+          content: [{ type: "text", text: "[preview]" }],
+          isError: false,
+          spilled: { blobId: parent.id, summary: "from parent" },
+        },
+      } as Parameters<typeof createCoreEvent>[1])
+      await log.append([seed as Event])
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("f1", "fetch_blob", { id: parent.id, start: 0, end: 40 })] },
+        { drafts: [say("读到了")] },
+      ])
+      await drain(runLoop(spillConfigNoInput(lowering, log, blobs)))
+      const res = resultOf(await all(log), "f1")
+      expect(res.payload.isError).toBe(false)
+      expect(textOf(res)).toContain(`blob "${parent.id}"`)
     })
 
     it("入参不合法 → 循环以 isError 告知（validate 抛错）", async () => {

@@ -38,6 +38,8 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 | `@reins/brain` | perception, compact, pins, spill, handoff, memory, approval, budget |
 | `@reins/lowering-pi` | provider lowering on top of pi-ai |
 | `@reins/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
+| `@reins/store-sqlite` | SQLite-backed stores; one SQL layer, driver from the runtime (`node:sqlite`, `bun:sqlite`) |
+| `@reins/store-pg` | Postgres-backed stores; any `query(text, params)` client (pg, PGlite) |
 | `@reins/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
 | `reins` | `createAgent()` plus re-exports of core / server / ui-agui |
 
