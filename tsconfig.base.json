@@ -25,6 +25,7 @@
       "@reins/store-sqlite": ["./packages/store-sqlite/src/index.ts"],
       "@reins/store-sqlite/node": ["./packages/store-sqlite/src/node.ts"],
       "@reins/store-pg": ["./packages/store-pg/src/index.ts"],
+      "@reins/adapter-tanstack-ai": ["./packages/adapter-tanstack-ai/src/index.ts"],
       "reins": ["./packages/reins/src/index.ts"],
       "@reins/ui-agui": ["./packages/ui-agui/src/index.ts"]
     }
