@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest"
 import { noneArm, thresholdArm } from "./arms.js"
 import { checkGate } from "./gate.js"
 import { renderReport } from "./report.js"
-import { runEval, summarize } from "./runner.js"
+import { probeAnswerOf, runEval, summarize } from "./runner.js"
 import type { EvalArm, EvalFixture, EvalOutcome } from "./types.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -103,6 +103,7 @@ describe("runEval：对照运行器", () => {
     expect(none.facts[0]).toMatchObject({
       id: "code",
       answer: "The code is 4711.",
+      answerFrom: "text",
       score: 1,
       gradedBy: "expect",
     })
@@ -345,6 +346,44 @@ describe("runEval：对照运行器", () => {
     expect(judged).toEqual(["The code is 4711."])
     expect(report.outcomes[0]?.facts[0]).toMatchObject({ score: 0.5, gradedBy: "judge" })
     expect(report.outcomes[0]?.metrics.recall).toBe(0.5)
+  })
+
+  it("probeAnswerOf：有正文取正文；正文为空退回最后一段 thinking；都没有为 none", () => {
+    const reg = createCoreRegistry()
+    const mk = (type: "core.model_text" | "core.model_thinking", text: string, seq: number): Event =>
+      createCoreEvent(reg, {
+        type,
+        actor: "model",
+        payload: { text },
+        sessionId: "p",
+        seq,
+        at: seq,
+        id: `p${seq}`,
+      })
+    expect(probeAnswerOf([mk("core.model_thinking", "14", 1), mk("core.model_text", "fourteen", 2)])).toEqual(
+      {
+        answer: "fourteen",
+        answerFrom: "text",
+      },
+    )
+    expect(probeAnswerOf([mk("core.model_thinking", "14", 1), mk("core.model_thinking", "", 2)])).toEqual({
+      answer: "14",
+      answerFrom: "thinking",
+    })
+    expect(probeAnswerOf([])).toEqual({ answer: "", answerFrom: "none" })
+  })
+
+  it("repeatStart：补跑时从指定编号起，不盖掉已有的格", async () => {
+    const report = await runEval({
+      fixtures: [{ ...fixture, facts: [] }],
+      arms: [noneArm()],
+      lowering: new ScriptedLowering(finder),
+      model: MODEL,
+      repeats: 2,
+      repeatStart: 3,
+      ...deterministic(),
+    })
+    expect(report.outcomes.map((o) => o.repeat)).toEqual([3, 4])
   })
 
   it("种子历史不计入指标：token、轮、动作只算本次新追加的事件；完成判定仍能看全链", async () => {

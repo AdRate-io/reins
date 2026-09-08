@@ -23,4 +23,5 @@ You have a \`${COMPACT_TOOL_NAME}\` tool that folds earlier conversation into a 
 - Compact when a sub-task is finished or the trajectory has converged and the folded details are no longer needed verbatim. Do it at a natural pause, not while acting on something.
 - Do not compact in the middle of a derivation, while a problem is still unresolved, or when you feel stuck: you would lose exactly the details you still need.
 - The summary replaces everything it folds, including earlier summaries. Carry forward the user's goals and constraints, decisions made and why, the current state, and what comes next. List each fact that must survive in \`keep\`. The most recent user message and pinned notes survive verbatim on their own; check the pins still say what you need.
+- Keep exact values, not just conclusions: identifiers, status and enum fields you verified, numbers, dates, error codes. "Checked, all ENABLE" loses the field values themselves; once folded you can only re-fetch them or admit you dropped them.
 - If you never compact, the harness folds the oldest turns mechanically once the window nears its limit. Its summary is worse than yours.`

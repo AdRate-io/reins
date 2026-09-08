@@ -13,6 +13,7 @@
  */
 import {
   type ApprovalDecisionInput,
+  type CoreEventOf,
   createCoreRegistry,
   type Event,
   type EventSchemaRegistry,
@@ -59,6 +60,8 @@ export interface RunEvalOptions {
   model: ModelRef
   /** 每格重复次数，缺省 1；真模型有随机性，门禁前建议 ≥ 3 */
   repeats?: number
+  /** 重复编号从几开始，缺省 1。补跑单格（如第 3 次因网络中断失败）时给 3，结果编号不会盖掉已有的 */
+  repeatStart?: number
   /** 每格一套新存储；缺省内存实现 */
   stores?: () => Stores
   /** LLM judge，给没有 expect 的预埋事实打分 */
@@ -89,7 +92,8 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   const outcomes: EvalOutcome[] = []
   for (const fixture of opts.fixtures) {
     for (const arm of opts.arms) {
-      for (let repeat = 1; repeat <= repeats; repeat++) {
+      const start = opts.repeatStart ?? 1
+      for (let repeat = start; repeat < start + repeats; repeat++) {
         opts.signal?.throwIfAborted()
         const outcome = await runCell(opts, fixture, arm, repeat)
         outcomes.push(outcome)
@@ -324,12 +328,32 @@ async function runProbe(
       onEvent(e)
     },
   )
-  const answer = finalTextOf(probeEvents)
+  const { answer, answerFrom } = probeAnswerOf(probeEvents)
   const graded = await grade(opts, fixture, fact, answer)
   return {
-    fact: { id: fact.id, question: fact.question, answer, ...graded },
+    fact: { id: fact.id, question: fact.question, answer, answerFrom, ...graded },
     tokens: sumTokens(probeEvents),
   }
+}
+
+/**
+ * 探针的回答：优先取模型正文；一句正文都没有时退回最后一段 thinking。
+ * 实测（E3，DeepSeek v4 flash 经 Anthropic 端口）短答案（"14"）有 9% 的概率整个落在 thinking 块里、正文为空、输出 1 个 token ——
+ * 那是模型唯一的输出，不该判成"不记得"。
+ */
+export function probeAnswerOf(events: readonly Event[]): {
+  answer: string
+  answerFrom: FactResult["answerFrom"]
+} {
+  const text = finalTextOf(events)
+  if (text !== "") return { answer: text, answerFrom: "text" }
+  const thinking = [...events]
+    .reverse()
+    .filter((e): e is CoreEventOf<"core.model_thinking"> => e.type === "core.model_thinking")
+    .find((e) => e.payload.text !== "")
+  return thinking
+    ? { answer: thinking.payload.text, answerFrom: "thinking" }
+    : { answer: "", answerFrom: "none" }
 }
 
 async function grade(
@@ -343,11 +367,14 @@ async function grade(
     if (!opts.judge) throw new Error(`事实 ${fact.id} 没有 expect 也没有 judge`) // assertFixtures 已拦，此处兜底
     return { score: clamp01(await opts.judge({ fixtureId: fixture.id, fact, answer })), gradedBy: "judge" }
   }
-  let score: number
-  if (typeof expect === "string") score = answer.toLowerCase().includes(expect.toLowerCase()) ? 1 : 0
-  else if (expect instanceof RegExp) score = expect.test(answer) ? 1 : 0
-  else score = clamp01(expect(answer))
-  return { score, gradedBy: "expect" }
+  return { score: gradeExpect(expect, answer), gradedBy: "expect" }
+}
+
+/** 确定性判分：字符串不分大小写包含、正则、或函数（0~1 / 布尔） */
+export function gradeExpect(expect: NonNullable<PlantedFact["expect"]>, answer: string): number {
+  if (typeof expect === "string") return answer.toLowerCase().includes(expect.toLowerCase()) ? 1 : 0
+  if (expect instanceof RegExp) return expect.test(answer) ? 1 : 0
+  return clamp01(expect(answer))
 }
 
 async function drain(gen: AsyncGenerator<Event, RunResult>, onEvent: (e: Event) => void): Promise<RunResult> {

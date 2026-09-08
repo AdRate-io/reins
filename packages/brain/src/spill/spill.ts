@@ -4,7 +4,7 @@
  * 工具偶尔会吐回一大坨（整页搜索结果、几千行日志、一个大 JSON）。硬塞进上下文既贵又挤掉别的东西，
  * 直接截断又等于替模型决定"后面的不重要"。本模块的做法：
  *
- * 1. **afterTool 外溢**：结果的文本部分超过 `maxResultTokens`（缺省 8k，工具可用 `resultPolicy.maxTokens` 单独配）
+ * 1. **afterTool 外溢**：结果的文本部分超过 `maxResultTokens`（缺省 16k，工具可用 `resultPolicy.maxTokens` 单独配）
  *    → 全文原样写进 BlobStore，模型看到的结果换成 `[说明 + 首尾各 N 行预览]`，并在 `tool_result.spilled` 记下
  *    `{ blobId, summary }`。全文一个字都没丢，只是搬到了旁边；决定读不读、读哪段的仍是模型（宪法一）。
  *    工具声明 `resultPolicy.overflow = "truncate"` 时不存 blob、只留预览并明说中段不可恢复 —— 这是宿主对该工具的显式选择。
@@ -43,7 +43,7 @@ import {
 import { FETCH_BLOB_TOOL_DESCRIPTION, FETCH_BLOB_TOOL_NAME, SPILL_RULES } from "./rules.js"
 
 export interface SpillOptions {
-  /** 结果文本超过多少 token 就外溢；也是 fetch_blob 单次返回的上限。工具的 `resultPolicy.maxTokens` 优先。缺省 8000 */
+  /** 结果文本超过多少 token 就外溢；也是 fetch_blob 单次返回的上限。工具的 `resultPolicy.maxTokens` 优先。缺省 16000（E3 定） */
   maxResultTokens?: number
   /** 预览首尾各取多少行。缺省 20 */
   previewLines?: number
@@ -60,7 +60,12 @@ export interface SpillOptions {
 }
 
 export const SPILL_SOCKET_NAME = "spill"
-export const DEFAULT_MAX_RESULT_TOKENS = 8000
+/**
+ * 缺省外溢阈值。E3 对照（2026-09-09，DeepSeek v4 flash，AdRate 巡检）：6k 阈值把模型必须整读的 10k token 计划列表外溢出去，
+ * 模型再用 fetch_blob 分两三次取回，平白多两三轮、总 token 翻倍而完成度不变；16k 时同一任务 4 轮做完。
+ * 外溢是给"模型不需要全读"的巨量结果准备的安全网，阈值要高于常见的"整表读完"体量。
+ */
+export const DEFAULT_MAX_RESULT_TOKENS = 16_000
 export const DEFAULT_PREVIEW_LINES = 20
 export const DEFAULT_PREVIEW_CHARS = 2000
 /** 外溢正文的 mime；BlobStore 按 UTF-8 存字符串 */

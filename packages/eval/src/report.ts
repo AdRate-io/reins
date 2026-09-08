@@ -1,7 +1,9 @@
 /**
  * 把报告排成 Markdown 表：一臂一行，Boss 看这张表就够。要机器读请直接用 EvalReport（JSON）。
  */
+
 import type { GateResult } from "./gate.js"
+import { billableTokens } from "./metrics.js"
 import type { EvalOutcome, EvalReport } from "./types.js"
 
 export interface RenderOptions {
@@ -27,16 +29,18 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
   )
   lines.push("")
   lines.push(
-    "| 臂 | 跑完 | 完成度 | 总 token | 缓存命中 | 召回 | 违规率 前→后 | 整理 模型/阈值/连续 | 轮 | 工具 | 重复调用 | 墙钟 |",
+    "| 臂 | 跑完 | 完成度 | 总 token | 计费等价 | 缓存命中 | 召回 | 违规率 前→后 | 整理 模型/阈值/连续 | 轮 | 工具 | 重复调用 | 墙钟 |",
   )
-  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
   for (const a of arms) {
     lines.push(
-      `| ${a.arm} | ${pct(a.finishedRate)} | ${pct(a.completion)} | ${num(a.tokens.total)} | ${pct(a.cacheHitRate, 1)} | ${pct(a.recall)} | ${pct(a.violations.before, 1)} → ${pct(a.violations.after, 1)} | ${a.compactions.model.toFixed(1)} / ${a.compactions.threshold.toFixed(1)} / ${a.compactions.maxConsecutive.toFixed(1)} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${secs(a.wallMs)} |`,
+      `| ${a.arm} | ${pct(a.finishedRate)} | ${pct(a.completion)} | ${num(a.tokens.total)} | ${num(billableTokens(a.tokens))} | ${pct(a.cacheHitRate, 1)} | ${pct(a.recall)} | ${pct(a.violations.before, 1)} → ${pct(a.violations.after, 1)} | ${a.compactions.model.toFixed(1)} / ${a.compactions.threshold.toFixed(1)} / ${a.compactions.maxConsecutive.toFixed(1)} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${secs(a.wallMs)} |`,
     )
   }
   lines.push("")
-  lines.push("均值按 fixture × 重复取；整理三列是每次运行的次数均值。")
+  lines.push(
+    "均值按 fixture × 重复取；整理三列是每次运行的次数均值。总 token 把缓存读按 1× 计（模型每轮读了多少），计费等价按缓存读 0.1× 折算（账单）。",
+  )
 
   if (opts.gate) {
     lines.push("")
@@ -60,9 +64,11 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
     lines.push("## 明细")
     lines.push("")
     lines.push(
-      "| fixture | 臂 | # | 状态 | 完成度 | 总 token | 缓存命中 | 召回 | 违规 前/后 | 整理 模型/阈值/连续 | 轮 | 工具 | 墙钟 |",
+      "| fixture | 臂 | # | 状态 | 完成度 | 总 token | 计费等价 | 缓存命中 | 召回 | 违规 前/后 | 整理 模型/阈值/连续 | 轮 | 工具 | 墙钟 |",
     )
-    lines.push("| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.push(
+      "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    )
     for (const o of report.outcomes) lines.push(detailRow(o))
   }
   return `${lines.join("\n")}\n`
@@ -70,5 +76,5 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
 
 function detailRow(o: EvalOutcome): string {
   const m = o.metrics
-  return `| ${o.fixtureId} | ${o.arm} | ${o.repeat} | ${m.status} | ${pct(m.completed)} | ${num(m.tokens.total)} | ${pct(m.cacheHitRate, 1)} | ${pct(m.recall)} | ${m.violations.before.violations}/${m.violations.before.actions} → ${m.violations.after.violations}/${m.violations.after.actions} | ${m.compactions.model} / ${m.compactions.threshold} / ${m.compactions.maxConsecutive} | ${m.turns} | ${m.toolCalls} | ${secs(m.wallMs)} |`
+  return `| ${o.fixtureId} | ${o.arm} | ${o.repeat} | ${m.status} | ${pct(m.completed)} | ${num(m.tokens.total)} | ${num(billableTokens(m.tokens))} | ${pct(m.cacheHitRate, 1)} | ${pct(m.recall)} | ${m.violations.before.violations}/${m.violations.before.actions} → ${m.violations.after.violations}/${m.violations.after.actions} | ${m.compactions.model} / ${m.compactions.threshold} / ${m.compactions.maxConsecutive} | ${m.turns} | ${m.toolCalls} | ${secs(m.wallMs)} |`
 }

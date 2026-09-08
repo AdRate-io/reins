@@ -2,6 +2,16 @@
 
 `@reins/eval`（`packages/eval`）是 harness：fixture 形状、录像回放工具、指标、门禁。这里放**具体的 fixture** 与跑真模型的脚本。
 
+```bash
+pnpm build                                                     # 示例跑的是 dist
+REINS_PROVIDER=deepseek node examples/eval/run.ts --arms none,threshold,brain,brain-lean --repeats 3   # 每格落盘 out/<run>/cells/
+node examples/eval/report.ts examples/eval/out/<run> --candidate brain-lean --rescore                 # 汇总、门禁、按 fixture 分表
+```
+
+`run.ts` 一格一落盘（指标 JSON + 全链时间线 JSONL + 探针事件），可按臂拆进程并行、可用 `--repeat-start N` 只补跑失败的格；
+`report.ts --rescore` 用落盘的时间线按当前评分器重算完成度、按探针记录重判召回，改口径不必重跑模型。
+**结果**：`results/2026-09-09-deepseek-v4-flash/`（四轮 99 格的结论与各轮报告）。
+
 ## fixtures/adrate-patrol：AdRate"巡检降本"（B11 真实长任务的脱敏版）
 
 来源是 `examples/adrate/recordings/patrol-disable.jsonl`（2026-09-08，DeepSeek 直连，239 事件 / 57 工具 / 29 审批）。

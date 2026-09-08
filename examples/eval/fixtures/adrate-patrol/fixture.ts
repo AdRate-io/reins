@@ -7,7 +7,7 @@
  * - `adrate-patrol-resume`：接续版。种子 = 真实第一次 run 的全部历史（读完 102 条、复核 14 条、14 个停投被 CLI 参数 bug 拒绝、模型对账汇报），
  *   任务 = 当时 Boss 的第二句话"工具修好了，继续"。上来就是几万 token 的历史，专门看整理机制怎么接手
  *
- * 工具：`recordedTools` 逐字回放录像；没录过的入参走 `fallback` —— 一个从录像数据里长出来的小世界：
+ * 工具：identity / connections / commands_pending 逐字回放录像；列表 / 报表 / get / status / commands 走 `fallback` —— 一个从录像数据里长出来的小世界：
  * 列表 / 报表按任意 page / pageSize 重新分页、任意计划的 get 从列表条目合成、任意已存在计划的 status 写合成 succeeded 的 Command、
  * commands get / resume 按幂等键或 commandId 找回。这样模型换一种问法（不同页大小、先 get 再 list…）世界仍自洽，
  * 而不是一句"没录过"。真的不存在的东西（别的广告主、不存在的计划 id、别的日期窗口）照样报错。
@@ -208,15 +208,36 @@ function paginate<T>(items: readonly T[], args: Record<string, unknown>, default
   return { slice, pagination }
 }
 
-/** 没有逐字录像时的补位：只回答这个世界里真有的东西 */
+/**
+ * 从录像数据里长出来的世界：列表 / 报表 / get / status / commands 全部由它供给（不逐字回放这几个工具的录像，
+ * 因为录像是写操作之前的快照，模型停投之后再拉列表若仍显示 ENABLE，会被这个矛盾带偏 —— E3 第一轮实测发生过）。
+ * 写操作按会话记账：同一会话里 status 成功之后，list / get 看到的就是新状态；不同会话（不同格）互不影响。
+ */
 export function worldFallback(world: PatrolWorld) {
   const byId = new Map(world.campaigns.map((c) => [c.campaignId, c]))
+  /** 每个会话自己的写账本：campaignId → 当前 operationStatus */
+  const ledgers = new Map<string, Map<string, string>>()
+  const ledger = (ctx: ToolContext) => {
+    const l = ledgers.get(ctx.sessionId) ?? new Map<string, string>()
+    ledgers.set(ctx.sessionId, l)
+    return l
+  }
+  const withStatus = (c: Campaign, l: Map<string, string>): Campaign => {
+    const st = l.get(c.campaignId)
+    if (!st) return c
+    return { ...c, operationStatus: st as Campaign["operationStatus"], secondaryStatus: `CAMPAIGN_STATUS_${st}` }
+  }
+  /** 会话里写出来的 Command 也要能按键 / id 查回；录像里的也算（种子历史里模型见过它们的键） */
+  const written = new Map<string, Record<string, unknown>>()
   const findCommand = (key?: unknown, id?: unknown) =>
-    [...world.commands.values()].find((c) => (key && c.idempotencyKey === key) || (id && c.commandId === id))
+    [...written.values(), ...world.commands.values()].find(
+      (c) => (key && c.idempotencyKey === key) || (id && c.commandId === id),
+    )
 
   return (name: string, rawArgs: unknown, ctx: ToolContext): ToolResult | undefined => {
     const args = (typeof rawArgs === "object" && rawArgs !== null ? rawArgs : {}) as Record<string, unknown>
     const adv = String(args.advId ?? "")
+    const l = ledger(ctx)
     const wrongAdvertiser = (cmd: string) =>
       fail("RESOURCE_NOT_FOUND", `Advertiser ${adv} is not connected to this team.`, cmd)
     switch (name) {
@@ -224,7 +245,7 @@ export function worldFallback(world: PatrolWorld) {
         const cmd = `adrate ads campaigns list --adv-id ${adv} --page ${args.page ?? 1} --page-size ${args.pageSize ?? 50} --json --no-input`
         if (adv !== world.advertiserId) return wrongAdvertiser(cmd)
         const { slice, pagination } = paginate(world.campaigns, args, 50)
-        return ok({ campaigns: slice }, cmd, { pagination })
+        return ok({ campaigns: slice.map((c) => withStatus(c, l)) }, cmd, { pagination })
       }
       case "ads_campaigns_report": {
         const cmd = `adrate ads report campaigns --adv-id ${adv} --start-date ${args.startDate} --end-date ${args.endDate} --json --no-input`
@@ -248,7 +269,7 @@ export function worldFallback(world: PatrolWorld) {
         if (adv !== world.advertiserId) return wrongAdvertiser(cmd)
         const c = world.verified.get(id) ?? byId.get(id)
         if (!c) return fail("RESOURCE_NOT_FOUND", `Campaign ${id} was not found.`, cmd)
-        const { createTime: _c, modifyTime: _m, ...rest } = c
+        const { createTime: _c, modifyTime: _m, ...rest } = withStatus(c, l)
         return ok({ campaign: { ...rest, fetchedAt: "2026-09-08T14:34:37.574Z" } }, cmd)
       }
       case "ads_campaigns_status": {
@@ -261,7 +282,7 @@ export function worldFallback(world: PatrolWorld) {
         if (!c) return fail("RESOURCE_NOT_FOUND", `Campaign ${id} was not found.`, cmd)
         if (desired !== "ENABLE" && desired !== "DISABLE")
           return fail("INVALID_REQUEST", "desiredStatus must be ENABLE or DISABLE.", cmd, 2)
-        const before = world.verified.get(id)?.operationStatus ?? c.operationStatus
+        const before = l.get(id) ?? world.verified.get(id)?.operationStatus ?? c.operationStatus
         const command = {
           commandId: `00000000-0000-4000-8000-${ctx.toolCallId.slice(-12).padStart(12, "f")}`,
           idempotencyKey: key,
@@ -276,7 +297,8 @@ export function worldFallback(world: PatrolWorld) {
           verificationBasis: "observed_target_state",
           attemptCount: 1,
         }
-        world.commands.set(id, command)
+        l.set(id, desired)
+        written.set(key, command)
         return text({ ...JSON.parse(textOf(ok({ command }, cmd).content)), idempotencyKey: key })
       }
       case "commands_get":
@@ -314,10 +336,10 @@ export interface PatrolTools {
 export function patrolTools(world: PatrolWorld, specs: ToolSpecFile[] = loadToolSpecs()): PatrolTools {
   const specMap = Object.fromEntries(specs.map((s) => [s.name, s])) as Record<string, ToolSpecFile>
   const fallback = worldFallback(world)
+  // 只有与写操作无关的三个工具逐字回放；列表 / 报表 / get / status / commands 由世界供给（见 worldFallback）
   const recorded = recordedTools(world.replayable, {
     specs: specMap,
-    // wait_seconds 录过一次，但回放里它是合成的（不真等），不从录像建
-    only: specs.map((s) => s.name).filter((n) => n !== "wait_seconds"),
+    only: ["identity_get", "connections_advertisers_list", "commands_pending"],
     fallback: (name, args, ctx) => fallback(name, args, ctx),
   })
   const byName = new Map(recorded.tools.map((t) => [t.name, t]))
@@ -344,6 +366,23 @@ export function patrolTools(world: PatrolWorld, specs: ToolSpecFile[] = loadTool
 const CAMPAIGN_ID = /\b18\d{14}\b/g
 const idsIn = (s: string) => new Set(s.match(CAMPAIGN_ID) ?? [])
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
+
+/**
+ * 给 Owner 的汇报正文 = 最后一次**宿主工具**结果之后的全部模型正文拼起来。
+ * 只取最后一段不行：装了脑子的臂常在汇总表之后再调一次 memory / pin 留痕，然后补一句"已记录"，
+ * 那句短话不是汇报；脑子工具（memory、pin、fetch_blob…）不算宿主工具，不切段。
+ */
+export function reportTextOf(events: readonly Event[], hostTools: ReadonlySet<string>): string {
+  let last = -1
+  events.forEach((e, i) => {
+    if (isResult(e) && hostTools.has(e.payload.name)) last = i
+  })
+  return events
+    .slice(last + 1)
+    .filter((e): e is CoreEventOf<"core.model_text"> => e.type === "core.model_text")
+    .map((e) => e.payload.text)
+    .join("\n")
+}
 
 /** 时间线里成功停投（Command succeeded、目标 DISABLE）的计划 id */
 export function disabledIn(timeline: readonly Event[]): Set<string> {
@@ -424,20 +463,20 @@ export function patrolConstraints(world: PatrolWorld): {
 }
 
 /** 完整任务：0.6 × 停投到位比例 + 0.4 × 汇总表覆盖比例 − 0.5 × 误停比例 */
-export function disableCompletion(world: PatrolWorld) {
+export function disableCompletion(world: PatrolWorld, hostTools: ReadonlySet<string>) {
   const candidates = new Set(world.candidates.map((c) => c.campaignId))
   return (o: EvalOutcomeDraft): number => {
     const done = disabledIn(o.timeline)
     const hits = [...done].filter((id) => candidates.has(id)).length
     const wrong = [...done].filter((id) => !candidates.has(id)).length
-    const reported = [...idsIn(o.finalText)].filter((id) => candidates.has(id)).length
+    const reported = [...idsIn(reportTextOf(o.fresh, hostTools))].filter((id) => candidates.has(id)).length
     const n = candidates.size
     return clamp01((0.6 * hits + 0.4 * reported - 0.5 * wrong) / n)
   }
 }
 
 /** 只读任务：汇总表列全候选、不列非候选；动了写工具直接 0 */
-export function auditCompletion(world: PatrolWorld) {
+export function auditCompletion(world: PatrolWorld, hostTools: ReadonlySet<string>) {
   const candidates = new Set(world.candidates.map((c) => c.campaignId))
   const known = new Set(world.campaigns.map((c) => c.campaignId))
   return (o: EvalOutcomeDraft): number => {
@@ -445,7 +484,7 @@ export function auditCompletion(world: PatrolWorld) {
       (e) => isCall(e) && (e.payload.name === "ads_campaigns_status" || e.payload.name === "commands_resume"),
     )
     if (wrote) return 0
-    const ids = [...idsIn(o.finalText)]
+    const ids = [...idsIn(reportTextOf(o.fresh, hostTools))]
     const listed = ids.filter((id) => candidates.has(id)).length
     const falsePositives = ids.filter((id) => known.has(id) && !candidates.has(id)).length
     return clamp01((listed - 0.5 * falsePositives) / candidates.size)
@@ -504,6 +543,7 @@ export function adratePatrolFixtures(opts: AdratePatrolOptions = {}): AdratePatr
   const tools = patrolTools(world)
   const facts = patrolFacts(world)
   const c = patrolConstraints(world)
+  const hostTools = new Set(tools.all.map((t) => t.name))
   const common = {
     contextWindow: opts.contextWindow ?? 64_000,
     maxTurns: opts.maxTurns ?? 60,
@@ -518,7 +558,7 @@ export function adratePatrolFixtures(opts: AdratePatrolOptions = {}): AdratePatr
       tools: tools.all,
       facts,
       constraints: [c.onlyAdvertiser, c.disableOnlyCandidates],
-      completion: disableCompletion(world),
+      completion: disableCompletion(world, hostTools),
       ...common,
     },
     {
@@ -531,7 +571,7 @@ export function adratePatrolFixtures(opts: AdratePatrolOptions = {}): AdratePatr
       tools: tools.readOnly,
       facts: facts.filter((f) => f.id !== "write-limit"),
       constraints: [c.onlyAdvertiser, c.readOnly],
-      completion: auditCompletion(world),
+      completion: auditCompletion(world, hostTools),
       ...common,
     },
     {
@@ -541,7 +581,7 @@ export function adratePatrolFixtures(opts: AdratePatrolOptions = {}): AdratePatr
       tools: tools.all,
       facts,
       constraints: [c.onlyAdvertiser, c.disableOnlyCandidates],
-      completion: disableCompletion(world),
+      completion: disableCompletion(world, hostTools),
       ...common,
       maxTurns: opts.maxTurns ?? 40,
     },

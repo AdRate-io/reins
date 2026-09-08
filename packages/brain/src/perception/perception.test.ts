@@ -98,7 +98,9 @@ describe("perception × runLoop：注入位置与 prompt cache 约束", () => {
     expect(note.payload.kind).toBe("perception")
     expect(note.payload.text).toContain("Context window used: <50%")
     expect(note.payload.text).toContain("auto-folds the oldest turns at 85%")
-    expect(note.payload.text).toContain("Unfolded history: ≤5 turns; compactions so far: 0")
+    expect(note.payload.text).toContain(
+      "Unfolded history: ≤5 turns; compactions so far: 0 (nothing has been folded; everything above is verbatim)",
+    )
     expect(note.payload.text).toContain("Session tokens used: <10k")
     expect(note.payload.text).not.toContain("budget remaining")
     expect(note.payload.text).not.toContain("spilled")

@@ -2,11 +2,21 @@
  * fixture 自检：世界从录像里长得对不对、回放工具与补位是否自洽、评分器与约束是否按设计打分。
  * 用脚本化"模型"跑 runEval，不联网。
  */
-import type { CoreEventOf, ToRequestInput } from "@reins/core"
+import {
+  type CoreEventOf,
+  type CoreEventPayloads,
+  type CoreEventType,
+  createCoreEvent,
+  createCoreRegistry,
+  type Event,
+  type ToRequestInput,
+} from "@reins/core"
 import { callTool, type Script, ScriptedLowering, say } from "@reins/core/testing"
 import { noneArm, runEval } from "@reins/eval"
 import { describe, expect, it } from "vitest"
-import { adratePatrolFixtures, loadRecording, seedOf, worldOf } from "./fixture.ts"
+import { adratePatrolFixtures, auditCompletion, disableCompletion, loadRecording, reportTextOf, seedOf, worldOf } from "./fixture.ts"
+
+const idsIn = (t: string) => new Set(t.match(/\b18\d{14}\b/g) ?? [])
 
 const MODEL = { provider: "scripted", id: "scripted" }
 const suite = adratePatrolFixtures()
@@ -204,6 +214,52 @@ describe("adrate-patrol-disable：完整任务", () => {
     expect(JSON.parse(seen.cmd ?? "{}").data.command.status).toBe("succeeded")
     expect(seen.wait).toBe("waited 40s: 限流")
   })
+
+  it("世界写后可见：同一会话里停投成功后 get / list 显示 DISABLE，commands_get 能按新键查回；别的会话不受影响", async () => {
+    n = 0
+    const target = CANDIDATES[0] ?? ""
+    const seen: Record<string, string> = {}
+    const writer: Script = (input) => {
+      if (isProbe(input)) return { drafts: [say("x")] }
+      const names = calledNames(input)
+      if (names.length === 0) return { drafts: [callTool("w", "ads_campaigns_status", { advId: ADV, campaignId: target, desiredStatus: "DISABLE" })] }
+      if (names.length === 1)
+        return {
+          drafts: [
+            callTool("g", "ads_campaigns_get", { advId: ADV, campaignId: target }),
+            callTool("l", "ads_campaigns_list", { advId: ADV, page: 1, pageSize: 100 }),
+            callTool("c", "commands_get", { idempotencyKey: "reins-w" }),
+          ],
+        }
+      for (const e of input.events) {
+        if (e.type !== "core.tool_result") continue
+        const r = e as CoreEventOf<"core.tool_result">
+        seen[r.payload.toolCallId] = r.payload.content.map((c) => (c.type === "text" ? c.text : "")).join("")
+      }
+      return { drafts: [say("done")] }
+    }
+    await runEval({
+      fixtures: [{ ...fx("adrate-patrol-disable"), facts: [] }],
+      arms: [noneArm()],
+      lowering: new ScriptedLowering(writer),
+      model: MODEL,
+    })
+    expect(JSON.parse(seen.w ?? "{}").data.command.beforeStatus).toBe("ENABLE")
+    expect(JSON.parse(seen.g ?? "{}").data.campaign.operationStatus).toBe("DISABLE")
+    const listed = JSON.parse(seen.l ?? "{}").data.campaigns.find((c: { campaignId: string }) => c.campaignId === target)
+    expect(listed.operationStatus).toBe("DISABLE")
+    expect(JSON.parse(seen.c ?? "{}").data.command.idempotencyKey).toBe("reins-w")
+    // 另一格（新会话）看到的仍是原始状态
+    const seen2: Record<string, string> = {}
+    const reader: Script = (input) => {
+      if (isProbe(input)) return { drafts: [say("x")] }
+      if (calledNames(input).length === 0) return { drafts: [callTool("g2", "ads_campaigns_get", { advId: ADV, campaignId: target })] }
+      for (const e of input.events) if (e.type === "core.tool_result") seen2.g2 = JSON.stringify((e as CoreEventOf<"core.tool_result">).payload.content)
+      return { drafts: [say("done")] }
+    }
+    await runEval({ fixtures: [{ ...fx("adrate-patrol-disable"), facts: [] }], arms: [noneArm()], lowering: new ScriptedLowering(reader), model: MODEL })
+    expect(seen2.g2).toContain("ENABLE")
+  })
 })
 
 describe("adrate-patrol-audit：只读", () => {
@@ -275,6 +331,40 @@ describe("adrate-patrol-resume：带种子接续", () => {
     expect(o.metrics.toolCalls).toBe(14)
     expect(o.metrics.toolErrors).toBe(0)
     expect(o.metrics.recall).toBe(1)
+  })
+})
+
+describe("reportTextOf：汇报正文的取法", () => {
+  it("汇总表之后再调脑子工具留痕并补一句短话，完成度仍按汇总表算；宿主工具结果之前的正文不算", () => {
+    const hostTools = new Set(suite.tools.all.map((t) => t.name))
+    const registry = createCoreRegistry()
+    let s = 0
+    const mk = <T extends CoreEventType>(type: T, actor: Event["actor"], payload: CoreEventPayloads[T]): Event =>
+      createCoreEvent(registry, { type, actor, payload, sessionId: "x", seq: ++s, at: s, id: `r${s}` })
+    const fresh: Event[] = [
+      mk("core.model_text", "model", { text: `中途提到 ${CANDIDATES[0]}` }),
+      mk("core.tool_call", "model", { toolCallId: "g", name: "ads_campaigns_get", args: {} }),
+      mk("core.tool_result", "tool", { toolCallId: "g", name: "ads_campaigns_get", content: [{ type: "text", text: "{}" }], isError: false }),
+      mk("core.model_text", "model", { text: table(CANDIDATES) }),
+      mk("core.tool_call", "model", { toolCallId: "m", name: "memory", args: {} }),
+      mk("core.tool_result", "tool", { toolCallId: "m", name: "memory", content: [{ type: "text", text: "saved" }], isError: false }),
+      mk("core.model_text", "model", { text: "已写入记忆，上方表格即为结果。" }),
+    ]
+    expect(idsIn(reportTextOf(fresh, hostTools)).size).toBe(14)
+    expect(reportTextOf(fresh, hostTools)).not.toContain("中途提到")
+    const draft = {
+      fixtureId: "adrate-patrol-audit",
+      arm: "t",
+      repeat: 1,
+      sessionIds: ["x"],
+      timelines: [fresh],
+      timeline: fresh,
+      fresh,
+      result: { status: "done" as const, sessionId: "x", lastSeq: s },
+      finalText: "已写入记忆，上方表格即为结果。",
+    }
+    expect(auditCompletion(world, hostTools)(draft)).toBe(1)
+    expect(disableCompletion(world, hostTools)(draft)).toBeCloseTo(0.4, 5)
   })
 })
 

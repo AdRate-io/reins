@@ -86,6 +86,8 @@ function foreignOrigin(a: ModelOrigin, target: ModelOrigin): boolean {
   return a.provider !== target.provider || a.api !== target.api
 }
 
+const DEFERRED_NOTE = "已后移到同批工具结果之后（工具结果必须紧跟调用）"
+
 export interface ToContextInput {
   events: readonly Event[]
   tools?: readonly ToolSpec[]
@@ -102,6 +104,47 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
   const landings: LandingRecord[] = []
 
   let group: { origin: ModelOrigin; content: AssistantMessage["content"]; at: number } | null = null
+  /**
+   * 已下发 tool_call、结果还没到的调用 id。Anthropic 要求同一批 tool_result 紧跟在 tool_use 所在的 assistant 之后、
+   * 连成一条 user，中间不能插别的消息；而日志里 pin / memory 留痕的说明、感知说明都可能落在两条 tool_result 之间
+   * （并行工具时 ctx.emit 的草稿排在各自结果之前）。所以结果没到齐时，说明与摘要先攒着，到齐后再放出（落点备注说明后移）。
+   */
+  const awaiting = new Set<string>()
+  const deferred: {
+    msg: Message
+    event: Event
+    kind: LandingRecord["kind"]
+    landing: string
+    note?: string
+  }[] = []
+  const land = (e: Event, kind: LandingRecord["kind"], landing: string, note?: string) => {
+    landings.push(
+      note
+        ? { eventId: e.id, type: e.type, kind, landing, note }
+        : { eventId: e.id, type: e.type, kind, landing },
+    )
+  }
+  const releaseDeferred = () => {
+    for (const d of deferred) {
+      messages.push(d.msg)
+      land(d.event, d.kind, d.landing, d.note ? `${d.note}；${DEFERRED_NOTE}` : DEFERRED_NOTE)
+    }
+    deferred.length = 0
+  }
+  /** 说明 / 摘要类消息：工具结果还没到齐就先攒着 */
+  const note = (e: Event, msg: Message, kind: LandingRecord["kind"], landing: string, why?: string) => {
+    if (awaiting.size > 0) {
+      deferred.push({ msg, event: e, kind, landing, ...(why !== undefined ? { note: why } : {}) })
+      return
+    }
+    messages.push(msg)
+    land(e, kind, landing, why)
+  }
+  /** 新的模型输出或用户消息到来：这批调用的结果不会再来了（被拒 / 暂停未续），后移的说明放出 */
+  const settleAwaiting = () => {
+    awaiting.clear()
+    releaseDeferred()
+  }
   const flush = () => {
     if (!group) return
     const hasTool = group.content.some((c) => c.type === "toolCall")
@@ -115,19 +158,16 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       stopReason: hasTool ? "toolUse" : "stop",
       timestamp: group.at,
     })
+    for (const c of group.content) if (c.type === "toolCall") awaiting.add(c.id)
     group = null
   }
   const assistant = (e: Event, origin: ModelOrigin) => {
     if (group && !sameOrigin(group.origin, origin)) flush()
-    if (!group) group = { origin, content: [], at: e.at }
+    if (!group) {
+      settleAwaiting()
+      group = { origin, content: [], at: e.at }
+    }
     return group
-  }
-  const land = (e: Event, kind: LandingRecord["kind"], landing: string, note?: string) => {
-    landings.push(
-      note
-        ? { eventId: e.id, type: e.type, kind, landing, note }
-        : { eventId: e.id, type: e.type, kind, landing },
-    )
   }
 
   for (const raw of input.events) {
@@ -135,6 +175,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
     switch (e.type) {
       case "core.user_message":
         flush()
+        settleAwaiting()
         messages.push({ role: "user", content: toPiContent(e.payload.content), timestamp: e.at })
         land(e, "exact", "user")
         break
@@ -205,31 +246,43 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
           timestamp: e.at,
         })
         land(e, "exact", isAnthropic ? "tool_result" : "function_call_output")
+        awaiting.delete(e.payload.toolCallId)
+        if (awaiting.size === 0) releaseDeferred()
         break
 
       case "core.system_note":
         flush()
         if (capabilities.midConversationSystem) {
-          messages.push({ role: "user", content: markSystemNote(e.payload.text), timestamp: e.at })
-          land(e, "exact", isAnthropic ? "system" : model.reasoning ? "developer" : "system")
+          note(
+            e,
+            { role: "user", content: markSystemNote(e.payload.text), timestamp: e.at },
+            "exact",
+            isAnthropic ? "system" : model.reasoning ? "developer" : "system",
+          )
         } else {
-          messages.push({
-            role: "user",
-            content: framedSystemNote(e.payload.kind, e.payload.text),
-            timestamp: e.at,
-          })
-          land(e, "lossy", "user-role", "模型不支持中途 system，以 <system_note> 标签包住走 user 角色")
+          note(
+            e,
+            { role: "user", content: framedSystemNote(e.payload.kind, e.payload.text), timestamp: e.at },
+            "lossy",
+            "user-role",
+            "模型不支持中途 system，以 <system_note> 标签包住走 user 角色",
+          )
         }
         break
 
       case "core.compaction":
         flush()
-        messages.push({
-          role: "user",
-          content: `[Summary of earlier conversation]\n${e.payload.summary}`,
-          timestamp: e.at,
-        })
-        land(e, "lossy", "user-text", "摘要以 user 角色文本呈现")
+        note(
+          e,
+          {
+            role: "user",
+            content: `[Summary of earlier conversation]\n${e.payload.summary}`,
+            timestamp: e.at,
+          },
+          "lossy",
+          "user-text",
+          "摘要以 user 角色文本呈现",
+        )
         break
 
       case "core.approval_request":
@@ -248,6 +301,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
     }
   }
   flush()
+  settleAwaiting()
 
   const context: Context = { messages }
   if (input.systemPrompt) context.systemPrompt = input.systemPrompt

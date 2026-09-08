@@ -7,11 +7,21 @@
  */
 import type { PerceptionReading } from "./reading.js"
 
+/**
+ * 说清"折叠"到底拿走了什么。E3 实测（DeepSeek v4 flash）：只写"compactions so far: 1"时，模型会把仍在视野里的早期工具结果
+ * 当成"已被折叠"，被问到时拒答"不编造"—— 其实那条结果就在上文。这句话只随整理次数变，不引入每轮变化的数字，不扰动缓存。
+ */
+function foldedNote(compactions: number): string {
+  return compactions === 0
+    ? "(nothing has been folded; everything above is verbatim)"
+    : "(only the ranges those summaries replaced are gone; every tool result still shown above is verbatim)"
+}
+
 export function renderPerception(r: PerceptionReading): string {
   const lines = [
     "Runtime context status (from the harness, not from the user):",
     `- Context window used: ${r.contextUsage.label} (the harness auto-folds the oldest turns at ${r.autoFoldAt})`,
-    `- Unfolded history: ${r.unfoldedTurns.label} turns; compactions so far: ${r.compactions}`,
+    `- Unfolded history: ${r.unfoldedTurns.label} turns; compactions so far: ${r.compactions} ${foldedNote(r.compactions)}`,
     `- Session tokens used: ${r.sessionTokens.label}`,
   ]
   if (r.budgetRemaining) {

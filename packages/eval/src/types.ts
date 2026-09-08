@@ -166,8 +166,10 @@ export interface EvalMetrics {
 export interface FactResult {
   id: string
   question: string
-  /** 模型在分叉会话里的回答（正文拼接） */
+  /** 模型在分叉会话里的回答（正文拼接；没有正文时退回最后一段 thinking） */
   answer: string
+  /** 回答取自哪里：text 正文、thinking（正文为空）、none（什么都没输出） */
+  answerFrom: "text" | "thinking" | "none"
   /** 0~1 */
   score: number
   /** 判定来源 */

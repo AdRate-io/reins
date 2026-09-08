@@ -82,7 +82,7 @@ function config(
     tools: [echoTool()],
     systemPrompt: "你是回声",
     input: "试试",
-    // 缺省 8000 token 上限太大，测试用小上限：预览首尾 3 行、每侧 80 字符
+    // 缺省 16000 token 上限太大，测试用小上限：预览首尾 3 行、每侧 80 字符
     sockets: [spill({ maxResultTokens: 200, previewLines: 3, previewChars: 80 })],
     ...deterministic(),
     ...extra,
