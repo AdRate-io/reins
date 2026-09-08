@@ -41,5 +41,5 @@ keep: ["Total weight of items 1, 2, and 3: 222 g"]
 2. **整理后的请求形状真实 API 接受**：模型自决与阈值兜底两种摘要都是首条 user 文本，其后是完整的 assistant（thinking + tool_use）轮，无 400。
 3. **最近一条用户消息必须由库保住**（已改缺省）：模型无法复述它还没开始处理的指令。这条进了 `pinsKept`，随 pin 一起重注入在摘要之后。
 4. **感知的"上下文使用率"偏低**：pressured 3k 时真实 input 已 4.4k（含系统提示、工具表、thinking），估算只按视图正文粗算，报 50%–70%。感知应改用上一次请求的真实用量（`budget_usage.tokens` 的 input + cacheRead + cacheWrite）校准——记入 TASKS 待做（B8 预算模块一并处理）。
-5. **网关的一个未解现象**：感知说明殿后（请求以 `system(text)` 收尾）时，模型 thinking 里两次出现"用户只发了一个句号"，我们发出的请求里没有这条消息，疑是网关在 system 收尾时补占位 user 消息。单独探测一次没有复现出句号但模型说自己"之前回了 OK"，同样是我们没发过的内容。直连官方 API 前无法定论，记入 §17 待核实；不影响 B2 结论。
+5. **"用户只发了一个句号"是网关所为**（Boss 提议用 DeepSeek 直连对照后确认，见 `spikes/aireiter-gateway-check/`）：aireiter 的 Claude 端点会改写请求，末尾的中途 system 被换成 Assistant "OK" + Human "."，说明内容丢失；本次实测里 perception 的说明模型在注入当轮都没看到。compact 的规则提示走顶层 system、用户指令走 user 正文，都可达，B2 结论不受影响。
 6. 模型是否"该整理时就整理"是 eval 问题（M2 E3），短任务里它一次都没自发整理是对的；长任务的时机质量要等 fixture。
