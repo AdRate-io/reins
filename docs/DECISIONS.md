@@ -58,9 +58,11 @@
 | 2026-09-08 | **B11** dogfood 的模型来源改为 DeepSeek 直连（`REINS_PROVIDER=deepseek`），aireiter 网关只留给单轮探测 | 网关对带工具结果的多轮请求两次掐断（第一次 15 s 后 Connection error，第二次返回了用量却在正文前 terminated），而 20k / 60k 字符的单轮大请求都能过；DeepSeek 小请求 3 s、大请求 5 s 稳定且接受中途 system、缓存命中 85% | 中（网关修好可切回） |
 | 2026-09-08 | **B11 附** tsup 配置 `removeNodeProtocol: false`（store-sqlite），并把"跑一次 dist 产物"列入每个含 `node:*` 子路径包的验收 | tsup 8 缺省剥掉 `node:` 前缀，`node:sqlite` 不在 esbuild 内置清单里就成了裸的 `sqlite` 包名，只在真跑 dist 时才暴露；vitest 与 tsc 走源码路径全绿掩盖了它 | 高 |
 | 2026-09-08 | **B11 附** lowering-pi 工厂 `BoundModelOptions.midConversationSystem?` 透传到 ModelDefinition；示例对 DeepSeek 置 true | B1 附加的字段只有直接构造 PiAiLowering 才能用，走 `anthropic()` 工厂的第三方上游被迫 lossy；透传后 dogfood 后半程全部 exact | 高 |
+| 2026-09-09 | **Boss 决定**：取消 PRD §7 门槛 1 的"两周 dogfood 观察期"，改为"跑通真实长任务并进入生产接入"；机制已在测试环境验证，直接推进 M2 | 流程与工具都跑通说明机制成立，两周日历观察不再提供新信息；生产接入本身就是持续 dogfood | 高（Boss 决策） |
+| 2026-09-09 | **B11 附** AdRate 契约漂移复核：ads 状态命令属实（服务端 registry 声明 `--status`，CLI 只认 `--set`，守门测试把错误值当预期冻结了），已修复发布测试与生产，两端统一小写；GMV Max 不属漂移（inputSchema 枚举大写是 HTTP 线上格式，CLI 内部小写→大写映射且有三方对齐测试）。示例 `CLI_OVERRIDES` 删掉 flag 改名、只保留两处"HTTP 大写枚举 → CLI 小写"的层间映射 | 工具站在 CLI 层，模型按 schema 给大写值是合理的，映射属于适配层职责而非漂移；重新 sync 即验证服务端修复 | 高 |
 
 ## 待 Boss 本人操作
 
 - [ ] M2 发布前：在 GitHub 创建组织 `reins` 并授权推送（或授权我用现有账号创建并转移）
 - [ ] M2 发布前：在 npm 创建组织 `reins`
-- [x] M1 B11：从投放工具里选一条真实长任务流程作为 dogfood —— 2026-09-08 Boss 定 CLI 接入 + 测试广告主 7000000000000000001；第一条"巡检降本"已跑通。**待 Boss 转达 AdRate 团队**：服务端 schema `ads.campaign.status.write` 的 cliFlags（`--status ENABLE|DISABLE`）与 CLI 0.1.0 实际（`--set enable|disable`）不一致；gmvmax 状态命令枚举大小写同样不一致
+- [x] M1 B11：从投放工具里选一条真实长任务流程作为 dogfood —— 2026-09-08 Boss 定 CLI 接入 + 测试广告主 7000000000000000001；第一条"巡检降本"已跑通。AdRate 侧 `--status`/`--set` 漂移 09-09 已修复发布（gmvmax 经复核不属漂移）

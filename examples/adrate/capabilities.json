@@ -857,10 +857,10 @@
               "description": "TikTok campaign ID"
             },
             {
-              "name": "--status",
+              "name": "--set",
               "inputPath": "desiredStatus",
               "required": true,
-              "description": "ENABLE or DISABLE"
+              "description": "enable or disable"
             },
             {
               "name": "--auth-id",
@@ -877,7 +877,7 @@
           ],
           "examples": [
             {
-              "command": "adrate ads campaigns status --adv-id 70001 --campaign-id 80001 --status DISABLE --idempotency-key campaign-80001-disable --json",
+              "command": "adrate ads campaigns status --adv-id 70001 --campaign-id 80001 --set disable --idempotency-key campaign-80001-disable --json",
               "advId": "70001",
               "campaignId": "80001",
               "desiredStatus": "DISABLE",

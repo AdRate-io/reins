@@ -126,13 +126,13 @@ export async function adrate(argv: string[], opts: { timeoutMs?: number; signal?
 }
 
 /**
- * 服务端 schema 与 CLI 0.1.0 实际参数对不上的地方（dogfood 2026-09-08 发现，已反馈 AdRate）：
- * - `ads campaigns status`：schema 说 `--status ENABLE|DISABLE`，CLI 只认 `--set enable|disable`
- * - `gmvmax campaigns status`：flag 是 `--set`，但枚举给的是大写，CLI 帮助与示例用小写
- * 这里按 CLI 实际行为改写；服务端修正后删掉对应条目即可。
+ * 两层契约的接缝：inputSchema 的枚举是 HTTP 线上格式（`ENABLE` / `DISABLE`），而 CLI 的 `--set` 只认小写
+ * `enable` / `disable`（CLI 内部再映射成大写发 HTTP）。本工具站在 CLI 这一层，所以把模型按 schema 给的大写值转小写。
+ * （2026-09-08 dogfood 还发现 ads 状态命令服务端把 flag 写成了 `--status`，属真实漂移，AdRate 已于 09-09 修复发布，
+ * 重新 sync 后 flag 已是 `--set`，这里不再需要改 flag 名。）
  */
 const CLI_OVERRIDES: Record<string, { flag?: Record<string, string>; lowercase?: string[] }> = {
-  "ads.campaigns.status": { flag: { desiredStatus: "--set" }, lowercase: ["desiredStatus"] },
+  "ads.campaigns.status": { lowercase: ["desiredStatus"] },
   "gmvmax.campaigns.status": { lowercase: ["status"] },
 }
 

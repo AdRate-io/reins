@@ -34,8 +34,12 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
 | 结束时上下文 | 约 100k / 200k，未触发折叠 |
 | 结果 | 14 条全部 DISABLE，Command 全部 isFinal=true / succeeded；CLI 独立复核 102 条全为 DISABLE |
 
+Boss 2026-09-09 决定：机制验证通过，不做两周观察期，直接进入 M2 与生产接入。
+
 看到的模型行为：分页读完 102 条、用 fetch_blob 分段取回外溢全文、并行发只读调用、写调用一批只发 10 个并主动 wait 40 s 等限流窗口、
 失败后按 Skill 契约对账（commands_pending / commands_get 按原键）再汇报、幂等键原样透传给服务端。
 
 发现并反馈 AdRate 的问题：服务端 `schema ads.campaign.status.write` 里 cliFlags 说 `--status ENABLE|DISABLE`，CLI 0.1.0 实际只认
-`--set enable|disable`（gmvmax 状态命令的枚举大小写同样不一致）。适配层暂以 `CLI_OVERRIDES` 兜住。
+`--set enable|disable`。**2026-09-09 AdRate 已修复并发布测试与生产**，`node sync.ts` 重新同步后 flag 已是 `--set`。
+GMV Max 经复核不是漂移：inputSchema 的大写枚举是 HTTP 线上格式，CLI 小写是命令行格式，CLI 内部做映射；所以 `CLI_OVERRIDES` 只保留
+两处"HTTP 大写枚举 → CLI 小写"的层间映射。写路径冒烟：`node examples/adrate/smoke-write.ts`（对测试广告主的一条已停投计划再发一次 DISABLE）。
