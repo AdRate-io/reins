@@ -175,6 +175,23 @@ export interface TurnContext {
 }
 
 /**
+ * 静态贡献的运行环境（B6）：run 起步时给每个 Socket 看一次，让它按"有哪些存储、给谁跑"决定带不带工具与规则。
+ * 只暴露跨请求不变或整个 run 不变的东西；每轮变化的信息（视图、预算）走 TurnContext。
+ */
+export interface SocketSetup {
+  log: EventLog
+  blobs?: BlobStore
+  memory?: MemoryStore
+  model: ModelRef
+  principal?: Principal
+  /** 宿主自己的工具（尚未并入任何 Socket 的贡献） */
+  hostTools: readonly Tool[]
+}
+
+/** 静态贡献：常量，或按运行环境算一次的函数（返回 undefined 表示这次不贡献） */
+export type StaticContribution<T> = T | ((setup: SocketSetup) => T | undefined)
+
+/**
  * 脑子与底盘之间唯一的契约。多个 Socket 按注册顺序执行。
  * 钩子可以不返回（无意见），返回值的合并规则见 runLoop 各处注释。
  *
@@ -187,10 +204,13 @@ export interface TurnContext {
 export interface Socket {
   /** 便于日志与排错 */
   name?: string
-  /** 模块带给模型的工具，整个 run 不变；与 LoopConfig.tools 同名时以后者为准 */
-  tools?: readonly Tool[]
-  /** 模块的规则提示片段，追加在宿主系统提示之后（空行分隔），整个 run 不变 */
-  systemPrompt?: string
+  /**
+   * 模块带给模型的工具，整个 run 不变；与 LoopConfig.tools 同名时以后者为准。
+   * 可以是函数：run 起步时按运行环境算一次（如 memory 模块在没有 MemoryStore 时不注册工具，§5"缺则不注册"）。
+   */
+  tools?: StaticContribution<readonly Tool[]>
+  /** 模块的规则提示片段，追加在宿主系统提示之后（空行分隔），整个 run 不变；同样可以是按环境算一次的函数 */
+  systemPrompt?: StaticContribution<string>
   beforeModel?(ctx: TurnContext): MaybePromise<BeforeModelPatch | undefined>
   afterModel?(ctx: TurnContext, events: Event[]): MaybePromise<void>
   /** 任一 block / defer 即中止该调用；rewrite 替换入参后继续问下一个 Socket */

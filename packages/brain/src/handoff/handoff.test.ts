@@ -7,6 +7,7 @@ import {
   type LoopConfig,
   type RunResult,
   runLoop,
+  type Tool,
 } from "@reins/core"
 import { callTool, ScriptedLowering, say, think } from "@reins/core/testing"
 import { describe, expect, it } from "vitest"
@@ -325,7 +326,7 @@ describe("handoff × runLoop", () => {
     expect(handoff().systemPrompt).toBe(HANDOFF_RULES)
     expect(handoff({ rules: false }).systemPrompt).toBeUndefined()
     expect(handoff({ rules: "自定义" }).systemPrompt).toBe("自定义")
-    expect(handoff().tools?.map((t) => t.name)).toEqual(["handoff"])
+    expect((handoff().tools as readonly Tool[]).map((t) => t.name)).toEqual(["handoff"])
   })
 })
 

@@ -18,6 +18,7 @@ import {
   RunStateError,
   readEvents,
   readTimeline,
+  resolveSocketContributions,
   runLoop,
   uuidv7,
   validateResume,
@@ -277,11 +278,8 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
             state: body.resume,
             sessionId,
             timeline,
-            configHash: await computeConfigHash({
-              model: agent.model,
-              tools: agent.tools ?? [],
-              ...(agent.systemPrompt !== undefined ? { systemPrompt: agent.systemPrompt } : {}),
-            }),
+            // 与 runLoop 起步同一份算法：并入各 Socket 的静态贡献（否则装了 compact / memory 等模块就会误判配置漂移）
+            configHash: await computeConfigHash({ model: agent.model, ...resolveSocketContributions(agent) }),
             ...(agent.secret !== undefined ? { secret: agent.secret } : {}),
             ...(agent.allowConfigDrift !== undefined ? { allowConfigDrift: agent.allowConfigDrift } : {}),
           })

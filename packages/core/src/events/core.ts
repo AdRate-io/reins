@@ -107,11 +107,17 @@ export interface HandoffPayload {
   reason: string
 }
 
-/** 模型读写记忆留痕。op 与 Anthropic memory_20250818 工具的 command 同名。 */
+/**
+ * 模型读写记忆留痕。op 与 Anthropic memory_20250818 工具的 command 同名。
+ * 只在操作成功时记录（失败的尝试已由 tool_call 入参 + tool_result(isError) 留痕）。
+ */
 export interface MemoryOpPayload {
   op: "view" | "create" | "str_replace" | "insert" | "delete" | "rename"
+  /** 模型可见形态的路径（/memories/...），rename 时是源路径 */
   path: string
-  /** 写类操作涉及的字节数，便于配额统计 */
+  /** rename 的目标路径（B6 新增可选字段，不升版本） */
+  toPath?: string
+  /** 涉及的 UTF-8 字节数：view 是读到的、写类是写后的大小、delete / rename 是涉及的文件总量；目录列表不记 */
   bytes?: number
 }
 

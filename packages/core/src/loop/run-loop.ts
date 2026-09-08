@@ -37,6 +37,7 @@ import {
   serializeRunState,
   validateResume,
 } from "./state.js"
+import { resolveSocketContributions } from "./static.js"
 import { errorMessageOf, normalizeToolOutput, toolSpecOf } from "./tools.js"
 import type {
   BeforeToolDecision,
@@ -45,7 +46,6 @@ import type {
   PauseReason,
   RunResult,
   Socket,
-  Tool,
   ToolCallEvent,
   ToolContext,
   ToolResultDraft,
@@ -72,9 +72,9 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   const now = cfg.now ?? (() => Date.now())
   const newId = cfg.newId ?? uuidv7
   const sockets = cfg.sockets ?? []
-  // Socket 的静态贡献在这里并入：工具表与系统提示整个 run 不变（prompt cache），续跑补齐 pending 时也在场
-  const baseTools: readonly Tool[] = mergeTools(cfg.tools ?? [], sockets)
-  const baseSystemPrompt = mergeSystemPrompt(cfg.systemPrompt, sockets)
+  // Socket 的静态贡献在这里并入：工具表与系统提示整个 run 不变（prompt cache），续跑补齐 pending 时也在场。
+  // 算法在 static.ts，server 的恢复预校验用同一份，configHash 才对得上
+  const { tools: baseTools, systemPrompt: baseSystemPrompt } = resolveSocketContributions(cfg)
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS
   const capabilities = lowering.capabilities(model)
   const configHash = await computeConfigHash({
@@ -426,28 +426,6 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     await cfg.onHandoff?.(sessionId, toSessionId)
     return { status: "handoff", sessionId, lastSeq, toSessionId }
   }
-}
-
-/** 宿主工具 + 各 Socket 的静态工具；同名以宿主为准（宿主想覆盖模块的默认实现时用） */
-function mergeTools(host: readonly Tool[], sockets: readonly Socket[]): readonly Tool[] {
-  const out = [...host]
-  const names = new Set(host.map((t) => t.name))
-  for (const s of sockets) {
-    for (const t of s.tools ?? []) {
-      if (names.has(t.name)) continue
-      names.add(t.name)
-      out.push(t)
-    }
-  }
-  return out
-}
-
-/** 宿主系统提示在前，各 Socket 的规则片段按注册顺序追加，空行分隔；都没有则 undefined */
-function mergeSystemPrompt(host: string | undefined, sockets: readonly Socket[]): string | undefined {
-  const parts = [host, ...sockets.map((s) => s.systemPrompt)].filter(
-    (p): p is string => typeof p === "string" && p.trim().length > 0,
-  )
-  return parts.length > 0 ? parts.join("\n\n") : undefined
 }
 
 function pauseReasonOf(interruptions: readonly Interruption[]): PauseReason {

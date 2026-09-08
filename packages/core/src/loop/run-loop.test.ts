@@ -4,9 +4,10 @@ import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { createCoreRegistry } from "../events/registry.js"
 import { project } from "../projection/project.js"
-import { InMemoryEventLog } from "../store/in-memory.js"
+import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
 import { BUILTIN_APPROVAL_POLICY, runLoop } from "./run-loop.js"
+import { resolveSocketContributions } from "./static.js"
 import { defineTool } from "./tools.js"
 import type { LoopConfig, RunResult, Socket, Tool } from "./types.js"
 
@@ -353,6 +354,50 @@ describe("runLoop：Socket 五个钩子", () => {
     const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
     expect(res.payload.isError).toBe(false)
     expect(res.payload.content).toEqual([{ type: "text", text: "补齐了" }])
+  })
+
+  it("Socket 静态贡献可以是按运行环境算一次的函数：按有没有某个存储决定带不带工具与规则（B6）", async () => {
+    const brainTool: Tool = { name: "remember", description: "", inputSchema: {}, execute: () => "ok" }
+    let calls = 0
+    const socket: Socket = {
+      name: "m",
+      tools: (setup) => {
+        calls++
+        return setup.memory ? [brainTool] : undefined
+      },
+      systemPrompt: (setup) => (setup.memory ? "记忆规则" : undefined),
+    }
+    // 没有 MemoryStore：什么都不贡献，函数整个 run 只被问一次
+    const l1 = new ScriptedLowering([{ drafts: [say("一")] }, { drafts: [say("二")] }])
+    await drain(
+      runLoop(
+        baseConfig(l1, new InMemoryEventLog(), { input: "问", systemPrompt: "宿主", sockets: [socket] }),
+      ),
+    )
+    expect(l1.requests[0]?.tools?.map((t) => t.name)).toEqual(["add"])
+    expect(l1.requests[0]?.systemPrompt).toBe("宿主")
+    expect(calls).toBe(1)
+    // 有 MemoryStore：工具与规则都在
+    const l2 = new ScriptedLowering([{ drafts: [say("一")] }])
+    await drain(
+      runLoop(
+        baseConfig(l2, new InMemoryEventLog(), {
+          input: "问",
+          systemPrompt: "宿主",
+          memory: new InMemoryMemoryStore(),
+          sockets: [socket],
+        }),
+      ),
+    )
+    expect(l2.requests[0]?.tools?.map((t) => t.name)).toEqual(["add", "remember"])
+    expect(l2.requests[0]?.systemPrompt).toBe("宿主\n\n记忆规则")
+    // 解析函数单独可用（server 预校验靠它与循环算出同一个 configHash）
+    const resolved = resolveSocketContributions({
+      log: new InMemoryEventLog(),
+      model: MODEL,
+      sockets: [socket],
+    })
+    expect(resolved).toEqual({ tools: [] })
   })
 
   it("beforeTool block：结果为 isError 并说明原因，模型下一轮看得到", async () => {

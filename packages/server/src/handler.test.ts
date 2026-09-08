@@ -308,6 +308,30 @@ describe("审批暂停与跨请求恢复", () => {
     return { frames, result }
   }
 
+  it("装了带静态贡献的 Socket（工具 + 规则）时，恢复预校验与循环算出同一个 configHash：批准后续跑到 done 而不是 409", async () => {
+    const brainTool: Tool = {
+      name: "brain_tool",
+      description: "模块工具",
+      inputSchema: {},
+      execute: () => "ok",
+    }
+    const sockets = [{ name: "m", tools: [brainTool], systemPrompt: "模块规则" }]
+    const { handler } = setup(SCRIPT, [deployTool], { secret: "k", sockets, systemPrompt: "宿主提示" })
+    const { result } = await pauseFirst(handler)
+    const res = await handler(
+      postRequest({
+        sessionId: "s1",
+        lastSeq: result.lastSeq,
+        resume: result.state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(res.status).toBe(200)
+    const frames = parseFrames(await res.text())
+    expect(resultOf(frames)?.status).toBe("done")
+    expect(typesOf(frames)).toContain("model_text")
+  })
+
   it("需要审批的工具：result 帧是 paused，带 interruptions 与已签名的 state", async () => {
     const { handler } = setup(SCRIPT, [deployTool], { secret: "k" })
     const { frames, result } = await pauseFirst(handler)
