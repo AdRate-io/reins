@@ -3,7 +3,7 @@
  *
  * 这是一个导出的普通异步生成器，没有私有状态，用户可以整个复制去改（P3）。它每一轮做的事：
  *
- *   timeline  = log.read(session)                       ← 时间线是唯一真源（宪法二）
+ *   timeline  = readTimeline(log, session, { registry }) ← 时间线是唯一真源（宪法二）；读时按注册表升级（P9）
  *   补齐日志里还没结果的 tool_call                       ← 进程死亡 / 审批恢复 / 客户端工具回填后的续跑
  *   view      = project(timeline)                        ← 过滤 → 折叠 → 钉住 → 感知 → 预算裁剪
  *   beforeModel 钩子                                     ← 脑子注入 system_note、改投影、增删工具
@@ -29,6 +29,7 @@ import { createCoreRegistry } from "../events/registry.js"
 import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../lowering/types.js"
 import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
+import { readTimeline } from "../store/read-timeline.js"
 import {
   computeConfigHash,
   pendingToolCalls,
@@ -57,12 +58,6 @@ export const DEFAULT_MAX_TURNS = 100
 /** 循环内置的审批策略标识：工具自己声明 needsApproval 且没有 Socket 做主 */
 export const BUILTIN_APPROVAL_POLICY = "tool.needsApproval"
 
-async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
-  const out: T[] = []
-  for await (const x of iter) out.push(x)
-  return out
-}
-
 function inputDraft(input: NonNullable<LoopConfig["input"]>): EventDraft {
   if (typeof input === "string")
     return { type: "core.user_message", actor: "user", payload: { content: [{ type: "text", text: input }] } }
@@ -87,7 +82,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   })
 
   const startedAt = now()
-  let lastSeq = (await log.tail(sessionId, 1))[0]?.seq ?? 0
+  // 起步先把整条日志过一遍注册表：有读不出来的事件（未登记的 ext.*、未来版本）就在写任何东西之前拒绝（P9 fail-closed）
+  let lastSeq = (await readTimeline(log, sessionId, { registry })).at(-1)?.seq ?? 0
   let turns = 0
   let tokensSpent = 0
   let toolCallsTotal = 0
@@ -110,7 +106,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   ): Promise<{ events: Event[]; result: RunResult }> => {
     const events = await append([{ type: "core.run_paused", actor: "system", payload: { reason } }])
     // pending 以日志为准（而不是本轮内存里的列表），恢复时对账的也是日志
-    const pending = pendingToolCalls(await collect(log.read(sessionId)))
+    const pending = pendingToolCalls(await readTimeline(log, sessionId, { registry }))
     const state = await serializeRunState({
       sessionId,
       lastSeq,
@@ -129,7 +125,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
 
   // ---- 恢复与审批结论：先做完全部校验（不通过就抛，一条日志都不写），再写 run_resumed 与 approval_decision ----
   if (cfg.resume !== undefined || (cfg.decisions && cfg.decisions.length > 0)) {
-    const timeline = await collect(log.read(sessionId))
+    const timeline = await readTimeline(log, sessionId, { registry })
     if (cfg.resume !== undefined) {
       await validateResume({
         state: cfg.resume,
@@ -175,7 +171,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
 
   while (true) {
     const turnStartedAt = now()
-    const timeline = await collect(log.read(sessionId))
+    const timeline = await readTimeline(log, sessionId, { registry })
 
     // 投影：模型本轮看什么。策略新造的事件（阈值 compaction）先入日志 —— 模型可见 ⟺ 已记录
     const projected = project({

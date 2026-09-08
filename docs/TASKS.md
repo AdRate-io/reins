@@ -44,7 +44,7 @@
 ### 阶段 6：M0 收口
 
 - [x] T15 回放演示：从事件日志重放一次完整会话并展示 —— 验收：Boss 能看到"发生过什么"的时间线（2026-09-08 完成：core 新增 `replayTurns(timeline, { budget })`，只凭日志重算每一轮模型看到的事件（投影是纯函数，与 ScriptedLowering 记录的实际请求逐字相同，4 用例）；`examples/minimal/record.ts` 经网关用 claude-opus-5 录下真实会话 `recordings/weather-deploy.jsonl`（17 条事件：问天气 → 思考 → 调工具 → 答 → 要上线 → 审批暂停 → 批准续跑 → 答），`replay.ts` 不需要 key 离线回放：逐行 fail-closed 读取 → 整批灌入新日志校验自洽 → 逐轮重算投影与有损落点，终端打时间线并生成零依赖静态页面 `recordings/replay.html`（每轮卡片点开高亮"模型看到 / 看不到"，点事件看完整载荷，按真实时间比例重放）。全仓 273 用例绿）
-- [ ] T16 M0 复盘：更新技术方案与 DECISIONS —— 验收：文档与代码一致
+- [x] T16 M0 复盘：更新技术方案与 DECISIONS —— 验收：文档与代码一致（2026-09-08 完成。逐节对照技术方案与代码，发现并修复一处硬约束违反：方案与 §14 都写"schema 升级只读时 upcast"，但循环、server 补发、resume 预校验读日志时都没过注册表，旧版本事件与未登记的 ext.* 会被静默透传。修法：core store 层新增 `readTimeline` / `readEvents`（逐条 `registry.read`），循环起步、每轮、暂停对账，server 补发与预校验全部改经它读；run 起步先整条过一遍，读不出来就在写任何东西之前抛 `SchemaError`。6 个新用例（v1 → v2 升级、原件不改写、ext.* 未登记拒绝 / 登记后可读、未来版本拒绝、循环端到端两条）。文档回填：§3 包表去重（ui-agui 重复行、不存在的 store-memory 包、store-postgres → store-pg 并提前到 M1）、§4 写明升级发生在哪、§7 行数 578、§8 加回放段、§12 补发经注册表、§16 M0 完成情况（Bun 未实测如实写明）、§17 勾掉 AG-UI 自定义事件约定。全仓 279 用例绿。M0 收口）
 
 ## M1 脑子 v1（目标 3 周）
 

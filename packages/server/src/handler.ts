@@ -11,11 +11,13 @@
  */
 import {
   computeConfigHash,
-  type Event,
+  createCoreRegistry,
   type EventLog,
   type Principal,
   pendingToolCalls,
   RunStateError,
+  readEvents,
+  readTimeline,
   runLoop,
   uuidv7,
   validateResume,
@@ -95,12 +97,6 @@ function lastSeqOf(request: Request, url: URL): number | string {
   return isNonNegativeInt(n) ? n : "lastSeq 必须是非负整数"
 }
 
-async function collect(iter: AsyncIterable<Event>): Promise<Event[]> {
-  const out: Event[] = []
-  for await (const e of iter) out.push(e)
-  return out
-}
-
 interface StreamPlan {
   sessionId: string
   fromSeq: number
@@ -121,6 +117,8 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
   const newSessionId = options.newSessionId ?? (() => uuidv7())
   const runs = options.runs ?? new RunRegistry()
   const { log } = agent
+  // 补发与预校验读日志都经注册表升级（P9），与循环看到的形状一致；宿主有 ext.* 事件时在 definition 里给自己的注册表
+  const registry = agent.registry ?? createCoreRegistry()
 
   /** 组装 SSE 响应。补发 + （可选）实时推，全部在 ReadableStream 内部异步进行，Response 立刻返回 */
   function openStream(plan: StreamPlan): Response {
@@ -165,7 +163,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
           emit({ kind: "start", sessionId: plan.sessionId, fromSeq, live: plan.run !== undefined })
 
           let maxSeq = fromSeq - 1
-          for await (const e of log.read(plan.sessionId, { fromSeq })) {
+          for await (const e of readEvents(log, plan.sessionId, { registry, fromSeq })) {
             if (closed) break
             emit({ kind: "event", event: e, replay: true })
             maxSeq = e.seq
@@ -273,7 +271,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     // 恢复参数先在这里校验一遍，能给出 409 而不是 200 + error 帧；循环内部还会再校验一次（fail-closed 不靠这里）
     if (body.resume !== undefined || (body.decisions !== undefined && body.decisions.length > 0)) {
       try {
-        const timeline = await collect(log.read(sessionId))
+        const timeline = await readTimeline(log, sessionId, { registry })
         if (body.resume !== undefined) {
           await validateResume({
             state: body.resume,
