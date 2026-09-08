@@ -43,7 +43,7 @@
 
 ### 阶段 6：M0 收口
 
-- [ ] T15 回放演示：从事件日志重放一次完整会话并展示 —— 验收：Boss 能看到"发生过什么"的时间线
+- [x] T15 回放演示：从事件日志重放一次完整会话并展示 —— 验收：Boss 能看到"发生过什么"的时间线（2026-09-08 完成：core 新增 `replayTurns(timeline, { budget })`，只凭日志重算每一轮模型看到的事件（投影是纯函数，与 ScriptedLowering 记录的实际请求逐字相同，4 用例）；`examples/minimal/record.ts` 经网关用 claude-opus-5 录下真实会话 `recordings/weather-deploy.jsonl`（17 条事件：问天气 → 思考 → 调工具 → 答 → 要上线 → 审批暂停 → 批准续跑 → 答），`replay.ts` 不需要 key 离线回放：逐行 fail-closed 读取 → 整批灌入新日志校验自洽 → 逐轮重算投影与有损落点，终端打时间线并生成零依赖静态页面 `recordings/replay.html`（每轮卡片点开高亮"模型看到 / 看不到"，点事件看完整载荷，按真实时间比例重放）。全仓 273 用例绿）
 - [ ] T16 M0 复盘：更新技术方案与 DECISIONS —— 验收：文档与代码一致
 
 ## M1 脑子 v1（目标 3 周）

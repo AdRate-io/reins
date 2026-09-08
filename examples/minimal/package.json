@@ -5,7 +5,9 @@
   "type": "module",
   "description": "reins 五分钟体验：PRD §5.1 那段代码原样可跑",
   "scripts": {
-    "start": "node server.ts"
+    "start": "node server.ts",
+    "record": "node record.ts",
+    "replay": "node replay.ts"
   },
   "dependencies": {
     "@reins/lowering-pi": "workspace:*",

@@ -79,7 +79,7 @@ const agent = createAgent({
 export const POST = agent.handler      // Web 标准 (Request) => Response，缺省 AG-UI 事件流
 ```
 
-可跑的完整版在 `examples/minimal/`（T14）：`pnpm build && ANTHROPIC_API_KEY=… node examples/minimal/server.ts`，浏览器打开即可对话、看审批、看时间线重放。
+可跑的完整版在 `examples/minimal/`（T14）：`pnpm build && ANTHROPIC_API_KEY=… node examples/minimal/server.ts`，浏览器打开即可对话、看审批、看断线重连补发。回放（T15）：`record.ts` 录一段真实会话成 JSONL，`replay.ts` 不需要 key 就能重现每一轮模型看到了什么、有损落点与真实用量，并生成静态页面。
 
 得到的不只是一个会调工具的 chat：它会在上下文变满前自己整理并说明整理了什么；关键约束不会在整理中丢失；超大的工具结果不会撑爆上下文；任务太长它会主动交接到新会话并带上总结；它会记住该记的；每一步都在时间线里，可回放、可分叉。
 

@@ -24,11 +24,17 @@ ANTHROPIC_API_KEY=… node examples/minimal/server.ts   # then open http://local
 
 `examples/minimal/agent.ts` is the whole five-minute experience: one model, two tools (one needs approval), an in-memory store, and a Web-standard handler you can drop into any route.
 
+Replay a recorded session without a key — the timeline is the only source of truth, so a JSONL of events is enough to rebuild what happened and what the model saw on every turn:
+
+```bash
+node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl --html /tmp/replay.html
+```
+
 ## Packages
 
 | package | what |
 | --- | --- |
-| `@reins/core` | event timeline, store interfaces, projection, loop, run state, socket |
+| `@reins/core` | event timeline, store interfaces, projection, loop, run state, socket, replay |
 | `@reins/brain` | perception, compact, pins, spill, handoff, memory, approval, budget |
 | `@reins/lowering-pi` | provider lowering on top of pi-ai |
 | `@reins/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |

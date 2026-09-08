@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>reins · 时间线回放</title>
+<style>
+  :root { --bg: #f6f5f1; --ink: #1c1b18; --mute: #7a766c; --line: #e2dfd6; --user: #dbe7ff; --model: #ffffff; --tool: #fff4d6; --system: #ecebe4; --host: #dff3e4; --warn: #ffe0e0; --focus: #fffbe6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--line); background: #fff; display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .meta { color: var(--mute); font-size: 12px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+  .controls { display: flex; gap: 8px; align-items: center; padding: 10px 24px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--mute); flex-wrap: wrap; }
+  .controls button { font-size: 12px; padding: 4px 12px; border-radius: 8px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  .controls button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .controls label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  main { max-width: 1040px; margin: 0 auto; padding: 16px 24px 60px; }
+  .turn { margin: 18px 0 8px; padding: 10px 14px; border: 1px dashed var(--mute); border-radius: 10px; background: #fff; font-size: 12px; cursor: pointer; }
+  .turn:hover { background: var(--focus); }
+  .turn.active { background: var(--focus); border-style: solid; border-color: var(--ink); }
+  .turn b { font-size: 13px; }
+  .turn .notes { color: var(--mute); margin-top: 4px; }
+  .turn .warn { color: #a12; }
+  .ev { display: grid; grid-template-columns: 44px 72px 56px 130px 1fr; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); align-items: start; cursor: pointer; border-left: 4px solid transparent; }
+  .ev:hover { background: #fff; }
+  .ev .seq { color: var(--mute); text-align: right; font-family: ui-monospace, Menlo, monospace; }
+  .ev .t { color: var(--mute); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .ev .actor { font-size: 11px; padding: 1px 8px; border-radius: 999px; text-align: center; border: 1px solid var(--line); }
+  .ev .type { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .ev .body { white-space: pre-wrap; word-break: break-word; }
+  .ev .body.thinking { color: var(--mute); font-size: 13px; }
+  .ev pre { margin: 6px 0 0; padding: 8px; background: var(--system); border-radius: 6px; font-size: 11px; overflow-x: auto; }
+  .ev[data-actor="user"] { border-left-color: #6b8fe0; } .ev[data-actor="user"] .actor { background: var(--user); }
+  .ev[data-actor="model"] { border-left-color: #bbb; } .ev[data-actor="model"] .actor { background: var(--model); }
+  .ev[data-actor="tool"] { border-left-color: #e0b64f; } .ev[data-actor="tool"] .actor { background: var(--tool); }
+  .ev[data-actor="system"] { border-left-color: #a9a69c; } .ev[data-actor="system"] .actor { background: var(--system); }
+  .ev[data-actor="host"] { border-left-color: #5cb27a; } .ev[data-actor="host"] .actor { background: var(--host); }
+  .ev.error .body { color: #a12; }
+  .ev.hidden-actor, .ev.not-yet { display: none; }
+  body.focus .ev.unseen { opacity: .35; }
+  body.focus .ev.unseen .type::after { content: " · 模型这轮看不到"; color: var(--mute); font-size: 11px; }
+  body.focus .ev.seen { background: var(--focus); }
+  body.focus .ev.later { opacity: .2; }
+  .legend { color: var(--mute); font-size: 12px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>reins · 时间线回放</h1>
+  <span class="meta">会话 <b id="sid"></b> · 模型 <b id="model"></b></span>
+  <span class="meta" id="summary"></span>
+</header>
+<div class="controls">
+  <button class="primary" id="play" type="button" title="按真实时间比例逐条出现">▶ 重放</button>
+  <button id="all" type="button">全部显示</button>
+  <span>发起者：</span>
+  <label><input type="checkbox" checked data-actor="user" /> user</label>
+  <label><input type="checkbox" checked data-actor="model" /> model</label>
+  <label><input type="checkbox" checked data-actor="tool" /> tool</label>
+  <label><input type="checkbox" checked data-actor="system" /> system</label>
+  <label><input type="checkbox" checked data-actor="host" /> host</label>
+  <span id="hint">点某一轮的卡片，看那一轮模型到底看到了什么；点事件看完整载荷</span>
+</div>
+<main id="main"></main>
+
+<script id="replay-data" type="application/json">{"sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","model":{"provider":"anthropic","id":"claude-opus-5"},"contextWindow":1000000,"events":[{"id":"01a07f09-f4c8-7614-8293-fba7268a77a7","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":1,"at":1788837754056,"type":"core.user_message","schemaVersion":1,"actor":"user","trust":"principal","payload":{"content":[{"type":"text","text":"上海今天天气怎么样？"}]}},{"id":"01a07f0a-0be0-784d-bf5d-8b3c0632ea5f","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":2,"at":1788837759968,"type":"core.model_thinking","schemaVersion":1,"actor":"model","trust":"model","replay":{"provider":"anthropic","api":"anthropic-messages","model":"claude-opus-5","thinkingSignature":"bnSy5KgYX7ZqU4FhOr1SkjuxfK36pvYIOcH1iz9k3/VbYcDIUBvPEgBH7cEjaM/LSjE2Em3+lHvXwmYuiQApqgG2MQn9TZkwd1Km9G/b06+FvTHjQ+T6H+GuUUz8kSE96Iz1KAjyftl8AT2UaO3ZyS2foKXX9/wKthSleDQtZJga6b0L5jc75BfHxDiy7alwEwhM1lW/tSPISAgP0NmAW3bWXzTDATRJB8Qe7I82hrRW45OUN47ztjHirvoXyw2/DTpfj1grH01Ar/WksnR8+pHD1CHhywxScIYXgKgaSpdBR00opvld0M6bem/T"},"payload":{"text":"用户在问上海今天的天气。我有一个 get_weather 函数可以查询城市的天气信息。我应该直接调用这个函数来获取上海的天气。\n\n参数：\n- city: \"上海\"\n\n这是一个简单直接的请求，我应该立即执行。\n"}},{"id":"01a07f0a-0be0-75fa-8002-6dfb30ee75b7","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":3,"at":1788837759968,"type":"core.tool_call","schemaVersion":1,"actor":"model","trust":"model","replay":{"provider":"anthropic","api":"anthropic-messages","model":"claude-opus-5"},"payload":{"toolCallId":"toolu_AjDmXsaqRpfP9xbqtJ8VCP","name":"get_weather","args":{"city":"上海"}}},{"id":"01a07f0a-0be1-78d5-b287-e43e4e72ded5","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":4,"at":1788837759969,"type":"core.tool_result","schemaVersion":1,"actor":"tool","trust":"untrusted","parentId":"01a07f0a-0be0-75fa-8002-6dfb30ee75b7","provenance":{"source":"get_weather"},"payload":{"toolCallId":"toolu_AjDmXsaqRpfP9xbqtJ8VCP","name":"get_weather","content":[{"type":"text","text":"{\"city\":\"上海\",\"temp\":26,\"condition\":\"多云\"}"}],"isError":false}},{"id":"01a07f0a-0be2-749b-9247-7a28f1dc1d91","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":5,"at":1788837759970,"type":"core.budget_usage","schemaVersion":1,"actor":"system","trust":"system","payload":{"tokens":{"input":32,"output":198,"cacheRead":100,"cacheWrite":526},"toolCalls":1,"wallMs":5913}},{"id":"01a07f0a-1c1d-7c54-9436-1c2eefc5e039","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":6,"at":1788837764125,"type":"core.model_text","schemaVersion":1,"actor":"model","trust":"model","replay":{"provider":"anthropic","api":"anthropic-messages","model":"claude-opus-5"},"payload":{"text":"上海今天天气多云，气温26°C。"}},{"id":"01a07f0a-1c1e-7502-9199-93a43bd5e499","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":7,"at":1788837764126,"type":"core.budget_usage","schemaVersion":1,"actor":"system","trust":"system","payload":{"tokens":{"input":38,"output":36,"cacheRead":294,"cacheWrite":542},"toolCalls":0,"wallMs":4156}},{"id":"01a07f0a-1c1f-7752-af15-a2659e2fa756","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":8,"at":1788837764127,"type":"core.user_message","schemaVersion":1,"actor":"user","trust":"principal","payload":{"content":[{"type":"text","text":"很好，把当前版本上线到 prod"}]}},{"id":"01a07f0a-806b-7eca-b610-0a52558cc9ff","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":9,"at":1788837789803,"type":"core.tool_call","schemaVersion":1,"actor":"model","trust":"model","replay":{"provider":"anthropic","api":"anthropic-messages","model":"claude-opus-5"},"payload":{"toolCallId":"toolu_yK2c5sgJCdVhyHTv6qcE3H","name":"deploy","args":{"env":"prod"}}},{"id":"01a07f0a-806b-7651-9fbc-e27ec3f7843d","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":10,"at":1788837789803,"type":"core.approval_request","schemaVersion":1,"actor":"system","trust":"system","parentId":"01a07f0a-806b-7eca-b610-0a52558cc9ff","payload":{"toolCallId":"toolu_yK2c5sgJCdVhyHTv6qcE3H","policyId":"tool.needsApproval","summary":"deploy({\"env\":\"prod\"})"}},{"id":"01a07f0a-806b-7cea-b687-1c7164143262","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":11,"at":1788837789803,"type":"core.budget_usage","schemaVersion":1,"actor":"system","trust":"system","payload":{"tokens":{"input":28,"output":12,"cacheRead":360,"cacheWrite":558},"toolCalls":1,"wallMs":25675}},{"id":"01a07f0a-806c-75e3-99c1-25abe84fb8a5","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":12,"at":1788837789804,"type":"core.run_paused","schemaVersion":1,"actor":"system","trust":"system","payload":{"reason":"approval"}},{"id":"01a07f0a-806f-7738-a7ba-676c11b5d678","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":13,"at":1788837789807,"type":"core.run_resumed","schemaVersion":1,"actor":"host","trust":"system","payload":{"by":"boss"}},{"id":"01a07f0a-8070-77f8-8f3a-2714d54acedd","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":14,"at":1788837789808,"type":"core.approval_decision","schemaVersion":1,"actor":"host","trust":"system","payload":{"toolCallId":"toolu_yK2c5sgJCdVhyHTv6qcE3H","approved":true,"by":"boss"}},{"id":"01a07f0a-8070-734e-989d-a7cc43eeb7bf","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":15,"at":1788837789808,"type":"core.tool_result","schemaVersion":1,"actor":"tool","trust":"untrusted","parentId":"01a07f0a-806b-7eca-b610-0a52558cc9ff","provenance":{"source":"deploy"},"payload":{"toolCallId":"toolu_yK2c5sgJCdVhyHTv6qcE3H","name":"deploy","content":[{"type":"text","text":"已上线到 prod"}],"isError":false}},{"id":"01a07f0a-8ba2-7c15-b215-fd5af00febcf","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":16,"at":1788837792674,"type":"core.model_text","schemaVersion":1,"actor":"model","trust":"model","replay":{"provider":"anthropic","api":"anthropic-messages","model":"claude-opus-5"},"payload":{"text":"已完成，当前版本已上线到 prod 环境。"}},{"id":"01a07f0a-8ba3-7f6c-871f-f2c9e3ec34e5","sessionId":"01a07f09-f4c7-7ebb-ab16-59d5048df7ef","seq":17,"at":1788837792675,"type":"core.budget_usage","schemaVersion":1,"actor":"system","trust":"system","payload":{"tokens":{"input":18,"output":30,"cacheRead":878,"cacheWrite":88},"toolCalls":0,"wallMs":2867}}],"turns":[{"index":1,"requestAtSeq":1,"visibleSeqs":[1],"estimatedTokens":14,"diverged":false,"usage":{"tokens":{"input":32,"output":198,"cacheRead":100,"cacheWrite":526},"toolCalls":1,"wallMs":5913},"landings":{"exact":1,"lossy":0,"dropped":0,"notes":[]},"firstOutputSeq":2},{"index":2,"requestAtSeq":5,"visibleSeqs":[1,2,3,4],"estimatedTokens":133,"diverged":false,"usage":{"tokens":{"input":38,"output":36,"cacheRead":294,"cacheWrite":542},"toolCalls":0,"wallMs":4156},"landings":{"exact":4,"lossy":0,"dropped":0,"notes":[]},"firstOutputSeq":6},{"index":3,"requestAtSeq":8,"visibleSeqs":[1,2,3,4,6,8],"estimatedTokens":168,"diverged":false,"usage":{"tokens":{"input":28,"output":12,"cacheRead":360,"cacheWrite":558},"toolCalls":1,"wallMs":25675},"landings":{"exact":6,"lossy":0,"dropped":0,"notes":[]},"firstOutputSeq":9},{"index":4,"requestAtSeq":15,"visibleSeqs":[1,2,3,4,6,8,9,15],"estimatedTokens":190,"diverged":false,"usage":{"tokens":{"input":18,"output":30,"cacheRead":878,"cacheWrite":88},"toolCalls":0,"wallMs":2867},"landings":{"exact":8,"lossy":0,"dropped":0,"notes":[]},"firstOutputSeq":16}]}</script>
+<script>
+/**
+ * 数据由 replay.ts 注入：完整时间线 + 每轮的重算结果（可见 seq、估算 token、有损落点、真实用量）。
+ * 页面只负责渲染，不含任何 reins 逻辑 —— 这样任何人拿到 JSONL 都能自己画一份。
+ */
+const data = JSON.parse(document.getElementById("replay-data").textContent)
+const $ = (id) => document.getElementById(id)
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n }
+const t0 = data.events[0].at
+const rel = (at) => `+${((at - t0) / 1000).toFixed(2)}s`
+const short = (t) => t.replace("core.", "")
+const textOf = (parts) => Array.isArray(parts) ? parts.map((x) => x.type === "text" ? x.text : `[${x.type}]`).join(" ") : String(parts)
+
+function preview(e) {
+  const p = e.payload
+  switch (e.type) {
+    case "core.user_message": return textOf(p.content)
+    case "core.model_text": return p.text
+    case "core.model_thinking": return p.text || "（加密思考，只有回放签名）"
+    case "core.tool_call": return `${p.name}(${JSON.stringify(p.args)})`
+    case "core.tool_result": return `${p.name} → ${textOf(p.content)}`
+    case "core.approval_request": return `需要审批：${p.summary}（策略 ${p.policyId}）`
+    case "core.approval_decision": return `${p.approved ? "✅ 批准" : "⛔ 拒绝"}，by ${p.by}${p.reason ? `：${p.reason}` : ""}`
+    case "core.budget_usage": return `tokens in ${p.tokens.input} / out ${p.tokens.output}${p.tokens.cacheRead ? ` (缓存读 ${p.tokens.cacheRead})` : ""} · 工具 ${p.toolCalls} 次 · ${p.wallMs} ms`
+    case "core.run_paused": return `run 暂停，原因：${p.reason}`
+    case "core.run_resumed": return `run 恢复${p.by ? `，by ${p.by}` : ""}`
+    case "core.system_note": return `[${p.kind}] ${p.text}`
+    case "core.compaction": return `折叠 seq ${p.coversSeq.join("~")}（${p.decidedBy}）：${p.summary}`
+    case "core.handoff": return `交接到 ${p.toSessionId}：${p.summary}`
+    case "core.error": return `${p.category}：${p.message}`
+    default: return JSON.stringify(p)
+  }
+}
+
+// ---- 渲染 ----
+const main = $("main")
+const rows = new Map() // seq → 节点
+const turnBySeq = new Map(data.turns.filter((t) => t.firstOutputSeq !== null).map((t) => [t.firstOutputSeq, t]))
+const usage = data.turns.reduce((a, t) => ({ i: a.i + (t.usage?.tokens.input ?? 0), o: a.o + (t.usage?.tokens.output ?? 0) }), { i: 0, o: 0 })
+const n = (type) => data.events.filter((e) => e.type === type).length
+$("sid").textContent = data.sessionId
+$("model").textContent = `${data.model.provider}/${data.model.id}`
+$("summary").textContent = `${data.events.length} 条事件 · ${data.turns.length} 轮模型调用 · ${n("core.tool_call")} 次工具 · ${n("core.approval_request")} 次审批 · 用时 ${((data.events.at(-1).at - t0) / 1000).toFixed(1)}s · tokens in ${usage.i} / out ${usage.o}`
+
+for (const e of data.events) {
+  const turn = turnBySeq.get(e.seq)
+  if (turn) main.append(turnCard(turn))
+  const row = el("div", `ev${e.type === "core.error" || e.payload?.isError ? " error" : ""}`)
+  row.dataset.actor = e.actor
+  row.dataset.seq = e.seq
+  const body = el("div", `body${e.type === "core.model_thinking" ? " thinking" : ""}`, preview(e))
+  row.append(el("span", "seq", e.seq), el("span", "t", rel(e.at)), el("span", "actor", e.actor), el("span", "type", short(e.type)), body)
+  row.onclick = () => {
+    const open = row.querySelector("pre")
+    if (open) return open.remove()
+    const full = { ...e }
+    body.append(Object.assign(el("pre"), { textContent: JSON.stringify(full, null, 2) }))
+  }
+  rows.set(e.seq, row)
+  main.append(row)
+}
+
+function turnCard(t) {
+  const card = el("div", "turn")
+  const seqs = t.visibleSeqs
+  const l = t.landings
+  const loss = l.lossy + l.dropped > 0 ? `有损 ${l.lossy} / 丢弃 ${l.dropped}` : "全部 exact"
+  const u = t.usage ? ` · 实际用量 in ${t.usage.tokens.input} / out ${t.usage.tokens.output} · ${t.usage.wallMs} ms` : ""
+  card.append(el("b", null, `第 ${t.index} 轮`), el("span", null, ` · 模型看到 ${seqs.length} 条（seq ${seqs[0]}~${seqs.at(-1)}，约 ${t.estimatedTokens} token / 窗口 ${data.contextWindow}）· 落点 ${loss}${u}`))
+  if (l.notes.length) card.append(el("div", "notes", l.notes.map((x) => `↳ ${x}`).join("\n")))
+  if (t.diverged) card.append(el("div", "warn", "⚠ 用现在的投影规则重算，与当时发生的不一致（策略或估算变了）"))
+  card.onclick = () => focusTurn(t, card)
+  return card
+}
+
+// ---- 聚焦某一轮：高亮它看到的，压暗它看不到的与之后才发生的 ----
+let active = null
+function focusTurn(t, card) {
+  document.querySelectorAll(".turn.active").forEach((c) => c.classList.remove("active"))
+  if (active === t) { active = null; document.body.classList.remove("focus"); rows.forEach((r) => r.classList.remove("seen", "unseen", "later")); return }
+  active = t
+  card.classList.add("active")
+  document.body.classList.add("focus")
+  const seen = new Set(t.visibleSeqs)
+  rows.forEach((r, seq) => {
+    r.classList.remove("seen", "unseen", "later")
+    r.classList.add(seq > t.requestAtSeq ? "later" : seen.has(seq) ? "seen" : "unseen")
+  })
+  card.scrollIntoView({ block: "center", behavior: "smooth" })
+}
+
+// ---- 发起者过滤 ----
+document.querySelectorAll("input[data-actor]").forEach((box) => {
+  box.onchange = () => rows.forEach((r) => { if (r.dataset.actor === box.dataset.actor) r.classList.toggle("hidden-actor", !box.checked) })
+})
+
+// ---- 重放：按真实间隔比例逐条出现，整段压到 8 秒内，单步不超过 1.2 秒 ----
+let timer = null
+$("play").onclick = () => {
+  if (timer) { clearTimeout(timer); timer = null }
+  rows.forEach((r) => r.classList.add("not-yet"))
+  document.querySelectorAll(".turn").forEach((c) => (c.style.display = "none"))
+  const total = Math.max(1, data.events.at(-1).at - t0)
+  const scale = Math.min(1, 8000 / total)
+  let i = 0
+  const step = () => {
+    const e = data.events[i]
+    if (!e) { timer = null; return }
+    const card = rows.get(e.seq).previousElementSibling
+    if (card?.classList.contains("turn")) card.style.display = ""
+    rows.get(e.seq).classList.remove("not-yet")
+    rows.get(e.seq).scrollIntoView({ block: "nearest" })
+    i++
+    const next = data.events[i]
+    if (next) timer = setTimeout(step, Math.min(1200, Math.max(120, (next.at - e.at) * scale)))
+  }
+  step()
+}
+$("all").onclick = () => {
+  if (timer) { clearTimeout(timer); timer = null }
+  rows.forEach((r) => r.classList.remove("not-yet"))
+  document.querySelectorAll(".turn").forEach((c) => (c.style.display = ""))
+}
+</script>
+</body>
+</html>
