@@ -347,6 +347,58 @@ describe("runEval：对照运行器", () => {
     expect(report.outcomes[0]?.metrics.recall).toBe(0.5)
   })
 
+  it("种子历史不计入指标：token、轮、动作只算本次新追加的事件；完成判定仍能看全链", async () => {
+    const seed: Event[] = [
+      createCoreEvent(createCoreRegistry(), {
+        type: "core.user_message",
+        actor: "user",
+        payload: { content: [{ type: "text", text: "earlier task" }] },
+        sessionId: "old",
+        seq: 1,
+        at: 1,
+        id: "s1",
+      }),
+      createCoreEvent(createCoreRegistry(), {
+        type: "core.model_text",
+        actor: "model",
+        payload: { text: "earlier answer: the code is 4711" },
+        sessionId: "old",
+        seq: 2,
+        at: 2,
+        id: "s2",
+      }),
+      createCoreEvent(createCoreRegistry(), {
+        type: "core.budget_usage",
+        actor: "system",
+        payload: { tokens: { input: 99_999, output: 1 }, toolCalls: 0, wallMs: 1 },
+        sessionId: "old",
+        seq: 3,
+        at: 3,
+        id: "s3",
+      }),
+    ]
+    const report = await runEval({
+      fixtures: [
+        {
+          ...fixture,
+          task: { ...fixture.task, seed },
+          facts: [],
+          completion: (o) => o.timeline.length > o.fresh.length && o.finalText.startsWith("Done"),
+        },
+      ],
+      arms: [noneArm()],
+      lowering: new ScriptedLowering(finder),
+      model: MODEL,
+      ...deterministic(),
+    })
+    const m = report.outcomes[0]?.metrics
+    expect(m?.completed).toBe(1)
+    expect(m?.tokens.input).toBe(110)
+    expect(m?.turns).toBe(2)
+    expect(m?.violations.before.actions).toBe(2)
+    expect(report.outcomes[0]?.timeline.slice(0, 3).map((e) => e.id)).toEqual(["s1", "s2", "s3"])
+  })
+
   it("summarize：按臂取均值，recall / cacheHitRate 只在有值时给", () => {
     const mk = (arm: string, completed: number, total: number, recall?: number): EvalOutcome => ({
       fixtureId: "f",
@@ -355,6 +407,7 @@ describe("runEval：对照运行器", () => {
       sessionIds: [],
       timelines: [],
       timeline: [],
+      fresh: [],
       result: { status: "done" as const, sessionId: "s", lastSeq: 0 },
       finalText: "",
       facts: [],

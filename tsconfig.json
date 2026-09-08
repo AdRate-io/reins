@@ -12,6 +12,7 @@
     { "path": "packages/ui-agui" },
     { "path": "packages/reins" },
     { "path": "examples/minimal" },
-    { "path": "examples/adrate" }
+    { "path": "examples/adrate" },
+    { "path": "examples/eval" }
   ]
 }

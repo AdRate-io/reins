@@ -21,6 +21,8 @@ export interface RecordedToolSpec {
   inputSchema?: Record<string, unknown>
   risk?: Tool["risk"]
   needsApproval?: Tool["needsApproval"]
+  /** 结果处置（如 spill）：只有装了 spill 模块的臂会消费，无脑子臂照样拿全文 */
+  resultPolicy?: Tool["resultPolicy"]
 }
 
 export interface RecordedToolsOptions {
@@ -118,6 +120,7 @@ export function recordedTools(recording: readonly Event[], opts: RecordedToolsOp
       inputSchema: spec.inputSchema ?? { type: "object", additionalProperties: true },
       ...(spec.risk !== undefined ? { risk: spec.risk } : {}),
       ...(spec.needsApproval !== undefined ? { needsApproval: spec.needsApproval } : {}),
+      ...(spec.resultPolicy !== undefined ? { resultPolicy: spec.resultPolicy } : {}),
       async execute(input: unknown, ctx: ToolContext): Promise<ToolResult> {
         const key = canonicalArgs(input)
         const matches = calls.map((c, i) => (c.key === key ? i : -1)).filter((i) => i >= 0)

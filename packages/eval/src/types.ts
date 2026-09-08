@@ -185,6 +185,8 @@ export interface EvalOutcomeDraft {
   timelines: Event[][]
   /** 全链拼起来的时间线（按会话先后再按 seq），评分器最常用它 */
   timeline: Event[]
+  /** 本次真正跑出来的事件：去掉种子历史后的 timeline。指标（token、轮、动作、违规）只看它 */
+  fresh: Event[]
   /** 最后一次 run 的返回 */
   result: RunResult
   /** 最后一段模型正文（通常是给用户的汇报） */

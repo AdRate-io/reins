@@ -175,6 +175,7 @@ async function runCell(
     sessionIds,
     timelines: [],
     timeline: [],
+    fresh: [],
     result,
     finalText: "",
   })
@@ -220,13 +221,18 @@ async function runCell(
   for (const id of sessionIds)
     timelines.push(await readTimeline(env.stores.log, id, { registry: env.registry }))
   const timeline = timelines.flat()
+  // 种子历史是别人（上一次真实运行）的账：token、轮数、动作都不算在这一格头上，只算本次新追加的事件
+  const seedLen = fixture.task.seed?.length ?? 0
+  const fresh =
+    seedLen > 0 ? [...(timelines[0] ?? []).slice(seedLen), ...timelines.slice(1).flat()] : timeline
   const outcomeDraft: EvalOutcomeDraft = {
     ...cell,
     sessionIds,
     timelines,
     timeline,
+    fresh,
     result,
-    finalText: finalTextOf(timeline),
+    finalText: finalTextOf(fresh),
   }
   const completed = clamp01(await fixture.completion(outcomeDraft))
 
@@ -242,7 +248,7 @@ async function runCell(
     facts.push(probe.fact)
   }
 
-  const base = measureTimeline(timeline, fixture.constraints ?? [])
+  const base = measureTimeline(fresh, fixture.constraints ?? [])
   const metrics: EvalMetrics = {
     status: result.status,
     completed,

@@ -43,6 +43,25 @@ importers:
         specifier: ^22.0.0
         version: 22.20.1
 
+  examples/eval:
+    dependencies:
+      '@reins/brain':
+        specifier: workspace:*
+        version: link:../../packages/brain
+      '@reins/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@reins/eval':
+        specifier: workspace:*
+        version: link:../../packages/eval
+      '@reins/lowering-pi':
+        specifier: workspace:*
+        version: link:../../packages/lowering-pi
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+
   examples/minimal:
     dependencies:
       '@reins/lowering-pi':

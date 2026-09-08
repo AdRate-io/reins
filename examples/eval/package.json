@@ -1,0 +1,19 @@
+{
+  "name": "@reins-examples/eval",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "reins eval：首批 fixture（投放工具真实长任务脱敏版）、fixture 构建脚本、真模型对照运行脚本（M2 E2/E3）",
+  "scripts": {
+    "build:adrate-patrol": "node fixtures/adrate-patrol/build.ts"
+  },
+  "dependencies": {
+    "@reins/brain": "workspace:*",
+    "@reins/core": "workspace:*",
+    "@reins/eval": "workspace:*",
+    "@reins/lowering-pi": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

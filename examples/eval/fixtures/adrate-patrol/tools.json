@@ -1,0 +1,277 @@
+[
+  {
+    "name": "identity_get",
+    "description": "AdRate `adrate auth whoami`（capability identity.read，risk low，public_read，每次 0 operation unit）。\n返回 AdRate JSON 信封原文：ok 为唯一成功判据；exitCode 4 表示需等待后重试，5 表示远端结果未知，须按 adrate-shared 契约恢复。",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "risk": "low"
+  },
+  {
+    "name": "connections_advertisers_list",
+    "description": "AdRate `adrate ads advertisers`（capability connections.read，risk low，public_read，每次 0 operation unit）。\n返回 AdRate JSON 信封原文：ok 为唯一成功判据；exitCode 4 表示需等待后重试，5 表示远端结果未知，须按 adrate-shared 契约恢复。",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "risk": "low",
+    "resultPolicy": {
+      "maxTokens": 6000,
+      "overflow": "spill"
+    }
+  },
+  {
+    "name": "ads_campaigns_list",
+    "description": "AdRate `adrate ads campaigns list`（capability ads.campaign.read，risk medium，upstream_read，每次 1 operation unit）。\n参数：advId — TikTok advertiser ID；authId? — TikTok authorization ID；page? — TikTok page number；pageSize? — Rows per TikTok page\n返回 AdRate JSON 信封原文：ok 为唯一成功判据；exitCode 4 表示需等待后重试，5 表示远端结果未知，须按 adrate-shared 契约恢复。",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "advId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+          "description": "TikTok 资源 ID，原样字符串"
+        },
+        "authId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "TikTok authorization ID"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "default": 1
+        },
+        "pageSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 50
+        }
+      },
+      "required": [
+        "advId"
+      ]
+    },
+    "risk": "low",
+    "resultPolicy": {
+      "maxTokens": 6000,
+      "overflow": "spill"
+    }
+  },
+  {
+    "name": "ads_campaigns_report",
+    "description": "AdRate `adrate ads report campaigns`（capability ads.report.read，risk medium，upstream_read，每次 2 operation unit）。\n参数：advId — TikTok advertiser ID；authId? — TikTok authorization ID；startDate — Report start date；endDate — Report end date；groupBy? — none, day, or hour；page? — TikTok page number；pageSize? — Rows per TikTok page\n返回 AdRate JSON 信封原文：ok 为唯一成功判据；exitCode 4 表示需等待后重试，5 表示远端结果未知，须按 adrate-shared 契约恢复。",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "advId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+          "description": "TikTok 资源 ID，原样字符串"
+        },
+        "authId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "TikTok authorization ID"
+        },
+        "startDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+        },
+        "endDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Real Gregorian calendar date in YYYY-MM-DD format"
+        },
+        "groupBy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "day",
+            "hour"
+          ],
+          "default": "none"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "default": 1
+        },
+        "pageSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 50
+        }
+      },
+      "required": [
+        "advId",
+        "startDate",
+        "endDate"
+      ]
+    },
+    "risk": "low",
+    "resultPolicy": {
+      "maxTokens": 6000,
+      "overflow": "spill"
+    }
+  },
+  {
+    "name": "ads_campaigns_get",
+    "description": "AdRate `adrate ads campaigns get`（capability ads.campaign.read，risk medium，upstream_read，每次 1 operation unit）。\n参数：advId — TikTok advertiser ID；campaignId — TikTok campaign ID；authId? — TikTok authorization ID\n返回 AdRate JSON 信封原文：ok 为唯一成功判据；exitCode 4 表示需等待后重试，5 表示远端结果未知，须按 adrate-shared 契约恢复。",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "advId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+          "description": "TikTok 资源 ID，原样字符串"
+        },
+        "campaignId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+          "description": "TikTok 资源 ID，原样字符串"
+        },
+        "authId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "TikTok authorization ID"
+        }
+      },
+      "required": [
+        "advId",
+        "campaignId"
+      ]
+    },
+    "risk": "low"
+  },
+  {
+    "name": "ads_campaigns_status",
+    "description": "AdRate `adrate ads campaigns status`（capability ads.campaign.status.write，risk high，public_write，每次 3 operation unit，写操作：幂等键由系统按本次调用自动生成并在结果里返回）。\n参数：advId — TikTok advertiser ID；campaignId — TikTok campaign ID；desiredStatus — enable or disable；authId? — TikTok authorization ID\n返回 AdRate JSON 信封原文：ok 为唯一成功判据；exitCode 4 表示需等待后重试，5 表示远端结果未知，须按 adrate-shared 契约恢复。",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "advId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+          "description": "TikTok 资源 ID，原样字符串"
+        },
+        "campaignId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_!~*'().-]+$",
+          "description": "TikTok 资源 ID，原样字符串"
+        },
+        "desiredStatus": {
+          "type": "string",
+          "enum": [
+            "ENABLE",
+            "DISABLE"
+          ]
+        },
+        "authId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "TikTok authorization ID"
+        }
+      },
+      "required": [
+        "advId",
+        "campaignId",
+        "desiredStatus"
+      ]
+    },
+    "risk": "high"
+  },
+  {
+    "name": "commands_get",
+    "description": "AdRate `adrate commands get`：按 commandId 或 idempotencyKey 查询一条服务端 Command 的状态与终态证据。写操作返回 exitCode 4/5 后用它对账；只有 isFinal=false 的 Command 值得有限次轮询。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "commandId": {
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "risk": "low"
+  },
+  {
+    "name": "commands_pending",
+    "description": "AdRate `adrate commands pending`：列出本机尚未确认终态的写操作恢复记录。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "risk": "low"
+  },
+  {
+    "name": "commands_resume",
+    "description": "AdRate `adrate commands resume`：用原幂等键显式恢复一条 pending 写操作（先查再按需重发原载荷）。这是写操作，须经审批。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotencyKey"
+      ],
+      "additionalProperties": false
+    },
+    "risk": "high"
+  },
+  {
+    "name": "wait_seconds",
+    "description": "等待若干秒再继续（RATE_LIMITED 的 Retry-After、Copy 任务轮询间隔等）。最多 60 秒。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seconds": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seconds"
+      ],
+      "additionalProperties": false
+    },
+    "risk": "low"
+  }
+]
