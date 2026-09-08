@@ -123,6 +123,10 @@ export interface MemoryOpPayload {
 
 // ---- 预算与运行控制 ----
 
+/**
+ * 一次模型请求的用量。字段语义跟随 Anthropic：`input` 是未命中缓存的输入 token，缓存读 / 写另计，
+ * 所以"这次请求的上下文有多大"= input + cacheRead + cacheWrite（见 contextTokensOf），不是 input 本身。
+ */
 export interface TokenUsage {
   input: number
   output: number
@@ -130,11 +134,22 @@ export interface TokenUsage {
   cacheWrite?: number
 }
 
-/** 用量是事件，宿主可按会话或用户聚合出配额；remaining 由 budget 模块按上限算出。 */
+/** 该请求实际送进模型的上下文大小：未命中 + 缓存读 + 缓存写 */
+export function contextTokensOf(usage: TokenUsage): number {
+  return usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0)
+}
+
+/**
+ * 用量是事件，宿主可按会话或用户聚合出配额（库不做配额）。
+ * `contextEstimate`（B8）：这次请求投影的估算 token（= 当轮 TurnContext.budget.used），与真实用量放在同一条事件里，
+ * 感知模块用"真实上下文 − 估算"得到系统提示、工具表、thinking 等估算不含的固定开销，校准下一轮的使用率读数。
+ * `remaining` 预留给宿主 / 适配器自己追加的聚合用量；循环不填（上限属于 brain budget 模块，循环不知道）。
+ */
 export interface BudgetUsagePayload {
   tokens: TokenUsage
   toolCalls: number
   wallMs: number
+  contextEstimate?: number
   remaining?: { tokens?: number; toolCalls?: number; wallMs?: number }
 }
 

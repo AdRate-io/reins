@@ -12,6 +12,7 @@ import type {
   ApprovalRequestPayload,
   CoreEventOf,
   ErrorPayload,
+  TokenUsage,
   ToolCallPayload,
   ToolResultPayload,
 } from "../events/core.js"
@@ -167,7 +168,13 @@ export interface TurnContext {
     tokensSpent: number
     turns: number
     toolCalls: number
+    /** 距 run 开始的毫秒数；beforeModel 时是本轮开始的读数，模型调用后更新 */
     wallMs: number
+    /**
+     * 最近一次模型请求的真实用量（B8）：beforeModel 时是上一次请求的（含上次 run，从日志最后一条 budget_usage 读），
+     * 模型调用后即本轮的。上下文大小用 contextTokensOf(lastUsage) 算，不是 input
+     */
+    lastUsage?: TokenUsage
   }
   signal?: AbortSignal
   /** 草稿：无 id / seq / at / sessionId，循环补齐后 append。beforeModel 期间 emit 的本轮即可见 */

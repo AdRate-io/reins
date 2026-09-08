@@ -11,9 +11,10 @@
  * - handoff/：会话交接（B5）。handoff 工具把摘要、下一步、可见的 pin 带进新会话；机械部分在 core 循环
  * - memory/：记忆（B6）。memory 工具（形状对齐 memory_20250818）读写宿主的 MemoryStore，路径限定 /memories，每次读写留 memory_op
  * - approval/：审批与权限（B7）。deny → ask → allow 策略管线在 beforeTool 里跑：deny 留 approval_decision 再拦，ask 转审批暂停，allow 放行；fail-closed
- * - budget：M1 后续任务
+ * - budget/：预算（B8）。五维上限（contextTokens / totalTokens / turns / toolCalls / wallMs），触顶且模型还要继续 → pause(budget)
  */
 export * from "./approval/index.js"
+export * from "./budget/index.js"
 export * from "./compact/index.js"
 export * from "./handoff/index.js"
 export * from "./memory/index.js"

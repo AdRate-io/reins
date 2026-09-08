@@ -174,6 +174,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   while (true) {
     const turnStartedAt = now()
     const timeline = await readTimeline(log, sessionId, { registry })
+    // 上一次模型请求的真实用量：日志最后一条 budget_usage（续跑时上次 run 的也算）。感知用它校准估算，预算用它算上下文大小
+    const lastUsage = lastBudgetUsage(timeline)?.payload.tokens
 
     // 投影：模型本轮看什么。策略新造的事件（阈值 compaction）先入日志 —— 模型可见 ⟺ 已记录
     const projected = project({
@@ -217,6 +219,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         turns,
         toolCalls: toolCallsTotal,
         wallMs: turnStartedAt - startedAt,
+        ...(lastUsage ? { lastUsage } : {}),
       },
       ...(cfg.signal ? { signal: cfg.signal } : {}),
       emit: (d) => emitted.push(d),
@@ -315,6 +318,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     }
     tokensSpent += outcome.usage.input + outcome.usage.output
     ctx.budget.tokensSpent = tokensSpent
+    ctx.budget.wallMs = now() - startedAt
+    ctx.budget.lastUsage = outcome.usage
 
     if (outcome.stopReason === "error") {
       const { events, result } = await fail({
@@ -360,6 +365,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
           tokens: outcome.usage,
           toolCalls: calls.length,
           wallMs: now() - turnStartedAt,
+          contextEstimate: projected.stats.estimatedTokens,
         },
       },
     ])
@@ -446,6 +452,15 @@ interface ExecuteSummary {
   /** 真正跑了 execute 的次数 */
   executed: number
   interruptions: Interruption[]
+}
+
+/** 日志里最后一条 budget_usage（最近一次模型请求的用量与估算） */
+function lastBudgetUsage(timeline: readonly Event[]): CoreEventOf<"core.budget_usage"> | undefined {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const e = timeline[i]
+    if (e?.type === "core.budget_usage") return e as CoreEventOf<"core.budget_usage">
+  }
+  return undefined
 }
 
 /**

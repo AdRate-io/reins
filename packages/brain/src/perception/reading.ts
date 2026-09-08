@@ -5,23 +5,23 @@
  * - `ctx.events`（模型本轮将看到的投影）：算"未折叠历史有多长"、"有几条外溢结果可取"—— 这些是模型视角的量；
  * - `ctx.timeline`（完整日志）：算"整理过几次"、"本会话累计花了多少 token"—— 这些是会话全局的量。
  */
-import type { CoreEvent, Event, TurnContext } from "@reins/core"
+import { type CoreEvent, contextTokensOf, type Event, type TurnContext } from "@reins/core"
+import type { BudgetDimension, BudgetLimits } from "../budget/budget.js"
 import { compactNumber, countTier, percent, rangeTier, type Tier } from "./tiers.js"
 
-/** 预算上限（与 §9.8 budget 模块同一组维度，B8 落地后由它传入）。给了哪几维就只按那几维算余量 */
-export interface PerceptionLimits {
-  /** 本次 run 累计 token（输入 + 输出） */
-  totalTokens?: number
-  turns?: number
-  toolCalls?: number
-  wallMs?: number
-}
+/** 预算上限：与 budget 模块（§9.8）同一个形状，宿主把同一份 limits 传给两个模块。给了哪几维就只按那几维算余量 */
+export type PerceptionLimits = BudgetLimits
 
-export type LimitDimension = keyof PerceptionLimits
+export type LimitDimension = BudgetDimension
 
 export interface PerceptionReading {
-  /** 上下文窗口使用率档位（本轮投影估算 token / contextLimit） */
+  /** 上下文窗口使用率档位（校准后的本轮上下文估算 / contextLimit，见 contextOverheadOf） */
   contextUsage: Tier
+  /**
+   * 校准用的固定开销（token）：上一次请求的真实上下文 − 当时的投影估算，即系统提示、工具表、thinking 等估算不含的部分。
+   * 没有可对照的请求时为 0。精确值，只进 meta 不进文字
+   */
+  contextOverhead: number
   /** 阈值兜底的触发点（裁剪目标 / contextLimit），如 "85%"。配置不变它就不变 */
   autoFoldAt: string
   /** 当前可见、未被折叠的模型轮数档位（一轮 = 连续的 thinking / text / tool_call） */
@@ -74,11 +74,30 @@ export function sumSessionTokens(timeline: readonly Event[]): number {
   return n
 }
 
+/**
+ * 估算与真实之间的固定开销（B8，关闭 §17 的 B2 实测发现）。
+ *
+ * 投影只数模型可见事件的正文，系统提示、工具表、thinking 签名块等都不在内，真实 input 可高出一倍。
+ * 这些多出来的部分在一个 run 里基本是常量（系统提示与工具表整轮不变），所以用**加法**校准而不是比例：
+ * 比例会随历史变长把误差放大（100k 时翻倍成 200k），加法只补那块固定的开销。
+ * 数据来自日志最后一条同时带 tokens 与 contextEstimate 的 budget_usage：真实上下文 = input + cacheRead + cacheWrite。
+ */
+export function contextOverheadOf(timeline: readonly Event[]): number {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const e = timeline[i] as CoreEvent | undefined
+    if (e?.type !== "core.budget_usage" || e.payload.contextEstimate === undefined) continue
+    return Math.max(0, contextTokensOf(e.payload.tokens) - e.payload.contextEstimate)
+  }
+  return 0
+}
+
 function remainingOf(
   budget: TurnContext["budget"],
+  contextTokens: number,
   limits: PerceptionLimits,
 ): { fraction: number; dimension: LimitDimension } | undefined {
   const used: Record<LimitDimension, number> = {
+    contextTokens,
     totalTokens: budget.tokensSpent,
     turns: budget.turns,
     toolCalls: budget.toolCalls,
@@ -94,25 +113,34 @@ function remainingOf(
   return tightest
 }
 
+export interface ReadingOptions {
+  /** 用上一请求的真实用量校准上下文估算。缺省 true；关掉则只按投影估算（偏低） */
+  calibrate?: boolean
+}
+
 export function readPerception(
   ctx: TurnContext,
   thresholds: ReadingThresholds,
   limits?: PerceptionLimits,
+  opts: ReadingOptions = {},
 ): PerceptionReading {
   const { budget } = ctx
+  const contextOverhead = opts.calibrate === false ? 0 : contextOverheadOf(ctx.timeline)
+  const contextTokens = budget.used + contextOverhead
   const spilled = ctx.events.filter(
     (e) => e.type === "core.tool_result" && (e as CoreEvent & { type: "core.tool_result" }).payload.spilled,
   ).length
   const spilledTier = spillTier(spilled, thresholds.spills)
   const reading: PerceptionReading = {
-    contextUsage: rangeTier(budget.used / budget.contextLimit, thresholds.usage, percent),
+    contextUsage: rangeTier(contextTokens / budget.contextLimit, thresholds.usage, percent),
+    contextOverhead,
     autoFoldAt: percent(budget.targetTokens / budget.contextLimit),
     unfoldedTurns: countTier(countModelTurns(ctx.events), thresholds.turns),
     compactions: ctx.timeline.filter((e) => e.type === "core.compaction").length,
     sessionTokens: rangeTier(sumSessionTokens(ctx.timeline), thresholds.tokens, compactNumber),
     spilledResults: spilledTier,
   }
-  const remaining = limits ? remainingOf(budget, limits) : undefined
+  const remaining = limits ? remainingOf(budget, contextTokens, limits) : undefined
   if (remaining) {
     reading.budgetRemaining = {
       ...rangeTier(remaining.fraction, thresholds.remaining, percent),

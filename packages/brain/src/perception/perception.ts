@@ -35,8 +35,10 @@ export interface PerceptionOptions {
   spillTiers?: readonly number[]
   /** 预算余量比例档位边界。缺省 [0.05, 0.2, 0.5] → <5% / 5%–20% / 20%–50% / ≥50% */
   remainingTiers?: readonly number[]
-  /** 本次 run 的上限；给了才报"余量"。B8 落地后由 budget 模块统一提供 */
+  /** 本次 run 的上限；给了才报"余量"。与 budget 模块（B8）传同一份 */
   limits?: PerceptionLimits
+  /** 用上一请求的真实用量校准上下文使用率（B8）。缺省 true */
+  calibrate?: boolean
   /** 自定义措辞 / 语言；必须是纯函数（同一读数同一文字），否则每轮都会追加 */
   render?: (reading: PerceptionReading) => string
 }
@@ -76,7 +78,9 @@ export function perception(opts: PerceptionOptions = {}): Socket {
   return {
     name: PERCEPTION_SOCKET_NAME,
     beforeModel(ctx: TurnContext) {
-      const reading = readPerception(ctx, thresholds, opts.limits)
+      const reading = readPerception(ctx, thresholds, opts.limits, {
+        ...(opts.calibrate !== undefined ? { calibrate: opts.calibrate } : {}),
+      })
       const text = render(reading)
       if (lastVisiblePerceptionNote(ctx.events)?.payload.text === text) return undefined
       ctx.emit({

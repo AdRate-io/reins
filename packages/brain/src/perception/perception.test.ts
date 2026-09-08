@@ -15,7 +15,7 @@ import {
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reins/core/testing"
 import { describe, expect, it } from "vitest"
 import { lastVisiblePerceptionNote, perception } from "./perception.js"
-import { readPerception } from "./reading.js"
+import { contextOverheadOf, readPerception } from "./reading.js"
 import { renderPerception } from "./render.js"
 import { compactNumber, countTier, rangeTier } from "./tiers.js"
 
@@ -360,5 +360,88 @@ describe("perception Socket：判重与重注入", () => {
       fakeCtx({ emitted: again, events: [note], timeline: [compaction, note], budget: usage(1) }),
     )
     expect(again).toHaveLength(0)
+  })
+})
+
+describe("perception：用上一请求的真实用量校准上下文使用率（B8）", () => {
+  it("contextOverheadOf：最后一条带 contextEstimate 的 budget_usage，真实上下文 = input + 缓存读写，减去估算；不为负", () => {
+    const older = ev(
+      "core.budget_usage",
+      { tokens: { input: 5000, output: 10 }, toolCalls: 0, wallMs: 1, contextEstimate: 1000 },
+      "system",
+    )
+    const noEstimate = ev(
+      "core.budget_usage",
+      { tokens: { input: 9000, output: 10 }, toolCalls: 0, wallMs: 1 },
+      "system",
+    )
+    const latest = ev(
+      "core.budget_usage",
+      {
+        tokens: { input: 1000, output: 10, cacheRead: 2000, cacheWrite: 500 },
+        toolCalls: 0,
+        wallMs: 1,
+        contextEstimate: 1500,
+      },
+      "system",
+    )
+    expect(contextOverheadOf([older, noEstimate, latest])).toBe(2000)
+    // 没有可对照的请求 → 0；真实比估算还小（估算偏高）→ 0 不为负
+    expect(contextOverheadOf([noEstimate])).toBe(0)
+    const over = ev(
+      "core.budget_usage",
+      { tokens: { input: 100, output: 1 }, toolCalls: 0, wallMs: 1, contextEstimate: 900 },
+      "system",
+    )
+    expect(contextOverheadOf([over])).toBe(0)
+  })
+
+  it("读数用校准值：估算 21% 加上 2500 开销后跨到 50%–70% 档；calibrate:false 回到纯估算；余量的 contextTokens 维也用校准值", () => {
+    const usage = ev(
+      "core.budget_usage",
+      {
+        tokens: { input: 3000, output: 10, cacheRead: 1000 },
+        toolCalls: 0,
+        wallMs: 1,
+        contextEstimate: 1500,
+      },
+      "system",
+    )
+    const ctx = fakeCtx({ timeline: [usage], budget: { used: 1700, contextLimit: 8000, targetTokens: 6800 } })
+    const r = readPerception(ctx, thresholds)
+    expect(r.contextOverhead).toBe(2500)
+    expect(r.contextUsage).toEqual({ level: 1, label: "50%–70%" })
+    const raw = readPerception(ctx, thresholds, undefined, { calibrate: false })
+    expect(raw.contextOverhead).toBe(0)
+    expect(raw.contextUsage).toEqual({ level: 0, label: "<50%" })
+    // 4200 / 5000 已用 → 余 16%
+    const withLimits = readPerception(ctx, thresholds, { contextTokens: 5000 })
+    expect(withLimits.budgetRemaining).toEqual({ level: 1, label: "5%–20%", tightest: "contextTokens" })
+  })
+
+  it("循环里：第二轮读数吃到第一轮的真实用量，档位随之上跳并追加新说明", async () => {
+    const log = new InMemoryEventLog()
+    // 窗口 4000：估算不到 10%；第一轮真实 input 2500 远大于估算 → 第二轮校准后 ≥ 50%
+    const lowering = new ScriptedLowering(
+      [
+        { drafts: [callTool("c1", "add", { a: 2, b: 3 })], outcome: { usage: { input: 2500, output: 5 } } },
+        { drafts: [callTool("c2", "add", { a: 5, b: 4 })], outcome: { usage: { input: 2600, output: 5 } } },
+        { drafts: [say("答案是 9")] },
+      ],
+      { capabilities: { contextWindow: 4000 } },
+    )
+    await drain(runLoop(config(lowering, log, { sockets: [perception()] })))
+    const notes = notesOf(await all(log))
+    expect(notes.length).toBeGreaterThanOrEqual(2)
+    const levels = notes.map(
+      (n) => (n.payload.meta as { reading: { contextUsage: { level: number } } }).reading.contextUsage.level,
+    )
+    expect(levels[0]).toBe(0)
+    expect(levels[1]).toBeGreaterThanOrEqual(1)
+    // 日志里的 budget_usage 带估算，回放时能重算同一读数
+    const usages = (await all(log)).filter(
+      (e) => e.type === "core.budget_usage",
+    ) as CoreEventOf<"core.budget_usage">[]
+    expect(usages.every((u) => typeof u.payload.contextEstimate === "number")).toBe(true)
   })
 })

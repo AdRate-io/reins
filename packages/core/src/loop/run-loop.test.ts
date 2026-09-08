@@ -149,6 +149,58 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
     expect(replay.events[1]?.replay).toMatchObject({ thinkingSignature: "sig:先算 2+3" })
   })
 
+  it("budget_usage 带该请求的投影估算 contextEstimate；ctx.budget.lastUsage 在 beforeModel 是上次的、onTurnEnd 是本轮的（B8）", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      {
+        drafts: [callTool("c1", "add", { a: 2, b: 3 })],
+        outcome: { usage: { input: 100, output: 7, cacheRead: 30 } },
+      },
+      { drafts: [say("5")], outcome: { usage: { input: 200, output: 9 } } },
+    ])
+    const seen: { hook: string; turn: number; usage: unknown; wallMs: number }[] = []
+    const probe: Socket = {
+      beforeModel: (ctx) => {
+        seen.push({
+          hook: "before",
+          turn: ctx.session.turn,
+          usage: ctx.budget.lastUsage,
+          wallMs: ctx.budget.wallMs,
+        })
+        return undefined
+      },
+      onTurnEnd: (ctx) => {
+        seen.push({
+          hook: "end",
+          turn: ctx.session.turn,
+          usage: ctx.budget.lastUsage,
+          wallMs: ctx.budget.wallMs,
+        })
+        return undefined
+      },
+    }
+    await drain(runLoop(baseConfig(lowering, log, { input: "算", sockets: [probe] })))
+    expect(seen.map((s) => [s.hook, s.turn, s.usage])).toEqual([
+      ["before", 1, undefined],
+      ["end", 1, { input: 100, output: 7, cacheRead: 30 }],
+      ["before", 2, { input: 100, output: 7, cacheRead: 30 }],
+      ["end", 2, { input: 200, output: 9 }],
+    ])
+    // 模型调用后 wallMs 已更新（时钟每读一次 +1ms）
+    const t1 = seen.filter((s) => s.turn === 1)
+    expect((t1[1]?.wallMs ?? 0) > (t1[0]?.wallMs ?? 0)).toBe(true)
+    const usages = (await all(log)).filter(
+      (e): e is CoreEventOf<"core.budget_usage"> => e.type === "core.budget_usage",
+    )
+    expect(usages).toHaveLength(2)
+    for (const [i, u] of usages.entries()) {
+      // 与该轮请求的投影估算同值：回放时能重算
+      expect(u.payload.contextEstimate).toBeGreaterThan(0)
+      expect(typeof u.payload.contextEstimate).toBe("number")
+      expect(u.payload.tokens).toEqual(lowering.requests[i] ? u.payload.tokens : undefined)
+    }
+  })
+
   it("budget_usage 记录每轮用量与工具次数", async () => {
     const log = new InMemoryEventLog()
     await drain(runLoop(baseConfig(new ScriptedLowering(THREE_TURNS), log, { input: "算" })))
