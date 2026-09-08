@@ -80,9 +80,14 @@ const t0 = (timeline[0] as Event).at
 const tLast = (timeline.at(-1) as Event).at
 const rel = (at: number) => `+${((at - t0) / 1000).toFixed(2)}s`
 const count = (type: string) => timeline.filter((e) => e.type === type).length
+// 口径：厂商报的 input 不含缓存命中的部分，真正进模型的输入 = input + cacheRead
 const usage = turns.reduce(
-  (acc, t) => ({ input: acc.input + (t.usage?.tokens.input ?? 0), output: acc.output + (t.usage?.tokens.output ?? 0) }),
-  { input: 0, output: 0 },
+  (acc, t) => ({
+    input: acc.input + (t.usage?.tokens.input ?? 0),
+    cacheRead: acc.cacheRead + (t.usage?.tokens.cacheRead ?? 0),
+    output: acc.output + (t.usage?.tokens.output ?? 0),
+  }),
+  { input: 0, cacheRead: 0, output: 0 },
 )
 
 /** 一行能看懂的内容摘要；完整载荷在 HTML 里点开看 */
@@ -135,7 +140,7 @@ const row = (e: Event) =>
 const turnLandings = turns.map(landingsOf)
 console.log(`会话 ${sessionId} · 模型 ${model.provider}/${model.id}`)
 console.log(
-  `${timeline.length} 条事件 · ${turns.length} 轮模型调用 · ${count("core.tool_call")} 次工具 · ${count("core.approval_request")} 次审批 · 用时 ${((tLast - t0) / 1000).toFixed(1)}s · tokens in ${usage.input} / out ${usage.output}`,
+  `${timeline.length} 条事件 · ${turns.length} 轮模型调用 · ${count("core.tool_call")} 次工具 · ${count("core.approval_request")} 次审批 · 用时 ${((tLast - t0) / 1000).toFixed(1)}s · 输入 ${usage.input + usage.cacheRead} token（其中缓存命中 ${usage.cacheRead}）· 输出 ${usage.output}`,
 )
 console.log()
 for (const e of preamble) console.log(row(e))

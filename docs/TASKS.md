@@ -48,7 +48,7 @@
 
 ## M1 脑子 v1（目标 3 周）
 
-- [ ] B1 perception（分档注入、每档一次）
+- [ ] B1 perception（分档注入、每档一次）—— 验收：注入内容按档位离散化；遵守技术方案 §9.1 的五条 prompt cache 约束（只追加在末尾、旧说明不删不隐藏、系统提示与工具表稳定）；用 `budget_usage.tokens.cacheRead` 对比注入前后，命中占比不下降，并关闭 §17 对应待核实项
 - [ ] B2 compact 工具 + 规则提示 + 阈值兜底 + 连续上限
 - [ ] B3 pins 幸存契约 + 折叠后重注入
 - [ ] B4 spill 外溢 + `fetch_blob`

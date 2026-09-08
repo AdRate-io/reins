@@ -104,11 +104,12 @@ function preview(e) {
 const main = $("main")
 const rows = new Map() // seq → 节点
 const turnBySeq = new Map(data.turns.filter((t) => t.firstOutputSeq !== null).map((t) => [t.firstOutputSeq, t]))
-const usage = data.turns.reduce((a, t) => ({ i: a.i + (t.usage?.tokens.input ?? 0), o: a.o + (t.usage?.tokens.output ?? 0) }), { i: 0, o: 0 })
+// 口径：厂商报的 input 不含缓存命中的部分，真正进模型的输入 = input + cacheRead
+const usage = data.turns.reduce((a, t) => ({ i: a.i + (t.usage?.tokens.input ?? 0), c: a.c + (t.usage?.tokens.cacheRead ?? 0), o: a.o + (t.usage?.tokens.output ?? 0) }), { i: 0, c: 0, o: 0 })
 const n = (type) => data.events.filter((e) => e.type === type).length
 $("sid").textContent = data.sessionId
 $("model").textContent = `${data.model.provider}/${data.model.id}`
-$("summary").textContent = `${data.events.length} 条事件 · ${data.turns.length} 轮模型调用 · ${n("core.tool_call")} 次工具 · ${n("core.approval_request")} 次审批 · 用时 ${((data.events.at(-1).at - t0) / 1000).toFixed(1)}s · tokens in ${usage.i} / out ${usage.o}`
+$("summary").textContent = `${data.events.length} 条事件 · ${data.turns.length} 轮模型调用 · ${n("core.tool_call")} 次工具 · ${n("core.approval_request")} 次审批 · 用时 ${((data.events.at(-1).at - t0) / 1000).toFixed(1)}s · 输入 ${usage.i + usage.c} token（其中缓存命中 ${usage.c}）· 输出 ${usage.o}`
 
 for (const e of data.events) {
   const turn = turnBySeq.get(e.seq)
