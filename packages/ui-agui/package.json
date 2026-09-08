@@ -1,0 +1,30 @@
+{
+  "name": "@reins/ui-agui",
+  "version": "0.0.0",
+  "description": "reins — timeline events → AG-UI protocol events (encoder for @reins/server, or standalone mapper)",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@reins/core": "workspace:*",
+    "@reins/server": "workspace:*"
+  },
+  "devDependencies": {
+    "@ag-ui/core": "0.0.59"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

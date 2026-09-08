@@ -29,6 +29,7 @@ import type {
   HandlerContext,
   HandlerOptions,
   StreamEncoder,
+  StreamEncoderFactory,
   StreamItem,
 } from "./types.js"
 
@@ -113,7 +114,7 @@ interface StreamPlan {
 }
 
 export function createAgentHandler(agent: AgentDefinition, options: HandlerOptions = {}): AgentHandler {
-  const encode: StreamEncoder = options.encode ?? rawEncoder
+  const makeEncoder: StreamEncoderFactory = options.encode ?? (() => rawEncoder)
   const deltas = options.deltas ?? true
   const onDisconnect = options.onDisconnect ?? "continue"
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
@@ -123,6 +124,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
 
   /** 组装 SSE 响应。补发 + （可选）实时推，全部在 ReadableStream 内部异步进行，Response 立刻返回 */
   function openStream(plan: StreamPlan): Response {
+    const encode: StreamEncoder = makeEncoder()
     const textEncoder = new TextEncoder()
     let closed = false
     let begun = false
@@ -155,17 +157,15 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
         if (heartbeatMs > 0) heartbeat = setInterval(() => write(SSE_HEARTBEAT), heartbeatMs)
 
         const pump = async () => {
-          emit({
-            kind: "start",
-            sessionId: plan.sessionId,
-            fromSeq: plan.fromSeq,
-            live: plan.run !== undefined,
-          })
           // 先订阅再补发：补发期间 run 推出的事件先攒在队列里，补发完按 seq 去重
           if (plan.run !== undefined) sub = plan.run.subscribe()
+          // 客户端报的 lastSeq 若超过日志末尾（换了会话、存储被清），钳到末尾：否则之后的实时事件会被当成"已补发过"静默丢掉
+          const tailSeq = (await log.tail(plan.sessionId, 1))[0]?.seq ?? 0
+          const fromSeq = Math.min(plan.fromSeq, tailSeq + 1)
+          emit({ kind: "start", sessionId: plan.sessionId, fromSeq, live: plan.run !== undefined })
 
-          let maxSeq = plan.fromSeq - 1
-          for await (const e of log.read(plan.sessionId, { fromSeq: plan.fromSeq })) {
+          let maxSeq = fromSeq - 1
+          for await (const e of log.read(plan.sessionId, { fromSeq })) {
             if (closed) break
             emit({ kind: "event", event: e, replay: true })
             maxSeq = e.seq

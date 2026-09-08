@@ -78,6 +78,12 @@ export interface SseFrame {
 /** 编码器：StreamItem → SSE 帧。缺省 rawEncoder 原样推事件；AG-UI 编码器在 @reins/ui-agui */
 export type StreamEncoder = (item: StreamItem) => readonly SseFrame[]
 
+/**
+ * 每条流开始时调用一次，返回该流专用的编码器。编码器可以有状态（AG-UI 要把流式增量与随后的完整事件接成
+ * 同一条消息），而多条流会并发交错，所以状态必须按流隔离 —— handler 拿到的是工厂而不是编码器本身。
+ */
+export type StreamEncoderFactory = () => StreamEncoder
+
 // ---- handler ----
 
 /** 宿主运行时可选传入的上下文。Cloudflare Workers 的 ExecutionContext 结构兼容，直接透传即可 */
@@ -89,8 +95,8 @@ export interface HandlerContext {
 export type AgentHandler = (request: Request, ctx?: HandlerContext) => Promise<Response>
 
 export interface HandlerOptions {
-  /** 缺省 rawEncoder */
-  encode?: StreamEncoder
+  /** 每条流一个编码器实例；缺省 `() => rawEncoder` */
+  encode?: StreamEncoderFactory
   /** 是否推流式增量（delta 项）；缺省 true。日志里只有完整内容块，增量只给 UI 用 */
   deltas?: boolean
   /**

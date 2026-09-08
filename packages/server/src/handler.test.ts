@@ -118,6 +118,20 @@ describe("POST：起 run 并流式推时间线", () => {
     expect(resultOf(second)).toEqual({ status: "done", sessionId: "s1", lastSeq: 9 })
   })
 
+  it("lastSeq 超过日志末尾（客户端记错 / 存储被清）：钳到末尾，实时事件一条不丢", async () => {
+    const { handler } = setup(TWO_TURNS)
+    const frames = parseFrames(
+      await (await handler(postRequest({ sessionId: "s1", input: "2+3", lastSeq: 99 }))).text(),
+    )
+    expect(frames[0]).toEqual({ event: "start", data: { sessionId: "s1", fromSeq: 1, live: true } })
+    expect(ids(frames)).toEqual([1, 2, 3, 4, 5, 6])
+    const replay = parseFrames(await (await handler(getRequest({ sessionId: "s1", lastSeq: "99" }))).text())
+    expect(replay).toEqual([
+      { event: "start", data: { sessionId: "s1", fromSeq: 7, live: false } },
+      { event: "end", data: { sessionId: "s1", lastSeq: 6 } },
+    ])
+  })
+
   it("deltas:false 时没有 delta 帧；自定义编码器完全替换输出", async () => {
     const noDelta = setup(TWO_TURNS, [addTool], {}, { deltas: false })
     const frames = parseFrames(await (await noDelta.handler(postRequest({ input: "x" }))).text())
@@ -125,7 +139,7 @@ describe("POST：起 run 并流式推时间线", () => {
 
     const encode = (item: StreamItem) =>
       item.kind === "event" ? [{ event: "ev", data: item.event.type }] : [{ event: item.kind, data: null }]
-    const custom = setup(TWO_TURNS, [addTool], {}, { encode })
+    const custom = setup(TWO_TURNS, [addTool], {}, { encode: () => encode })
     const raw = await (await custom.handler(postRequest({ input: "x" }))).text()
     expect(raw).toContain('event: ev\ndata: "core.tool_call"\n\n')
     expect(raw).toContain("event: result\ndata: null\n\n")

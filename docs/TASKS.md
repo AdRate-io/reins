@@ -38,7 +38,7 @@
 ### 阶段 5：服务端与前端
 
 - [x] T12 `@reins/server` `createAgentHandler`：Web 标准 handler、SSE、`lastSeq` 重连补发 —— 验收：Node 与 Cloudflare Workers（miniflare）各跑通（2026-09-08 完成：`packages/server`，handler / runs / sse 三个源文件约 450 行。POST 起 run 并实时推每条刚 append 的事件，SSE `id:` = seq，结束给 `result` 帧；GET 带 `lastSeq` 或 `Last-Event-ID` 从 EventLog 补发，撞上正在跑的 run 则接着实时推；同会话单 run（409）；发起者断开缺省不中止；resume / decisions 开流前预校验给 409；编码器可插，缺省推原始事件，AG-UI 留给 T13。15 用例：纯 Web Request 调用 12 项（流式顺序与日志逐字一致、补发去重、正在跑时重连不重不漏、409、continue / abort、审批暂停 → 回传 state 批准 / 拒绝、篡改 / 指错 / 换会话 409 且一条日志不写、400 / 405、principal 钩子）、真实 node:http 经 TCP 边跑边收 1 项、miniflare / workerd 1 项（esbuild 打包产物零 `node:` 引用、waitUntil 挂上）。全仓 230 用例绿）
-- [ ] T13 `@reins/ui-agui` 事件映射 —— 验收：映射表测试；一个最小 HTML 页面消费流
+- [x] T13 `@reins/ui-agui` 事件映射 —— 验收：映射表测试；一个最小 HTML 页面消费流（2026-09-08 完成：`packages/ui-agui`，`mapEvent` 纯映射 + `AGUI_MAPPING` 映射表 + `createAguiEncoder` 有状态编码器（流式增量与随后的完整事件接成同一条消息）+ `aguiEncoding()` 直接塞给 server 的 `encode`。运行时零依赖，31 用例全部用 `@ag-ui/core@0.0.59` 官方 zod schema 逐条校验产出：15 种 core 事件 + ext.* 的映射表逐条核对、无死条目、图片有损声明、空正文不发空 delta、tool_args 增量丢弃、paused → interrupt outcome、error → RUN_ERROR、接 server 整条流首尾与 seq 挂帧。server 的 `encode` 改为按流工厂（编码器有状态，多流并发不能共享）；修了 lastSeq 超末尾时实时事件被误当已补发的问题。demo：`packages/ui-agui/demo/`（`serve.mjs` + `index.html`，无依赖），经网关用 Claude Opus 5 实跑：流式思考、查天气、上线请求暂停、批准后续跑到 done，全部走 AG-UI 事件；无密钥时剧本模式离线可跑。全仓 262 用例绿）
 - [ ] T14 示例应用 `examples/minimal`：五分钟体验代码原样可跑 —— 验收：PRD §5.1 代码块复制即用
 
 ### 阶段 6：M0 收口

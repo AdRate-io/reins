@@ -20,7 +20,8 @@
       "@reins/core/testing": ["./packages/core/src/testing/index.ts"],
       "@reins/brain": ["./packages/brain/src/index.ts"],
       "@reins/lowering-pi": ["./packages/lowering-pi/src/index.ts"],
-      "@reins/server": ["./packages/server/src/index.ts"]
+      "@reins/server": ["./packages/server/src/index.ts"],
+      "@reins/ui-agui": ["./packages/ui-agui/src/index.ts"]
     }
   }
 }
