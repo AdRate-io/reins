@@ -92,6 +92,23 @@ export interface HandlerContext {
   waitUntil?(promise: Promise<unknown>): void
 }
 
+/** 传给 `HandlerOptions.authorizeSession` 的一次会话访问请求。 */
+export interface SessionAuthzInput {
+  /** 已解析出的会话 id：GET 取自 query，POST 取自请求体（没带则是服务端刚生成的新 id） */
+  sessionId: string
+  /** `principal` 钩子的解析结果；没设那个钩子或返回 undefined 时为 undefined（匿名） */
+  principal: Principal | undefined
+  /** 原始请求，供宿主读 header / cookie 等。**别在这里读 body**：handler 随后要读它 */
+  request: Request
+  /** GET 是重连读流，POST 是起 run。宿主可以只对写放行给部分人 */
+  method: "GET" | "POST"
+  /**
+   * 这次是不是要新建会话（POST 没带 sessionId，id 是服务端刚生成的）。
+   * 新会话还没有归属，宿主通常一律放行、并在返回前自行把 sessionId 记到自己的归属表里。
+   */
+  isNew: boolean
+}
+
 export type AgentHandler = (request: Request, ctx?: HandlerContext) => Promise<Response>
 
 export interface HandlerOptions {
@@ -111,6 +128,29 @@ export interface HandlerOptions {
    * 解析结果透传给循环（工具与钩子可读），库不解释其字段。
    */
   principal?(request: Request): MaybePromise<Principal | undefined>
+  /**
+   * 会话级鉴权：handler 解析出 sessionId **之后**、读写这条会话的任何日志之前调用，
+   * 决定这个主事人能不能碰这条会话。
+   *
+   * 为什么单独一个钩子而不是让宿主在 `principal` 里判：`principal` 只拿到 Request，
+   * 而 POST 的 sessionId 在**请求体**里 —— 宿主要在那里判归属就得 `clone()` 去读 body，
+   * 而 handler 随后还要再读一次。GET 的 sessionId 虽在 query 里可解析，但两条路各写一遍
+   * 归属判定容易漏。所以由 handler 统一解析好再回调。
+   *
+   * **只有显式返回 `true` 才放行**；`false` 或 `undefined` 一律拒绝（回 404，见下）；
+   * 要自定应答就 throw 一个 Response（原样返回，与 `principal` 一致）。
+   *
+   * 为什么不让"什么都不返回"算放行：鉴权钩子必须 fail-closed。宿主某条分支漏写 return
+   * 就得到 undefined —— 那时拒绝会让会话立刻打不开、当场发现，放行则是一个安静的越权漏洞。
+   * 与 schema 读、审批、resume 校验同一原则。
+   *
+   * 拒绝为什么是 404 而不是 403：403 等于告诉对方"这条会话存在，只是你不能看"。
+   * 与外溢 blob 的授权规则一致（未被引用的 id 一律当不存在，不泄露）。
+   *
+   * **不设这个钩子时 handler 不做任何会话归属检查** —— 只要知道 sessionId 就能读整条时间线。
+   * 多租户宿主必须设它。
+   */
+  authorizeSession?(input: SessionAuthzInput): MaybePromise<boolean | undefined>
   /** 新会话 id 工厂；缺省 uuidv7 */
   newSessionId?(): string
   /**

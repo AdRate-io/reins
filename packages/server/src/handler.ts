@@ -36,6 +36,7 @@ import type {
   AgentRequestBody,
   HandlerContext,
   HandlerOptions,
+  SessionAuthzInput,
   StreamEncoder,
   StreamEncoderFactory,
   StreamItem,
@@ -334,10 +335,38 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     return new Response(body, { status: 200, headers: { ...SSE_HEADERS, [SESSION_HEADER]: plan.sessionId } })
   }
 
-  async function handleGet(request: Request, url: URL): Promise<Response> {
+  /**
+   * 跑一次会话级鉴权。返回 Response 表示"到此为止，把它回给客户端"；返回 undefined 表示放行。
+   *
+   * fail-closed：**只有钩子显式返回 true 才放行**，false 与 undefined（宿主漏写 return）一律拒。
+   * 拒绝一律 404 而不是 403：403 等于确认"这条会话存在，只是你不能看"（与 blob 授权同一规则）。
+   */
+  async function denyBySessionAuthz(input: SessionAuthzInput): Promise<Response | undefined> {
+    if (options.authorizeSession === undefined) return undefined
+    let allowed: boolean | undefined
+    try {
+      allowed = await options.authorizeSession(input)
+    } catch (err) {
+      if (err instanceof Response) return err
+      throw err
+    }
+    if (allowed !== true) return json(404, { error: "not_found", message: "会话不存在" })
+    return undefined
+  }
+
+  async function handleGet(request: Request, url: URL, principal: Principal | undefined): Promise<Response> {
     const sessionId = url.searchParams.get("sessionId")
     if (sessionId === null || sessionId === "")
       return json(400, { error: "bad_request", message: "缺少 sessionId" })
+    // 读日志之前先问归属：GET 拿到 sessionId 就能补发整条时间线，这里是唯一的关口
+    const denied = await denyBySessionAuthz({
+      sessionId,
+      principal,
+      request,
+      method: "GET",
+      isNew: false,
+    })
+    if (denied !== undefined) return denied
     const lastSeq = lastSeqOf(request, url)
     if (typeof lastSeq === "string") return json(400, { error: "bad_request", message: lastSeq })
     const run = runs.get(sessionId)
@@ -365,6 +394,15 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     if (!parsed.ok) return json(400, { error: "bad_request", message: parsed.error })
     const body = parsed.body
     const sessionId = body.sessionId ?? newSessionId()
+    // 归属判定放在 readTimeline / validateResume 之前：那些已经在读这条会话的日志了
+    const denied = await denyBySessionAuthz({
+      sessionId,
+      principal,
+      request,
+      method: "POST",
+      isNew: body.sessionId === undefined,
+    })
+    if (denied !== undefined) return denied
     const fromSeq = (body.lastSeq ?? 0) + 1
     const inputIsDraft =
       body.input !== undefined && typeof body.input !== "string" && !Array.isArray(body.input)
@@ -445,7 +483,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
       throw err
     }
     const url = new URL(request.url)
-    if (request.method === "GET") return handleGet(request, url)
+    if (request.method === "GET") return handleGet(request, url, principal)
     if (request.method === "POST") return handlePost(request, ctx, principal)
     return json(405, { error: "method_not_allowed", message: "只接受 GET 与 POST" }, { allow: "GET, POST" })
   }

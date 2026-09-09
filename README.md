@@ -44,6 +44,45 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 | `@reins/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
 | `reins` | `createAgent()` plus re-exports of core / server / ui-agui |
 
+## Security notes
+
+Read these before putting `@reins/server` on a public route.
+
+**Session access is not authorized by default.** The handler identifies a session by `sessionId`
+alone — a `GET ?sessionId=…` replays that session's entire timeline, and a `POST` with someone
+else's `sessionId` continues their run. The `principal(request)` hook resolves *who is asking*,
+but it does not decide *what they may touch*. If more than one user shares a handler, you must
+also pass `authorizeSession`:
+
+```ts
+createAgentHandler(agent, {
+  principal: (req) => verifyToken(req.headers.get("authorization")),
+  // called after sessionId is parsed, before any of that session's log is read or written
+  authorizeSession: async ({ sessionId, principal, method, isNew }) => {
+    if (principal === undefined) throw new Response("unauthorized", { status: 401 })
+    if (isNew) return true            // brand-new session: record the owner yourself, then allow
+    return await ownsSession(principal.id, sessionId)
+  },
+})
+```
+
+Only an explicit `true` allows the request. `false` — or `undefined`, which is what a branch
+with a missing `return` produces — answers `404 not_found` rather than `403`, because a `403`
+would confirm that the session exists. Throwing a `Response` returns it verbatim, same as
+`principal`. The hook is fail-closed on purpose: a forgotten `return` should lock you out
+loudly, not wave a stranger through quietly.
+
+**Runtime footprint.** `@reins/core` and `@reins/brain` have zero external dependencies.
+`@reins/lowering-pi` pulls `pi-ai`, which declares ten dependencies of its own — installing it
+fetches roughly 65 MB, of which about 29 MB (`@google/genai`, the AWS Bedrock SDK) is outside
+the import graph reins actually reaches. Nothing Node-specific ends up on the paths we use:
+the lowering layer is verified on Cloudflare workerd with no `nodejs_compat` flag
+(see `spikes/edge-runtime-check`). If the install size matters more than provider coverage,
+a zero-dependency lowering layer is on the roadmap.
+
+**Also worth knowing.** `sessionId` values must be ASCII — the handler echoes them in the
+`X-Reins-Session` response header, and HTTP header values cannot carry non-latin1 characters.
+
 ## License
 
 MIT

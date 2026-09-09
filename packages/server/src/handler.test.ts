@@ -672,3 +672,130 @@ describe("input 草稿的服务端白名单（上线前审查修复）", () => {
     expect(forbid.status).toBe(400)
   })
 })
+
+/**
+ * 记账用的 EventLog：数一数这条会话的日志被读了几次。
+ * 会话级鉴权的关口必须在**读之前**，这个计数就是判据（项目里其他测试都不用 vi，所以自己包一层）。
+ */
+class CountingLog extends InMemoryEventLog {
+  reads = 0
+  override read(sessionId: string, opts?: Parameters<InMemoryEventLog["read"]>[1]) {
+    this.reads += 1
+    return super.read(sessionId, opts)
+  }
+  override tail(sessionId: string, n: number) {
+    this.reads += 1
+    return super.tail(sessionId, n)
+  }
+}
+
+describe("R6 会话级鉴权：authorizeSession", () => {
+  it("不设钩子时不做任何归属检查：知道 sessionId 就能读走整条时间线（多租户宿主必须设它）", async () => {
+    const { handler } = setup(TWO_TURNS)
+    // sessionId 用 ASCII：它要塞进 X-Reins-Session 响应头，HTTP header 值只能是 latin1
+    await (await handler(postRequest({ sessionId: "someone-elses", input: "2+3" }))).text()
+
+    // 换一个"谁都不是"的请求，照样把别人的时间线读完
+    const stolen = parseFrames(await (await handler(getRequest({ sessionId: "someone-elses" }))).text())
+    // 整条时间线，一条不落（含运维事件）
+    expect(typesOf(stolen)).toEqual([
+      "user_message",
+      "tool_call",
+      "tool_result",
+      "budget_usage",
+      "model_text",
+      "budget_usage",
+    ])
+  })
+
+  it("GET 返回 false：404 not_found，且日志一次都没被读", async () => {
+    const log = new CountingLog()
+    const seen: unknown[] = []
+    const { handler } = setup(
+      TWO_TURNS,
+      [addTool],
+      { log },
+      {
+        authorizeSession: (input) => {
+          seen.push({ sessionId: input.sessionId, method: input.method, isNew: input.isNew })
+          return false
+        },
+      },
+    )
+    log.reads = 0
+
+    const res = await handler(getRequest({ sessionId: "s1", lastSeq: "0" }))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: "not_found", message: "会话不存在" })
+    // 关口在读之前：一条日志都没碰
+    expect(log.reads).toBe(0)
+    expect(seen).toEqual([{ sessionId: "s1", method: "GET", isNew: false }])
+  })
+
+  it("POST 既有会话返回 false：404，且没有写进任何事件", async () => {
+    const log = new InMemoryEventLog()
+    const { handler } = setup(TWO_TURNS, [addTool], { log }, { authorizeSession: () => false })
+
+    const res = await handler(postRequest({ sessionId: "s1", input: "2+3" }))
+    expect(res.status).toBe(404)
+    expect(await logged(log, "s1")).toEqual([])
+  })
+
+  it("POST 新会话：isNew 为 true，sessionId 是服务端刚生成的那个", async () => {
+    const seen: unknown[] = []
+    const { handler } = setup(
+      TWO_TURNS,
+      [addTool],
+      {},
+      {
+        authorizeSession: (input) => {
+          seen.push({ sessionId: input.sessionId, isNew: input.isNew, method: input.method })
+          return true
+        },
+      },
+    )
+    const res = await handler(postRequest({ input: "2+3" }))
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(seen).toEqual([{ sessionId: "fresh", isNew: true, method: "POST" }])
+  })
+
+  it("抛出 Response 即原样返回（与 principal 一致）；principal 解析结果透传，GET 也拿得到", async () => {
+    const seen: unknown[] = []
+    const { handler } = setup(
+      TWO_TURNS,
+      [addTool],
+      {},
+      {
+        principal: (req) => (req.headers.get("authorization") === "Bearer boss" ? { id: "boss" } : undefined),
+        authorizeSession: (input) => {
+          seen.push(input.principal)
+          if (input.principal === undefined) throw new Response("请先登录", { status: 401 })
+          return true
+        },
+      },
+    )
+
+    const anon = await handler(getRequest({ sessionId: "s1" }))
+    expect(anon.status).toBe(401)
+    expect(await anon.text()).toBe("请先登录")
+
+    // GET 此前压根没拿到 principal（R6 的修复点）：带上凭证就该放行，且钩子看得见主事人
+    const ok = await handler(getRequest({ sessionId: "s1" }, { authorization: "Bearer boss" }))
+    expect(ok.status).toBe(200)
+    await ok.text()
+    expect(seen).toEqual([undefined, { id: "boss" }])
+  })
+
+  it("fail-closed：只有显式 true 放行；undefined（宿主漏写 return）与 false 一样拒", async () => {
+    const allowed = setup(TWO_TURNS, [addTool], {}, { authorizeSession: () => true })
+    const ok = await allowed.handler(postRequest({ sessionId: "s1", input: "2+3" }))
+    expect(ok.status).toBe(200)
+    expect(typesOf(parseFrames(await ok.text()))).toContain("model_text")
+
+    // 漏写 return 的钩子不能变成"放行"——那会是个安静的越权漏洞
+    const forgot = setup(TWO_TURNS, [addTool], {}, { authorizeSession: () => undefined })
+    const denied = await forgot.handler(postRequest({ sessionId: "s1", input: "2+3" }))
+    expect(denied.status).toBe(404)
+  })
+})
