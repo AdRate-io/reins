@@ -119,6 +119,15 @@ function brainLeanArm(world: PatrolWorld): EvalArm {
   }
 }
 
+/**
+ * 只加整理与取回（E3c）：threshold 的 core 缺省链 + perception（整理规则引用它的读数）+ compact（含 recall）。
+ * 用来把"整理 + 取回"的成本单独从 brain-lean 里剥出来看 —— brain-lean 的 token 差主要来自 approval 的分批暂停多出的轮次。
+ */
+function compactOnlyArm(): EvalArm {
+  const limits = { toolCalls: 120, wallMs: 40 * 60_000 }
+  return { name: "compact-only", sockets: [perception({ limits }), compact()] }
+}
+
 const suite = adratePatrolFixtures({ contextWindow })
 const fixtures = fixtureIds.length ? suite.fixtures.filter((f) => fixtureIds.includes(f.id)) : suite.fixtures
 if (fixtures.length === 0) throw new Error(`没有匹配的 fixture：${fixtureIds.join(",")}`)
@@ -127,6 +136,7 @@ const armsByName: Record<string, EvalArm> = {
   threshold: thresholdArm(),
   brain: brainArm(suite.world),
   "brain-lean": brainLeanArm(suite.world),
+  "compact-only": compactOnlyArm(),
 }
 const arms = armNames.map((n) => {
   const a = armsByName[n]

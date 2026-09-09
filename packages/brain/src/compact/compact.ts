@@ -1,7 +1,7 @@
 /**
  * compact —— 自主整理模块（技术方案 §9.2，B2）。
  *
- * 四件事：
+ * 五件事：
  * 1. **工具** `compact({ summary, keep, keepRecentTurns? })`：模型自己决定何时整理、留什么（宪法一）。
  *    工具本身是静态贡献（Socket.tools），整个 run 不变，续跑补齐 pending 时也在场。
  * 2. **规则提示**：静态 systemPrompt 片段（rules.ts），告诉模型什么时候该整理、什么时候别整理。
@@ -10,6 +10,8 @@
  *    宿主经 LoopConfig.projection.reserveTokens 调；perception 会把这个点告诉模型。
  * 4. **连续上限**：连着整理（模型自决 + 阈值兜底合计）达到 maxConsecutive 次仍没有一轮"正常"工作，
  *    说明卡死了（折叠后仍放不下、或模型在反复整理）→ onTurnEnd 返回 pause(budget) 交宿主处理。
+ * 5. **取回**（E3c）：摘要下面列出被折叠的每条工具结果（seq + 工具 + 入参），`recall({ seq })` 工具逐字取回一条。
+ *    整理丢细节是机制的代价（模型按自己的重要性判断留东西），清单与取回让丢掉的东西有路可回，见 recall.ts。
  *
  * 为什么真正的工作在 afterTool 而不在工具的 execute 里：算覆盖范围需要"模型本轮看到的视图"（ctx.events）与
  * 完整时间线，这些只有 TurnContext 有、ToolContext 没有；工具自己 readTimeline 又会绕开宿主的注册表（ext.* 事件会读不出）。
@@ -29,8 +31,15 @@ import {
   type ToolResultDraft,
   type TurnContext,
 } from "@reins/core"
-import { type CompactPlan, parseCompactArgs, planCompaction, trailingCompactionRun } from "./plan.js"
-import { COMPACT_RULES, COMPACT_TOOL_DESCRIPTION, COMPACT_TOOL_NAME } from "./rules.js"
+import {
+  type CompactPlan,
+  type ManifestOptions,
+  parseCompactArgs,
+  planCompaction,
+  trailingCompactionRun,
+} from "./plan.js"
+import { recallTool } from "./recall.js"
+import { COMPACT_RULES, COMPACT_TOOL_DESCRIPTION, COMPACT_TOOL_NAME, RECALL_TOOL_NAME } from "./rules.js"
 
 export interface CompactOptions {
   /**
@@ -42,6 +51,13 @@ export interface CompactOptions {
    * 规则提示：缺省用内置英文文案；传字符串替换；传 false 则本模块不碰系统提示（宿主自己把 COMPACT_RULES 放进去）。
    */
   rules?: string | false
+  /**
+   * 被折叠工具结果清单（E3c）：缺省列在摘要之后、最多 80 条；传 false 不列；传对象调条数与排除名单。
+   * 关掉清单时缺省文案里关于清单的说法就不成立了，宿主应一并换 rules。
+   */
+  manifest?: false | ManifestOptions
+  /** 是否给模型 recall 取回工具（E3c）。缺省 true；false 时清单照列，只是模型自己取不回（宿主另有读法时用） */
+  recall?: boolean
 }
 
 export const COMPACT_SOCKET_NAME = "compact"
@@ -85,10 +101,15 @@ function replaceResult(result: ToolResultDraft, text: string, isError: boolean):
   return { ...result, payload: { ...result.payload, content: [{ type: "text", text }], isError } }
 }
 
-function receipt(plan: Extract<CompactPlan, { ok: true }>): string {
+function receipt(plan: Extract<CompactPlan, { ok: true }>, withRecall: boolean): string {
   const [from, to] = plan.payload.coversSeq
   const parts = [`Folded ${plan.folded.length} events (seq ${from}–${to}) into your summary.`]
   if (plan.absorbed.length > 0) parts.push(`${plan.absorbed.length} earlier summary(ies) were absorbed.`)
+  if (plan.manifest.length > 0) {
+    parts.push(
+      `${plan.manifest.length} folded tool result(s) are listed under the summary${withRecall ? ` and can be brought back verbatim with ${RECALL_TOOL_NAME}({ seq })` : ""}.`,
+    )
+  }
   if (plan.payload.pinsKept.length > 0)
     parts.push(
       `${plan.payload.pinsKept.length} item(s) carried over verbatim (pinned notes and the latest user message).`,
@@ -107,6 +128,7 @@ export function compact(opts: CompactOptions = {}): Socket {
   if (!Number.isInteger(maxConsecutive) || maxConsecutive < 1) {
     throw new RangeError(`compact.maxConsecutive 必须是 ≥1 的整数：${String(maxConsecutive)}`)
   }
+  const withRecall = opts.recall ?? true
   const records = new WeakMap<TurnContext, TurnRecord>()
   const recordOf = (ctx: TurnContext): TurnRecord => {
     let r = records.get(ctx)
@@ -128,7 +150,7 @@ export function compact(opts: CompactOptions = {}): Socket {
 
   const socket: Socket = {
     name: COMPACT_SOCKET_NAME,
-    tools: [tool],
+    tools: withRecall ? [tool, recallTool()] : [tool],
 
     afterModel(ctx, events) {
       recordOf(ctx).hadToolCall = events.some((e) => e.type === "core.tool_call")
@@ -142,6 +164,7 @@ export function compact(opts: CompactOptions = {}): Socket {
         plan = planCompaction(ctx.events, parseCompactArgs(call.payload.args), {
           protectCallId: call.id,
           timeline: ctx.timeline,
+          ...(opts.manifest !== undefined ? { manifest: opts.manifest } : {}),
         })
       } catch (err) {
         return replaceResult(result, err instanceof Error ? err.message : String(err), true)
@@ -157,7 +180,7 @@ export function compact(opts: CompactOptions = {}): Socket {
         payload,
       })
       recordOf(ctx).compactions++
-      return replaceResult(result, receipt(plan), false)
+      return replaceResult(result, receipt(plan, withRecall), false)
     },
 
     onTurnEnd(ctx) {

@@ -13,8 +13,17 @@ import {
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reins/core/testing"
 import { describe, expect, it } from "vitest"
 import { perception } from "../perception/index.js"
+import { pins } from "../pins/index.js"
 import { compact, isModelCompaction } from "./compact.js"
-import { parseCompactArgs, planCompaction, segmentTimelineByTurn, trailingCompactionRun } from "./plan.js"
+import {
+  MANIFEST_HEADING,
+  parseCompactArgs,
+  planCompaction,
+  renderCompactionSummary,
+  segmentTimelineByTurn,
+  trailingCompactionRun,
+} from "./plan.js"
+import { parseRecallArgs, recallResult } from "./recall.js"
 import { COMPACT_RULES } from "./rules.js"
 
 const registry = createCoreRegistry()
@@ -91,7 +100,7 @@ describe("compact × runLoop：模型自决整理", () => {
     expect(lowering.requests).toHaveLength(2)
     for (const req of lowering.requests) {
       expect(req.systemPrompt).toBe(`你是计算器\n\n${COMPACT_RULES}`)
-      expect(req.tools?.map((t) => t.name)).toEqual(["add", "compact"])
+      expect(req.tools?.map((t) => t.name)).toEqual(["add", "compact", "recall"])
     }
     const spec = lowering.requests[0]?.tools?.find((t) => t.name === "compact")
     expect(spec?.inputSchema).toMatchObject({ required: ["summary", "keep"] })
@@ -131,7 +140,10 @@ describe("compact × runLoop：模型自决整理", () => {
     expect(c.payload).toEqual({
       // 第 2 轮开始时可见的是 seq 1–4（user、thinking、tool_call、tool_result；budget_usage 5 对模型不可见）
       coversSeq: [1, 4],
-      summary: "User asked 2+3+4. Computed 2+3=5.\n\nKey facts carried forward:\n- intermediate result: 5",
+      // 要点清单之后是被折叠工具结果清单（E3c）：结果 "5" 只有 1 个字符
+      summary:
+        "User asked 2+3+4. Computed 2+3=5.\n\nKey facts carried forward:\n- intermediate result: 5\n\n" +
+        `${MANIFEST_HEADING}\n- seq 4 add({"a":2,"b":3}) — 1 chars`,
       decidedBy: "model",
       // 最近一条用户消息缺省幸存（见 plan.ts 第 4 条）
       pinsKept: [logged[0]?.id],
@@ -143,7 +155,9 @@ describe("compact × runLoop：模型自决整理", () => {
     expect(receipt.payload.content[0]).toEqual({
       type: "text",
       text:
-        "Folded 4 events (seq 1–4) into your summary. 1 item(s) carried over verbatim (pinned notes and the latest user message). " +
+        "Folded 4 events (seq 1–4) into your summary. " +
+        "1 folded tool result(s) are listed under the summary and can be brought back verbatim with recall({ seq }). " +
+        "1 item(s) carried over verbatim (pinned notes and the latest user message). " +
         "Only the current turn stays unfolded. The originals remain in the session log.",
     })
 
@@ -184,9 +198,16 @@ describe("compact × runLoop：模型自决整理", () => {
     const c = compactionsOf(logged)[0] as Compaction
     // 第 3 轮开始时可见：user(1) thinking(2) call(3) result(4) | call(6) result(7)；保留最后一个模型轮 → 折 1–4
     expect(c.payload.coversSeq).toEqual([1, 4])
-    expect(c.payload.summary).toBe("Early steps folded.")
+    expect(c.payload.summary).toBe(
+      `Early steps folded.\n\n${MANIFEST_HEADING}\n- seq 4 add({"a":2,"b":3}) — 1 chars`,
+    )
     expect(resultOf(logged, "c3").payload.content[0]).toMatchObject({
       text: expect.stringContaining("The last 1 model turn(s) stay unfolded."),
+    })
+    expect(resultOf(logged, "c3").payload.content[0]).toMatchObject({
+      text: expect.stringContaining(
+        "1 folded tool result(s) are listed under the summary and can be brought back verbatim with recall({ seq })",
+      ),
     })
     expect(types(lowering.requests[3]?.events ?? [])).toEqual([
       "compaction",
@@ -268,7 +289,7 @@ describe("compact × runLoop：模型自决整理", () => {
       text: expect.not.stringContaining("absorbed"),
     })
     const view = lowering.requests[5]?.events ?? []
-    expect(compactionsOf(view).map((c) => c.payload.summary)).toEqual(["Old.", "New."])
+    expect(compactionsOf(view).map((c) => c.payload.summary.split("\n")[0])).toEqual(["Old.", "New."])
     expect(types(view)).toEqual([
       "compaction",
       "compaction",
@@ -505,6 +526,118 @@ describe("compact：阈值兜底与连续上限", () => {
   })
 })
 
+describe("compact × recall：被折叠的工具结果有路可回（E3c）", () => {
+  const doRecall = (id: string, seq: number) => callTool(id, "recall", { seq })
+
+  it("整理后 recall({ seq }) 逐字取回原结果并带说明头；seq 指向非结果事件或不存在时以 isError 说明", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [think("先算 2+3"), callTool("c1", "add", { a: 2, b: 3 })] },
+      { drafts: [doCompact("c2", { summary: "Computed 2+3.", keep: [] })] },
+      { drafts: [doRecall("r1", 4), doRecall("r2", 2), doRecall("r3", 999)] },
+      { drafts: [say("5")] },
+    ])
+    const { result } = await drain(runLoop(config(lowering, log)))
+    expect(result.status).toBe("done")
+    const logged = await all(log)
+    const r1 = resultOf(logged, "r1")
+    expect(r1.payload.isError).toBe(false)
+    expect(r1.payload.content).toEqual([
+      {
+        type: "text",
+        text: '[Recalled tool result seq 4: add({"a":2,"b":3}). Original output follows verbatim.]',
+      },
+      { type: "text", text: "5" },
+    ])
+    const r2 = resultOf(logged, "r2")
+    expect(r2.payload.isError).toBe(true)
+    expect(r2.payload.content[0]).toMatchObject({
+      text: expect.stringContaining("is a model_thinking event, not a tool result"),
+    })
+    const r3 = resultOf(logged, "r3")
+    expect(r3.payload.isError).toBe(true)
+    expect(r3.payload.content[0]).toMatchObject({ text: "No event with seq 999 in this session." })
+    // 取回的内容在下一轮视图里，与普通工具结果一样
+    const view = lowering.requests[3]?.events ?? []
+    expect(
+      view.some((e) => e.type === "core.tool_result" && (e as ToolResult).payload.toolCallId === "r1"),
+    ).toBe(true)
+  })
+
+  it("已外溢的原件不复述预览而指向 blob；只读本会话；fork 出的会话保留 seq 所以照样能取", async () => {
+    const log = new InMemoryEventLog()
+    const spilledResult = createCoreEvent(registry, {
+      type: "core.tool_result",
+      actor: "tool",
+      sessionId: SESSION,
+      seq: 1,
+      at: 1,
+      id: "x1",
+      payload: {
+        toolCallId: "big",
+        name: "list",
+        content: [{ type: "text", text: "[preview]" }],
+        isError: false,
+        spilled: { blobId: "b-1", summary: "12k chars" },
+      },
+    })
+    await log.append([spilledResult])
+    const ctxOf = (sessionId: string) => ({ sessionId, toolCallId: "t", log, emit: () => {} })
+    const spilled = await recallResult({ seq: 1 }, ctxOf(SESSION))
+    expect(spilled.isError).toBe(true)
+    expect(spilled.content[0]).toMatchObject({
+      text: expect.stringContaining('stored verbatim as blob "b-1". Read it with fetch_blob({ id: "b-1" })'),
+    })
+    // 别的会话看不到
+    expect(await recallResult({ seq: 1 }, ctxOf("other"))).toMatchObject({
+      isError: true,
+      content: [{ text: "No event with seq 1 in this session." }],
+    })
+    // fork：事件复制且 seq 不变（eval 探针正是这样跑的）
+    await log.fork(SESSION, 1, "child")
+    const viaChild = await recallResult({ seq: 1 }, ctxOf("child"))
+    expect(viaChild.content[0]).toMatchObject({ text: expect.stringContaining('blob "b-1"') })
+    expect(() => parseRecallArgs({ seq: 0 })).toThrow(RangeError)
+    expect(() => parseRecallArgs({})).toThrow(RangeError)
+    expect(parseRecallArgs({ seq: 3 })).toEqual({ seq: 3 })
+  })
+
+  it("recall: false 不给工具、回执不提取回；manifest: false 摘要不带清单", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 2, b: 3 })] },
+      { drafts: [doCompact("c2", { summary: "Plain.", keep: [] })] },
+      { drafts: [say("5")] },
+    ])
+    await drain(runLoop(config(lowering, log, { sockets: [compact({ recall: false, manifest: false })] })))
+    expect(lowering.requests[0]?.tools?.map((t) => t.name)).toEqual(["add", "compact"])
+    const logged = await all(log)
+    expect((compactionsOf(logged)[0] as Compaction).payload.summary).toBe("Plain.")
+    expect(resultOf(logged, "c2").payload.content[0]).toMatchObject({
+      text: expect.not.stringContaining("folded tool result"),
+    })
+  })
+
+  it("清单不列脑子自己的回执（compact / pin / recall），列宿主工具的结果", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 1 }), callTool("p1", "pin", { text: "keep 2" })] },
+      { drafts: [doCompact("c2", { summary: "First.", keep: [] })] },
+      { drafts: [doRecall("r1", 4)] },
+      { drafts: [doCompact("c3", { summary: "Second.", keep: [] })] },
+      { drafts: [say("2")] },
+    ])
+    await drain(runLoop(config(lowering, log, { sockets: [pins(), compact()] })))
+    const logged = await all(log)
+    const [first, second] = compactionsOf(logged) as [Compaction, Compaction]
+    expect(first.payload.summary).toBe(`First.\n\n${MANIFEST_HEADING}\n- seq 4 add({"a":1,"b":1}) — 1 chars`)
+    // 第二次整理吸收第一次：范围内有 compact 回执、recall 结果，都不列；add 的原结果已在上次清单里、这次仍是被折叠的原件，照列
+    expect(second.payload.summary).toBe(
+      `Second.\n\n${MANIFEST_HEADING}\n- seq 4 add({"a":1,"b":1}) — 1 chars`,
+    )
+  })
+})
+
 describe("compact 纯函数层", () => {
   let seq = 0
   const ev = <T extends CoreEvent["type"]>(
@@ -578,6 +711,52 @@ describe("compact 纯函数层", () => {
     expect(noUser.ok && noUser.payload.pinsKept).toEqual(["e2"])
     expect(plan.absorbed).toEqual([c])
     expect(plan.folded).toEqual([pin, t1, u])
+  })
+
+  it("planCompaction 清单：入参在时间线里找、幸存者不列、超过 maxItems 折成一行、manifest:false 不列", () => {
+    seq = 0
+    const call = (id: string, name: string, args: unknown) =>
+      ev("core.tool_call", { toolCallId: id, name, args }, "model")
+    const result = (id: string, name: string, t: string) =>
+      ev(
+        "core.tool_result",
+        { toolCallId: id, name, content: [{ type: "text", text: t }], isError: false },
+        "tool",
+      )
+    const events = [
+      user("q"), // e1
+      call("a", "get", { id: 2, adv: 1 }), // e2
+      call("b", "get", { id: 1 }), // e3
+      result("a", "get", "x".repeat(1500)), // e4
+      result("b", "get", "short"), // e5
+      call("c", "fetch_blob", { id: "b" }), // e6
+      result("c", "fetch_blob", "slice"), // e7
+      text("done"), // e8
+      usage(), // e9
+    ]
+    const plan = planCompaction(events, { summary: "S", keep: [], keepRecentTurns: 0 })
+    expect(plan.ok).toBe(true)
+    if (!plan.ok) return
+    // 键排序后的入参；fetch_blob 的切片不列；e1 幸存但它不是工具结果
+    expect(plan.manifest.map((m) => [m.seq, m.name, m.chars])).toEqual([
+      [4, "get", 1500],
+      [5, "get", 5],
+    ])
+    expect(plan.payload.summary).toBe(
+      `S\n\n${MANIFEST_HEADING}\n- seq 4 get({"adv":1,"id":2}) — 1.5k chars\n- seq 5 get({"id":1}) — 5 chars`,
+    )
+    const capped = planCompaction(
+      events,
+      { summary: "S", keep: [], keepRecentTurns: 0 },
+      { manifest: { maxItems: 1 } },
+    )
+    expect(capped.ok && capped.payload.summary).toBe(
+      `S\n\n${MANIFEST_HEADING}\n- seq 4 get({"adv":1,"id":2}) — 1.5k chars\n- …and 1 more (seq 5–5)`,
+    )
+    const off = planCompaction(events, { summary: "S", keep: ["k"], keepRecentTurns: 0 }, { manifest: false })
+    expect(off.ok && off.payload.summary).toBe("S\n\nKey facts carried forward:\n- k")
+    expect(off.ok && off.manifest).toEqual([])
+    expect(renderCompactionSummary({ summary: "S", keep: [] })).toBe("S")
   })
 
   it("segmentTimelineByTurn / trailingCompactionRun：阈值 compaction 与系统说明归入其后那一轮", () => {

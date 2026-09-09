@@ -12,15 +12,24 @@
  * 4. 被折叠范围内**最近的一条用户消息**缺省也幸存。真模型实测（spikes/b2-compact-live）：用户说"先整理，然后做 X"，
  *    模型先整理、把这条消息也折了进去，摘要里只写"接着做第二部分"，整理完反问"第二部分要做什么"。模型没法复述
  *    它还没开始处理的指令，所以这条由库保住；长任务里它就是原始任务陈述，留着只多一条消息。
+ * 5. （E3c）被折叠的工具结果列成清单附在摘要之后（`seq N tool(arguments) — 大小`），模型之后可用 recall 按 seq 取回。
+ *    摘要是模型的取舍，清单是"事实上还在的东西"；两个模型族的实测都把复核过的字段值整理成了一句结论，
+ *    清单让它至少知道去哪拿。脑子自己的工具（compact / pin / recall / fetch_blob 的回执）不列，只是噪音。
  */
 import {
   type CompactionPayload,
   type Event,
+  type FoldedToolResult,
+  foldedToolResults,
   isCompaction,
   isPinNote,
+  renderFoldedToolResults,
   splitTurns,
   supersededIds,
 } from "@reins/core"
+import { PIN_TOOL_NAME } from "../pins/rules.js"
+import { FETCH_BLOB_TOOL_NAME } from "../spill/rules.js"
+import { COMPACT_TOOL_NAME, RECALL_TOOL_NAME } from "./rules.js"
 
 export interface CompactArgs {
   summary: string
@@ -46,10 +55,38 @@ export function parseCompactArgs(raw: unknown): CompactArgs {
   return { summary: o.summary.trim(), keep: keep.map((k) => k.trim()).filter(Boolean), keepRecentTurns }
 }
 
-/** 摘要正文 + 要点清单，合成 compaction.summary。要点单列是为了模型（和 eval）一眼看到"什么被明确保留了" */
-export function renderCompactionSummary(args: Pick<CompactArgs, "summary" | "keep">): string {
-  if (args.keep.length === 0) return args.summary
-  return `${args.summary}\n\nKey facts carried forward:\n${args.keep.map((k) => `- ${k}`).join("\n")}`
+/** 缺省不列进清单的工具：脑子自己的回执与切片，取回没有意义 */
+export const MANIFEST_DEFAULT_EXCLUDE: ReadonlySet<string> = new Set([
+  COMPACT_TOOL_NAME,
+  RECALL_TOOL_NAME,
+  PIN_TOOL_NAME,
+  FETCH_BLOB_TOOL_NAME,
+])
+
+export const MANIFEST_HEADING = `Folded tool results (bring one back verbatim with ${RECALL_TOOL_NAME}({ seq })):`
+
+export interface ManifestOptions {
+  /** 最多列几条，其余折成一行。缺省 80 */
+  maxItems?: number
+  /** 不列的工具名；缺省 MANIFEST_DEFAULT_EXCLUDE */
+  exclude?: ReadonlySet<string>
+}
+
+/**
+ * 摘要正文 + 要点清单 + 被折叠工具结果清单，合成 compaction.summary。
+ * 要点单列是为了模型（和 eval）一眼看到"什么被明确保留了"；结果清单让它知道"什么还能拿回来"。
+ */
+export function renderCompactionSummary(
+  args: Pick<CompactArgs, "summary" | "keep">,
+  folded: readonly FoldedToolResult[] = [],
+  manifest: ManifestOptions = {},
+): string {
+  const parts = [args.summary]
+  if (args.keep.length > 0)
+    parts.push(`Key facts carried forward:\n${args.keep.map((k) => `- ${k}`).join("\n")}`)
+  const list = renderFoldedToolResults(folded, { heading: MANIFEST_HEADING, ...manifest })
+  if (list) parts.push(list)
+  return parts.join("\n\n")
 }
 
 export type CompactPlan =
@@ -62,6 +99,8 @@ export type CompactPlan =
       absorbed: Event[]
       /** 保留在视图里的最近模型轮数（可能比请求的多） */
       keptTurns: number
+      /** 列进摘要的被折叠工具结果（E3c） */
+      manifest: FoldedToolResult[]
     }
   | { ok: false; reason: string }
 
@@ -93,6 +132,8 @@ export interface PlanOptions {
   keepLatestUserMessage?: boolean
   /** 完整时间线：取代关系（system_note.supersedes）在这里找，取代者可能已不在视图里。缺省只看视图 */
   timeline?: readonly Event[]
+  /** 被折叠工具结果清单：false 不列；对象调条数与排除名单。缺省列、上限 80 条 */
+  manifest?: false | ManifestOptions
 }
 
 export function planCompaction(
@@ -148,6 +189,32 @@ export function planCompaction(
   const survivors = folded.filter(
     (e) => !superseded.has(e.id) && (isPinNote(e) || priorKept.has(e.id) || e === latestUser),
   )
+  // 清单的范围 = 本次折叠的可见事件 + 被吸收旧摘要盖住的原件（它们已不在视图里，只能从完整时间线找）。
+  // 不这么做，第二次整理一吸收第一次，第一次列出的结果就从清单上消失了 —— 原件明明还在日志里。
+  const survivorIds = new Set(survivors.map((e) => e.id))
+  const manifestOpts =
+    opts.manifest === false ? undefined : { exclude: MANIFEST_DEFAULT_EXCLUDE, ...opts.manifest }
+  let manifest: FoldedToolResult[] = []
+  if (manifestOpts) {
+    const listed = new Set(folded.map((e) => e.id))
+    const scope = folded.filter((e) => !survivorIds.has(e.id))
+    if (opts.timeline) {
+      for (const c of absorbed) {
+        if (!isCompaction(c)) continue
+        const [from, to] = c.payload.coversSeq
+        for (const e of opts.timeline) {
+          if (e.seq >= from && e.seq <= to && e.seq < c.seq && !listed.has(e.id) && !isCompaction(e)) {
+            listed.add(e.id)
+            scope.push(e)
+          }
+        }
+      }
+    }
+    manifest = foldedToolResults(scope, {
+      lookup: opts.timeline ?? visible,
+      exclude: manifestOpts.exclude ?? MANIFEST_DEFAULT_EXCLUDE,
+    })
+  }
   const from = Math.min(
     minSeq(folded),
     ...absorbed.map((c) => (isCompaction(c) ? c.payload.coversSeq[0] : Number.POSITIVE_INFINITY)),
@@ -158,13 +225,14 @@ export function planCompaction(
     ok: true,
     payload: {
       coversSeq: [from, to],
-      summary: renderCompactionSummary(args),
+      summary: renderCompactionSummary(args, manifest, manifestOpts ?? {}),
       decidedBy: "model",
       pinsKept: survivors.map((e) => e.id),
     },
     folded,
     absorbed,
     keptTurns: args.keepRecentTurns,
+    manifest,
   }
 }
 

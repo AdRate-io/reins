@@ -247,14 +247,27 @@ describe("pins × runLoop：模型的 pin 工具", () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([
       { drafts: [doPin("p1", { text: "   " })] },
-      { drafts: [doPin("p2", { text: "x".repeat(501) })] },
+      { drafts: [doPin("p2", { text: "x".repeat(601) })] },
+      // 声明 500、容差两成：545 字符（Sonnet 实测的典型超出）放行，601 才拒
+      { drafts: [doPin("p3", { text: "y".repeat(545) })] },
       { drafts: [say("好")] },
     ])
     await drain(runLoop(config(lowering, log)))
     const logged = await all(log)
-    expect(notesOf(logged).map((n) => pinMetaOf(n)?.source)).toEqual(["host"])
+    expect(notesOf(logged).map((n) => pinMetaOf(n)?.source)).toEqual(["host", "model"])
     expect(resultOf(logged, "p1").payload.isError).toBe(true)
-    expect(textOf(resultOf(logged, "p2"))).toMatch(/limited to 500/)
+    expect(textOf(resultOf(logged, "p2"))).toMatch(/is 601 characters; pins are limited to 500/)
+    expect(resultOf(logged, "p3").payload.isError).toBe(false)
+    expect(() => pins({ overshootTolerance: 1 })).toThrow(RangeError)
+    // 上限在下笔前就看得到（E3c）：工具说明与 schema.maxLength 都带着，随 maxTextLength 变
+    const spec = lowering.requests[0]?.tools?.find((t) => t.name === "pin")
+    expect(spec?.description).toContain("at most 500 characters")
+    expect(spec?.inputSchema).toMatchObject({ properties: { text: { maxLength: 500 } } })
+    const l2 = new ScriptedLowering([{ drafts: [say("好")] }])
+    await drain(runLoop(config(l2, new InMemoryEventLog(), { sockets: [pins({ maxTextLength: 200 })] })))
+    const spec2 = l2.requests[0]?.tools?.find((t) => t.name === "pin")
+    expect(spec2?.description).toContain("at most 200 characters")
+    expect(spec2?.inputSchema).toMatchObject({ properties: { text: { maxLength: 200 } } })
   })
 })
 
@@ -361,7 +374,9 @@ describe("pins：构造与纯函数", () => {
     expect(parsePinArgs({ text: "a", replaces: " b " })).toEqual({ text: "a", replaces: "b" })
     expect(() => parsePinArgs("a")).toThrow(RangeError)
     expect(() => parsePinArgs({ text: "" })).toThrow(RangeError)
-    expect(() => parsePinArgs({ text: "abc" }, 2)).toThrow(/limited to 2/)
+    expect(() => parsePinArgs({ text: "abcd" }, 2)).toThrow(/limited to 2/) // 声明 2、容差两成 → 3 放行、4 拒
+    expect(parsePinArgs({ text: "abc" }, 2)).toEqual({ text: "abc" })
+    expect(() => parsePinArgs({ text: "abc" }, 2, 0)).toThrow(/limited to 2/)
     expect(() => parsePinArgs({ text: "a", replaces: "" })).toThrow(RangeError)
   })
 

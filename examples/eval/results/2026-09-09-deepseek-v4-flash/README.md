@@ -66,3 +66,49 @@ fixture：`examples/eval/fixtures/adrate-patrol`（AdRate 巡检降本脱敏版�
 **结论不变、更硬了**：compact 不默认开（两个模型族召回都低 5–10 点）；approval 默认开多了一条证据；spill 16k、memory / handoff 不默认的判断在 Sonnet 上同样成立（brain-lean 没装它们，完成度 100%）。
 
 **下一步**：让整理机制在丢细节前多留一手（给探针 / 模型一条"不确定就回看上文"的说明、或让感知报出可见工具结果条数），—— 方向有三：① compact 工具的 `keep` 字段引导模型逐字保留"核对过的字段值"而非结论；② 整理时自动把被折叠范围内的工具结果 id 列进摘要尾部（"以下结果已折叠，可 fetch 取回"），让模型知道能拿回什么；③ pin 上限 500 字符放宽或分条。做完任一项后在两个模型族上复测；门槛 2 在此之前不算达成。
+
+## 整理丢细节专项（E3c，2026-09-10，两个模型族）
+
+**改了什么**（DECISIONS 2026-09-10 E3c）：整理时在摘要之后自动附**被折叠工具结果清单**（`seq N tool(入参) — 大小`，模型自决与阈值兜底都列），新增 **`recall({ seq })`** 工具按号逐字取回一条原件；pin 的 500 字符上限写进工具说明与 schema。臂仍是 threshold（core 缺省链）对 brain-lean（perception / compact+recall / pins / spill 16k / budget / approval），3 fixture × 3 重复。报告：`e3c-deepseek-v4-flash-report.md`、`e3c-claude-sonnet-5-report.md`。
+
+| 模型族 | 臂 | 完成度 | 召回 | 总 token | 计费等价 | 违规 前→后 | 整理 模型/阈值 | 轮 | 门禁 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| deepseek-v4-flash | threshold | 100% | 97% | 198,801 | 51,729 | 0 → 0 | 0.0 / 0.3 | 5.2 | — |
+| deepseek-v4-flash | brain-lean | 100% | **100%** | **184,700** | 57,148 | 0 → 0 | 0.0 / 0.3 | 4.4 | **四条全过 ✅** |
+| claude-sonnet-5 | threshold | 100% | 100% | 271,266 | 100,799 | 0 → 0 | 0.0 / 0.3 | 5.0 | — |
+| claude-sonnet-5 | brain-lean | 100% | **100%** | 276,196 | **78,886** | 0 → 0 | 0.7 / 0.0 | 9.0 | 三条过，总 token +1.8% ❌ |
+
+**召回这一关过了，两个模型族都是 100%。** 上一轮丢的同一条事实（复核时的 secondaryStatus）：
+
+- Sonnet 6/6 格整理了，摘要照旧只写"状态 ENABLE"；但探针问到时，**5 格直接 `recall` 了摘要清单里那一条 `ads_campaigns_get` 的原件**（seq 报得一个不差），答出 `BUDGET_EXCEED`，另 1 格摘要里本来就带着。E3b 里这 6 格的回答是"没留，我可以重查"。
+- DeepSeek 这一轮**一次都没自己整理**（模型自决 0），也没用 recall；召回 100% 来自它不再"以为被折叠而拒答"。规则里那句"被问到摘要没留的细节，去取回而不是猜或说没了"很可能是原因，但 n 小，不下断言。threshold 臂反而丢了 2 格：接续版 fixture 本来就顶着窗口，**探针会话**再多一问就触发阈值折叠把整段历史（seq 1–163）折掉，模型如实说"seq 44 那条已被移除"——是窗口边缘的真实行为，不是评分错。
+
+**token 这一关，Sonnet 差 1.8%。** 差在轮数（9.0 对 5.0）而不在整理：brain-lean 的 disable 格 Sonnet 把 14 个停投写操作**一个一轮**地提交，每个经 approval 暂停 / 续跑一次（14 次暂停），DeepSeek 则一轮并行提交一批；另有 5/6 格 pin 写到 502–558 字符撞上限白费一轮（上限已写进说明与 schema，模型仍数不准自己的字数 → 校验加两成容差，见 DECISIONS）。整理本身每格只多一轮。计费等价 brain-lean 反而**便宜 22%**（缓存命中 81% 对 71%）。
+
+**清单的样子**（Sonnet 一格的 compaction 摘要尾部，节选）：
+
+```
+Folded tool results (bring one back verbatim with recall({ seq })):
+- seq 10 ads_campaigns_list({"advId":"7000000000000000001","page":1,"pageSize":1000}) — 40k chars
+- seq 11 ads_campaigns_report({"advId":"7000000000000000001","endDate":"2026-09-07","groupBy":"none","page":1,"pageSize":1000,"st…) — 27k chars
+- seq 30 ads_campaigns_get({"advId":"7000000000000000001","campaignId":"1800000000000006"}) — 567 chars
+… （共 16 条）
+```
+
+**第二轮（Claude，`e3c2-claude-sonnet-5-report.md`，threshold 基线沿用第一轮）**：pin 校验加两成容差后重跑 brain-lean，并加一臂 **compact-only**（core 缺省链 + perception + compact/recall，不装 pins / spill / budget / approval），把"整理 + 取回"的成本单独剥出来看：
+
+| 臂 | 完成度 | 召回 | 总 token | 计费等价 | 整理 模型 | 轮 | 门禁 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| threshold | 100% | 100% | 271,266 | 100,799 | 0.0 | 5.0 | — |
+| brain-lean | 100% | 100% | **210,905**（−22%） | 71,289 | 0.7 | 5.9 | **四条全过 ✅** |
+| compact-only | 100% | 100% | **192,604**（−29%） | 70,164 | 0.7 | 5.3 | **四条全过 ✅** |
+
+- 召回再次 100%：两臂 12 格里 10 格探针用了 `recall`（seq 全对），其余 2 格摘要里本来就带着。**两轮合计 Sonnet 12/12、DeepSeek 9/9 格答对上一轮必丢的那条事实。**
+- token 两轮差别大（brain-lean 276k → 211k）：这一轮 Sonnet 把停投写操作按批提交（每格 2–3 次审批暂停，上一轮 14 次），pin 撞上限从 5/6 格降到 2/6（剩下两条 608 / 680 字符，超出两成容差，该拒）。模型行为的轮间波动比整理机制本身的成本大得多，所以看 compact-only：只装整理 + 取回，token 比 threshold **少 29%**、召回不降 —— 整理是省的，丢细节的账由 recall 兜住。
+
+## 结论（E3c 收口，DECISIONS 2026-09-10）
+
+- **PRD §7 门槛 2 达成**：两个模型族、候选 brain-lean 对照 threshold，四条硬规则全过（DeepSeek 一轮、Sonnet 第二轮；Sonnet 第一轮总 token 差 1.8% 未过，差在审批分批的轮次与 pin 重试，不在整理）。
+- **compact（含被折叠清单 + recall）改为推荐默认**，取代 E3 "不默认开"的结论：E3 / E3b 不默认的理由是"整理丢细粒度字段、召回低 5–10 点"，E3c 把丢的东西做成有路可回后，两族召回 100%、token 少 22–29%。
+- memory / handoff 仍不默认；spill 16k、perception / pins / budget / approval 推荐默认不变；core 阈值兜底继续，它的摘要现在也列被裁掉的工具结果。
+- 仍要看着的：DeepSeek 在这批 fixture 里从不自己整理（模型自决 0），它的收益全来自 threshold 兜底 + 不再拒答，recall 在 DeepSeek 上还没被真正用过；Sonnet 的审批分批行为轮间波动大，token 的门禁裕度不该按单轮数字宣传。

@@ -1,6 +1,7 @@
 export * from "./estimate.js"
 export * from "./filter.js"
 export * from "./fold.js"
+export * from "./manifest.js"
 export * from "./pins.js"
 export * from "./project.js"
 export * from "./truncate.js"

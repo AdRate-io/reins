@@ -261,7 +261,7 @@ describe("reinsMiddleware：脑子模块", () => {
     await f.run({ messages: [user("go")] })
     expect(f.adapter.calls).toHaveLength(3)
     const names = f.adapter.calls[0]?.tools?.map((t) => t.name)
-    expect(names).toEqual(["add", "compact", "pin"])
+    expect(names).toEqual(["add", "compact", "recall", "pin"])
     const prompts0 = f.adapter.calls[0]?.systemPrompts
     expect(prompts0?.[0]).toBe("你是计算器")
     expect(prompts0).toHaveLength(2)

@@ -82,7 +82,7 @@ export interface RunEvalOptions {
 }
 
 const PROBE_NOTE =
-  "Answer the following question using only what you already know from this conversation. Do not call tools unless retrieving previously spilled results. Answer concisely."
+  "Answer the following question using only what you already know from this conversation. Do not call tools except to bring back a previously spilled or folded tool result. Answer concisely."
 
 export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   assertFixtures(opts)

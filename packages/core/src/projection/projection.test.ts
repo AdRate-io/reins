@@ -6,6 +6,7 @@ import { createCoreRegistry } from "../events/registry.js"
 import { estimateTextTokens, roughTokenEstimate } from "./estimate.js"
 import { DEFAULT_MODEL_INVISIBLE_TYPES, visibilityFilter } from "./filter.js"
 import { foldCompactions } from "./fold.js"
+import { digestArgs, foldedToolResults, renderFoldedToolResults } from "./manifest.js"
 import { reinjectPins } from "./pins.js"
 import { defaultProjectionChain, project } from "./project.js"
 import { budgetTruncate, splitTurns } from "./truncate.js"
@@ -296,6 +297,56 @@ describe("splitTurns", () => {
   })
 })
 
+describe("被折叠工具结果清单（manifest）", () => {
+  it("foldedToolResults：按 seq 升序、入参从 lookup 里找、排除名单生效、外溢的记 blob id", () => {
+    const events = [
+      call(2, "c1", "read"),
+      call(3, "c2", "read"),
+      result(5, "c2", "second"),
+      result(4, "c1", "first"),
+      ev(6, "core.tool_result", {
+        toolCallId: "c3",
+        name: "big",
+        content: [{ type: "text", text: "[preview]" }],
+        isError: true,
+        spilled: { blobId: "blob-9", summary: "big output" },
+      }),
+    ]
+    expect(foldedToolResults(events)).toEqual([
+      { seq: 4, name: "read", args: {}, chars: 5, isError: false },
+      { seq: 5, name: "read", args: {}, chars: 6, isError: false },
+      { seq: 6, name: "big", args: undefined, chars: 9, isError: true, spilledBlobId: "blob-9" },
+    ])
+    expect(foldedToolResults(events, { exclude: new Set(["read"]) }).map((m) => m.seq)).toEqual([6])
+    // 调用不在 removed 里、在 lookup（完整时间线）里
+    expect(foldedToolResults([result(4, "c1")], { lookup: events })[0]?.args).toEqual({})
+    expect(foldedToolResults([result(4, "c1")])[0]?.args).toBeUndefined()
+  })
+
+  it("renderFoldedToolResults：空清单为空串；大小与错误标注；超过 maxItems 折成一行；digestArgs 键排序并截断", () => {
+    expect(renderFoldedToolResults([], { heading: "H" })).toBe("")
+    const items = [
+      { seq: 4, name: "read", args: { b: 1, a: "x" }, chars: 12_345, isError: false },
+      { seq: 5, name: "read", args: undefined, chars: 7, isError: true },
+      { seq: 6, name: "big", args: {}, chars: 9, isError: false, spilledBlobId: "blob-9" },
+    ]
+    expect(renderFoldedToolResults(items, { heading: "H" })).toBe(
+      [
+        "H",
+        '- seq 4 read({"a":"x","b":1}) — 12k chars',
+        "- seq 5 read() — 7 chars, error",
+        '- seq 6 big({}) — stored as blob "blob-9", read with fetch_blob',
+      ].join("\n"),
+    )
+    expect(renderFoldedToolResults(items, { heading: "H", maxItems: 1 })).toBe(
+      ["H", '- seq 4 read({"a":"x","b":1}) — 12k chars', "- …and 2 more (seq 5–6)"].join("\n"),
+    )
+    expect(digestArgs({ z: [3, { y: 1, x: 2 }], a: null })).toBe('{"a":null,"z":[3,{"x":2,"y":1}]}')
+    expect(digestArgs("x".repeat(200), 10)).toBe(`"${"x".repeat(8)}…`)
+    expect(digestArgs(undefined)).toBe("")
+  })
+})
+
 describe("budgetTruncate", () => {
   /** 一段典型对话：用户 → 思考+调用 → 结果 → 回答 → 用户 → ... */
   const timeline = [
@@ -332,6 +383,10 @@ describe("budgetTruncate", () => {
     // 合法切点：保留部分第一轮不含 tool_result。切在 seq 6（user 轮）之前：剩 5 条 + 摘要 = 60 ✓
     expect(seqs(step.events)).toEqual([11, 6, 7, 8, 9, 10])
     expect(first.payload.coversSeq).toEqual([1, 5])
+    // 机械摘要也列出被裁掉的工具结果（E3c）：取回工具在脑子里，core 只报 seq 与入参
+    expect(first.payload.summary).toContain(
+      "Tool results that were removed (still in the session log, by seq):\n- seq 4 read({}) — 3 chars",
+    )
   })
 
   it("切点绝不让 tool_result 与其 tool_call 分离", () => {

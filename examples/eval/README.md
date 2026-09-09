@@ -4,7 +4,7 @@
 
 ```bash
 pnpm build                                                     # 示例跑的是 dist
-REINS_PROVIDER=deepseek node examples/eval/run.ts --arms none,threshold,brain,brain-lean --repeats 3   # 每格落盘 out/<run>/cells/
+REINS_PROVIDER=deepseek node examples/eval/run.ts --arms none,threshold,brain,brain-lean,compact-only --repeats 3   # 每格落盘 out/<run>/cells/
 node examples/eval/report.ts examples/eval/out/<run> --candidate brain-lean --rescore                 # 汇总、门禁、按 fixture 分表
 ```
 

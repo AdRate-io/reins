@@ -135,7 +135,7 @@ export const POST = agent.handler      // Web 标准 (Request) => Response，缺
 **第一期发布门槛（缺一不发）：**
 
 1. 投放工具用 reins 跑通真实长任务并进入生产接入（Boss 2026-09-09 决定：机制验证通过即可，不设两周观察期；第一条"巡检降本"已于 09-08 跑通，见 `examples/adrate`）
-2. eval 四项数字公开：对照纯阈值压缩，token 不多于其 100%、任务完成率不低于、关键信息召回不低于、压缩前后约束违规率不上升（2026-09-09 E3 首批数字见 `examples/eval/results/`：token、完成率、违规率达标，召回低 3–6 点，**未达成**；机理已定位，E3b 复测）
+2. eval 四项数字公开：对照纯阈值压缩，token 不多于其 100%、任务完成率不低于、关键信息召回不低于、压缩前后约束违规率不上升（2026-09-09 E3 首批数字见 `examples/eval/results/`：token、完成率、违规率达标，召回低 3–6 点，未达成；E3b 换 claude-sonnet-5 同样丢召回；**2026-09-10 E3c 达成**：整理摘要附被折叠工具结果清单 + `recall` 取回后，deepseek-v4-flash 与 claude-sonnet-5 两族四条全过，候选 token 比阈值基线少 7% / 22%，召回 100%，见该目录 README）
 3. 五分钟体验在 Node、Bun、Vercel、Cloudflare Workers 四个环境跑通
 4. 任意会话可从时间线完整回放并在任意点分叉
 5. 公开 API 文档覆盖全部导出，事件 schema 带版本

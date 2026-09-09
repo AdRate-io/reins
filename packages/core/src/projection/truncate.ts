@@ -17,6 +17,7 @@ import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { estimateTotal } from "./estimate.js"
 import { isCompaction, isPinNote, supersededIds } from "./fold.js"
+import { foldedToolResults, renderFoldedToolResults } from "./manifest.js"
 import type { ProjectionContext, ProjectionStrategy } from "./types.js"
 
 const ASSISTANT_TYPES: ReadonlySet<string> = new Set([
@@ -66,7 +67,7 @@ function excerpt(parts: CoreEventOf<"core.user_message">["payload"]["content"], 
  * 默认兜底摘要：没有模型参与，只能机械描述 —— 说明发生了什么、被裁掉多少、并入旧摘要、引用用户原话开头。
  * 给模型看的默认文案用英文；宿主可整体替换。
  */
-export const defaultThresholdSummary: ThresholdSummarizer = (removed) => {
+export const defaultThresholdSummary: ThresholdSummarizer = (removed, ctx) => {
   const prior = removed.filter(isCompaction)
   const fresh = removed.filter((e) => !isCompaction(e))
   const seqs = removed.map((e) => e.seq)
@@ -94,6 +95,11 @@ export const defaultThresholdSummary: ThresholdSummarizer = (removed) => {
     lines.push("User messages that were removed (openings only):")
     for (const u of users) lines.push(`- ${excerpt(u.payload.content)}`)
   }
+  // E3c：列出被裁掉的工具结果，模型才知道有什么还能拿回来（取回工具由脑子提供，core 只报 seq）
+  const manifest = renderFoldedToolResults(foldedToolResults(fresh, { lookup: ctx.timeline }), {
+    heading: "Tool results that were removed (still in the session log, by seq):",
+  })
+  if (manifest) lines.push(manifest)
   return lines.join("\n")
 }
 

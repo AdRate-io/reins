@@ -26,7 +26,7 @@ import type {
   ToolResultDraft,
   TurnContext,
 } from "@reins/core"
-import { PIN_RULES, PIN_TOOL_DESCRIPTION, PIN_TOOL_NAME } from "./rules.js"
+import { PIN_RULES, PIN_TOOL_NAME, pinToolDescription } from "./rules.js"
 
 /**
  * 宿主声明的一条 pin：
@@ -44,14 +44,21 @@ export interface PinsOptions {
   pins?: readonly PinSpec[]
   /** 是否给模型 `pin` 工具。缺省 true */
   tool?: boolean
-  /** 单条 pin 的最大字数（工具入参校验）。缺省 500：pin 是永久占用，长内容该进摘要或记忆 */
+  /** 单条 pin 的最大字数（写进工具说明与 schema 的"声明上限"）。缺省 500：pin 是永久占用，长内容该进摘要或记忆 */
   maxTextLength?: number
+  /**
+   * 校验时在声明上限之上再放的容差比例，缺省 0.2（声明 500 → 实际 600 才拒）。
+   * E3c 实测：上限写进说明与 schema 后，Sonnet 5 仍写出 502 / 545 / 558 字符 —— 模型瞄着上限写、数不准自己的字数，
+   * 差几个字就拒掉只是白费一轮。声明值仍是 500，模型照旧往 500 以内凑；容差只吃掉数错的那一点。传 0 则严格按声明值。
+   */
+  overshootTolerance?: number
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
 }
 
 export const PINS_SOCKET_NAME = "pins"
 export const DEFAULT_MAX_PIN_TEXT_LENGTH = 500
+export const DEFAULT_PIN_OVERSHOOT_TOLERANCE = 0.2
 
 /** system_note.meta.pin 的形状：谁钉的、宿主 spec 名 */
 export interface PinMeta {
@@ -60,6 +67,27 @@ export interface PinMeta {
 }
 
 export type PinNote = CoreEventOf<"core.system_note">
+
+/** 入参 schema；`maxLength` 随 maxTextLength 变，模型下笔前就看得到上限（E3c） */
+export function pinInputSchema(maxTextLength: number) {
+  return {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        maxLength: maxTextLength,
+        description: `The note to pin, one or two sentences (at most ${maxTextLength} characters). It will be shown verbatim after every future summary.`,
+      },
+      replaces: {
+        type: "string",
+        description:
+          "Exact text of one of your earlier pinned notes that this one supersedes. Omit to add a new note.",
+      },
+    },
+    required: ["text"],
+    additionalProperties: false,
+  } as const
+}
 
 export const PIN_INPUT_SCHEMA = {
   type: "object",
@@ -84,16 +112,21 @@ export interface PinArgs {
   replaces?: string
 }
 
-export function parsePinArgs(raw: unknown, maxTextLength = DEFAULT_MAX_PIN_TEXT_LENGTH): PinArgs {
+export function parsePinArgs(
+  raw: unknown,
+  maxTextLength = DEFAULT_MAX_PIN_TEXT_LENGTH,
+  overshootTolerance = DEFAULT_PIN_OVERSHOOT_TOLERANCE,
+): PinArgs {
   if (typeof raw !== "object" || raw === null) throw new RangeError(`${PIN_TOOL_NAME} expects an object`)
   const o = raw as Record<string, unknown>
   if (typeof o.text !== "string" || o.text.trim().length === 0) {
     throw new RangeError("`text` must be a non-empty string")
   }
   const text = o.text.trim()
-  if (text.length > maxTextLength) {
+  // 报错仍报声明上限：模型该往 500 以内凑，容差只是不为数错的几个字白费一轮
+  if (text.length > Math.ceil(maxTextLength * (1 + overshootTolerance))) {
     throw new RangeError(
-      `\`text\` is ${text.length} characters; pins are limited to ${maxTextLength}. Put long content in your compact summary or memory instead.`,
+      `\`text\` is ${text.length} characters; pins are limited to ${maxTextLength}. Split it across several notes or put it in your compact summary instead.`,
     )
   }
   if (o.replaces !== undefined && (typeof o.replaces !== "string" || o.replaces.trim().length === 0)) {
@@ -200,15 +233,19 @@ export function pins(opts: PinsOptions = {}): Socket {
   if (!Number.isInteger(maxTextLength) || maxTextLength < 1) {
     throw new RangeError(`pins.maxTextLength 必须是 ≥1 的整数：${String(maxTextLength)}`)
   }
+  const tolerance = opts.overshootTolerance ?? DEFAULT_PIN_OVERSHOOT_TOLERANCE
+  if (!(tolerance >= 0 && tolerance < 1)) {
+    throw new RangeError(`pins.overshootTolerance 必须在 [0, 1) 内：${String(tolerance)}`)
+  }
   if (specs.length === 0 && !withTool) {
     throw new RangeError("pins：既没有宿主 pin 也不给模型工具，这个 Socket 什么都不做")
   }
 
   const tool: Tool = {
     name: PIN_TOOL_NAME,
-    description: PIN_TOOL_DESCRIPTION,
-    inputSchema: PIN_INPUT_SCHEMA as unknown as Record<string, unknown>,
-    validate: (raw) => parsePinArgs(raw, maxTextLength),
+    description: pinToolDescription(maxTextLength),
+    inputSchema: pinInputSchema(maxTextLength) as unknown as Record<string, unknown>,
+    validate: (raw) => parsePinArgs(raw, maxTextLength, tolerance),
     risk: "low",
     execute: () => PLACEHOLDER,
   }
@@ -237,7 +274,7 @@ export function pins(opts: PinsOptions = {}): Socket {
       // 入参已由 validate 校验过；重新解析拿规范形态（循环不把校验后的入参传给 afterTool）
       let args: PinArgs
       try {
-        args = parsePinArgs(call.payload.args, maxTextLength)
+        args = parsePinArgs(call.payload.args, maxTextLength, tolerance)
       } catch (err) {
         return replaceResult(result, err instanceof Error ? err.message : String(err), true)
       }
