@@ -9,6 +9,7 @@ fixture：`examples/eval/fixtures/adrate-patrol`（AdRate 巡检降本脱敏版�
 | 2 `e3v2` | + brain-lean | 世界写后可见；brain-lean = 外溢阈值 16k、去掉 memory / handoff | brain-lean 完成度 100%、token 低于 threshold，召回差 5 点 |
 | 3 `e3v3` | threshold / brain-lean | compact 规则加"保留核对过的原始字段值"；spill 缺省 16k | 召回仍差：丢的不是被整理掉的，是模型**以为**被折叠了 |
 | 4 `e3v4` | threshold / brain-lean | 感知说明明说"折叠了什么 / 什么都没折" | 部分缓解，未消除 |
+| 5 `e3b` | threshold / brain-lean | **换模型族**：claude-sonnet-5 经 Boss 的中转（直通官方 API，`spikes/relay-check`） | 同一条事实再丢，但这次是模型**真的**整理掉了 |
 
 ## 各臂配置
 
@@ -32,6 +33,8 @@ fixture：`examples/eval/fixtures/adrate-patrol`（AdRate 巡检降本脱敏版�
 | 3 | brain-lean | 100% | 97% | 184,477 | 57,642 | 78% | 4.7 | 0 / 0.3 |
 | 4 | threshold | 100% | 100% | 189,348 | 44,516 | 87% | 4.8 | 0 / 0.3 |
 | 4 | brain-lean | 96% | 94% | 186,015 | 43,666 | 87% | 4.8 | 0 / 0.3 |
+| 5 (sonnet-5) | threshold | 93% | 100% | 259,533 | 98,062 | 70% | 4.7 | 0 / 0.3 |
+| 5 (sonnet-5) | brain-lean | 100% | 90% | 286,523 | 96,683 | 75% | 8.9 | 0.7 / 0.2 |
 
 "总 token"把缓存读按 1× 计（模型每轮读了多少，门禁用它）；"计费等价"按缓存读 0.1× 折算（账单）。违规率四轮全部 0 → 0，没有一次越界（动别的广告主、停投非候选、只读任务里写）。
 
@@ -52,4 +55,14 @@ fixture：`examples/eval/fixtures/adrate-patrol`（AdRate 巡检降本脱敏版�
 - `perception`、`pins`、`budget`、`approval` 推荐默认；感知说明改为明说折叠范围；
 - core 的阈值折叠（`budgetTruncate`）**继续作为兜底**：brain 臂里模型不整理时它出手了，没有它接续版会撞窗口。
 
-**下一步**：把"以为被折叠"当成独立问题处理（给探针 / 模型一条"不确定就回看上文"的说明、或让感知报出可见工具结果条数），并换一个模型族重跑；门槛 2 在此之前不算达成。
+## 第二个模型族（E3b，claude-sonnet-5 经中转）
+
+- **同一条事实（复核时的 secondaryStatus）brain-lean 6/6 格丢**，但机理不同：Sonnet 每格都**真的**调了 compact，摘要与 pin 只留了"operationStatus=ENABLE"，没留 secondaryStatus；模型答得很诚实（"摘要里没留，我可以重查"）。threshold 的机械折叠只盖最早 7 条事件，复核结果都在，12/12 答对。
+  → 两个模型族一起说明：**模型自决整理会按它自己的重要性判断丢掉细粒度字段**，这是机制本身的代价，不是某家模型的脾气。compact 规则里"保留核对过的原始字段值"那句没能改变 Sonnet 的取舍。
+- **完成度反过来**：brain-lean 100%，threshold 93%（一格列完候选停下等 Owner 批准）。两个模型族的 threshold / none 臂都出现过这种停摆，brain 臂一次都没有 —— 装了 approval 模块，模型知道写操作会经审批流程，就直接提交；没装时系统提示里"写操作先经 Owner 审批"一句让它停下来在正文里问。**approval 默认开的理由不只是安全，还有"让模型敢动"。**
+- token：总量 +10%，计费等价持平（96.7k vs 98.1k）。Sonnet 在 brain-lean 下轮数翻倍（8.9 vs 4.7）：写操作分小批提交、每批一次审批暂停；pin 超 500 字符被拒后重试（5/9 格撞上限）。
+- 中转验证：`midConversationSystem: true` 在官方 API 上可用（感知说明每轮进 system 角色，0 次 400）；中转强制隐藏 thinking，pi-ai 正常处理。
+
+**结论不变、更硬了**：compact 不默认开（两个模型族召回都低 5–10 点）；approval 默认开多了一条证据；spill 16k、memory / handoff 不默认的判断在 Sonnet 上同样成立（brain-lean 没装它们，完成度 100%）。
+
+**下一步**：让整理机制在丢细节前多留一手（给探针 / 模型一条"不确定就回看上文"的说明、或让感知报出可见工具结果条数），—— 方向有三：① compact 工具的 `keep` 字段引导模型逐字保留"核对过的字段值"而非结论；② 整理时自动把被折叠范围内的工具结果 id 列进摘要尾部（"以下结果已折叠，可 fetch 取回"），让模型知道能拿回什么；③ pin 上限 500 字符放宽或分条。做完任一项后在两个模型族上复测；门槛 2 在此之前不算达成。

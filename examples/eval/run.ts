@@ -14,6 +14,8 @@
  * - brain-lean：精简版（感知、模型自决整理、pin、外溢 16k、预算、审批；无记忆 / 交接）
  *
  * 模型密钥从仓库根 `模型API测试信息.md` 读（已 gitignore），与 examples/adrate/agent.ts 同源；ANTHROPIC_API_KEY 可覆盖。
+ * REINS_PROVIDER：deepseek（缺省，直连）| relay（Boss 的 Claude 中转，忠实直通官方 API，见 spikes/relay-check）| aireiter（会丢中途 system，只作参考）。
+ * REINS_MODEL 覆盖模型 id（relay 缺省 claude-sonnet-5，可用 claude-opus-5）。
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import type { Event } from "@reins/core"
@@ -34,26 +36,49 @@ const repeats = Number(flag("--repeats", "1"))
 /** 补跑用：重复编号从几开始（如只补第 3 次：--repeats 1 --repeat-start 3） */
 const repeatStart = Number(flag("--repeat-start", "1"))
 const contextWindow = Number(flag("--context-window", "64000"))
-const provider = (process.env.REINS_PROVIDER ?? "deepseek") as "aireiter" | "deepseek"
-const modelId = process.env.REINS_MODEL ?? (provider === "deepseek" ? "deepseek-v4-flash" : "claude-opus-5")
+type Provider = "aireiter" | "deepseek" | "relay"
+const provider = (process.env.REINS_PROVIDER ?? "deepseek") as Provider
+const DEFAULT_MODEL: Record<Provider, string> = { deepseek: "deepseek-v4-flash", aireiter: "claude-opus-5", relay: "claude-sonnet-5" }
+const modelId = process.env.REINS_MODEL ?? DEFAULT_MODEL[provider]
 const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")
 const out = flag("--out", new URL(`./out/${stamp}-${modelId}`, import.meta.url).pathname)
 mkdirSync(`${out}/cells`, { recursive: true })
 
 // ---- 模型 ----
-function readKey(section: "aireiter" | "deepseek"): string {
+const INFO = new URL("../../模型API测试信息.md", import.meta.url)
+function readKey(section: Provider): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-  const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
+  const info = readFileSync(INFO, "utf8")
+  if (section === "relay") {
+    // "Claude中转"段：key：sk-…  baseurl:http://…
+    const block = info.slice(info.lastIndexOf("Claude中转"))
+    const key = block.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
+    if (!key) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 key")
+    return key
+  }
   const keys = [...info.matchAll(/密钥[^`]*`(sk-[^`]+)`/g)].map((m) => m[1] as string)
   const key = section === "aireiter" ? keys[0] : keys[1]
   if (!key) throw new Error(`没在 模型API测试信息.md 里找到 ${section} 的密钥；或设 ANTHROPIC_API_KEY`)
   return key
 }
+function relayBase(): string {
+  const block = readFileSync(INFO, "utf8").slice(readFileSync(INFO, "utf8").lastIndexOf("Claude中转"))
+  const base = block.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
+  if (!base) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 baseurl")
+  return base
+}
+const BASE_URL: Record<Provider, string> = {
+  deepseek: "https://api.deepseek.com/anthropic",
+  aireiter: "https://aireiter.com/api",
+  relay: provider === "relay" ? relayBase() : "",
+}
 const bound = anthropic(modelId, {
   apiKey: readKey(provider),
-  baseUrl: provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://aireiter.com/api",
+  baseUrl: BASE_URL[provider],
   requestOptions: { thinkingEnabled: true, thinkingBudgetTokens: 2048 },
-  ...(provider === "deepseek" ? { midConversationSystem: true } : {}),
+  // DeepSeek 端口与官方 API（经忠实中转）都接受紧跟 user 之后的中途 system（spikes/relay-check 实测），感知 / pin 说明走 exact 落点；
+  // aireiter 会丢中途 system（spikes/aireiter-gateway-check），留缺省的 user 文本落点
+  ...(provider !== "aireiter" ? { midConversationSystem: true } : {}),
 })
 
 // ---- 臂 ----
