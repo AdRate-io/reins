@@ -3,6 +3,7 @@ import type { Event } from "../events/base.js"
 import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { createCoreRegistry } from "../events/registry.js"
+import { LoweringError } from "../lowering/errors.js"
 import { project } from "../projection/project.js"
 import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
@@ -912,13 +913,177 @@ describe("runLoop：错误、中止、上限、交接", () => {
     expect(types(await all(log))).toEqual(["user_message", "model_text", "error"])
   })
 
-  it("降级层抛异常（缺 key、断网）：同样记 error 事件而不是让生成器炸掉", async () => {
+  it("降级层抛异常（缺 key 等配置错）：不重试，记 error 事件而不是让生成器炸掉", async () => {
     const log = new InMemoryEventLog()
-    const lowering = new ScriptedLowering([{ drafts: [], throws: new Error("ECONNRESET") }])
+    const lowering = new ScriptedLowering([
+      { drafts: [], throws: new LoweringError("missing_api_key", "未配置 key") },
+    ])
     const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "问" })))
     expect(result.status).toBe("error")
     if (result.status !== "error") return
-    expect(result.error.payload).toMatchObject({ category: "lowering", message: "ECONNRESET" })
+    expect(result.error.payload).toMatchObject({
+      category: "lowering",
+      message: "[missing_api_key] 未配置 key",
+      retryable: false,
+      detail: { name: "LoweringError", attempts: 1 },
+    })
+    expect(lowering.requests).toHaveLength(1)
+  })
+
+  describe("瞬断有限重试", () => {
+    /** 记录每次等待时长的 sleep，不真等 */
+    function fakeSleep() {
+      const waits: number[] = []
+      return { waits, sleep: async (ms: number) => void waits.push(ms) }
+    }
+
+    it("断网抛异常 → 记 error(willRetry) 后退避重试，第二次成功；结果 done，退避 1000ms", async () => {
+      const log = new InMemoryEventLog()
+      const { waits, sleep } = fakeSleep()
+      const lowering = new ScriptedLowering([
+        { drafts: [], throws: new Error("ECONNRESET") },
+        { drafts: [say("好了")] },
+      ])
+      const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "问", retry: { sleep } })))
+      expect(result.status).toBe("done")
+      expect(waits).toEqual([1000])
+      expect(lowering.requests).toHaveLength(2)
+      const logged = await all(log)
+      expect(types(logged)).toEqual(["user_message", "error", "model_text", "budget_usage"])
+      expect((logged[1] as CoreEventOf<"core.error">).payload).toMatchObject({
+        category: "lowering",
+        message: "ECONNRESET",
+        retryable: true,
+        detail: { attempts: 1, willRetry: true, delayMs: 1000 },
+      })
+    })
+
+    it("降级层返回 error 态（E3 实测 terminated / 529）连续两次再成功：退避翻倍，失败尝试的 token 也记账", async () => {
+      const log = new InMemoryEventLog()
+      const { waits, sleep } = fakeSleep()
+      const lowering = new ScriptedLowering([
+        {
+          drafts: [],
+          outcome: { stopReason: "error", errorMessage: "terminated", usage: { input: 208, output: 0 } },
+        },
+        {
+          drafts: [],
+          outcome: { stopReason: "error", errorMessage: "529 overloaded", usage: { input: 5, output: 0 } },
+        },
+        { drafts: [say("第三次成了")] },
+      ])
+      let spent = 0
+      const watcher: Socket = {
+        name: "watch",
+        onTurnEnd: (ctx) => {
+          spent = ctx.budget.tokensSpent
+          return undefined
+        },
+      }
+      const { result } = await drain(
+        runLoop(baseConfig(lowering, log, { input: "问", retry: { sleep }, sockets: [watcher] })),
+      )
+      expect(result.status).toBe("done")
+      expect(waits).toEqual([1000, 2000])
+      const logged = await all(log)
+      expect(types(logged)).toEqual(["user_message", "error", "error", "model_text", "budget_usage"])
+      expect((logged[2] as CoreEventOf<"core.error">).payload).toMatchObject({
+        category: "provider",
+        message: "529 overloaded",
+        retryable: true,
+        detail: { attempts: 2, willRetry: true, delayMs: 2000, usage: { input: 5, output: 0 } },
+      })
+      // budget_usage 记的是成功那次请求的用量；累计（208 + 5 + 10 + 5）在 ctx.budget.tokensSpent
+      const usage = logged.at(-1) as CoreEventOf<"core.budget_usage">
+      expect(usage.payload.tokens).toEqual({ input: 10, output: 5 })
+      expect(spent).toBe(228)
+    })
+
+    it("用尽 maxAttempts 仍瞬断：最后一条 error 的 retryable=true、attempts=3；maxAttempts:1 即关闭重试", async () => {
+      const log = new InMemoryEventLog()
+      const { waits, sleep } = fakeSleep()
+      const lowering = new ScriptedLowering([
+        { drafts: [], throws: new Error("ECONNRESET") },
+        { drafts: [], throws: new Error("socket hang up") },
+        { drafts: [], throws: new Error("Connection error.") },
+      ])
+      const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "问", retry: { sleep } })))
+      expect(result.status).toBe("error")
+      if (result.status !== "error") return
+      expect(result.error.payload).toMatchObject({
+        message: "Connection error.",
+        retryable: true,
+        detail: { attempts: 3 },
+      })
+      expect(result.error.payload.detail).not.toHaveProperty("willRetry")
+      expect(waits).toEqual([1000, 2000])
+      expect(types(await all(log))).toEqual(["user_message", "error", "error", "error"])
+
+      const log2 = new InMemoryEventLog()
+      const l2 = new ScriptedLowering([{ drafts: [], throws: new Error("ECONNRESET") }])
+      const r2 = await drain(runLoop(baseConfig(l2, log2, { input: "问", retry: { maxAttempts: 1, sleep } })))
+      expect(r2.result.status).toBe("error")
+      expect(l2.requests).toHaveLength(1)
+    })
+
+    it("模型已吐出半截再断：不重试（日志里不能有两份半截），error 标 retryable=true 与 partialOutput", async () => {
+      const log = new InMemoryEventLog()
+      const { waits, sleep } = fakeSleep()
+      const lowering = new ScriptedLowering([
+        { drafts: [think("想到一半")], throws: new Error("ECONNRESET") },
+        { drafts: [say("不该到这")] },
+      ])
+      const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "问", retry: { sleep } })))
+      expect(result.status).toBe("error")
+      if (result.status !== "error") return
+      expect(result.error.payload).toMatchObject({
+        retryable: true,
+        detail: { attempts: 1, partialOutput: 1 },
+      })
+      expect(waits).toEqual([])
+      expect(types(await all(log))).toEqual(["user_message", "model_thinking", "error"])
+    })
+
+    it("重试等待期间宿主中止：以 paused(host) 返回，不再发请求", async () => {
+      const log = new InMemoryEventLog()
+      const ac = new AbortController()
+      const lowering = new ScriptedLowering([
+        { drafts: [], throws: new Error("ECONNRESET") },
+        { drafts: [say("不该到这")] },
+      ])
+      const sleep = async () => ac.abort()
+      const { result } = await drain(
+        runLoop(baseConfig(lowering, log, { input: "问", signal: ac.signal, retry: { sleep } })),
+      )
+      expect(result.status).toBe("paused")
+      if (result.status !== "paused") return
+      expect(result.reason).toBe("host")
+      expect(lowering.requests).toHaveLength(1)
+      expect(types(await all(log))).toEqual(["user_message", "error", "run_paused"])
+    })
+
+    it("自定义 isTransient：宿主可以把某类错误判成瞬断或非瞬断", async () => {
+      const log = new InMemoryEventLog()
+      const { waits, sleep } = fakeSleep()
+      const lowering = new ScriptedLowering([
+        { drafts: [], throws: new Error("weird upstream hiccup") },
+        { drafts: [say("好了")] },
+      ])
+      const { result } = await drain(
+        runLoop(
+          baseConfig(lowering, log, {
+            input: "问",
+            retry: {
+              sleep,
+              baseDelayMs: 10,
+              isTransient: (f) => f.kind === "thrown" && /hiccup/.test(String((f.error as Error).message)),
+            },
+          }),
+        ),
+      )
+      expect(result.status).toBe("done")
+      expect(waits).toEqual([10])
+    })
   })
 
   it("宿主中止：模型响应 aborted 后以 paused(host) 返回，未回答的 tool_call 记为 pending", async () => {

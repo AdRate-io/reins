@@ -30,6 +30,7 @@ import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../l
 import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
+import { type ModelCallFailure, resolveRetry } from "./retry.js"
 import {
   computeConfigHash,
   pendingToolCalls,
@@ -76,6 +77,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   // 算法在 static.ts，server 的恢复预校验用同一份，configHash 才对得上
   const { tools: baseTools, systemPrompt: baseSystemPrompt } = resolveSocketContributions(cfg)
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS
+  const retry = resolveRetry(cfg.retry)
   const capabilities = lowering.capabilities(model)
   const configHash = await computeConfigHash({
     model,
@@ -278,59 +280,106 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     ctx.events = visible
     ctx.tools = tools
 
-    // ---- 问模型 ----
-    let outcome: LoweringOutcome
+    // ---- 问模型（瞬断有限重试，见 retry.ts）----
+    // 每次尝试重新 toRequest + stream；beforeModel 钩子不重跑（视图、工具、说明都是本轮已定的）。
+    // 只有本次尝试一块模型输出都没落日志时才重试：落了半截再重说，日志里就有两份半截。
+    let outcome: LoweringOutcome | undefined
     const modelEvents: Event[] = []
-    try {
-      const request = lowering.toRequest({
-        events: visible,
-        tools: tools.map(toolSpecOf),
-        model,
-        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
-      })
-      cfg.onLandings?.(lossesOf(request), request)
-      const streamCtx: LoweringStreamContext = {
-        ...(cfg.signal ? { signal: cfg.signal } : {}),
-        ...(cfg.onDelta ? { onDelta: cfg.onDelta } : {}),
-      }
-      const stream = lowering.stream(request, streamCtx)
-      while (true) {
-        const step = await stream.next()
-        if (step.done) {
-          outcome = step.value
-          break
+    for (let attempt = 1; ; attempt++) {
+      let failure: ModelCallFailure | undefined
+      let attemptOutput = 0
+      try {
+        const request = lowering.toRequest({
+          events: visible,
+          tools: tools.map(toolSpecOf),
+          model,
+          ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+        })
+        cfg.onLandings?.(lossesOf(request), request)
+        const streamCtx: LoweringStreamContext = {
+          ...(cfg.signal ? { signal: cfg.signal } : {}),
+          ...(cfg.onDelta ? { onDelta: cfg.onDelta } : {}),
         }
-        // 模型说的每一块立刻入日志，宿主随即拿到
-        const appended = await append([step.value])
-        modelEvents.push(...appended)
-        yield* appended
+        const stream = lowering.stream(request, streamCtx)
+        while (true) {
+          const step = await stream.next()
+          if (step.done) {
+            outcome = step.value
+            break
+          }
+          // 模型说的每一块立刻入日志，宿主随即拿到
+          const appended = await append([step.value])
+          modelEvents.push(...appended)
+          attemptOutput += appended.length
+          yield* appended
+        }
+      } catch (err) {
+        // 降级层异常：缺 key、翻译不出合法请求（不重试），或网络断开（重试）
+        failure = { kind: "thrown", error: err }
       }
-    } catch (err) {
-      // 降级层异常（缺 key、翻译不出合法请求、网络断开）：记 error 事件，交宿主决定重试
-      const { events, result } = await fail({
-        category: "lowering",
-        message: errorMessageOf(err),
-        retryable: false,
-        detail: { name: (err as { name?: string }).name ?? "Error" },
-      })
-      yield* events
-      return result
-    }
-    tokensSpent += outcome.usage.input + outcome.usage.output
-    ctx.budget.tokensSpent = tokensSpent
-    ctx.budget.wallMs = now() - startedAt
-    ctx.budget.lastUsage = outcome.usage
+      if (outcome) {
+        // 失败的尝试也花了 token（缓存读、被掐前的输入），一并记账
+        tokensSpent += outcome.usage.input + outcome.usage.output
+        ctx.budget.tokensSpent = tokensSpent
+        ctx.budget.lastUsage = outcome.usage
+        if (outcome.stopReason === "error")
+          failure = { kind: "outcome", message: outcome.errorMessage ?? "模型响应出错" }
+      }
+      ctx.budget.wallMs = now() - startedAt
+      if (!failure) break
 
-    if (outcome.stopReason === "error") {
-      const { events, result } = await fail({
-        category: "provider",
-        message: outcome.errorMessage ?? "模型响应出错",
-        retryable: false,
-        detail: { usage: outcome.usage },
-      })
-      yield* events
-      return result
+      const transient = retry.isTransient(failure)
+      const canRetry = transient && attemptOutput === 0 && attempt < retry.maxAttempts && !cfg.signal?.aborted
+      const base =
+        failure.kind === "thrown"
+          ? {
+              category: "lowering",
+              message: errorMessageOf(failure.error),
+              detail: { name: (failure.error as { name?: string } | null)?.name ?? "Error" } as Record<
+                string,
+                unknown
+              >,
+            }
+          : {
+              category: "provider",
+              message: failure.message,
+              detail: { usage: outcome?.usage } as Record<string, unknown>,
+            }
+      if (!canRetry) {
+        const { events, result } = await fail({
+          ...base,
+          retryable: transient,
+          detail: {
+            ...base.detail,
+            attempts: attempt,
+            ...(attemptOutput > 0 ? { partialOutput: attemptOutput } : {}),
+          },
+        })
+        yield* events
+        return result
+      }
+      const delayMs = retry.delayFor(attempt)
+      // 将要重试的失败也进日志：宿主与 eval 看得见发生过什么，模型看不见（运维事件）
+      yield* await append([
+        {
+          type: "core.error",
+          actor: "system",
+          payload: {
+            ...base,
+            retryable: true,
+            detail: { ...base.detail, attempts: attempt, willRetry: true, delayMs },
+          },
+        },
+      ])
+      outcome = undefined
+      await retry.sleep(delayMs, cfg.signal)
+      if (cfg.signal?.aborted) {
+        const { events, result } = await pause("host", [{ kind: "host", note: "宿主在重试等待期间中止" }])
+        yield* events
+        return result
+      }
     }
+    if (!outcome) throw new Error("runLoop 内部错误：模型调用既无结果也无失败")
 
     for (const s of sockets) await s.afterModel?.(ctx, modelEvents)
     yield* await flush()

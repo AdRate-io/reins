@@ -28,6 +28,7 @@ import type {
 } from "../lowering/types.js"
 import type { ProjectionStrategy, TokenEstimator } from "../projection/types.js"
 import type { BlobStore, EventLog, MemoryStore } from "../store/types.js"
+import type { RetryOptions } from "./retry.js"
 
 // ---- 参与者 ----
 
@@ -322,6 +323,12 @@ export interface LoopConfig {
   maxTurns?: number
   /** 宿主中止：当前请求停止后以 paused(host) 返回，已产出的内容仍入日志 */
   signal?: AbortSignal
+  /**
+   * 模型调用遇到瞬断（连接被掐、超时、过载 / 限流 / 5xx）时的有限重试，缺省最多 3 次尝试、1s 起翻倍退避。
+   * 只在本次尝试尚未写进任何模型输出时重试；宿主中止与配置错不重试。每次将要重试的失败记一条 core.error（模型不可见）。
+   * 传 { maxAttempts: 1 } 关闭。见 retry.ts。
+   */
+  retry?: RetryOptions
   /** 流式增量，只给 UI 用；日志里只有完整内容块 */
   onDelta?: (delta: LoweringDelta) => void
   /** 每次请求的落点记录（有损与丢弃在此可见），供宿主告警或统计 */
