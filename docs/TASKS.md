@@ -76,4 +76,5 @@
   - [ ] R4（0.1 后）`projection/types.ts` 注释"emitted 冲突则重跑投影"与 runLoop 不符（实际直接抛 StoreError）：改注释或真做重跑
   - [ ] R5（0.1 后）TanStack 适配器导入客户端消息无幂等键，网络重试重发同一条 user 消息会入日志两次
   - [ ] R6（0.1 后）server 的 GET 只要知道 sessionId 就能读整条时间线，`principal` 钩子未与会话归属绑定；至少在 README 明示，或加会话级鉴权钩子
+- [x] 发布前核实：依赖 / 许可证盘查 + edge 运行时实证（2026-09-09 完成：① 96 个生产依赖全宽松证（MIT 42 / Apache-2.0 41 / BSD-3-Clause 11 / Unlicense 1 / 0BSD 1），零 copyleft / 未知 / 商业限制，`@reins/core` 与 `@reins/brain` 零外部依赖；pi-ai 传递依赖装机约 65 M，其中 29 M（@google/genai 14 M、aws-sdk 全家桶 15 M）在可达链之外，0.1 只在 README 明示，`@reins/lowering-fetch` 列 0.1 后可选项。② `spikes/edge-runtime-check`：lowering-pi 的 **dist** 在 Cloudflare workerd 上四层（模块加载 / 本地假端点 SSE / DeepSeek 真打 / gpt-5.5 真打）× 三档（2023 date 无 flag、2026 date 无 flag、nodejs_compat）**12 格全过，不需要 nodejs_compat**；判据取最严档（process / Buffer 不存在、node:* import 失败）。假端点把工具入参切两段 delta、SSE 按 7~29 字节乱切，入参仍拼成 city=上海 中文未乱；真打两条协议路径分别走 @anthropic-ai/sdk 与 openai 两个互不相干的 SDK。发现 Workers 新 compat date 默认已带部分 Node 兼容，只跑新 date 会高估结论。未覆盖：Deno / Bun / Vercel Edge 未测、只测单轮首个请求、server 与 store-* 未测。两回"HTTP 200 假通过"由逐项核对产出内容抓出，教训写进目录 README）
 - [ ] E4 文档、CHANGELOG、0.1 发布准备（远程仓库与 npm 组织在此之前建）

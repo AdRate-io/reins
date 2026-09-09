@@ -1,0 +1,7 @@
+# 最严档：把 compatibility_date 退回 2023-01-01，且不开 nodejs_compat。
+# 为什么要这一档：Workers 较新的 compat date 会默认提供一部分 Node 内建（实测严格档里
+# process / Buffer / setImmediate 都存在），只跑新 date 会高估"纯 Web 标准可跑"的结论。
+# 这一档过了，才能说降级层真的不依赖 Node 兼容层。
+name = "reins-edge-check-old"
+main = "worker.mjs"
+compatibility_date = "2023-01-01"

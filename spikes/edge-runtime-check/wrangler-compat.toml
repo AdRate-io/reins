@@ -1,0 +1,6 @@
+# 对照档：开 nodejs_compat。若严格档失败而这档通过，结论是"Workers 上可跑，但必须开 nodejs_compat 标志"，
+# 这仍是可用结论（Cloudflare 官方支持该标志），只是要写进文档告知用户。
+name = "reins-edge-check-compat"
+main = "worker.mjs"
+compatibility_date = "2026-09-09"
+compatibility_flags = ["nodejs_compat"]

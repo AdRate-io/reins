@@ -1,0 +1,5 @@
+# 严格档：故意**不开** nodejs_compat —— 这是最能说明问题的配置。
+# 过了，说明降级层在纯 Web 标准运行时里就能跑；不过，再看 wrangler-compat.toml 那档。
+name = "reins-edge-check"
+main = "worker.mjs"
+compatibility_date = "2026-09-09"

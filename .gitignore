@@ -13,3 +13,8 @@ spikes/deepseek-anthropic-check/out/
 examples/adrate/data/
 examples/adrate/recordings/*.log
 examples/eval/out/
+
+# wrangler 本地变量（spike 用，含临时密钥）
+.dev.vars
+spikes/**/out.json
+.wrangler/
