@@ -59,11 +59,32 @@ export const DEFAULT_MAX_TURNS = 100
 /** 循环内置的审批策略标识：工具自己声明 needsApproval 且没有 Socket 做主 */
 export const BUILTIN_APPROVAL_POLICY = "tool.needsApproval"
 
-function inputDraft(input: NonNullable<LoopConfig["input"]>): EventDraft {
+/**
+ * 宿主经 `input` 能直接追加的草稿类型：用户说话、给客户端工具回填结果、宿主说明、宿主自己的 ext.* 事件。
+ * 模型输出与运维事件（approval_decision、run_resumed、compaction、budget_usage…）不许从这条路进来：
+ * 一条伪造的 approval_decision(approved=true) 就能让 pending 调用免审批执行，伪造的 compaction 能把历史藏起来。
+ * 这些事件只能由循环自己按规则产生（审批结论走 `decisions`，经 T10 校验）。
+ */
+export const INPUT_DRAFT_TYPES: ReadonlySet<string> = new Set([
+  "core.user_message",
+  "core.tool_result",
+  "core.system_note",
+])
+
+/** 把 `input` 归一成草稿；不合规的草稿在写任何日志之前就抛 RangeError（fail-closed） */
+export function inputDraft(input: NonNullable<LoopConfig["input"]>): EventDraft {
   if (typeof input === "string")
     return { type: "core.user_message", actor: "user", payload: { content: [{ type: "text", text: input }] } }
   if (Array.isArray(input))
     return { type: "core.user_message", actor: "user", payload: { content: input as ContentPart[] } }
+  if (
+    typeof input.type !== "string" ||
+    (!INPUT_DRAFT_TYPES.has(input.type) && !input.type.startsWith("ext."))
+  ) {
+    throw new RangeError(
+      `input 草稿不接受事件类型 ${String(input.type)}：只能是 core.user_message、core.tool_result、core.system_note 或 ext.*`,
+    )
+  }
   return input
 }
 
@@ -78,6 +99,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   const { tools: baseTools, systemPrompt: baseSystemPrompt } = resolveSocketContributions(cfg)
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS
   const retry = resolveRetry(cfg.retry)
+  // 新输入先过类型白名单：不合规在写任何东西之前就拒绝
+  const input = cfg.input !== undefined ? inputDraft(cfg.input) : undefined
   const capabilities = lowering.capabilities(model)
   const configHash = await computeConfigHash({
     model,
@@ -171,7 +194,9 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   }
 
   // ---- 新输入 ----
-  if (cfg.input !== undefined) yield* await append([inputDraft(cfg.input)])
+  // 日志里还有没结果的 tool_call 时，新输入照样追加在此（时间线如实记录"用户此时插话"，宪法二）；
+  // 工具结果随后补齐、排在它之后，"tool_result 必须紧跟 tool_use"由降级层把用户消息后移来满足，不改日志顺序
+  if (input !== undefined) yield* await append([input])
 
   while (true) {
     const turnStartedAt = now()
@@ -231,6 +256,14 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       return events
     }
 
+    // 宿主中止：先于"补齐 pending"检查。否则上一轮在工具批中途被中止时，余下的调用会在这里被当成 pending 继续执行，
+    // 一轮一个直到跑完才暂停 —— 中止就成了空话。没执行的调用留作 pending，恢复时再补
+    if (cfg.signal?.aborted) {
+      const { events, result } = await pause("host", [{ kind: "host", note: "宿主在本轮开始前中止" }])
+      yield* events
+      return result
+    }
+
     // ---- 先补齐日志里没结果的 tool_call（上次暂停 / 崩溃留下的），再问模型 ----
     const pending = pendingToolCalls(timeline)
     if (pending.length > 0) {
@@ -242,13 +275,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         yield* events
         return result
       }
-      continue // 结果已入日志，重读时间线让模型看到
-    }
-
-    if (cfg.signal?.aborted) {
-      const { events, result } = await pause("host", [{ kind: "host", note: "宿主在本轮开始前中止" }])
-      yield* events
-      return result
+      continue // 结果已入日志，重读时间线让模型看到（若宿主已中止，下一轮开头就会暂停）
     }
     if (turns >= maxTurns) {
       const note = `单次 run 轮数达到上限 ${maxTurns}`
@@ -653,6 +680,7 @@ async function* executeToolCalls(
       if (replaced) result = replaced
     }
     yield* await settle(result)
+    // 宿主中止：本条结果已落，余下的调用不再执行、留作 pending；循环下一轮开头据 signal 直接 paused(host)
     if (cfg.signal?.aborted) break
   }
   return summary

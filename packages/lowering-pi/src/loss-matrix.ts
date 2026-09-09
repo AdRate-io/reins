@@ -43,9 +43,16 @@ const THINKING_COMMON = {
 
 const TOOL_CALL_ARGS = lossy("wrapped-args", "非对象入参包成 { value }", "tool_call.args 不是对象")
 
+/** 用户在工具结果回来之前插话（续跑带新 input、进程死亡后再发消息）：消息后移到同批结果之后，顺序有变 */
+const USER_DEFERRED = lossy(
+  "user",
+  "落在 tool_call 与 tool_result 之间的用户消息后移到同批结果之后（工具结果必须紧跟调用）",
+  "工具结果没到齐时用户插话",
+)
+
 export const LOSS_MATRIX: LossMatrix = {
   "anthropic-messages": {
-    "core.user_message": [exact("user")],
+    "core.user_message": [exact("user"), USER_DEFERRED],
     "core.model_text": [exact("assistant-text")],
     "core.model_thinking": [
       exact("thinking-block", "带 signature 原样回放"),
@@ -67,7 +74,7 @@ export const LOSS_MATRIX: LossMatrix = {
     "ext.*": [dropped("none", "宿主扩展事件无通用落点；需要模型看见的应在投影层翻译成 core 事件")],
   },
   "openai-responses": {
-    "core.user_message": [exact("user")],
+    "core.user_message": [exact("user"), USER_DEFERRED],
     "core.model_text": [exact("assistant-message")],
     "core.model_thinking": [
       exact("reasoning-item", "encrypted_content 原样回放"),

@@ -88,6 +88,20 @@ function variants(api: string, model: { provider: string; id: string }): Variant
         }),
       ],
     },
+    {
+      label: "user_message 夹在 tool_call 与 tool_result 之间（后移）",
+      events: [
+        user(),
+        mk("core.tool_call", { toolCallId: "c1", name: "f", args: {} }, origin),
+        user(),
+        mk("core.tool_result", {
+          toolCallId: "c1",
+          name: "f",
+          content: [{ type: "text", text: "r" }],
+          isError: false,
+        }),
+      ],
+    },
     { label: "system_note", events: [user(), mk("core.system_note", { kind: "perception", text: "n" })] },
     {
       label: "compaction",

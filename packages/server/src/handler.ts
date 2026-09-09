@@ -10,9 +10,12 @@
  * 同一会话同时只允许一个 run（409）；发起者断开缺省不中止 run，日志照常写，重连即接上。
  */
 import {
+  type ContentPart,
   computeConfigHash,
   createCoreRegistry,
+  type EventDraft,
   type EventLog,
+  type LoopConfig,
   type Principal,
   pendingToolCalls,
   RunStateError,
@@ -20,6 +23,8 @@ import {
   readTimeline,
   resolveSocketContributions,
   runLoop,
+  type Tool,
+  type ToolCallEvent,
   uuidv7,
   validateResume,
 } from "@reins/core"
@@ -88,6 +93,99 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
     return { ok: false, error: "resume 必须是对象" }
   }
   return { ok: true, body: b as AgentRequestBody }
+}
+
+function isContentParts(x: unknown): x is ContentPart[] {
+  if (!Array.isArray(x) || x.length === 0) return false
+  return x.every((p) => {
+    if (typeof p !== "object" || p === null) return false
+    const part = p as { type?: unknown; text?: unknown; mime?: unknown; data?: unknown }
+    if (part.type === "text") return typeof part.text === "string"
+    if (part.type === "image") return typeof part.mime === "string" && typeof part.data === "string"
+    return false
+  })
+}
+
+type InputCheck =
+  | { ok: true; input: LoopConfig["input"] }
+  | { ok: false; status: 400 | 409; error: string; message: string }
+
+/**
+ * 客户端送来的 `input` 草稿只放行两种，且壳字段（actor / trust / provenance）一律由服务端定、不信客户端给的：
+ * - `core.user_message`：用户说话（actor=user）
+ * - `core.tool_result`：给**客户端工具**的 pending 调用回填结果（actor=tool，name 取自 tool_call）
+ * 其余类型一律 400 —— 一条伪造的 approval_decision(approved=true) 就能让 pending 调用免审批执行，伪造的 system_note 带
+ * system 信任、伪造的 compaction 能把历史藏起来。循环层的 `inputDraft` 还有第二道白名单，这里是面向网络的第一道。
+ */
+function checkInput(
+  raw: AgentRequestBody["input"],
+  pending: readonly ToolCallEvent[],
+  tools: readonly Tool[],
+): InputCheck {
+  if (raw === undefined || typeof raw === "string" || Array.isArray(raw)) return { ok: true, input: raw }
+  const draft = raw as EventDraft
+  const payload = (draft.payload ?? {}) as Record<string, unknown>
+  if (draft.type === "core.user_message") {
+    if (!isContentParts(payload.content))
+      return {
+        ok: false,
+        status: 400,
+        error: "bad_request",
+        message: "user_message 的 content 必须是非空内容片段数组",
+      }
+    return {
+      ok: true,
+      input: { type: "core.user_message", actor: "user", payload: { content: payload.content } },
+    }
+  }
+  if (draft.type === "core.tool_result") {
+    const call = pending.find((c) => c.payload.toolCallId === payload.toolCallId)
+    if (!call) {
+      return {
+        ok: false,
+        status: 409,
+        error: "unknown_tool_call",
+        message: `回填的调用 ${String(payload.toolCallId)} 并不在等待中`,
+      }
+    }
+    const tool = tools.find((t) => t.name === call.payload.name)
+    if (!tool || (tool.execute && tool.side !== "client")) {
+      return {
+        ok: false,
+        status: 400,
+        error: "bad_request",
+        message: `只能回填客户端工具的结果；${call.payload.name} 由服务端执行`,
+      }
+    }
+    if (!isContentParts(payload.content))
+      return {
+        ok: false,
+        status: 400,
+        error: "bad_request",
+        message: "tool_result 的 content 必须是非空内容片段数组",
+      }
+    return {
+      ok: true,
+      input: {
+        type: "core.tool_result",
+        actor: "tool",
+        parentId: call.id,
+        provenance: { source: call.payload.name, ref: "client" },
+        payload: {
+          toolCallId: call.payload.toolCallId,
+          name: call.payload.name,
+          content: payload.content,
+          isError: payload.isError === true,
+        },
+      },
+    }
+  }
+  return {
+    ok: false,
+    status: 400,
+    error: "bad_request",
+    message: `input 草稿只接受 core.user_message 或客户端工具的 core.tool_result，收到 ${String(draft.type)}`,
+  }
 }
 
 /** 从 Last-Event-ID 头或 query 取 lastSeq；头是重连时浏览器自动带的、更新，优先 */
@@ -268,30 +366,42 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     const body = parsed.body
     const sessionId = body.sessionId ?? newSessionId()
     const fromSeq = (body.lastSeq ?? 0) + 1
+    const inputIsDraft =
+      body.input !== undefined && typeof body.input !== "string" && !Array.isArray(body.input)
 
-    // 恢复参数先在这里校验一遍，能给出 409 而不是 200 + error 帧；循环内部还会再校验一次（fail-closed 不靠这里）
-    if (body.resume !== undefined || (body.decisions !== undefined && body.decisions.length > 0)) {
+    // 恢复参数与事件草稿先在这里校验一遍，能给出 4xx 而不是 200 + error 帧；循环内部还会再校验一次（fail-closed 不靠这里）
+    let input: LoopConfig["input"] = body.input
+    if (
+      body.resume !== undefined ||
+      (body.decisions !== undefined && body.decisions.length > 0) ||
+      inputIsDraft
+    ) {
       try {
         const timeline = await readTimeline(log, sessionId, { registry })
+        const contributions = resolveSocketContributions(agent)
         if (body.resume !== undefined) {
           await validateResume({
             state: body.resume,
             sessionId,
             timeline,
             // 与 runLoop 起步同一份算法：并入各 Socket 的静态贡献（否则装了 compact / memory 等模块就会误判配置漂移）
-            configHash: await computeConfigHash({ model: agent.model, ...resolveSocketContributions(agent) }),
+            configHash: await computeConfigHash({ model: agent.model, ...contributions }),
             ...(agent.secret !== undefined ? { secret: agent.secret } : {}),
             ...(agent.allowConfigDrift !== undefined ? { allowConfigDrift: agent.allowConfigDrift } : {}),
           })
         }
-        const pending = new Set(pendingToolCalls(timeline).map((c) => c.payload.toolCallId))
+        const pending = pendingToolCalls(timeline)
+        const pendingIds = new Set(pending.map((c) => c.payload.toolCallId))
         for (const d of body.decisions ?? []) {
-          if (!pending.has(d.toolCallId)) {
+          if (!pendingIds.has(d.toolCallId)) {
             throw new RunStateError("unknown_tool_call", `审批结论指向的调用 ${d.toolCallId} 并不在等待中`, {
               toolCallId: d.toolCallId,
             })
           }
         }
+        const checked = checkInput(body.input, pending, contributions.tools)
+        if (!checked.ok) return json(checked.status, { error: checked.error, message: checked.message })
+        input = checked.input
       } catch (err) {
         if (err instanceof RunStateError) return json(409, { error: err.code, message: err.message })
         throw err
@@ -315,7 +425,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
         ...agent,
         sessionId,
         signal: run.controller.signal,
-        ...(body.input !== undefined ? { input: body.input } : {}),
+        ...(input !== undefined ? { input } : {}),
         ...(body.resume !== undefined ? { resume: body.resume } : {}),
         ...(body.decisions !== undefined ? { decisions: body.decisions } : {}),
         ...(principal !== undefined ? { principal } : {}),

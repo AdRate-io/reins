@@ -97,11 +97,8 @@ export function rewriteAnthropicPayload(payload: unknown, opts: RewriteAnthropic
   }
   if (pending.length === 0) return undefined
 
-  let lostBreakpoint: unknown
-  // 从后往前插，前面的索引不受影响
-  for (let i = pending.length - 1; i >= 0; i--) {
-    const note = pending[i]
-    if (!note) continue
+  // 每条说明在**原始** body 里的落点（都算完再拼，而不是边算边 splice：边 splice 会让同一落点的多条说明前后颠倒）
+  const placeOf = (note: (typeof pending)[number]): number => {
     let at = body.findIndex((m, idx) => idx >= note.afterIndex && m.role === "assistant")
     if (at === -1) {
       // 收尾：跳过 pi-ai 追加的 effort 专用空 system，保持"紧跟最后一条 user"
@@ -113,14 +110,36 @@ export function rewriteAnthropicPayload(payload: unknown, opts: RewriteAnthropic
       const firstUser = body.findIndex((m) => m.role === "user")
       at = firstUser === -1 ? body.length : firstUser + 1
     }
-    body.splice(at, 0, { role: "system", content: [{ type: "text", text: note.text }] })
-    if (note.cacheControl !== undefined && breakpoint === "previous-user") {
-      const prev = body[at - 1]
-      if (prev) body[at - 1] = withCacheControl(prev, note.cacheControl)
-    }
-    if (note.cacheControl !== undefined && breakpoint === "automatic") lostBreakpoint = note.cacheControl
+    return at
   }
-  const out = { ...p, messages: body }
+  // 同一落点的说明按原顺序成组（相邻的多条 system 视为一组，Anthropic 允许）
+  const groups = new Map<number, MarkedNote[]>()
+  for (const note of pending) {
+    const at = placeOf(note)
+    const bucket = groups.get(at)
+    if (bucket) bucket.push(note)
+    else groups.set(at, [note])
+  }
+
+  let lostBreakpoint: unknown
+  const messages: WireMessage[] = []
+  for (let i = 0; i <= body.length; i++) {
+    const notes = groups.get(i)
+    if (notes) {
+      for (const note of notes) {
+        if (note.cacheControl !== undefined && breakpoint === "previous-user") {
+          // 搬到紧邻的前一条 user 消息末块（此时它已在 messages 末尾）
+          const prev = messages[messages.length - 1]
+          if (prev) messages[messages.length - 1] = withCacheControl(prev, note.cacheControl)
+        }
+        if (note.cacheControl !== undefined && breakpoint === "automatic") lostBreakpoint = note.cacheControl
+        messages.push({ role: "system", content: [{ type: "text", text: note.text }] })
+      }
+    }
+    const m = body[i]
+    if (m) messages.push(m)
+  }
+  const out = { ...p, messages }
   if (lostBreakpoint !== undefined && out.cache_control === undefined) {
     // 顶层自动缓存也占一个槽位；块级断点已满就只能放弃，不能让请求 400
     if (countBlockBreakpoints(out) < MAX_ANTHROPIC_BREAKPOINTS) out.cache_control = lostBreakpoint

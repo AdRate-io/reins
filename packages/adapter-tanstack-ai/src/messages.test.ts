@@ -168,6 +168,7 @@ describe("toModelMessages", () => {
       ev("core.model_text", { text: "x" }),
       ev("core.model_text", { text: "y" }),
       ev("core.tool_call", { toolCallId: "c1", name: "t", args: {} }),
+      ev("core.user_message", { content: [{ type: "text", text: "插话（后移）" }] }),
       ev(
         "core.tool_result",
         { toolCallId: "c1", name: "t", content: [{ type: "text", text: "ok" }], isError: false },
@@ -319,5 +320,25 @@ describe("BlockAssembler", () => {
         replay: ORIGIN,
       },
     ])
+  })
+})
+
+describe("toModelMessages：用户消息后移", () => {
+  it("工具结果没到齐时用户插话：消息后移到同批结果之后，落点记 lossy", () => {
+    const events = [
+      ev("core.user_message", { content: [{ type: "text", text: "go" }] }),
+      ev("core.tool_call", { toolCallId: "c1", name: "t", args: {} }),
+      ev("core.user_message", { content: [{ type: "text", text: "顺便" }] }),
+      ev(
+        "core.tool_result",
+        { toolCallId: "c1", name: "t", content: [{ type: "text", text: "r" }], isError: false },
+        { actor: "tool" },
+      ),
+      ev("core.model_text", { text: "ok" }),
+    ]
+    const { messages, landings } = toModelMessages(events, { model: MODEL })
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user", "assistant"])
+    const late = landings.find((l) => l.eventId === events[2]?.id)
+    expect(late).toMatchObject({ kind: "lossy", landing: "user" })
   })
 })

@@ -107,7 +107,8 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
   /**
    * 已下发 tool_call、结果还没到的调用 id。Anthropic 要求同一批 tool_result 紧跟在 tool_use 所在的 assistant 之后、
    * 连成一条 user，中间不能插别的消息；而日志里 pin / memory 留痕的说明、感知说明都可能落在两条 tool_result 之间
-   * （并行工具时 ctx.emit 的草稿排在各自结果之前）。所以结果没到齐时，说明与摘要先攒着，到齐后再放出（落点备注说明后移）。
+   * （并行工具时 ctx.emit 的草稿排在各自结果之前），用户也可能在结果回来之前插话（续跑带新 input、进程死亡后再发消息）。
+   * 所以结果没到齐时，说明、摘要与用户消息先攒着，到齐后再放出（落点备注说明后移）。时间线本身如实保留插话的位置。
    */
   const awaiting = new Set<string>()
   const deferred: {
@@ -140,7 +141,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
     messages.push(msg)
     land(e, kind, landing, why)
   }
-  /** 新的模型输出或用户消息到来：这批调用的结果不会再来了（被拒 / 暂停未续），后移的说明放出 */
+  /** 新的模型输出到来：这批调用的结果不会再来了（视图被切在了结果之前），后移的一切放出 */
   const settleAwaiting = () => {
     awaiting.clear()
     releaseDeferred()
@@ -173,12 +174,25 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
   for (const raw of input.events) {
     const e = raw as CoreEvent
     switch (e.type) {
-      case "core.user_message":
+      case "core.user_message": {
         flush()
-        settleAwaiting()
-        messages.push({ role: "user", content: toPiContent(e.payload.content), timestamp: e.at })
+        const msg: Message = { role: "user", content: toPiContent(e.payload.content), timestamp: e.at }
+        // 工具结果还没到齐就来了用户消息：后移到同批结果之后，否则 tool_use 后面紧跟的不是 tool_result，厂商 400。
+        // 顺序变了所以记 lossy；日志里它仍在原位
+        if (awaiting.size > 0) {
+          deferred.push({
+            msg,
+            event: e,
+            kind: "lossy",
+            landing: "user",
+            note: "用户消息落在工具调用与结果之间",
+          })
+          break
+        }
+        messages.push(msg)
         land(e, "exact", "user")
         break
+      }
 
       case "core.model_thinking": {
         const origin = originOf(e.replay, model)

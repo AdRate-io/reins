@@ -95,7 +95,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
     messages.push(msg)
     land(e, "lossy", landing, why)
   }
-  /** 新的 assistant 内容或用户消息到来：这批调用的结果不会再来了（pending），后移的说明放出 */
+  /** 新的 assistant 内容到来：这批调用的结果不会再来了（视图被切在了结果之前），后移的一切放出 */
   const settleAwaiting = () => {
     awaiting.clear()
     releaseDeferred()
@@ -125,12 +125,18 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
   for (const raw of events) {
     const e = raw as CoreEvent
     switch (e.type) {
-      case "core.user_message":
+      case "core.user_message": {
         flush()
-        settleAwaiting()
-        messages.push({ role: "user", content: toTanstackContent(e.payload.content) })
+        const msg: ModelMessage = { role: "user", content: toTanstackContent(e.payload.content) }
+        // 工具结果还没到齐就来了用户消息（续跑带新输入、进程死亡后再发）：后移到同批结果之后，与 lowering-pi 同一规则
+        if (awaiting.size > 0) {
+          deferred.push({ msg, event: e, landing: "user", note: "用户消息落在工具调用与结果之间" })
+          break
+        }
+        messages.push(msg)
         land(e, "exact", "user")
         break
+      }
 
       case "core.model_text":
         assistant().texts.push(e.payload.text)

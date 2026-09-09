@@ -17,7 +17,10 @@ const dropped = (note: string): LossEntry => ({ kind: "dropped", landing: "none"
 const OPS = dropped("运维事件不下发（投影默认已过滤）")
 
 export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>> = {
-  "core.user_message": [exact("user")],
+  "core.user_message": [
+    exact("user"),
+    lossy("user", "落在 tool_call 与 tool_result 之间的用户消息后移到同批结果之后（工具结果必须紧跟调用）"),
+  ],
   "core.model_text": [exact("assistant-text"), lossy("merged-text", "同一响应的多段正文合成一个字符串")],
   "core.model_thinking": [exact("thinking"), dropped("无签名或来源不同的 thinking 不下发（厂商会拒收）")],
   "core.tool_call": [exact("tool-call")],

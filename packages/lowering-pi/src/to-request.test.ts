@@ -108,3 +108,25 @@ describe("eventsToContext：说明后移", () => {
     expect(landings.find((l) => l.type === "core.system_note")?.note).toBeUndefined()
   })
 })
+
+describe("eventsToContext：用户消息后移", () => {
+  it("工具结果没到齐时用户插话（续跑带新 input）：消息后移到同批结果之后，落点记 lossy 并说明后移", () => {
+    for (const mid of [true, false]) {
+      seq = 0
+      const events = [
+        ev("core.user_message", "user", { content: [{ type: "text", text: "go" }] }),
+        ev("core.tool_call", "model", { toolCallId: "a", name: "t", args: {} }),
+        ev("core.user_message", "user", { content: [{ type: "text", text: "顺便再看看 X" }] }),
+        result("a"),
+        ev("core.model_text", "model", { text: "ok" }),
+      ]
+      const { context, landings } = eventsToContext({ events, model, capabilities: caps(mid) })
+      expect(
+        context.messages.map((m) => (m.role === "toolResult" ? `result:${m.toolCallId}` : m.role)),
+      ).toEqual(["user", "assistant", "result:a", "user", "assistant"])
+      const late = landings.find((l) => l.eventId === "e3")
+      expect(late).toMatchObject({ type: "core.user_message", kind: "lossy", landing: "user" })
+      expect(late?.note).toContain("已后移到同批工具结果之后")
+    }
+  })
+})

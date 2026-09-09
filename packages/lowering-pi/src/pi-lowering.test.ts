@@ -356,9 +356,21 @@ describe("rewriteAnthropicPayload 归位规则", () => {
     expect(msgs[3]?.content).toEqual([{ type: "text", text: "note" }])
   })
 
-  it("system_note 在首位时挪到第一条 user 之后；多条相邻成组", () => {
+  const texts = (p: unknown) =>
+    (p as { messages: { role: string; content: unknown }[] }).messages.map((m) =>
+      m.role === "system" ? `system:${(m.content as { text: string }[])[0]?.text}` : m.role,
+    )
+
+  it("system_note 在首位时挪到第一条 user 之后；多条相邻成组且保持原顺序", () => {
     const out = rewriteAnthropicPayload({ messages: [s("n1"), s("n2"), u("a"), a("b")] })
-    expect(roles(out)).toEqual(["user", "system", "system", "assistant"])
+    expect(texts(out)).toEqual(["user", "system:n1", "system:n2", "assistant"])
+  })
+
+  it("同轮注入的多条说明（感知 + pin）在中段与末尾都保持原顺序（审查修复：此前从后往前 splice 会颠倒）", () => {
+    const mid = rewriteAnthropicPayload({ messages: [u("a"), a("b"), u("c"), s("n1"), s("n2"), a("d")] })
+    expect(texts(mid)).toEqual(["user", "assistant", "user", "system:n1", "system:n2", "assistant"])
+    const tail = rewriteAnthropicPayload({ messages: [u("a"), a("b"), u("c"), s("n1"), s("n2")] })
+    expect(texts(tail)).toEqual(["user", "assistant", "user", "system:n1", "system:n2"])
   })
 
   it("没有标记消息时返回 undefined，请求体原样", () => {
