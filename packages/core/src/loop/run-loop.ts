@@ -275,7 +275,11 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         yield* events
         return result
       }
-      continue // 结果已入日志，重读时间线让模型看到（若宿主已中止，下一轮开头就会暂停）
+      // 被打断的那一轮（上次 run 的模型输出 + 这次补齐的结果）到此才算结束：让 Socket 收尾（如 handoff 模块按日志重建交接意图）。
+      // 都无意见则继续：结果已入日志，重读时间线让模型看到（若宿主已中止，下一轮开头就会暂停）
+      const ended = yield* endTurn(ctx, "continue", flush)
+      if (ended) return ended
+      continue
     }
     if (turns >= maxTurns) {
       const note = `单次 run 轮数达到上限 ${maxTurns}`
@@ -453,7 +457,22 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     }
 
     // ---- 本轮结束：第一个给出意见的 Socket 决定；都无意见时按有没有工具调用 ----
-    let decision: TurnDecision = calls.length > 0 ? "continue" : "stop"
+    const ended = yield* endTurn(ctx, calls.length > 0 ? "continue" : "stop", flush)
+    if (ended) return ended
+  }
+
+  /**
+   * 一轮的收尾：问 onTurnEnd（第一个给意见的定）、落下钩子留的痕，按决定收口。
+   * 返回 RunResult 即整个 run 到此结束；返回 undefined 即继续下一轮。
+   * 正常路径在模型输出与工具都处理完之后调；续跑补齐 pending 之后也调 —— 被审批 / 中止打断的那一轮到那时才算结束，
+   * 否则它永远没有 onTurnEnd，模块在那一轮记下的决定（如 handoff 的交接意图）就丢了（R2）。
+   */
+  async function* endTurn(
+    ctx: TurnContext,
+    fallback: TurnDecision,
+    flush: () => Promise<Event[]>,
+  ): AsyncGenerator<Event, RunResult | undefined> {
+    let decision: TurnDecision = fallback
     for (const s of sockets) {
       const d = await s.onTurnEnd?.(ctx)
       if (d !== undefined) {
@@ -463,7 +482,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     }
     yield* await flush()
 
-    if (decision === "continue") continue
+    if (decision === "continue") return undefined
     if (decision === "stop") return { status: "done", sessionId, lastSeq }
     if ("pause" in decision) {
       const note = decision.pause.note ?? `Socket 要求暂停（${decision.pause.reason}）`
@@ -610,6 +629,15 @@ async function* executeToolCalls(
       continue
     }
 
+    // 入参校验先于审批（R1）：needsApproval 与审批摘要看到的必须是将要执行的那份（校验 / 规范化之后），
+    // 否则审批人批的与最终执行的不是同一份，needsApproval 的 TInput 类型也成了谎话。客户端工具同样先校验，入参不合法就不必等宿主
+    try {
+      if (tool.validate) args = tool.validate(args)
+    } catch (err) {
+      yield* await settle(errorResult(`入参不合法：${errorMessageOf(err)}`))
+      continue
+    }
+
     const toolCtx: ToolContext = {
       sessionId: ctx.session.id,
       toolCallId,
@@ -653,12 +681,6 @@ async function* executeToolCalls(
     }
 
     let result: ToolResultDraft
-    try {
-      if (tool.validate) args = tool.validate(args)
-    } catch (err) {
-      yield* await settle(errorResult(`入参不合法：${errorMessageOf(err)}`))
-      continue
-    }
     try {
       summary.executed++
       const out = await tool.execute(args, toolCtx)

@@ -1341,3 +1341,91 @@ describe("上线前审查修复（2026-09-10）", () => {
     ])
   })
 })
+
+describe("审查遗留 R1 / R2", () => {
+  it("R1：validate 先于审批 —— needsApproval 与审批摘要拿到的是校验 / 规范化后的入参；校验不过直接 isError，不问人", async () => {
+    const seen: unknown[] = []
+    const strict = defineTool<{ a: number }>({
+      name: "strict",
+      description: "",
+      inputSchema: { type: "object" },
+      validate: (raw) => {
+        const a = Number((raw as { a: unknown }).a)
+        if (!Number.isFinite(a)) throw new Error("a 必须是数字")
+        return { a }
+      },
+      needsApproval: (input) => {
+        seen.push(input)
+        return input.a > 10
+      },
+      execute: ({ a }) => a * 2,
+    })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "strict", { a: "42" }), callTool("c2", "strict", { a: "nope" })] },
+      { drafts: [say("done")] },
+    ])
+    const { result } = await drain(runLoop(baseConfig(lowering, log, { tools: [strict], input: "go" })))
+    expect(seen).toEqual([{ a: 42 }]) // c2 校验不过，根本没问 needsApproval
+    expect(result.status).toBe("paused")
+    if (result.status !== "paused") return
+    expect(result.interruptions).toEqual([
+      {
+        kind: "approval",
+        toolCallId: "c1",
+        request: { toolCallId: "c1", policyId: BUILTIN_APPROVAL_POLICY, summary: 'strict({"a":42})' },
+        call: { toolCallId: "c1", name: "strict", args: { a: "42" } },
+      },
+    ])
+    const events = await all(log)
+    const c2 = events.find(
+      (e): e is CoreEventOf<"core.tool_result"> =>
+        e.type === "core.tool_result" && e.payload.toolCallId === "c2",
+    )
+    expect(c2?.payload.isError).toBe(true)
+    expect(c2?.payload.content[0]).toMatchObject({ text: "入参不合法：a 必须是数字" })
+  })
+
+  it("R2：被审批打断的那一轮在续跑补齐 pending 后才收尾 —— onTurnEnd 被调用，其决定生效（stop 即不再问模型）", async () => {
+    const turnEnds: number[] = []
+    const stopper: Socket = {
+      name: "stopper",
+      onTurnEnd(ctx) {
+        turnEnds.push(ctx.session.turn)
+        // ctx.timeline 是本轮开始时的快照（既有语义）：续跑时里面已有 approval_decision，据此收工
+        return ctx.timeline.some((e) => e.type === "core.approval_decision") ? "stop" : undefined
+      },
+    }
+    const gated = defineTool<{ x: number }>({
+      name: "gated",
+      description: "",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: ({ x }) => x,
+    })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "gated", { x: 1 })] },
+      { drafts: [say("不该再问到模型")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [gated], sockets: [stopper] })
+    const first = await drain(runLoop({ ...cfg, input: "go" }))
+    expect(first.result.status).toBe("paused")
+    expect(turnEnds).toEqual([]) // 被打断的轮此时没有 onTurnEnd
+    const second = await drain(
+      runLoop({ ...cfg, decisions: [{ toolCallId: "c1", approved: true, by: "boss" }] }),
+    )
+    expect(turnEnds).toEqual([1]) // 补齐后收尾
+    expect(second.result.status).toBe("done")
+    expect(lowering.requests).toHaveLength(1)
+    expect(types(await all(log))).toEqual([
+      "user_message",
+      "tool_call",
+      "approval_request",
+      "budget_usage",
+      "run_paused",
+      "approval_decision",
+      "tool_result",
+    ])
+  })
+})

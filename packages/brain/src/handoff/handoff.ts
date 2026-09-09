@@ -32,7 +32,7 @@ import type {
   ToolResultDraft,
   TurnContext,
 } from "@reins/core"
-import { supersededIds } from "@reins/core"
+import { isModelOutput, supersededIds } from "@reins/core"
 import { HANDOFF_RULES, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME } from "./rules.js"
 
 export interface HandoffOptions {
@@ -155,6 +155,41 @@ export function lastVisibleUserMessage(events: readonly Event[]): string | undef
   return undefined
 }
 
+/**
+ * 上一次 run 里模型调了 handoff、拿到了"已安排交接"的回执，但那一轮被打断（审批暂停、宿主中止），
+ * 没能走到 onTurnEnd，内存里的意图随之丢失（R2）。续跑补齐 pending 后循环会再调 onTurnEnd，
+ * 这里从日志把入参找回来：最后一条成功的 handoff 回执之后，既没有 `core.handoff`（说明还没交接），
+ * 也没有新的模型输出（说明没有开新的一轮、旧意图仍然有效）。任一不满足即 undefined。
+ */
+export function unfinishedHandoffArgs(timeline: readonly Event[]): HandoffArgs | undefined {
+  let receipt: CoreEventOf<"core.tool_result"> | undefined
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const e = timeline[i] as Event
+    if (e.type === "core.handoff") return undefined
+    if (isModelOutput(e)) {
+      // 回执之前的模型输出就是发起交接的那一轮本身；回执之后出现的模型输出说明新的一轮已开始
+      if (receipt) break
+      return undefined
+    }
+    if (e.type === "core.tool_result") {
+      const r = e as CoreEventOf<"core.tool_result">
+      if (r.payload.name === HANDOFF_TOOL_NAME && !r.payload.isError && !receipt) receipt = r
+    }
+  }
+  if (!receipt) return undefined
+  const call = timeline.find(
+    (e): e is CoreEventOf<"core.tool_call"> =>
+      e.type === "core.tool_call" &&
+      (e as CoreEventOf<"core.tool_call">).payload.toolCallId === receipt?.payload.toolCallId,
+  )
+  if (!call) return undefined
+  try {
+    return parseHandoffArgs(call.payload.args)
+  } catch {
+    return undefined
+  }
+}
+
 function replaceResult(result: ToolResultDraft, text: string, isError: boolean): ToolResultDraft {
   return { ...result, payload: { ...result.payload, content: [{ type: "text", text }], isError } }
 }
@@ -195,15 +230,7 @@ export function handoff(opts: HandoffOptions = {}): Socket {
       } catch (err) {
         return replaceResult(result, err instanceof Error ? err.message : String(err), true)
       }
-      const pins = carryPins ? carriedPins(ctx) : []
-      const triggerMessage = args.triggerMessage ?? lastVisibleUserMessage(ctx.events)
-      const intent: HandoffIntent = {
-        summary: composeHandoffNote(args),
-        reason: args.reason ?? DEFAULT_HANDOFF_REASON,
-        by: "model",
-        ...(triggerMessage !== undefined ? { triggerMessage } : {}),
-        ...(pins.length > 0 ? { opening: pins } : {}),
-      }
+      const { intent, pins, triggerMessage } = intentOf(ctx, args)
       intents.set(ctx, intent)
       const carried = [
         `${args.nextSteps.length} next step${args.nextSteps.length === 1 ? "" : "s"}`,
@@ -221,8 +248,28 @@ export function handoff(opts: HandoffOptions = {}): Socket {
 
     onTurnEnd(ctx: TurnContext) {
       const intent = intents.get(ctx)
-      return intent ? { handoff: intent } : undefined
+      if (intent) return { handoff: intent }
+      // 本轮内存里没有：可能是上一次 run 被打断、这次补齐 pending 后的收尾，从日志重建（R2）
+      const args = unfinishedHandoffArgs(ctx.timeline)
+      return args ? { handoff: intentOf(ctx, args).intent } : undefined
     },
+  }
+
+  /** 由入参与当前视图算出交接意图：摘要 + 下一步排版成开场说明，带上可见的 pin 与触发消息 */
+  function intentOf(
+    ctx: TurnContext,
+    args: HandoffArgs,
+  ): { intent: HandoffIntent; pins: EventDraft[]; triggerMessage: string | undefined } {
+    const pins = carryPins ? carriedPins(ctx) : []
+    const triggerMessage = args.triggerMessage ?? lastVisibleUserMessage(ctx.events)
+    const intent: HandoffIntent = {
+      summary: composeHandoffNote(args),
+      reason: args.reason ?? DEFAULT_HANDOFF_REASON,
+      by: "model",
+      ...(triggerMessage !== undefined ? { triggerMessage } : {}),
+      ...(pins.length > 0 ? { opening: pins } : {}),
+    }
+    return { intent, pins, triggerMessage }
   }
   if (opts.rules !== false) socket.systemPrompt = opts.rules ?? HANDOFF_RULES
   return socket

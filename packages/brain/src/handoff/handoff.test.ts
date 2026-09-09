@@ -13,7 +13,7 @@ import { callTool, ScriptedLowering, say, think } from "@reins/core/testing"
 import { describe, expect, it } from "vitest"
 import { compact } from "../compact/index.js"
 import { pins } from "../pins/index.js"
-import { composeHandoffNote, handoff, parseHandoffArgs } from "./handoff.js"
+import { composeHandoffNote, handoff, parseHandoffArgs, unfinishedHandoffArgs } from "./handoff.js"
 import { HANDOFF_RULES } from "./rules.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -344,5 +344,72 @@ describe("handoff 纯函数", () => {
     expect(() => parseHandoffArgs({ summary: "s", nextSteps: [], triggerMessage: " " })).toThrow(
       "`triggerMessage`",
     )
+  })
+})
+
+describe("handoff × 审批同轮（R2）", () => {
+  it("模型同轮调了 handoff 与需审批的工具：暂停后续跑，补齐结果时仍按回执交接（意图从日志重建，不靠内存）", async () => {
+    const deploy = defineTool<{ env: string }>({
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: ({ env }) => `已上线 ${env}`,
+    })
+    const log = new InMemoryEventLog()
+    const handoffs: [string, string][] = []
+    const lowering = new ScriptedLowering([
+      { drafts: [doHandoff("h1", ARGS), callTool("c2", "deploy", { env: "prod" })] },
+      { drafts: [say("不该再问到模型")] },
+    ])
+    const cfg = config(lowering, log, {
+      tools: [addTool, deploy],
+      onHandoff: (a, b) => void handoffs.push([a, b]),
+    })
+    const first = await drain(runLoop(cfg))
+    expect(first.result.status).toBe("paused")
+    if (first.result.status !== "paused") return
+    expect(first.result.reason).toBe("approval")
+    expect(textOf(resultOf(await all(log), "h1"))).toContain("Handoff scheduled")
+
+    // 另起一次 run（模拟别的进程续跑）：handoff() 是新实例，内存里没有意图
+    const { input: _noInput, ...resumeCfg } = cfg
+    const second = await drain(
+      runLoop({
+        ...resumeCfg,
+        sockets: [handoff()],
+        resume: first.result.state,
+        decisions: [{ toolCallId: "c2", approved: true, by: "boss" }],
+      }),
+    )
+    expect(second.result.status).toBe("handoff")
+    if (second.result.status !== "handoff") return
+    expect(handoffs).toEqual([[SESSION, second.result.toSessionId]])
+    expect(lowering.requests).toHaveLength(1)
+    const old = await all(log)
+    expect(types(old).slice(-4)).toEqual(["run_resumed", "approval_decision", "tool_result", "handoff"])
+    const ho = old.at(-1) as Handoff
+    expect(ho.payload).toMatchObject({ summary: NOTE, triggerMessage: "把库迁移到 pg，必须保留旧表" })
+    expect(types(await all(log, second.result.toSessionId))).toEqual(["system_note", "user_message"])
+  })
+
+  it("已交接过、或回执之后模型又开了新一轮：不重建意图", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 2 })] },
+      { drafts: [doHandoff("h1", ARGS)] },
+    ])
+    const { result } = await drain(runLoop(config(lowering, log)))
+    expect(result.status).toBe("handoff")
+    // 交接后的日志里 handoff 事件在末尾 → 不再重建
+    expect(unfinishedHandoffArgs(await all(log))).toBeUndefined()
+    // 回执之后又有新的模型输出（人为拼一段）→ 旧意图作废
+    const events = (await all(log)).filter((e) => e.type !== "core.handoff")
+    expect(unfinishedHandoffArgs(events)?.summary).toBe(ARGS.summary)
+    const withNewTurn = [
+      ...events,
+      { ...(events[0] as Event), type: "core.model_text", payload: { text: "x" } },
+    ]
+    expect(unfinishedHandoffArgs(withNewTurn)).toBeUndefined()
   })
 })

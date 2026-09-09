@@ -87,7 +87,20 @@ export const APPROVAL_POLICY_IDS = {
   unmatched: "approval.unmatched",
   /** 三段都没命中、按 risk 兜底：`approval.risk.<low|medium|high|undeclared>` */
   risk: (level: Tool["risk"]) => `approval.risk.${level ?? "undeclared"}`,
+  /** 入参没过工具自己的 validate：不问人、放行给循环以"入参不合法"拒掉（执行不会发生） */
+  invalidArgs: "approval.invalid_args",
 } as const
+
+/** 入参过工具的 validate 后的调用；校验抛错返回 undefined。没有 validate 的工具原样返回 */
+function validatedCall(call: PolicyCall): PolicyCall | undefined {
+  const tool = call.tool
+  if (!tool?.validate) return call
+  try {
+    return { ...call, args: tool.validate(call.args) }
+  } catch {
+    return undefined
+  }
+}
 
 /** 管线的一次结论（导出供测试与宿主自己的 Socket 复用） */
 export type PolicyOutcome =
@@ -155,6 +168,13 @@ export async function evaluatePolicy(
     return { verdict: "deny", policyId: APPROVAL_POLICY_IDS.unknownTool, reason: `未知工具：${call.name}` }
   }
 
+  // 入参先过工具自己的 validate（R1）：规则、needsApproval、审批摘要看到的都是将要执行的那份（校验 / 规范化之后）。
+  // 校验不过就不问人 —— 循环随后会以"入参不合法"把这次调用拒掉，执行不会发生，先让审批人批一个必定失败的调用只是浪费
+  const tool = call.tool
+  const validated = validatedCall(call)
+  if (!validated) return { verdict: "allow", policyId: APPROVAL_POLICY_IDS.invalidArgs }
+  call = validated
+
   // 每段首匹配即定；某条规则抛错立刻 deny，不再往下看
   const firstMatch = async (
     rules: readonly PolicyRule[],
@@ -180,12 +200,12 @@ export async function evaluatePolicy(
   if (asked) return { verdict: "ask", policyId: asked.id, summary: summaryOf(asked) }
 
   // 工具自己声明的 needsApproval 视作 ask 段的最后一条规则；函数形态抛错同样 fail-closed
-  if (call.tool.needsApproval !== undefined) {
+  if (tool.needsApproval !== undefined) {
     try {
       const need =
-        typeof call.tool.needsApproval === "function"
-          ? await call.tool.needsApproval(call.args, toolContextOf(call, ctx))
-          : call.tool.needsApproval
+        typeof tool.needsApproval === "function"
+          ? await tool.needsApproval(call.args, toolContextOf(call, ctx))
+          : tool.needsApproval
       if (need) return { verdict: "ask", policyId: BUILTIN_APPROVAL_POLICY, summary: summaryOf(undefined) }
     } catch (err) {
       return failClosed(BUILTIN_APPROVAL_POLICY, err)
@@ -206,7 +226,7 @@ export async function evaluatePolicy(
     case "ask":
       return { verdict: "ask", policyId: APPROVAL_POLICY_IDS.unmatched, summary: summaryOf(undefined) }
     default: {
-      const level = call.tool.risk
+      const level = tool.risk
       const policyId = APPROVAL_POLICY_IDS.risk(level)
       return level === "low"
         ? { verdict: "allow", policyId }

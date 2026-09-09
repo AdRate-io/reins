@@ -569,3 +569,55 @@ describe("approval × runLoop", () => {
     expect(decisionsOf(logged).map((d) => d.payload.toolCallId)).toEqual(["c3"])
   })
 })
+
+describe("approval：validate 先于管线（R1）", () => {
+  const ctx = stubCtx()
+  const run = (
+    c: PolicyCall,
+    stages: Partial<{ deny: PolicyRule[]; ask: PolicyRule[]; allow: PolicyRule[] }> = {},
+  ) =>
+    evaluatePolicy(
+      c,
+      ctx,
+      { deny: [], ask: [], allow: [], ...stages },
+      { unmatched: "byRisk", maxSummaryChars: 200 },
+    )
+  const strict = defineTool<{ env: string }>({
+    name: "deploy",
+    description: "",
+    inputSchema: { type: "object" },
+    validate: (raw) => {
+      const env = (raw as { env?: unknown }).env
+      if (typeof env !== "string") throw new Error("env 必须是字符串")
+      return { env: env.toLowerCase() }
+    },
+    needsApproval: (input) => input.env === "prod",
+    risk: "high",
+  }) as Tool
+
+  it("规则、needsApproval、摘要看到的都是规范化后的入参", async () => {
+    const seenByRule: unknown[] = []
+    const rule: PolicyRule = {
+      id: "trace",
+      match: (c) => {
+        seenByRule.push(c.args)
+        return false
+      },
+    }
+    const out = await run(
+      { toolCallId: "c1", name: "deploy", args: { env: "PROD" }, tool: strict },
+      { deny: [rule] },
+    )
+    expect(seenByRule).toEqual([{ env: "prod" }])
+    expect(out).toEqual({
+      verdict: "ask",
+      policyId: BUILTIN_APPROVAL_POLICY,
+      summary: 'deploy({"env":"prod"})',
+    })
+  })
+
+  it("校验不过：不问人，以 approval.invalid_args 放行给循环拒掉", async () => {
+    const out = await run({ toolCallId: "c1", name: "deploy", args: { env: 7 }, tool: strict })
+    expect(out).toEqual({ verdict: "allow", policyId: "approval.invalid_args" })
+  })
+})

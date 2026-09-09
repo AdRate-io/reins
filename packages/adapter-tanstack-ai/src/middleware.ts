@@ -488,7 +488,9 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         continue
       }
       let approval = typeof verdict === "object" && "defer" in verdict ? verdict.defer : undefined
-      // 工具自己声明 needsApproval：TanStack 宿主工具由 TanStack 原生审批处理；reins 工具在这里按 runLoop 兜底
+      // 工具自己声明 needsApproval：TanStack 宿主工具由 TanStack 原生审批处理；reins 工具在这里按 runLoop 兜底。
+      // 入参先过 validate（R1，与 runLoop 同序）：needsApproval 与摘要看到的是将要执行的那份；校验不过就不问人，
+      // 执行时 toTanstackTool 会以"入参不合法"报错
       if (
         !approval &&
         !decided?.approved &&
@@ -496,16 +498,28 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         !isNativeToolView(tool) &&
         tool.needsApproval !== undefined
       ) {
-        const need =
-          typeof tool.needsApproval === "function"
-            ? await tool.needsApproval(args, {
-                ...toolContextBase(),
-                toolCallId,
-                emit: (d) => s.emitted.push(d),
-              })
-            : tool.needsApproval
-        if (need)
-          approval = { policyId: BUILTIN_APPROVAL_POLICY, summary: `${name}(${JSON.stringify(args) ?? ""})` }
+        let input: unknown = args
+        let valid = true
+        try {
+          if (tool.validate) input = tool.validate(args)
+        } catch {
+          valid = false
+        }
+        if (valid) {
+          const need =
+            typeof tool.needsApproval === "function"
+              ? await tool.needsApproval(input, {
+                  ...toolContextBase(),
+                  toolCallId,
+                  emit: (d) => s.emitted.push(d),
+                })
+              : tool.needsApproval
+          if (need)
+            approval = {
+              policyId: BUILTIN_APPROVAL_POLICY,
+              summary: `${name}(${JSON.stringify(input) ?? ""})`,
+            }
+        }
       }
       if (approval && !decided?.approved) {
         if (!requested.has(toolCallId)) {

@@ -84,6 +84,8 @@
 | 2026-09-09 | **上线前审查** 用户在工具结果回来之前插话（续跑带新 input、进程死亡后再发消息）：**日志顺序不动**（user_message 如实排在 tool_result 之前），由**降级层**把它后移到同批结果之后并记 `lossy(user)`（lowering-pi 与 TanStack 适配器同一规则，矩阵新增条目）；不改 runLoop 让 input 等 pending 补齐再落 | 宪法二：时间线是唯一真源，用户插话就是再追加一个事件，什么时候说的就记在什么位置；"tool_result 必须紧跟 tool_use"是厂商线协议的约束，属降级层职责（与说明后移同一机制）。若改成循环先补齐再落 input，pending 暂停时 input 要么丢、要么仍落在结果之前，问题只是换了地方。此前实测模型第二次请求看到 `[user, tool_call, user, tool_result]`，Anthropic 会 400 | 高 |
 | 2026-09-09 | **上线前审查** runLoop 的宿主中止检查**前移到"补齐 pending"之前**；工具批中途中止后余下调用留作 pending，下一轮开头直接 paused(host) | 此前检查在补齐之后：中止只跳出当前批，余下调用被当成 pending 在下一轮一个个继续执行，直到跑完才暂停（探针实测两个并行工具、第一个执行中 abort，第二个照样跑）。中止的语义是"没执行的别执行"，留作 pending 恢复时再补 | 高 |
 | 2026-09-09 | **上线前审查** Anthropic 中途 system 归位改为"先算每条说明在原始消息列表里的落点、按落点分组、再一次拼出"，不再边算边 splice | 边 splice 让同一落点的多条说明前后颠倒（探针实测感知 + pin 同轮注入变成 pin 在前、感知在后；中段与末尾都反）。现有测试只断言角色序列没查文本顺序，已补 | 高 |
+| 2026-09-09 | **R1** 工具入参 `validate` 前移到审批判定之前（runLoop、approval 模块、TanStack 适配器三处同序）；校验不过的调用**不问人**，直接以"入参不合法"拒掉（approval 模块记 `approval.invalid_args` 放行给循环拒） | 审批人批的必须是将要执行的那份入参，`needsApproval(input: TInput)` 才不是谎话；让人批一个随后必定被 validate 拒掉的调用只是浪费一次暂停。`rewrite` 仍在 validate 之前（钩子改写原始入参，改完再校验） | 高 |
+| 2026-09-09 | **R2** 被打断（审批 / 中止）的那一轮在续跑补齐 pending 之后调 `onTurnEnd` 收尾（循环抽出 `endTurn`，缺省 continue）；handoff 模块的意图**按日志重建**（`unfinishedHandoffArgs`），不再只靠 WeakMap | 根因是被打断的轮永远没有 onTurnEnd，模块在那一轮记下的决定全丢；修循环比在每个模块里各自补救干净。意图从日志重建是宪法二的直接推论（模型的回执与入参都在日志里），换进程续跑也成立。ctx.timeline 仍是轮开始时的快照（既有语义不变） | 高 |
 
 ## 待 Boss 本人操作
 
