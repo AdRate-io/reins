@@ -58,14 +58,31 @@ function isNonNegativeInt(x: unknown): x is number {
   return typeof x === "number" && Number.isInteger(x) && x >= 0
 }
 
+/**
+ * 可打印 ASCII，不含空格。sessionId 要回写进 `X-Reins-Session` 响应头，
+ * 而 HTTP header 值只能装 latin1 且不能有控制字符 —— 越界的值会让 `new Response(...)`
+ * 抛 TypeError（实测中文、emoji、CRLF、NUL 全部如此；CRLF 注入被运行时挡住，不是漏洞，
+ * 但异常会冒出 handler 变成 500 而不是一个明确的 400）。
+ *
+ * 为什么比 latin1 更严（`é` 其实能过却也拒掉）：一句"可打印 ASCII 不含空格"能说清、
+ * 各处一致；latin1 高位字符在不同解码下有歧义，而 header 值的首尾空格会被 trim，
+ * 让回写的 sessionId 与客户端给的不是同一个字符串 —— 那种不一致比直接拒绝更难查。
+ * uuidv7、nanoid、hex、`user:1/sess-2` 这类实际用法一律通过。
+ */
+const SESSION_ID_RE = /^[\x21-\x7e]+$/
+
+function isValidSessionId(x: unknown): x is string {
+  return typeof x === "string" && SESSION_ID_RE.test(x)
+}
+
 /** 请求体只做壳校验；resume 的形状与签名交给 core 的 validateResume，input 的内容交给循环 */
 function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: false; error: string } {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { ok: false, error: "请求体必须是 JSON 对象" }
   }
   const b = raw as Record<string, unknown>
-  if (b.sessionId !== undefined && (typeof b.sessionId !== "string" || b.sessionId.length === 0)) {
-    return { ok: false, error: "sessionId 必须是非空字符串" }
+  if (b.sessionId !== undefined && !isValidSessionId(b.sessionId)) {
+    return { ok: false, error: "sessionId 必须是非空的可打印 ASCII 字符串（不含空格）" }
   }
   if (b.lastSeq !== undefined && !isNonNegativeInt(b.lastSeq)) {
     return { ok: false, error: "lastSeq 必须是非负整数" }
@@ -358,6 +375,12 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     const sessionId = url.searchParams.get("sessionId")
     if (sessionId === null || sessionId === "")
       return json(400, { error: "bad_request", message: "缺少 sessionId" })
+    // query 来的 sessionId 同样是客户端输入，越界字符会让回写响应头时抛 TypeError
+    if (!isValidSessionId(sessionId))
+      return json(400, {
+        error: "bad_request",
+        message: "sessionId 必须是非空的可打印 ASCII 字符串（不含空格）",
+      })
     // 读日志之前先问归属：GET 拿到 sessionId 就能补发整条时间线，这里是唯一的关口
     const denied = await denyBySessionAuthz({
       sessionId,

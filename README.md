@@ -80,8 +80,14 @@ the lowering layer is verified on Cloudflare workerd with no `nodejs_compat` fla
 (see `spikes/edge-runtime-check`). If the install size matters more than provider coverage,
 a zero-dependency lowering layer is on the roadmap.
 
-**Also worth knowing.** `sessionId` values must be ASCII — the handler echoes them in the
-`X-Reins-Session` response header, and HTTP header values cannot carry non-latin1 characters.
+**Session ids are validated.** A `sessionId` must be non-empty printable ASCII with no spaces;
+anything else is answered `400 bad_request` on both `GET` and `POST`. The handler echoes the id
+in the `X-Reins-Session` response header, and an out-of-range value would make `new Response(...)`
+throw rather than return — a CRLF in there is refused by the runtime, so this was never an
+injection hole, but it did turn a bad request into an unhandled exception. Note that `sessionId`
+arrives from the client (query string on `GET`, body on `POST`), so this is input validation,
+not a constraint on what you may name things. uuid, nanoid, hex and composite ids like
+`user:42/sess-7` all pass.
 
 ## License
 

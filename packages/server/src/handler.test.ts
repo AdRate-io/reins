@@ -799,3 +799,55 @@ describe("R6 会话级鉴权：authorizeSession", () => {
     expect(denied.status).toBe(404)
   })
 })
+
+describe("sessionId 字符集：越界值给 400，不让它冒成未捕获异常", () => {
+  // 控制字符用 fromCharCode 构造，别把真字节写进源码
+  const CR = String.fromCharCode(13)
+  const LF = String.fromCharCode(10)
+  const NUL = String.fromCharCode(0)
+
+  const 越界 = [
+    ["中文", "会话一"],
+    ["emoji", "s1-🚀"],
+    ["latin1 高位（其实能进 header，仍按可打印 ASCII 一律拒）", "s1-é"],
+    ["CRLF（注入面，运行时本来也会挡）", `s1${CR}${LF}X-Injected: yes`],
+    ["裸 LF", `s1${LF}foo`],
+    ["NUL", `s1${NUL}x`],
+    ["含空格（header 值首尾会被 trim，回写与传入会不一致）", "s 1"],
+  ] as const
+
+  it("POST：越界 sessionId 一律 400 bad_request，且没有事件落库", async () => {
+    for (const [名, sid] of 越界) {
+      const log = new InMemoryEventLog()
+      const { handler } = setup(TWO_TURNS, [addTool], { log })
+      const res = await handler(postRequest({ sessionId: sid, input: "2+3" }))
+      expect(res.status, 名).toBe(400)
+      expect((await res.json()).error, 名).toBe("bad_request")
+      expect(await logged(log, sid), 名).toEqual([])
+    }
+  })
+
+  it("GET：越界 sessionId 一律 400（query 也是客户端输入）", async () => {
+    const { handler } = setup(TWO_TURNS)
+    for (const [名, sid] of 越界) {
+      const res = await handler(getRequest({ sessionId: sid }))
+      expect(res.status, 名).toBe(400)
+      expect((await res.json()).error, 名).toBe("bad_request")
+    }
+  })
+
+  it("正常形态照旧通过：uuid、nanoid、hex、带冒号斜杠的复合 id", async () => {
+    for (const sid of [
+      "0192f8c0-7d3e-7a1b-9c4d-8e2f1a3b5c6d",
+      "V1StGXR8_Z5jdHi6B-myT",
+      "deadbeef1234",
+      "user:42/sess-7",
+    ]) {
+      const { handler } = setup(TWO_TURNS)
+      const res = await handler(postRequest({ sessionId: sid, input: "2+3" }))
+      expect(res.status, sid).toBe(200)
+      expect(res.headers.get(SESSION_HEADER), sid).toBe(sid)
+      await res.text()
+    }
+  })
+})
