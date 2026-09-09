@@ -98,7 +98,16 @@ export interface SessionAuthzInput {
   sessionId: string
   /** `principal` 钩子的解析结果；没设那个钩子或返回 undefined 时为 undefined（匿名） */
   principal: Principal | undefined
-  /** 原始请求，供宿主读 header / cookie 等。**别在这里读 body**：handler 随后要读它 */
+  /**
+   * 原始请求，**只用来读 header / cookie 等**。
+   *
+   * POST 时 body 已经被 handler 读完了（`request.json()` 在解析出 sessionId 之前就调过），
+   * 在这里再读只会得到空流；GET 本来就没有 body。要 sessionId 用上面的 `sessionId` 字段，
+   * 别自己解析请求。
+   *
+   * 与 `principal` 钩子的差别正好相反，两处都别读 body 但原因不同：`principal` 跑在 handler
+   * 读 body **之前**，在那里读会把流抢走；这个钩子跑在**之后**，读不到东西。
+   */
   request: Request
   /** GET 是重连读流，POST 是起 run。宿主可以只对写放行给部分人 */
   method: "GET" | "POST"

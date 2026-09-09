@@ -787,6 +787,39 @@ describe("R6 会话级鉴权：authorizeSession", () => {
     expect(seen).toEqual([undefined, { id: "boss" }])
   })
 
+  it("钩子拿到的 request：POST 时 body 已被 handler 读完，GET 本来就没有 body", async () => {
+    const seen: Array<{ method: string; bodyUsed: boolean; hasBody: boolean; auth: string | null }> = []
+    const { handler } = setup(
+      TWO_TURNS,
+      [addTool],
+      {},
+      {
+        authorizeSession: ({ request, method }) => {
+          // 锁住时序：注释承诺"只读 header"，靠这条断言保证将来改动不会悄悄让它失真
+          seen.push({
+            method,
+            bodyUsed: request.bodyUsed,
+            hasBody: request.body !== null,
+            auth: request.headers.get("authorization"),
+          })
+          return true
+        },
+      },
+    )
+
+    const post = postRequest({ sessionId: "s1", input: "2+3" })
+    post.headers.set("authorization", "Bearer boss")
+    await (await handler(post)).text()
+    await (await handler(getRequest({ sessionId: "s1" }, { authorization: "Bearer boss" }))).text()
+
+    expect(seen).toEqual([
+      // POST：handler 已经 request.json() 过，宿主再读只有空流 —— header 照旧读得到
+      { method: "POST", bodyUsed: true, hasBody: true, auth: "Bearer boss" },
+      // GET：压根没有 body
+      { method: "GET", bodyUsed: false, hasBody: false, auth: "Bearer boss" },
+    ])
+  })
+
   it("fail-closed：只有显式 true 放行；undefined（宿主漏写 return）与 false 一样拒", async () => {
     const allowed = setup(TWO_TURNS, [addTool], {}, { authorizeSession: () => true })
     const ok = await allowed.handler(postRequest({ sessionId: "s1", input: "2+3" }))
