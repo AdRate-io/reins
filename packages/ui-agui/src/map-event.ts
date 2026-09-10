@@ -37,6 +37,7 @@ export const AGUI_MAPPING: Record<CoreEventType | "ext.*", readonly AguiEventTyp
   "core.budget_usage": ["CUSTOM"],
   "core.run_paused": ["CUSTOM"],
   "core.run_resumed": ["CUSTOM"],
+  "core.tools_bound": ["CUSTOM"],
   "core.error": ["CUSTOM"],
   "ext.*": ["CUSTOM"],
 }

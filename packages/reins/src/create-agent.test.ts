@@ -80,6 +80,8 @@ describe("createAgent", () => {
     }
     expect(result.value.status).toBe("done")
     expect(seen).toEqual([
+      // 起步先落一条模型不可见的工具表快照（首次 run 无上一条可比，不出变化说明）
+      "core.tools_bound",
       "core.user_message",
       "core.tool_call",
       "core.tool_result",

@@ -123,8 +123,9 @@ describe("compact × runLoop：模型自决整理", () => {
     expect(result.status).toBe("done")
 
     const logged = await all(log)
-    // 第 2 轮：thinking(6) tool_call(7) compaction(8) tool_result(9) budget_usage(10)
-    expect(types(logged).slice(5, 10)).toEqual([
+    // 起步的 tools_bound 占 seq 1，其后整体后移一位
+    // 第 2 轮：thinking(7) tool_call(8) compaction(9) tool_result(10) budget_usage(11)
+    expect(types(logged).slice(6, 11)).toEqual([
       "model_thinking",
       "tool_call",
       "compaction",
@@ -132,21 +133,22 @@ describe("compact × runLoop：模型自决整理", () => {
       "budget_usage",
     ])
     const c = compactionsOf(logged)[0] as Compaction
-    const call = logged[6] as CoreEventOf<"core.tool_call">
+    const call = logged[7] as CoreEventOf<"core.tool_call">
     expect(c.actor).toBe("model")
     expect(c.trust).toBe("model")
     expect(c.parentId).toBe(call.id)
     expect(c.provenance).toEqual({ source: "compact", ref: "c2" })
     expect(c.payload).toEqual({
-      // 第 2 轮开始时可见的是 seq 1–4（user、thinking、tool_call、tool_result；budget_usage 5 对模型不可见）
-      coversSeq: [1, 4],
+      // 第 2 轮开始时可见的是 seq 2–5（user、thinking、tool_call、tool_result；
+      // tools_bound 1 与 budget_usage 6 对模型不可见）
+      coversSeq: [2, 5],
       // 要点清单之后是被折叠工具结果清单（E3c）：结果 "5" 只有 1 个字符
       summary:
         "User asked 2+3+4. Computed 2+3=5.\n\nKey facts carried forward:\n- intermediate result: 5\n\n" +
-        `${MANIFEST_HEADING}\n- seq 4 add({"a":2,"b":3}) — 1 chars`,
+        `${MANIFEST_HEADING}\n- seq 5 add({"a":2,"b":3}) — 1 chars`,
       decidedBy: "model",
-      // 最近一条用户消息缺省幸存（见 plan.ts 第 4 条）
-      pinsKept: [logged[0]?.id],
+      // 最近一条用户消息缺省幸存（见 plan.ts 第 4 条）；它现在是 logged[1]，logged[0] 是 tools_bound
+      pinsKept: [logged[1]?.id],
     })
     expect(isModelCompaction(c)).toBe(true)
 
@@ -155,7 +157,7 @@ describe("compact × runLoop：模型自决整理", () => {
     expect(receipt.payload.content[0]).toEqual({
       type: "text",
       text:
-        "Folded 4 events (seq 1–4) into your summary. " +
+        "Folded 4 events (seq 2–5) into your summary. " +
         "1 folded tool result(s) are listed under the summary and can be brought back verbatim with recall({ seq }). " +
         "1 item(s) carried over verbatim (pinned notes and the latest user message). " +
         "Only the current turn stays unfolded. The originals remain in the session log.",
@@ -171,7 +173,7 @@ describe("compact × runLoop：模型自决整理", () => {
       "tool_result",
     ])
     expect(third?.events[0]?.id).toBe(c.id)
-    expect(third?.events[1]?.seq).toBe(1)
+    expect(third?.events[1]?.seq).toBe(2)
     // 第 4 轮继续在摘要之后累加，摘要位置不变（前缀稳定）
     const fourth = lowering.requests[3]
     expect(types(fourth?.events ?? [])).toEqual([
@@ -196,10 +198,11 @@ describe("compact × runLoop：模型自决整理", () => {
     await drain(runLoop(config(lowering, log)))
     const logged = await all(log)
     const c = compactionsOf(logged)[0] as Compaction
-    // 第 3 轮开始时可见：user(1) thinking(2) call(3) result(4) | call(6) result(7)；保留最后一个模型轮 → 折 1–4
-    expect(c.payload.coversSeq).toEqual([1, 4])
+    // tools_bound 占 seq 1；第 3 轮开始时可见：user(2) thinking(3) call(4) result(5) | call(7) result(8)
+    // 保留最后一个模型轮 → 折 2–5
+    expect(c.payload.coversSeq).toEqual([2, 5])
     expect(c.payload.summary).toBe(
-      `Early steps folded.\n\n${MANIFEST_HEADING}\n- seq 4 add({"a":2,"b":3}) — 1 chars`,
+      `Early steps folded.\n\n${MANIFEST_HEADING}\n- seq 5 add({"a":2,"b":3}) — 1 chars`,
     )
     expect(resultOf(logged, "c3").payload.content[0]).toMatchObject({
       text: expect.stringContaining("The last 1 model turn(s) stay unfolded."),
@@ -255,10 +258,11 @@ describe("compact × runLoop：模型自决整理", () => {
     await drain(runLoop(config(lowering, log)))
     const logged = await all(log)
     const [first, second] = compactionsOf(logged) as [Compaction, Compaction]
-    expect(first.payload.coversSeq).toEqual([1, 3])
-    // 第 4 轮开始时可见：first(6)、call c2(5)、result(7)、call c3(9)、result(10)；全部折叠，旧摘要一起吸收
-    expect(second.payload.coversSeq).toEqual([1, 10])
-    expect(second.seq).toBeGreaterThan(10)
+    // tools_bound 占 seq 1，其后整体后移一位
+    expect(first.payload.coversSeq).toEqual([2, 4])
+    // 第 4 轮开始时可见：first(7)、call c2(6)、result(8)、call c3(10)、result(11)；全部折叠，旧摘要一起吸收
+    expect(second.payload.coversSeq).toEqual([2, 11])
+    expect(second.seq).toBeGreaterThan(11)
     expect(resultOf(logged, "c4").payload.content[0]).toMatchObject({
       text: expect.stringContaining("1 earlier summary(ies) were absorbed."),
     })
@@ -280,11 +284,12 @@ describe("compact × runLoop：模型自决整理", () => {
     await drain(runLoop(config(lowering, log)))
     const logged = await all(log)
     const [old, fresh] = compactionsOf(logged) as [Compaction, Compaction]
-    expect(old.payload.coversSeq).toEqual([1, 4])
-    // 第 5 轮开始时视图：old(seq 10) user(1，old 保住的) | call c2(6) result(7) | call c3(9) result(11) | call c4(13) result(14)
-    // 保留最后 2 个模型轮 → 折 user(1)、6–7；old 的 seq 10 不小于保留部分的最小 seq 9，留在视图里不吸收
-    expect(fresh.payload.coversSeq).toEqual([1, 7])
-    expect(fresh.payload.pinsKept).toEqual([logged[0]?.id])
+    // tools_bound 占 seq 1，其后整体后移一位
+    expect(old.payload.coversSeq).toEqual([2, 5])
+    // 第 5 轮开始时视图：old(seq 11) user(2，old 保住的) | call c2(7) result(8) | call c3(10) result(12) | call c4(14) result(15)
+    // 保留最后 2 个模型轮 → 折 user(2)、7–8；old 的 seq 11 不小于保留部分的最小 seq 10，留在视图里不吸收
+    expect(fresh.payload.coversSeq).toEqual([2, 8])
+    expect(fresh.payload.pinsKept).toEqual([logged[1]?.id])
     expect(resultOf(logged, "c5").payload.content[0]).toMatchObject({
       text: expect.not.stringContaining("absorbed"),
     })
@@ -335,16 +340,17 @@ describe("compact × runLoop：模型自决整理", () => {
     await drain(runLoop(config(lowering, log, { input: "开始吧" })))
     const logged = await all(log)
     const c = compactionsOf(logged)[0] as Compaction
-    expect(c.payload.coversSeq).toEqual([1, 4])
-    // pin 说明（seq 2）与最近一条用户消息"开始吧"（seq 4）幸存；更早的用户消息（seq 1）折进摘要
-    expect(c.payload.pinsKept).toEqual([logged[1]?.id, logged[3]?.id])
+    // 预置的三条占 seq 1–3，起步的 tools_bound 占 seq 4，本次 input 落在 seq 5
+    expect(c.payload.coversSeq).toEqual([1, 5])
+    // pin 说明（seq 2）与最近一条用户消息"开始吧"（seq 5，即 logged[4]）幸存；更早的用户消息（seq 1）折进摘要
+    expect(c.payload.pinsKept).toEqual([logged[1]?.id, logged[4]?.id])
     expect(resultOf(logged, "c1").payload.content[0]).toMatchObject({
       text: expect.stringContaining("2 item(s) carried over verbatim"),
     })
     const view = lowering.requests[1]?.events ?? []
     expect(types(view)).toEqual(["compaction", "system_note", "user_message", "tool_call", "tool_result"])
     expect((view[1] as CoreEventOf<"core.system_note">).payload.kind).toBe("pin")
-    expect(view[2]?.seq).toBe(4)
+    expect(view[2]?.seq).toBe(5)
   })
 
   it("与 perception 同装：整理后感知说明被折叠，下一轮按新读数重新注入一条", async () => {
@@ -510,7 +516,8 @@ describe("compact：阈值兜底与连续上限", () => {
     const { result } = await drain(runLoop(cfg))
     expect(result.status).toBe("done")
     const logged = await all(log)
-    expect(types(logged).slice(3, 5)).toEqual(["compaction", "tool_result"])
+    // 预置的三条占 seq 1–3，起步的 tools_bound 占 seq 4，补齐的 compaction / 回执排在其后
+    expect(types(logged).slice(4, 6)).toEqual(["compaction", "tool_result"])
     const c = compactionsOf(logged)[0] as Compaction
     // pending 路径的视图含这次调用本身所在的模型轮（seq 2–3）：那一轮必须整个保留，否则回执 tool_result 成孤儿
     expect(c.payload.coversSeq).toEqual([1, 1])
@@ -534,7 +541,8 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
     const lowering = new ScriptedLowering([
       { drafts: [think("先算 2+3"), callTool("c1", "add", { a: 2, b: 3 })] },
       { drafts: [doCompact("c2", { summary: "Computed 2+3.", keep: [] })] },
-      { drafts: [doRecall("r1", 4), doRecall("r2", 2), doRecall("r3", 999)] },
+      // tools_bound 占 seq 1：add 的回执落在 seq 5、thinking 落在 seq 3
+      { drafts: [doRecall("r1", 5), doRecall("r2", 3), doRecall("r3", 999)] },
       { drafts: [say("5")] },
     ])
     const { result } = await drain(runLoop(config(lowering, log)))
@@ -545,7 +553,7 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
     expect(r1.payload.content).toEqual([
       {
         type: "text",
-        text: '[Recalled tool result seq 4: add({"a":2,"b":3}). Original output follows verbatim.]',
+        text: '[Recalled tool result seq 5: add({"a":2,"b":3}). Original output follows verbatim.]',
       },
       { type: "text", text: "5" },
     ])
@@ -623,17 +631,18 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
     const lowering = new ScriptedLowering([
       { drafts: [callTool("c1", "add", { a: 1, b: 1 }), callTool("p1", "pin", { text: "keep 2" })] },
       { drafts: [doCompact("c2", { summary: "First.", keep: [] })] },
-      { drafts: [doRecall("r1", 4)] },
+      { drafts: [doRecall("r1", 5)] },
       { drafts: [doCompact("c3", { summary: "Second.", keep: [] })] },
       { drafts: [say("2")] },
     ])
     await drain(runLoop(config(lowering, log, { sockets: [pins(), compact()] })))
     const logged = await all(log)
     const [first, second] = compactionsOf(logged) as [Compaction, Compaction]
-    expect(first.payload.summary).toBe(`First.\n\n${MANIFEST_HEADING}\n- seq 4 add({"a":1,"b":1}) — 1 chars`)
+    // tools_bound 占 seq 1：add 的回执落在 seq 5
+    expect(first.payload.summary).toBe(`First.\n\n${MANIFEST_HEADING}\n- seq 5 add({"a":1,"b":1}) — 1 chars`)
     // 第二次整理吸收第一次：范围内有 compact 回执、recall 结果，都不列；add 的原结果已在上次清单里、这次仍是被折叠的原件，照列
     expect(second.payload.summary).toBe(
-      `Second.\n\n${MANIFEST_HEADING}\n- seq 4 add({"a":1,"b":1}) — 1 chars`,
+      `Second.\n\n${MANIFEST_HEADING}\n- seq 5 add({"a":1,"b":1}) — 1 chars`,
     )
   })
 })

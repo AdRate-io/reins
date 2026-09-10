@@ -78,13 +78,14 @@ describe("replayTurns：只凭日志重算每轮模型看到了什么", () => {
 
     const { turns, preamble } = replayTurns(timeline, { budget: BUDGET })
 
-    expect(types(preamble)).toEqual(["user_message"])
+    // 起步的 tools_bound（模型不可见）也在第一轮请求之前，归 preamble
+    expect(types(preamble)).toEqual(["tools_bound", "user_message"])
     expect(turns).toHaveLength(3)
     // 核心承诺
     expect(turns.map((t) => ids(t.visible))).toEqual(lowering.requests.map((r) => ids(r.events)))
     expect(turns.every((t) => !t.diverged)).toBe(true)
 
-    expect(turns.map((t) => t.requestAtSeq)).toEqual([1, 5, 8])
+    expect(turns.map((t) => t.requestAtSeq)).toEqual([2, 6, 9])
     expect(turns.map((t) => types(t.output))).toEqual([
       ["model_thinking", "tool_call"],
       ["tool_call"],
@@ -130,6 +131,8 @@ describe("replayTurns：只凭日志重算每轮模型看到了什么", () => {
       "run_paused",
       "run_resumed",
       "approval_decision",
+      // 续跑起步的工具表快照排在 approval_decision 之后、补齐 pending 之前
+      "tools_bound",
       "tool_result",
     ])
     // 第二轮模型看到的里有审批相关事件吗？由投影的可见性规则决定，回放只是如实重算

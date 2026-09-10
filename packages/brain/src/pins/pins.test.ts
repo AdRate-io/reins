@@ -98,8 +98,9 @@ describe("pins × runLoop：宿主声明的 pin", () => {
     expect(result.status).toBe("done")
 
     const logged = await all(log)
-    expect(types(logged).slice(0, 3)).toEqual(["user_message", "system_note", "tool_call"])
-    const note = logged[1] as Note
+    // 起步的 tools_bound 占 seq 1（对模型不可见），其后才是用户消息与 pin
+    expect(types(logged).slice(0, 4)).toEqual(["tools_bound", "user_message", "system_note", "tool_call"])
+    const note = logged[2] as Note
     expect(note.actor).toBe("system")
     expect(note.trust).toBe("system")
     expect(note.payload).toEqual({
@@ -188,12 +189,12 @@ describe("pins × runLoop：模型的 pin 工具", () => {
     ])
     await drain(runLoop(config(lowering, log)))
     const logged = await all(log)
-    // user(1) host-pin(2) tool_call(3) note(4) tool_result(5) budget_usage(6)
-    expect(types(logged).slice(2, 6)).toEqual(["tool_call", "system_note", "tool_result", "budget_usage"])
-    const note = logged[3] as Note
+    // tools_bound(1) user(2) host-pin(3) tool_call(4) note(5) tool_result(6) budget_usage(7)
+    expect(types(logged).slice(3, 7)).toEqual(["tool_call", "system_note", "tool_result", "budget_usage"])
+    const note = logged[4] as Note
     expect(note.actor).toBe("model")
     expect(note.trust).toBe("model")
-    expect(note.parentId).toBe(logged[2]?.id)
+    expect(note.parentId).toBe(logged[3]?.id)
     expect(note.provenance).toEqual({ source: "pins", ref: "p1" })
     expect(note.payload).toEqual({
       kind: "pin",
@@ -290,8 +291,9 @@ describe("pins × compact：幸存契约端到端", () => {
     const logged = await all(log)
     const notes = notesOf(logged)
     const c = logged.find((e): e is Compaction => e.type === "core.compaction") as Compaction
-    // 幸存：最近一条用户消息、宿主 pin、模型的现行 pin；被取代的第一条模型 pin 不在
-    expect(c.payload.pinsKept).toEqual([logged[0]?.id, notes[0]?.id, notes[2]?.id])
+    // 幸存：最近一条用户消息（logged[1]，logged[0] 是 tools_bound）、宿主 pin、模型的现行 pin；
+    // 被取代的第一条模型 pin 不在
+    expect(c.payload.pinsKept).toEqual([logged[1]?.id, notes[0]?.id, notes[2]?.id])
     expect(c.payload.pinsKept).not.toContain(notes[1]?.id)
 
     const view = lowering.requests[4]?.events ?? []

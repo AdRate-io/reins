@@ -139,6 +139,7 @@ describe("spill × runLoop：结果外溢", () => {
 
     const logged = await all(log)
     expect(types(logged)).toEqual([
+      "tools_bound", // 起步的工具表快照，模型不可见
       "user_message",
       "tool_call",
       "tool_result",

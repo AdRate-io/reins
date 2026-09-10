@@ -49,6 +49,7 @@ const SAMPLES: { [T in CoreEventType]: CoreEventPayloads[T] } = {
   "core.budget_usage": { tokens: { input: 10, output: 5 }, toolCalls: 1, wallMs: 20 },
   "core.run_paused": { reason: "approval" },
   "core.run_resumed": { by: "boss" },
+  "core.tools_bound": { toolNames: ["add", "compact"], configHash: "abc" },
   "core.error": { category: "provider", message: "超时", retryable: true },
 }
 

@@ -88,12 +88,14 @@ describe("perception × runLoop：注入位置与 prompt cache 约束", () => {
     expect(result.status).toBe("done")
 
     const logged = await all(log)
-    expect(logged.slice(0, 3).map((e) => e.type)).toEqual([
+    // 起步的 tools_bound 排在最前（模型不可见），感知说明仍夹在 user 消息与模型输出之间
+    expect(logged.slice(0, 4).map((e) => e.type)).toEqual([
+      "core.tools_bound",
       "core.user_message",
       "core.system_note",
       "core.model_thinking",
     ])
-    const note = logged[1] as Note
+    const note = logged[2] as Note
     expect(note.actor).toBe("system")
     expect(note.payload.kind).toBe("perception")
     expect(note.payload.text).toContain("Context window used: <50%")

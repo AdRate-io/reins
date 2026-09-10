@@ -142,7 +142,9 @@ describe("reinsMiddleware：基本流程", () => {
     await f.run({ messages: [user("算 2+3")] })
 
     const events = await all(f.log)
+    // 每次请求 initRun 先落一条工具表快照 tools_bound（模型不可见），再导入客户端新消息
     expect(types(events)).toEqual([
+      "tools_bound",
       "user_message",
       "model_thinking",
       "tool_call",
@@ -151,27 +153,27 @@ describe("reinsMiddleware：基本流程", () => {
       "model_text",
       "budget_usage",
     ])
-    const result = events[4] as CoreEventOf<"core.tool_result">
+    const result = events[5] as CoreEventOf<"core.tool_result">
     expect(result.payload).toEqual({
       toolCallId: "c1",
       name: "add",
       content: [{ type: "text", text: "5" }],
       isError: false,
     })
-    expect(result.parentId).toBe(events[2]?.id)
-    expect((events[1] as CoreEventOf<"core.model_thinking">).replay).toEqual({
+    expect(result.parentId).toBe(events[3]?.id)
+    expect((events[2] as CoreEventOf<"core.model_thinking">).replay).toEqual({
       provider: "scripted",
       api: "tanstack-ai",
       model: "scripted-1",
       thinkingSignature: "SIG",
     })
     // 用量：promptTokens 100 → input 100；budget_usage 带投影估算
-    const usage = events[3] as CoreEventOf<"core.budget_usage">
+    const usage = events[4] as CoreEventOf<"core.budget_usage">
     expect(usage.payload.tokens).toEqual({ input: 100, output: 20 })
     expect(usage.payload.toolCalls).toBe(1)
     expect(usage.payload.contextEstimate).toBeGreaterThan(0)
 
-    // 模型看到的：第一轮只有用户消息；第二轮是日志投影（thinking 同源签名回放、工具结果）
+    // 模型看到的：第一轮只有用户消息（tools_bound 模型不可见）；第二轮是日志投影（thinking 同源签名回放、工具结果）
     expect(f.adapter.calls).toHaveLength(2)
     expect(f.adapter.calls[0]?.messages).toEqual([{ role: "user", content: "算 2+3" }])
     expect(f.adapter.calls[1]?.messages).toEqual([
@@ -187,7 +189,7 @@ describe("reinsMiddleware：基本流程", () => {
     expect(f.adapter.calls[0]?.systemPrompts).toEqual(["你是计算器"])
     expect(f.adapter.calls[0]?.tools?.map((t) => t.name)).toEqual(["add"])
     // onEvent 拿到每一条
-    expect(f.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(f.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
   })
 
   it("第二次请求只导入末尾新用户消息，历史以日志为准", async () => {
@@ -195,10 +197,13 @@ describe("reinsMiddleware：基本流程", () => {
     await f.run({ messages: [user("hi")] })
     // 客户端把整段历史（含它自己记的 assistant）连同新消息一起发来
     await f.run({ messages: [user("hi"), { role: "assistant", content: "你好" }, user("bye")] })
+    // 两次请求各有一条 tools_bound 打头；两次工具表相同，所以不出工具变化说明
     expect(types(await all(f.log))).toEqual([
+      "tools_bound",
       "user_message",
       "model_text",
       "budget_usage",
+      "tools_bound",
       "user_message",
       "model_text",
       "budget_usage",
@@ -214,16 +219,18 @@ describe("reinsMiddleware：基本流程", () => {
     const f = fixture([{ blocks: [say("继续")] }])
     await f.run({ messages: [user("a"), { role: "assistant", content: "b" }, user("c")] })
     const events = await all(f.log)
-    expect(types(events).slice(0, 3)).toEqual(["user_message", "model_text", "user_message"])
-    expect(events[1]?.provenance).toEqual({ source: "tanstack-ai", ref: "import" })
+    expect(types(events).slice(0, 4)).toEqual(["tools_bound", "user_message", "model_text", "user_message"])
+    expect(events[2]?.provenance).toEqual({ source: "tanstack-ai", ref: "import" })
   })
 
   it("非正文事件以 CUSTOM chunk 推进流（name = 事件 type）", async () => {
     const f = fixture([{ blocks: [say("hi")] }], [perception()])
     const chunks = await f.run({ messages: [user("hi")] })
     const custom = chunks.filter((c) => c.type === "CUSTOM") as { name: string; value: { type: string } }[]
-    expect(custom.map((c) => c.name)).toEqual(["core.system_note", "core.budget_usage"])
-    expect(custom[0]?.value.type).toBe("core.system_note")
+    // tools_bound 也是非正文事件，排在最前（initRun 里比感知说明更早落日志）
+    expect(custom.map((c) => c.name)).toEqual(["core.tools_bound", "core.system_note", "core.budget_usage"])
+    expect(custom[0]?.value.type).toBe("core.tools_bound")
+    expect(custom[1]?.value.type).toBe("core.system_note")
   })
 
   it("日志里有读不出的事件：起步即拒绝，不写任何东西", async () => {
@@ -278,8 +285,8 @@ describe("reinsMiddleware：脑子模块", () => {
     )
     await f.run({ messages: [user("go")] })
     const events = await all(f.log)
-    expect(types(events).slice(0, 3)).toEqual(["user_message", "system_note", "tool_call"])
-    const note = events[1] as CoreEventOf<"core.system_note">
+    expect(types(events).slice(0, 4)).toEqual(["tools_bound", "user_message", "system_note", "tool_call"])
+    const note = events[2] as CoreEventOf<"core.system_note">
     expect(note.payload.kind).toBe("perception")
     const first = f.adapter.calls[0]?.messages
     expect(first?.[1]).toEqual({ role: "user", content: framedSystemNote("perception", note.payload.text) })
@@ -293,6 +300,7 @@ describe("reinsMiddleware：脑子模块", () => {
     await f.run({ messages: [user("记住总重 30kg")] })
     const events = await all(f.log)
     expect(types(events)).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "budget_usage",
@@ -301,10 +309,10 @@ describe("reinsMiddleware：脑子模块", () => {
       "model_text",
       "budget_usage",
     ])
-    const pin = events[3] as CoreEventOf<"core.system_note">
+    const pin = events[4] as CoreEventOf<"core.system_note">
     expect(pin.payload).toMatchObject({ kind: "pin", text: "总重 30kg" })
     expect(pin.actor).toBe("model")
-    expect(pin.parentId).toBe(events[1]?.id)
+    expect(pin.parentId).toBe(events[2]?.id)
     expect(textOf(f.adapter.calls[1]?.messages?.[3])).toContain("总重 30kg")
   })
 
@@ -323,6 +331,7 @@ describe("reinsMiddleware：脑子模块", () => {
     await f.run({ messages: [user("存一下")] })
     const events = await all(f.log)
     expect(types(events)).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "budget_usage",
@@ -331,10 +340,10 @@ describe("reinsMiddleware：脑子模块", () => {
       "model_text",
       "budget_usage",
     ])
-    const op = events[3] as CoreEventOf<"core.memory_op">
+    const op = events[4] as CoreEventOf<"core.memory_op">
     expect(op.payload).toMatchObject({ op: "create", path: "/memories/a.md" })
     expect(op.provenance?.ref).toBe("c1")
-    expect((events[4] as CoreEventOf<"core.tool_result">).payload.isError).toBe(false)
+    expect((events[5] as CoreEventOf<"core.tool_result">).payload.isError).toBe(false)
   })
 
   it("spill：宿主工具的大结果外溢，模型下一轮看到预览；fetch_blob 能取回", async () => {
@@ -499,13 +508,14 @@ describe("reinsMiddleware：审批", () => {
     const chunks = await f.run({ messages: [user("上线")], tools: [deployTool], runId: "run1" })
     let events = await all(f.log)
     expect(types(events)).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "budget_usage",
       "approval_request",
       "run_paused",
     ])
-    const req = events[3] as CoreEventOf<"core.approval_request">
+    const req = events[4] as CoreEventOf<"core.approval_request">
     expect(req.payload).toMatchObject({ toolCallId: "c1", summary: expect.stringContaining("deploy") })
     const { interrupt, runId } = interruptOf(chunks)
     expect(interrupt.metadata?.["tanstack:interruptPayload"] ?? interrupt.metadata).toBeDefined()
@@ -519,16 +529,18 @@ describe("reinsMiddleware：审批", () => {
       resume: [resumeItem(interrupt, { approved: true, by: "boss" })],
     })
     events = await all(f.log)
-    expect(types(events).slice(5)).toEqual([
+    // 续跑也是一次新请求：先落第二条 tools_bound（工具表未变，不出说明），再是审批答复
+    expect(types(events).slice(6)).toEqual([
+      "tools_bound",
       "approval_decision",
       "run_resumed",
       "tool_result",
       "model_text",
       "budget_usage",
     ])
-    const decision = events[5] as CoreEventOf<"core.approval_decision">
+    const decision = events[7] as CoreEventOf<"core.approval_decision">
     expect(decision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
-    const result = events[7] as CoreEventOf<"core.tool_result">
+    const result = events[9] as CoreEventOf<"core.tool_result">
     expect(result.payload).toMatchObject({ isError: false, content: [{ type: "text", text: "deployed" }] })
     // 续跑那次模型看到的仍是日志投影：用户 → 工具调用 → 结果
     expect(f2.adapter.calls[0]?.messages?.map((m) => m.role)).toEqual(["user", "assistant", "tool"])
@@ -578,13 +590,14 @@ describe("reinsMiddleware：审批", () => {
     await f.run({ messages: [user("上线")], tools: [native] })
     const events = await all(f.log)
     expect(types(events)).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "budget_usage",
       "approval_request",
       "run_paused",
     ])
-    expect((events[3] as CoreEventOf<"core.approval_request">).payload.policyId).toBe(
+    expect((events[4] as CoreEventOf<"core.approval_request">).payload.policyId).toBe(
       TANSTACK_APPROVAL_POLICY,
     )
   })
@@ -597,6 +610,7 @@ describe("reinsMiddleware：审批", () => {
     await f.run({ messages: [user("上线")], tools: [deployTool] })
     const events = await all(f.log)
     expect(types(events)).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "budget_usage",
@@ -605,7 +619,7 @@ describe("reinsMiddleware：审批", () => {
       "model_text",
       "budget_usage",
     ])
-    expect((events[4] as CoreEventOf<"core.tool_result">).payload.isError).toBe(true)
+    expect((events[5] as CoreEventOf<"core.tool_result">).payload.isError).toBe(true)
     expect(f.adapter.calls[1]?.messages?.[2]).toMatchObject({
       role: "tool",
       error: expect.stringContaining("拦截"),

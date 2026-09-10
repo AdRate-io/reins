@@ -52,17 +52,19 @@ describe("fork：任意 seq 分叉出新会话，两条会话独立演进", () =
       }),
     )
     const mainBefore = await all(log, "main")
-    expect(types(mainBefore)).toEqual(["user_message", "model_text", "budget_usage"])
+    // 起步的 tools_bound（模型不可见）排在用户消息之前
+    expect(types(mainBefore)).toEqual(["tools_bound", "user_message", "model_text", "budget_usage"])
 
-    // 在第 2 条（模型回答）之后分叉
-    const { toSessionId } = await forkSession(log, { fromSessionId: "main", atSeq: 2 })
+    // 在第 3 条（模型回答）之后分叉
+    const { toSessionId } = await forkSession(log, { fromSessionId: "main", atSeq: 3 })
     const forked = await all(log, toSessionId)
     expect(forked.map((e) => [e.seq, e.type, e.sessionId])).toEqual([
-      [1, "core.user_message", toSessionId],
-      [2, "core.model_text", toSessionId],
+      [1, "core.tools_bound", toSessionId],
+      [2, "core.user_message", toSessionId],
+      [3, "core.model_text", toSessionId],
     ])
     // 事件 id 保留，parentId / pinsKept 之类的会话内引用继续有效
-    expect(forked.map((e) => e.id)).toEqual(mainBefore.slice(0, 2).map((e) => e.id))
+    expect(forked.map((e) => e.id)).toEqual(mainBefore.slice(0, 3).map((e) => e.id))
 
     // 两边各走一步
     const forkLowering = new ScriptedLowering([{ drafts: [say("这是 B 线的回答")] }])
@@ -91,9 +93,9 @@ describe("fork：任意 seq 分叉出新会话，两条会话独立演进", () =
       "model_text",
       "user_message",
     ])
-    // seq 各自从分叉点续编，互不干扰
-    expect(main.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6])
-    expect(fork.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5])
+    // seq 各自从分叉点续编，互不干扰（两边第二次起步各多一条 tools_bound）
+    expect(main.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(fork.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
   })
 
   it("切在 tool_call 与 tool_result 之间：新会话把那次调用当作 pending 重新执行", async () => {
@@ -115,7 +117,7 @@ describe("fork：任意 seq 分叉出新会话，两条会话独立演进", () =
     expect(executions).toBe(1)
     const main = await all(log, "main")
     const callSeq = main.find((e) => e.type === "core.tool_call")?.seq ?? 0
-    expect(callSeq).toBe(3)
+    expect(callSeq).toBe(4)
 
     // 切在 tool_call 之后、tool_result 之前
     const { toSessionId } = await forkSession(log, {
@@ -131,16 +133,19 @@ describe("fork：任意 seq 分叉出新会话，两条会话独立演进", () =
     // 工具在分叉线里又跑了一次，结果与原线一致但事件是新的
     expect(executions).toBe(2)
     const alt = await all(log, "alt")
+    // 分叉线自己起步又记了一条 tools_bound，排在补齐 pending 的 tool_result 之前
     expect(types(alt)).toEqual([
+      "tools_bound",
       "user_message",
       "model_thinking",
       "tool_call",
+      "tools_bound",
       "tool_result",
       "model_text",
       "budget_usage",
     ])
-    const altResult = alt[3] as CoreEventOf<"core.tool_result">
-    const mainResult = main[3] as CoreEventOf<"core.tool_result">
+    const altResult = alt[5] as CoreEventOf<"core.tool_result">
+    const mainResult = main[4] as CoreEventOf<"core.tool_result">
     expect(altResult.payload).toEqual(mainResult.payload)
     expect(altResult.id).not.toBe(mainResult.id)
     // 原会话一条没变

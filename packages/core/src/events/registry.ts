@@ -188,6 +188,7 @@ export const CORE_SCHEMAS: readonly EventSchema[] = (
     "core.budget_usage",
     "core.run_paused",
     "core.run_resumed",
+    "core.tools_bound",
     "core.error",
   ] satisfies CoreEventType[]
 ).map((type) => ({ type, version: 1 }))

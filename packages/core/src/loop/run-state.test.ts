@@ -79,7 +79,7 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
     const { stateString, result } = await processA()
     expect(stateString.length).toBeLessThan(400)
     const state = JSON.parse(stateString) as SerializedRunState
-    expect(state).toMatchObject({ v: 1, sessionId: SESSION, lastSeq: 5, pendingToolCallIds: ["c1"] })
+    expect(state).toMatchObject({ v: 1, sessionId: SESSION, lastSeq: 6, pendingToolCallIds: ["c1"] })
     expect(state.sig).toMatch(/^[0-9a-f]{64}$/)
     expect(state.pendingDigest).toMatch(/^[0-9a-f]{64}$/)
     expect(await verifyRunState(state, SECRET)).toBe(true)
@@ -96,12 +96,14 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
       decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
     })
     const { events, result } = await drain(runLoop(cfgB))
-    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 10 })
+    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 12 })
 
     const logged = await all(log)
     expect(types(logged.slice(before))).toEqual([
       "run_resumed",
       "approval_decision",
+      // 续跑起步的工具表快照：在 run_resumed / approval_decision 之后、补齐 pending 之前
+      "tools_bound",
       "tool_result",
       "model_text",
       "budget_usage",
@@ -111,13 +113,13 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
     expect(resumed.actor).toBe("host")
     const decision = logged[before + 1] as CoreEventOf<"core.approval_decision">
     expect(decision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
-    const res = logged[before + 2] as CoreEventOf<"core.tool_result">
+    const res = logged[before + 3] as CoreEventOf<"core.tool_result">
     expect(res.payload).toMatchObject({
       isError: false,
       content: [{ type: "text", text: '已上线 {"env":"prod"}' }],
     })
     // 进程 B 也把新事件逐条 yield 出来了
-    expect(events.map((e) => e.seq)).toEqual([6, 7, 8, 9, 10])
+    expect(events.map((e) => e.seq)).toEqual([7, 8, 9, 10, 11, 12])
     // 模型看到的是干净的对话：审批与暂停/恢复事件不可见
     const b = cfgB.lowering as ScriptedLowering
     expect(types(b.requests[0]?.events ?? [])).toEqual(["user_message", "tool_call", "tool_result"])

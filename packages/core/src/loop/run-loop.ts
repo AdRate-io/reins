@@ -40,6 +40,7 @@ import {
 } from "./state.js"
 import { resolveSocketContributions } from "./static.js"
 import { errorMessageOf, normalizeToolOutput, toolSpecOf } from "./tools.js"
+import { toolsBoundDrafts } from "./tools-bound.js"
 import type {
   BeforeToolDecision,
   Interruption,
@@ -95,8 +96,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   const newId = cfg.newId ?? uuidv7
   const sockets = cfg.sockets ?? []
   // Socket 的静态贡献在这里并入：工具表与系统提示整个 run 不变（prompt cache），续跑补齐 pending 时也在场。
-  // 算法在 static.ts，server 的恢复预校验用同一份，configHash 才对得上
-  const { tools: baseTools, systemPrompt: baseSystemPrompt } = resolveSocketContributions(cfg)
+  // 算法在 static.ts，server 的恢复预校验用同一份，configHash 才对得上。可 await：MCP 模块在此 tools/list（P1）
+  const { tools: baseTools, systemPrompt: baseSystemPrompt } = await resolveSocketContributions(cfg)
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS
   const retry = resolveRetry(cfg.retry)
   // 新输入先过类型白名单：不合规在写任何东西之前就拒绝
@@ -192,6 +193,17 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       })),
     )
   }
+
+  // ---- 工具表快照（P1）：每次 run 起步一条模型不可见的 tools_bound；与上一条比对有增删则再追加模型可见的说明 ----
+  // 放在校验之后（校验不过一条日志都不写）、新输入之前（说明先于用户这次的话，模型读到问题时已知道手里的工具变了）
+  yield* await append(
+    toolsBoundDrafts({
+      timeline: await readTimeline(log, sessionId, { registry }),
+      toolNames: baseTools.map((t) => t.name),
+      configHash,
+      announce: cfg.announceToolChanges ?? true,
+    }),
+  )
 
   // ---- 新输入 ----
   // 日志里还有没结果的 tool_call 时，新输入照样追加在此（时间线如实记录"用户此时插话"，宪法二）；

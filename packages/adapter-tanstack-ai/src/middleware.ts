@@ -29,6 +29,7 @@ import {
   BUILTIN_APPROVAL_POLICY,
   type CoreEvent,
   type CoreEventOf,
+  computeConfigHash,
   createCoreRegistry,
   createEvent,
   DEFAULT_MODEL_INVISIBLE_TYPES,
@@ -59,6 +60,7 @@ import {
   type ToolResultDraft,
   type TurnContext,
   type TurnDecision,
+  toolsBoundDrafts,
   uuidv7,
 } from "@reins/core"
 import type {
@@ -117,6 +119,8 @@ export interface ReinsMiddlewareOptions {
   emitCustomEvents?: boolean
   /** 告警出口（缺 BlobStore、未登记审批中断之类的降级），缺省 console.warn */
   warn?: (message: string) => void
+  /** 工具表与上一次 run 相比有增删时追加模型可见的说明（P1，缺省开）；快照事件 `core.tools_bound` 一律记 */
+  announceToolChanges?: boolean
   /** 测试注入 */
   now?: () => number
   newId?: (at: number) => string
@@ -296,7 +300,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     }
     // 宿主系统提示保持 TanStack 原来的条目（可能带 cache_control 之类元数据）不动，脑子的规则片段追加成最后一条；
     // 所以这里不把宿主提示交给 resolveSocketContributions，只取它算出的工具表与脑子片段
-    const { tools: baseTools, systemPrompt: brainPrompt } = resolveSocketContributions(setupCfg)
+    const { tools: baseTools, systemPrompt: brainPrompt } = await resolveSocketContributions(setupCfg)
     const systemPrompts: SystemPrompt[] = [...config.systemPrompts]
     if (brainPrompt !== undefined) systemPrompts.push(brainPrompt)
 
@@ -324,6 +328,23 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       wrapped: new Map(),
     }
     states.set(ctx, s)
+
+    // 工具表快照（P1）：与 runLoop 同一份纯函数。configHash 的系统提示只取脑子片段（宿主提示是 TanStack 的条目，
+    // 可能带非文本元数据），所以与 runLoop 的 hash 不可比，只在本适配器内前后自比
+    await append(
+      ctx,
+      s,
+      toolsBoundDrafts({
+        timeline,
+        toolNames: baseTools.map((t) => t.name),
+        configHash: await computeConfigHash({
+          model,
+          tools: baseTools,
+          ...(brainPrompt !== undefined ? { systemPrompt: brainPrompt } : {}),
+        }),
+        announce: options.announceToolChanges ?? true,
+      }),
+    )
 
     // 新输入：日志为空则整段接管客户端历史，否则只取末尾新带来的用户消息（历史已在日志里）
     const origin = { provider: model.provider, api: TANSTACK_API, model: model.id }

@@ -53,7 +53,9 @@ describe("Cloudflare Workers（miniflare / workerd）", () => {
 
     const frames = parseFrames(await res.text())
     expect(frames[0]).toEqual({ event: "start", data: { sessionId: "w1", fromSeq: 1, live: true } })
+    // 起步先落一条模型不可见的工具表快照，其余事件整体后移一位
     expect(typesOf(frames)).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "tool_result",
@@ -61,14 +63,14 @@ describe("Cloudflare Workers（miniflare / workerd）", () => {
       "model_text",
       "budget_usage",
     ])
-    expect(frames.at(-1)).toEqual({ event: "result", data: { status: "done", sessionId: "w1", lastSeq: 6 } })
+    expect(frames.at(-1)).toEqual({ event: "result", data: { status: "done", sessionId: "w1", lastSeq: 7 } })
 
     const replay = await mf.dispatchFetch("http://worker/agent?sessionId=w1", {
       headers: { "last-event-id": "3" },
     })
     const replayed = parseFrames(await replay.text())
-    expect(replayed.map((f) => f.id).filter(Boolean)).toEqual(["4", "5", "6"])
-    expect(replayed.at(-1)).toEqual({ event: "end", data: { sessionId: "w1", lastSeq: 6 } })
+    expect(replayed.map((f) => f.id).filter(Boolean)).toEqual(["4", "5", "6", "7"])
+    expect(replayed.at(-1)).toEqual({ event: "end", data: { sessionId: "w1", lastSeq: 7 } })
 
     const stats = await (await mf.dispatchFetch("http://worker/stats")).json()
     expect(stats).toEqual({ waitUntilCalls: 1 })

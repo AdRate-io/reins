@@ -71,9 +71,11 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
       runLoop(baseConfig(lowering, log, { input: "2+3 再加 4 等于几？" })),
     )
 
-    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 10 })
+    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 11 })
     const logged = await all(log)
+    // 起步先记一条模型不可见的 tools_bound（本次 run 的工具表快照），其后才是用户这次的话
     expect(types(logged)).toEqual([
+      "tools_bound",
       "user_message",
       "model_thinking",
       "tool_call",
@@ -87,7 +89,7 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
     ])
     // 时间线上的每一条都经 yield 交给了宿主，顺序与 seq 一致
     expect(events.map((e) => e.seq)).toEqual(logged.map((e) => e.seq))
-    expect(logged.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(logged.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
   })
 
   it("工具结果带因果链、来源与 untrusted，且答案正确", async () => {
@@ -128,9 +130,9 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
         sessionId: SESSION,
         budget: { contextLimit: 200_000 },
       })
-    expect(seen[0]).toEqual(prefixAt(1).events.map((e) => e.id))
-    expect(seen[1]).toEqual(prefixAt(5).events.map((e) => e.id))
-    expect(seen[2]).toEqual(prefixAt(8).events.map((e) => e.id))
+    expect(seen[0]).toEqual(prefixAt(2).events.map((e) => e.id))
+    expect(seen[1]).toEqual(prefixAt(6).events.map((e) => e.id))
+    expect(seen[2]).toEqual(prefixAt(9).events.map((e) => e.id))
     // 每轮工具声明也到位
     expect(lowering.requests[0]?.tools?.map((t) => t.name)).toEqual(["add"])
 
@@ -290,7 +292,12 @@ describe("runLoop：Socket 五个钩子", () => {
     ])
     // 注入的 system_note 排在用户消息之后、模型第一轮之前，且第一轮就看到了
     const logged = await all(log)
-    expect(types(logged).slice(0, 3)).toEqual(["user_message", "system_note", "model_thinking"])
+    expect(types(logged).slice(0, 4)).toEqual([
+      "tools_bound",
+      "user_message",
+      "system_note",
+      "model_thinking",
+    ])
     expect(types(lowering.requests[0]?.events ?? [])).toEqual(["user_message", "system_note"])
   })
 
@@ -445,7 +452,7 @@ describe("runLoop：Socket 五个钩子", () => {
     expect(l2.requests[0]?.tools?.map((t) => t.name)).toEqual(["add", "remember"])
     expect(l2.requests[0]?.systemPrompt).toBe("宿主\n\n记忆规则")
     // 解析函数单独可用（server 预校验靠它与循环算出同一个 configHash）
-    const resolved = resolveSocketContributions({
+    const resolved = await resolveSocketContributions({
       log: new InMemoryEventLog(),
       model: MODEL,
       sockets: [socket],
@@ -657,6 +664,7 @@ describe("runLoop：审批暂停与续跑", () => {
     ])
     expect(result.state.pendingToolCallIds).toEqual(["c1"])
     expect(types(await all(log))).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "approval_request",
@@ -755,6 +763,7 @@ describe("runLoop：审批暂停与续跑", () => {
     if (result.status !== "paused") return
     expect(result.state.pendingToolCallIds).toEqual(["c2"])
     expect(types(await all(log))).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "tool_call",
@@ -895,7 +904,8 @@ describe("runLoop：工具的各种失败与客户端工具", () => {
       { drafts: [say("完")] },
     ])
     await drain(runLoop(baseConfig(lowering, log, { input: "记", tools: [remember] })))
-    expect(types(await all(log)).slice(1, 4)).toEqual(["tool_call", "memory_op", "tool_result"])
+    // 日志开头是 tools_bound + user_message，从第 3 条起看这一批
+    expect(types(await all(log)).slice(2, 5)).toEqual(["tool_call", "memory_op", "tool_result"])
   })
 })
 
@@ -910,7 +920,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
     if (result.status !== "error") return
     expect(result.error.payload).toMatchObject({ category: "provider", message: "529 overloaded" })
     // 说了一半的内容仍在日志里 —— 记录发生过什么
-    expect(types(await all(log))).toEqual(["user_message", "model_text", "error"])
+    expect(types(await all(log))).toEqual(["tools_bound", "user_message", "model_text", "error"])
   })
 
   it("降级层抛异常（缺 key 等配置错）：不重试，记 error 事件而不是让生成器炸掉", async () => {
@@ -949,8 +959,8 @@ describe("runLoop：错误、中止、上限、交接", () => {
       expect(waits).toEqual([1000])
       expect(lowering.requests).toHaveLength(2)
       const logged = await all(log)
-      expect(types(logged)).toEqual(["user_message", "error", "model_text", "budget_usage"])
-      expect((logged[1] as CoreEventOf<"core.error">).payload).toMatchObject({
+      expect(types(logged)).toEqual(["tools_bound", "user_message", "error", "model_text", "budget_usage"])
+      expect((logged[2] as CoreEventOf<"core.error">).payload).toMatchObject({
         category: "lowering",
         message: "ECONNRESET",
         retryable: true,
@@ -986,8 +996,15 @@ describe("runLoop：错误、中止、上限、交接", () => {
       expect(result.status).toBe("done")
       expect(waits).toEqual([1000, 2000])
       const logged = await all(log)
-      expect(types(logged)).toEqual(["user_message", "error", "error", "model_text", "budget_usage"])
-      expect((logged[2] as CoreEventOf<"core.error">).payload).toMatchObject({
+      expect(types(logged)).toEqual([
+        "tools_bound",
+        "user_message",
+        "error",
+        "error",
+        "model_text",
+        "budget_usage",
+      ])
+      expect((logged[3] as CoreEventOf<"core.error">).payload).toMatchObject({
         category: "provider",
         message: "529 overloaded",
         retryable: true,
@@ -1017,7 +1034,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
       })
       expect(result.error.payload.detail).not.toHaveProperty("willRetry")
       expect(waits).toEqual([1000, 2000])
-      expect(types(await all(log))).toEqual(["user_message", "error", "error", "error"])
+      expect(types(await all(log))).toEqual(["tools_bound", "user_message", "error", "error", "error"])
 
       const log2 = new InMemoryEventLog()
       const l2 = new ScriptedLowering([{ drafts: [], throws: new Error("ECONNRESET") }])
@@ -1041,7 +1058,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
         detail: { attempts: 1, partialOutput: 1 },
       })
       expect(waits).toEqual([])
-      expect(types(await all(log))).toEqual(["user_message", "model_thinking", "error"])
+      expect(types(await all(log))).toEqual(["tools_bound", "user_message", "model_thinking", "error"])
     })
 
     it("重试等待期间宿主中止：以 paused(host) 返回，不再发请求", async () => {
@@ -1059,7 +1076,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
       if (result.status !== "paused") return
       expect(result.reason).toBe("host")
       expect(lowering.requests).toHaveLength(1)
-      expect(types(await all(log))).toEqual(["user_message", "error", "run_paused"])
+      expect(types(await all(log))).toEqual(["tools_bound", "user_message", "error", "run_paused"])
     })
 
     it("自定义 isTransient：宿主可以把某类错误判成瞬断或非瞬断", async () => {
@@ -1097,7 +1114,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
     expect(result.reason).toBe("host")
     expect(result.state.pendingToolCallIds).toEqual(["c1"])
     // 工具没执行
-    expect(types(await all(log))).toEqual(["user_message", "tool_call", "run_paused"])
+    expect(types(await all(log))).toEqual(["tools_bound", "user_message", "tool_call", "run_paused"])
   })
 
   it("signal 在开轮前已中止：直接 paused(host)，不调模型", async () => {
@@ -1146,7 +1163,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
     expect(handoffs).toEqual([[SESSION, result.toSessionId]])
 
     const old = await all(log)
-    expect(types(old)).toEqual(["user_message", "model_text", "budget_usage", "handoff"])
+    expect(types(old)).toEqual(["tools_bound", "user_message", "model_text", "budget_usage", "handoff"])
     const handoff = old.at(-1) as CoreEventOf<"core.handoff">
     expect(handoff.actor).toBe("model")
     expect(handoff.payload).toEqual({
@@ -1302,6 +1319,7 @@ describe("上线前审查修复（2026-09-10）", () => {
     expect(result.state.pendingToolCallIds).toEqual(["c2"])
     expect(lowering.requests).toHaveLength(1)
     expect(types(await all(log))).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "tool_call",
@@ -1419,12 +1437,15 @@ describe("审查遗留 R1 / R2", () => {
     expect(second.result.status).toBe("done")
     expect(lowering.requests).toHaveLength(1)
     expect(types(await all(log))).toEqual([
+      "tools_bound",
       "user_message",
       "tool_call",
       "approval_request",
       "budget_usage",
       "run_paused",
       "approval_decision",
+      // 第二次起步的工具表快照：排在 approval_decision 之后、补齐 pending 之前
+      "tools_bound",
       "tool_result",
     ])
   })

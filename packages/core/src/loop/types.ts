@@ -196,8 +196,12 @@ export interface SocketSetup {
   hostTools: readonly Tool[]
 }
 
-/** 静态贡献：常量，或按运行环境算一次的函数（返回 undefined 表示这次不贡献） */
-export type StaticContribution<T> = T | ((setup: SocketSetup) => T | undefined)
+/**
+ * 静态贡献：常量，或按运行环境算一次的函数（返回 undefined 表示这次不贡献）。
+ * 函数可以是异步的（P1）：MCP 模块的工具表要在 run 起步时向服务器 `tools/list` 一次，同步解析不可能成立；
+ * 代价只是 `resolveSocketContributions` 变成 async，调用它的三处（循环起步、server 预校验、TanStack 适配器）本就在异步上下文里。
+ */
+export type StaticContribution<T> = T | ((setup: SocketSetup) => T | undefined | Promise<T | undefined>)
 
 /**
  * 脑子与底盘之间唯一的契约。多个 Socket 按注册顺序执行。
@@ -347,6 +351,11 @@ export interface LoopConfig {
   secret?: string
   /** 允许在模型 / 工具集 / 系统提示变了之后恢复；缺省拒绝 */
   allowConfigDrift?: boolean
+  /**
+   * 工具表与上一次 run 相比有增删时，是否追加一条模型可见的 `system_note(kind=host)` 列出增删的工具名（P1，缺省开）。
+   * 关掉只是不出说明；每次 run 起步那条模型不可见的 `core.tools_bound` 快照照样记，回放与 eval 靠它知道当时有哪些工具。
+   */
+  announceToolChanges?: boolean
   /** 测试注入：时间与 id 工厂 */
   now?: () => number
   newId?: (at: number) => string

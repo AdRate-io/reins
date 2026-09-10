@@ -164,6 +164,18 @@ export interface RunResumedPayload {
   by?: string
 }
 
+/**
+ * 每次 run 起步时的工具表快照（P1，模型不可见）。宪法二：日志里要能看出"那次 run 模型手里有哪些工具"，
+ * 而不是从 tool_call 反推；也是"工具表变化告知模型"的比对依据 —— 与上一条 tools_bound 比对有增删，
+ * 循环就再追加一条模型可见的 system_note(kind=host)。MCP 服务器加减工具、宿主按请求换配置，都从这里被看见。
+ */
+export interface ToolsBoundPayload {
+  /** 本次 run 模型可用的全部工具名（宿主工具 + 各 Socket 的静态贡献），已排序 */
+  toolNames: string[]
+  /** 与 SerializedRunState.configHash 同一算法（模型、工具名集合、系统提示） */
+  configHash: string
+}
+
 export interface ErrorPayload {
   /** 粗分类：provider / tool / budget / internal 等，字符串开放给宿主扩展 */
   category: string
@@ -190,6 +202,7 @@ export interface CoreEventPayloads {
   "core.budget_usage": BudgetUsagePayload
   "core.run_paused": RunPausedPayload
   "core.run_resumed": RunResumedPayload
+  "core.tools_bound": ToolsBoundPayload
   "core.error": ErrorPayload
 }
 

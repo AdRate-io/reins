@@ -116,6 +116,7 @@ describe("handoff × runLoop", () => {
 
     const old = await all(log)
     expect(types(old)).toEqual([
+      "tools_bound", // 起步的工具表快照，模型不可见
       "user_message",
       "tool_call",
       "tool_result",
@@ -223,7 +224,8 @@ describe("handoff × runLoop", () => {
       meta: { pin: { source: "host", spec: "Never touch the production database." } },
     })
     expect(hostPin.trust).toBe("system")
-    expect(hostPin.provenance).toEqual({ source: "handoff", ref: "id2" })
+    // 旧会话起步的 tools_bound 占了 id1，宿主 pin 的 id 顺延一位
+    expect(hostPin.provenance).toEqual({ source: "handoff", ref: "id3" })
     const modelPin = fresh[2] as Note
     expect(modelPin.payload).toEqual({
       kind: "pin",
@@ -249,6 +251,7 @@ describe("handoff × runLoop", () => {
       "system_note",
       "system_note",
       "user_message",
+      "tools_bound", // 新会话由 handoff 直接建起，这次 runLoop 起步才留下第一条快照
       "model_text",
       "budget_usage",
     ])
@@ -387,7 +390,13 @@ describe("handoff × 审批同轮（R2）", () => {
     expect(handoffs).toEqual([[SESSION, second.result.toSessionId]])
     expect(lowering.requests).toHaveLength(1)
     const old = await all(log)
-    expect(types(old).slice(-4)).toEqual(["run_resumed", "approval_decision", "tool_result", "handoff"])
+    expect(types(old).slice(-5)).toEqual([
+      "run_resumed",
+      "approval_decision",
+      "tools_bound", // 续跑起步同样留快照：排在回执之后、补齐的工具结果之前
+      "tool_result",
+      "handoff",
+    ])
     const ho = old.at(-1) as Handoff
     expect(ho.payload).toMatchObject({ summary: NOTE, triggerMessage: "把库迁移到 pg，必须保留旧表" })
     expect(types(await all(log, second.result.toSessionId))).toEqual(["system_note", "user_message"])

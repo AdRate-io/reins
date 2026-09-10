@@ -293,6 +293,7 @@ describe("接上 @reins/server", () => {
     expect(frames.every((f) => f.event === undefined)).toBe(true)
     expect(types(frames)).toEqual([
       "RUN_STARTED",
+      "CUSTOM", // tools_bound：runLoop 起步落的工具表快照（模型不可见，但会翻成 AG-UI CUSTOM）
       "TEXT_MESSAGE_START",
       "TEXT_MESSAGE_CONTENT",
       "TEXT_MESSAGE_END",
@@ -321,6 +322,7 @@ describe("接上 @reins/server", () => {
       "TEXT_MESSAGE_CONTENT",
       "TEXT_MESSAGE_END",
     ])
+    // 多了起步的 tools_bound，日志共 8 条事件，帧 id 逐一对上 seq
     expect(frames.filter((f) => f.id !== undefined).map((f) => f.id)).toEqual([
       "1",
       "2",
@@ -329,16 +331,17 @@ describe("接上 @reins/server", () => {
       "5",
       "6",
       "7",
+      "8",
     ])
 
-    // 第二条流：新的 run id、状态不串（补发 7 条 + 结束）
+    // 第二条流：新的 run id、状态不串（补发 8 条 + 结束）
     const again = await handler(new Request("http://t/agent?sessionId=s1"))
     const replay = parseSse(await again.text())
     expect(data(replay)[0]).toMatchObject({ type: "RUN_STARTED", runId: "run2" })
     expect(data(replay).at(-1)).toMatchObject({
       type: "RUN_FINISHED",
       runId: "run2",
-      result: { status: "replayed", lastSeq: 7 },
+      result: { status: "replayed", lastSeq: 8 },
     })
     assertValidAgui(replay)
   })

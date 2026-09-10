@@ -439,7 +439,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     ) {
       try {
         const timeline = await readTimeline(log, sessionId, { registry })
-        const contributions = resolveSocketContributions(agent)
+        const contributions = await resolveSocketContributions(agent)
         if (body.resume !== undefined) {
           await validateResume({
             state: body.resume,

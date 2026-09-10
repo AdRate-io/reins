@@ -31,7 +31,7 @@ describe("EventSchemaRegistry.read — 正常路径", () => {
   })
 
   it("全部 core.* 都已登记且为 v1", () => {
-    expect(CORE_SCHEMAS).toHaveLength(15)
+    expect(CORE_SCHEMAS).toHaveLength(16)
     for (const s of CORE_SCHEMAS) {
       expect(registry.has(s.type)).toBe(true)
       expect(registry.currentVersion(s.type)).toBe(1)
