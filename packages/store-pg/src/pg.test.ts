@@ -9,7 +9,15 @@ import {
 } from "@reins/core/testing"
 import pg from "pg"
 import { afterAll, describe, expect, it } from "vitest"
-import { type PgClient, PgEventLog, pgStores } from "./index.js"
+import {
+  migratePg,
+  PG_SCHEMA_SQL,
+  PG_SCHEMA_STATEMENTS,
+  type PgClient,
+  PgEventLog,
+  PgMemoryStore,
+  pgStores,
+} from "./index.js"
 
 /**
  * 缺省用 PGlite（进程内 WASM Postgres，真 Postgres 引擎，不需要服务器）跑一致性套件；
@@ -102,6 +110,54 @@ for (const backend of backends) {
         await store.write("/memories/100%.md", "3")
         expect(await store.list("/memories/a_")).toEqual(["/memories/a_b.md"])
         expect(await store.list("/memories/100%")).toEqual(["/memories/100%.md"])
+      })
+
+      it("memoryTable：同一个库里两套记忆各用一张表，互不可见；事件表共用", async () => {
+        await fresh()
+        await backend.client.query("DROP TABLE IF EXISTS finance_memory, legal_memory")
+        const finance = await pgStores(backend.client, { memoryTable: "finance_memory" })
+        const legal = await pgStores(backend.client, { memoryTable: "legal_memory" })
+        await finance.memory?.write("/memories/notes.md", "预算 3%")
+        await legal.memory?.write("/memories/notes.md", "合同条款")
+        expect(await finance.memory?.read("/memories/notes.md")).toBe("预算 3%")
+        expect(await legal.memory?.read("/memories/notes.md")).toBe("合同条款")
+        expect(await finance.memory?.list("/")).toEqual(["/memories/notes.md"])
+        expect(await (await pgStores(backend.client)).memory?.list("/")).toEqual([])
+        const tables = await backend.client.query(
+          "SELECT table_name FROM information_schema.tables WHERE table_name IN ($1, $2) ORDER BY table_name",
+          ["finance_memory", "legal_memory"],
+        )
+        expect(tables.rows.map((r) => r.table_name)).toEqual(["finance_memory", "legal_memory"])
+        await finance.log.append(makeEvents("s1", 2))
+        expect((await collect(legal.log.read("s1"))).map((e) => e.seq)).toEqual([1, 2])
+      })
+
+      it("memoryTable：非法表名在建表前就拒绝（invalid_argument），不发任何语句；缺省 DDL 文本不变", async () => {
+        const sent: string[] = []
+        const spy: PgClient = {
+          query: async (text, params) => {
+            sent.push(text)
+            return backend.client.query(text, params)
+          },
+        }
+        for (const bad of ["", "1abc", "a-b", "a.b", 'x"; DROP TABLE reins_events; --', "a".repeat(64)]) {
+          await expect(pgStores(spy, { memoryTable: bad })).rejects.toMatchObject({
+            code: "invalid_argument",
+          })
+          expect(() => new PgMemoryStore(spy, { table: bad })).toThrow(
+            expect.objectContaining({ code: "invalid_argument" }),
+          )
+        }
+        expect(sent).toEqual([])
+        expect(PG_SCHEMA_STATEMENTS[2]).toContain("CREATE TABLE IF NOT EXISTS reins_memory (")
+        expect(PG_SCHEMA_SQL).not.toContain("${")
+        const long = `m_63_${"x".repeat(58)}`
+        await migratePg(backend.client, { memoryTable: long })
+        await migratePg(backend.client, { memoryTable: long }) // 幂等
+        const store = new PgMemoryStore(backend.client, { table: long })
+        await store.write("/memories/a.md", "1")
+        expect(await store.read("/memories/a.md")).toBe("1")
+        await backend.client.query(`DROP TABLE ${long}`)
       })
     })
   })

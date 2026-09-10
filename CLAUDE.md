@@ -11,7 +11,7 @@
 - **09-09～10** M2 用数字说话：建了 `@reins/eval`，把真实录像脱敏成 fixture，在 DeepSeek 与 Claude 两个模型族上跑了四轮一百多格对照。第一轮门槛未过——模型看到"已整理过一次"就认定旧细节丢了而拒答；我们没有降标准，而是给整理摘要附上被折叠清单并加了 `recall` 逐字取回，两族复测召回 100%、token 反降，**门槛 2 达成，compact 改为推荐默认**。发布前审查修了一个真安全漏洞（伪造审批事件可绕过审批）、补了会话级鉴权，盘了 96 个依赖的许可证，在最严格的 workerd 配置下实证了 edge 兼容。
 - **09-10** Boss 提出多角色 agent 团队场景，一起定了记忆隔离不加角色字段、子代理即工具、MCP 提前到 0.1 三项设计，随后项目进入维护阶段，文档换代到这一版。
 
-11 个包、约 3.2 万行 TypeScript、665 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.2 万行 TypeScript、669 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -138,6 +138,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 
 - **pg 的 `data` 列必须是 `json` 不能是 `jsonb`** — jsonb 重排键序，`pendingDigest` / `configHash` 按 `JSON.stringify` 算，一续跑就误报篡改。
 - **store-sqlite 的 tsup 必须 `removeNodeProtocol: false`** — tsup 8 缺省把 `node:sqlite` 剥成裸 `sqlite`，源码与 vitest 全绿，只有跑 dist 才炸。含 `node:*` 的包验收必须跑一次 dist。
+- **`memoryTable` / `table` 是字面拼进 SQL 的，`assertTableName` 白名单是唯一防注入闸，两包各一份同一正则** — 标识符绑不了参数；只有记忆表可换名，事件表与 blob 表按 session_id 隔离刻意不可配。
 - **pg 侧刻意不开事务，每个写是单条语句** — 传连接池就是对的；任何"先查后写"两步逻辑都破坏这个前提。
 
 ### TanStack 适配器

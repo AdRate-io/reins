@@ -44,6 +44,59 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 | `@reins/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
 | `reins` | `createAgent()` plus re-exports of core / server / ui-agui |
 
+## Memory and how to isolate it
+
+The `memory()` socket in `@reins/brain` gives the model a `memory` tool shaped like Anthropic's
+`memory_20250818` (view / create / str_replace / insert / delete / rename under `/memories`). What
+to remember and when is the model's call; the library only decides *where the bytes go*. Isolation
+is layered, and each layer has exactly one owner:
+
+| layer | who decides | knob |
+| --- | --- | --- |
+| store instance — which table, which database | you, when you build the store | `sqliteStores(db, { memoryTable })`, `pgStores(client, { memoryTable })`, or any `MemoryStore` you implement |
+| namespace prefix inside one store | you, per agent | `memory({ namespace: (ctx) => "/…" })` — prepended to the storage key, invisible to the model |
+| paths under `/memories` | the model | none — it organizes its own files |
+
+There is no "role" column anywhere. Which role is running is already decided by which
+`createAgent` you called, so neither the events nor the storage learn about it. The three common
+setups differ only in the namespace function.
+
+**One shared memory for the whole platform** — every agent reads and writes the same `/memories`:
+
+```ts
+const store = await pgStores(pool)
+const planner = createAgent({ model, store, sockets: [memory()], systemPrompt: "…" })
+const analyst = createAgent({ model, store, sockets: [memory()], systemPrompt: "…" })
+```
+
+**One memory per role** — each agent closes over a constant prefix. They still share one table and
+one event log:
+
+```ts
+const finance = createAgent({ model, store, sockets: [memory({ namespace: () => "/roles/finance" })] })
+const legal   = createAgent({ model, store, sockets: [memory({ namespace: () => "/roles/legal" })] })
+```
+
+If roles must not even share a table (separate retention, separate backups, a per-role
+`DROP TABLE`), move the split one layer down and give each role its own table in the same
+database. Events and blobs stay shared and are isolated by `session_id`:
+
+```ts
+const financeStore = await pgStores(pool, { memoryTable: "finance_memory" })
+const legalStore   = await pgStores(pool, { memoryTable: "legal_memory" })
+```
+
+**Per role, then per user** — append the principal your handler resolved for this request:
+
+```ts
+memory({ namespace: (ctx) => `/roles/finance/users/${ctx.principal?.id ?? "anonymous"}` })
+```
+
+Table names are checked against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL is assembled; an
+invalid name throws `invalid_argument` and touches nothing. Mounting two namespaces into one agent
+(shared read-only knowledge plus private writable notes) is not supported yet; see
+`docs/技术方案.md` §9.6 for the planned shape.
+
 ## Security notes
 
 Read these before putting `@reins/server` on a public route.

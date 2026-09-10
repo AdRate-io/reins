@@ -11,7 +11,14 @@ import {
   memoryStoreConformance,
 } from "@reins/core/testing"
 import { afterAll, describe, expect, it } from "vitest"
-import { SqliteEventLog, SqliteMemoryStore, sqliteStores } from "./index.js"
+import {
+  DEFAULT_MEMORY_TABLE,
+  migrateSqlite,
+  SQLITE_SCHEMA_SQL,
+  SqliteEventLog,
+  SqliteMemoryStore,
+  sqliteStores,
+} from "./index.js"
 import { openSqlite } from "./node.js"
 
 const memoryDb = () => new DatabaseSync(":memory:")
@@ -104,6 +111,53 @@ describe("@reins/store-sqlite：SQLite 特有行为", () => {
     await store.write("/memories/100%.md", "3")
     expect(await store.list("/memories/a_")).toEqual(["/memories/a_b.md"])
     expect(await store.list("/memories/100%")).toEqual(["/memories/100%.md"])
+  })
+
+  it("memoryTable：同一个库里两套记忆各用一张表，互不可见；事件表与 blob 表共用", async () => {
+    const db = memoryDb()
+    const finance = sqliteStores(db, { memoryTable: "finance_memory" })
+    const legal = sqliteStores(db, { memoryTable: "legal_memory" })
+    await finance.memory?.write("/memories/notes.md", "预算 3%")
+    await legal.memory?.write("/memories/notes.md", "合同条款")
+    expect(await finance.memory?.read("/memories/notes.md")).toBe("预算 3%")
+    expect(await legal.memory?.read("/memories/notes.md")).toBe("合同条款")
+    expect(await finance.memory?.list("/")).toEqual(["/memories/notes.md"])
+    // 缺省表不受影响，且确实建的是指定名字的表
+    expect(await sqliteStores(db).memory?.list("/")).toEqual([])
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as {
+        name: string
+      }[]
+    ).map((r) => r.name)
+    expect(tables).toEqual([
+      "finance_memory",
+      "legal_memory",
+      "reins_blobs",
+      "reins_events",
+      DEFAULT_MEMORY_TABLE,
+    ])
+    // 事件日志是同一张表：一边写另一边读得到
+    await finance.log.append(makeEvents("s1", 2))
+    expect((await collect(legal.log.read("s1"))).map((e) => e.seq)).toEqual([1, 2])
+  })
+
+  it("memoryTable：非法表名在建表前就拒绝（invalid_argument），不碰数据库；缺省 DDL 文本不变", () => {
+    const db = memoryDb()
+    for (const bad of ["", "1abc", "a-b", "a.b", 'x"; DROP TABLE reins_events; --', "a".repeat(64)]) {
+      expect(() => sqliteStores(db, { memoryTable: bad })).toThrow(
+        expect.objectContaining({ code: "invalid_argument" } satisfies Partial<StoreError>),
+      )
+      expect(() => new SqliteMemoryStore(db, { table: bad })).toThrow(
+        expect.objectContaining({ code: "invalid_argument" } satisfies Partial<StoreError>),
+      )
+    }
+    expect(db.prepare("SELECT count(*) AS n FROM sqlite_master").get()).toEqual({ n: 0 })
+    expect(SQLITE_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS reins_memory (")
+    expect(SQLITE_SCHEMA_SQL).not.toContain("${")
+    // migrateSqlite 单独调也认表名，且幂等
+    migrateSqlite(db, { memoryTable: "m_63_" + "x".repeat(58) })
+    migrateSqlite(db, { memoryTable: "m_63_" + "x".repeat(58) })
+    expect(new SqliteMemoryStore(db, { table: "m_63_" + "x".repeat(58) })).toBeInstanceOf(SqliteMemoryStore)
   })
 })
 
