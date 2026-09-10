@@ -1,6 +1,6 @@
 {
   "name": "@reins/server",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "reins — Web-standard (Request) => Response handler: runs the loop, streams the timeline as SSE, replays from lastSeq on reconnect",
   "license": "MIT",
   "type": "module",

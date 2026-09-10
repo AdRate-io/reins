@@ -19,7 +19,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 - [x] **R4** 投影新造事件冲突 —— 2026-09-10 定"不重跑、抛 StoreError 交宿主"，注释与技术方案 §6 改成如实描述。理由见 DECISIONS "R4" 行
 - [x] **R8** pg 用例标题 —— 2026-09-10 改为"json 列往返不改内容，本包刻意不用 jsonb"
 - [x] **`asTool(agent, opts)` 助手** —— 2026-09-10 落地（`reins` 包）：`Interruption` 加 `kind: "subagent"`、`ApprovalDecisionInput.sessionId?`、`ToolContext.decisions? / spend?`、core `subagentPause` 标记；审批冒泡跨进程续跑与预算合算各有用例（core +3、reins +4，695 全绿）；`examples/team` 改用 asTool，手写版留 `subagent-tool.handwritten.ts` 对照。设计见 DECISIONS "asTool" 行、技术方案 §6 补充与 §10.1 落地段。未做：真模型复跑 examples/team（专家全只读，冒泡路径真模型下无从触发）
-- [ ] **E4** 文档、CHANGELOG、0.1 发布准备（远程仓库与 npm 组织在此之前建，见"待 Boss"）—— 含每个包的 README（对外，英文）、CHANGELOG 首条、changeset、`pnpm build` 产物 import 自检、根 README 状态从 Pre-alpha 改 0.1；最后 `pnpm publish`
+- [ ] **E4** 0.1 发布 —— 2026-09-10 发前准备已做完：11 个包英文 README、changeset → 0.1.0 + CHANGELOG 首条、每包 LICENSE、`pnpm check:dist` 产物自检（15 个入口全过）、根 README 改 0.1.0（DECISIONS "E4" 行）。**剩下只等 Boss**：GitHub / npm 组织建好后补 package.json 的 `repository` / `homepage`，`git remote add` + push，`pnpm changeset publish`
 
 ## 0.1 之后（纯新增或有外部依赖）
 

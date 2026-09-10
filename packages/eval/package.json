@@ -1,6 +1,6 @@
 {
   "name": "@reins/eval",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "reins — eval harness: fixtures from event logs, recorded-tool replay, metrics, arm-vs-arm runner and the P8 gate",
   "license": "MIT",
   "type": "module",

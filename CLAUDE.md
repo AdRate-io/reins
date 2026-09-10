@@ -67,7 +67,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 
 ## 命令与仓库
 
-- `pnpm check`（typecheck + lint + test，提交前必绿）、`pnpm format`、`pnpm build`、`pnpm test`（vitest）。
+- `pnpm check`（typecheck + lint + test，提交前必绿）、`pnpm format`、`pnpm build`、`pnpm check:dist`（构建产物自检：每个 exports 入口可 import、`node:*` 只在 `/node` 子路径且前缀未被剥，发布前必跑）、`pnpm test`（vitest）。版本用 changesets：改公开行为就 `pnpm changeset`，发布前 `pnpm changeset version`；examples 是私有包不参与版本。
 - pnpm monorepo，Node ≥ 22，TS 严格模式 + `exactOptionalPropertyTypes`，Biome，tsup，changesets，MIT。提交约定 `CONTRIBUTING.md`，commit-msg 钩子校验。
 - 密钥在根目录 `模型API测试信息.md`（已 gitignore，不进提交）；spike 脚本自动从它读。
 

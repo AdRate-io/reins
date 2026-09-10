@@ -13,12 +13,14 @@ The loop is a few hundred lines you can read and copy. Nothing is hidden. Every 
 
 ## Status
 
-Pre-alpha. Under construction. See `docs/` once published.
+**0.1.0** — first public release. Eleven packages, ~32k lines of TypeScript, 695 tests, every default measured on real models (see `examples/eval`). Public types are frozen for the 0.1 line; breaking changes bump the minor version until 1.0.
+
+Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add reins @reins/lowering-pi @reins/brain` — Node ≥ 22, Bun, Deno and Cloudflare Workers.
 
 ## Try it
 
 ```bash
-pnpm install && pnpm build
+pnpm install && pnpm build && pnpm check:dist
 ANTHROPIC_API_KEY=… node examples/minimal/server.ts   # then open http://localhost:8787
 ```
 
@@ -42,7 +44,9 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 | `@reins/store-pg` | Postgres-backed stores; any `query(text, params)` client (pg, PGlite) |
 | `@reins/eval` | Eval harness: fixtures from event logs, recorded-tool replay, metrics, arm-vs-arm runner, the P8 gate |
 | `@reins/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
-| `reins` | `createAgent()` plus re-exports of core / server / ui-agui |
+| `@reins/tools-mcp` | MCP servers as one socket: tools bound per run, annotations as defaults, `/node` stdio transport |
+| `@reins/adapter-tanstack-ai` | the brain as a TanStack AI chat middleware, the log stays the single source of truth |
+| `reins` | `createAgent()` and `asTool()` plus re-exports of core / server / ui-agui |
 
 ## Memory and how to isolate it
 

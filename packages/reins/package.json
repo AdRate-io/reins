@@ -1,6 +1,6 @@
 {
   "name": "reins",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "reins — hand the reins to the model. createAgent() + re-exports of @reins/core, @reins/server and @reins/ui-agui",
   "license": "MIT",
   "type": "module",

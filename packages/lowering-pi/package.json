@@ -1,6 +1,6 @@
 {
   "name": "@reins/lowering-pi",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "reins — lowering layer on pi-ai: events ⇄ provider wire protocols (Anthropic Messages, OpenAI Responses)",
   "license": "MIT",
   "type": "module",

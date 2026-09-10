@@ -1,6 +1,6 @@
 {
   "name": "@reins/adapter-tanstack-ai",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "reins — the brain as a TanStack AI chat middleware: EventLog stays the source of truth, sockets drive onConfig / onChunk / tool hooks",
   "license": "MIT",
   "type": "module",

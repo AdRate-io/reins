@@ -1,6 +1,6 @@
 {
   "name": "@reins/brain",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "reins — brain: perception, compact, pins, spill, handoff, memory, approval, budget",
   "license": "MIT",
   "type": "module",
