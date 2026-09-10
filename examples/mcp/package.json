@@ -1,0 +1,23 @@
+{
+  "name": "@reins-examples/mcp",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "reins × MCP：一个 agent 同时挂进程内工具与 MCP 工具，MCP 配置按请求从文件读、改了下一次请求生效（P1）",
+  "scripts": {
+    "serve": "node server.ts",
+    "run": "node run.ts"
+  },
+  "dependencies": {
+    "@reins/brain": "workspace:*",
+    "@reins/lowering-pi": "workspace:*",
+    "@reins/store-sqlite": "workspace:*",
+    "@reins/tools-mcp": "workspace:*",
+    "reins": "workspace:*"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "@types/node": "^22.0.0",
+    "zod": "^4.2.0"
+  }
+}

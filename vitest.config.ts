@@ -17,6 +17,8 @@ export default defineConfig({
       { find: "@reins/store-sqlite", replacement: src("store-sqlite/src/index.ts") },
       { find: "@reins/store-pg", replacement: src("store-pg/src/index.ts") },
       { find: "@reins/adapter-tanstack-ai", replacement: src("adapter-tanstack-ai/src/index.ts") },
+      { find: "@reins/tools-mcp/node", replacement: src("tools-mcp/src/node.ts") },
+      { find: "@reins/tools-mcp", replacement: src("tools-mcp/src/index.ts") },
       { find: "reins", replacement: src("reins/src/index.ts") },
       { find: "@reins/ui-agui", replacement: src("ui-agui/src/index.ts") },
     ],

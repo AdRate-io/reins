@@ -14,8 +14,11 @@ import { readFile, rm, writeFile } from "node:fs/promises"
 
 const HERE = new URL("./", import.meta.url)
 const live = process.argv.includes("--live")
+/** 只跑最严档（P1 ③ 复核 tools-mcp 时省时间；结论判据本来就取最严档） */
+const onlyOld = process.argv.includes("--only-old")
 const FAKE_PORT = 8790
 const WORKER_PORT = 8791
+const MCP_PORT = 8792
 
 /** 从信息文件取 DeepSeek 官方 Anthropic 端口的 key 与 baseUrl。选它是因为直连 https、已实测五项全 200，
  *  不经 aireiter（网关会改写请求、吞消息）也不经 Claude 中转（那个是 http 明文，会污染运行时结论）。 */
@@ -111,12 +114,15 @@ async function runArch(configFile, label, vars) {
       },
     },
   )
-  const result = { label, load: null, fake: null, live: null, liveOpenai: null, 启动失败: null }
+  const result = { label, load: null, mcp: null, fake: null, live: null, liveOpenai: null, 启动失败: null }
   try {
     await waitReady(`http://127.0.0.1:${WORKER_PORT}/`, 180_000, w, `wrangler dev(${label})`)
     console.log("worker 就绪，开始探测")
     result.load = await probe("/load")
     console.log(`  /load  → HTTP ${result.load.status}`)
+    // P1 ③：tools-mcp 主入口在 workerd 里连本地假 MCP 服务器（list + call），不出外网
+    result.mcp = await probe("/mcp")
+    console.log(`  /mcp   → HTTP ${result.mcp.status}`)
     if (result.load.status === 200) {
       result.fake = await probe("/fake")
       console.log(`  /fake  → HTTP ${result.fake.status}`)
@@ -147,22 +153,30 @@ if (live)
     `真 API 档位：Anthropic 协议 → DeepSeek ${ds.base}（${ds.model ?? "deepseek-v4-flash"}）；OpenAI Responses 协议 → ${gw.base}（${gw.model}）。两个 key 已读入，不回显`,
   )
 
+const waitFor = (proc, marker, label) =>
+  new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error(`${label}启动超时\n${proc.err}`)), 15_000)
+    const iv = setInterval(() => {
+      if (proc.out.includes(marker)) {
+        clearInterval(iv)
+        clearTimeout(t)
+        res()
+      }
+    }, 100)
+  })
+
 console.log("起本地假 Anthropic 端点…")
 const fake = sh("node", ["fake-upstream.mjs"], { env: { ...process.env, FAKE_PORT: String(FAKE_PORT) } })
-await new Promise((res, rej) => {
-  const t = setTimeout(() => rej(new Error("假端点启动超时")), 10_000)
-  const iv = setInterval(() => {
-    if (fake.out.includes("FAKE_READY")) {
-      clearInterval(iv)
-      clearTimeout(t)
-      res()
-    }
-  }, 100)
-})
+await waitFor(fake, "FAKE_READY", "假端点")
 console.log(`  假端点就绪 http://127.0.0.1:${FAKE_PORT}`)
+console.log("起本地假 MCP 服务器（Streamable HTTP）…")
+const mcp = sh("node", ["fake-mcp.mjs"], { env: { ...process.env, MCP_PORT: String(MCP_PORT) } })
+await waitFor(mcp, "MCP_READY", "假 MCP 服务器")
+console.log(`  假 MCP 就绪 http://127.0.0.1:${MCP_PORT}/mcp`)
 
 const vars = {
   FAKE_BASE: `http://127.0.0.1:${FAKE_PORT}`,
+  MCP_BASE: `http://127.0.0.1:${MCP_PORT}`,
   ...(live
     ? {
         LIVE_KEY: ds.key,
@@ -178,17 +192,20 @@ const vars = {
 // 三档全跑（不因前一档通过就跳过）：我们要的是"从最严到最宽，边界在哪"的完整画像，
 // 而不是一个"能跑"的二值结论。最严档退回 2023 compat date，剥掉 Workers 后来默认给的 Node 内建。
 const old = await runArch("wrangler-old.toml", "最严档：2023 compat date，无 nodejs_compat", vars)
-const strict = await runArch("wrangler.toml", "严格档：2026 compat date，无 nodejs_compat", vars)
-const compat = await runArch("wrangler-compat.toml", "宽松档：nodejs_compat 开", vars)
+const strict = onlyOld
+  ? null
+  : await runArch("wrangler.toml", "严格档：2026 compat date，无 nodejs_compat", vars)
+const compat = onlyOld ? null : await runArch("wrangler-compat.toml", "宽松档：nodejs_compat 开", vars)
 
 fake.p.kill("SIGTERM")
+mcp.p.kill("SIGTERM")
 
 // ---- 结论 ----
 const verdict = (r) => {
   if (!r) return "未跑"
   if (r.启动失败) return `启动/等待失败`
   const s = (x) => (x === null ? "跳过" : x.status === 200 ? "通过" : `HTTP ${x.status}`)
-  return `load=${s(r.load)} fake=${s(r.fake)} live-anthropic=${s(r.live)} live-openai=${s(r.liveOpenai)}`
+  return `load=${s(r.load)} mcp=${s(r.mcp)} fake=${s(r.fake)} live-anthropic=${s(r.live)} live-openai=${s(r.liveOpenai)}`
 }
 console.log(`\n${"#".repeat(70)}\n# 结论\n${"#".repeat(70)}`)
 console.log(`最严档 2023，无 compat  : ${verdict(old)}`)
@@ -220,6 +237,7 @@ for (const r of [old, strict, compat]) {
   if (!r) continue
   for (const [k, v] of Object.entries({
     load: r.load,
+    mcp: r.mcp,
     fake: r.fake,
     live: r.live,
     liveOpenai: r.liveOpenai,

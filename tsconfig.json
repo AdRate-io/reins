@@ -11,8 +11,10 @@
     { "path": "packages/adapter-tanstack-ai" },
     { "path": "packages/ui-agui" },
     { "path": "packages/reins" },
+    { "path": "packages/tools-mcp" },
     { "path": "examples/minimal" },
     { "path": "examples/adrate" },
-    { "path": "examples/eval" }
+    { "path": "examples/eval" },
+    { "path": "examples/mcp" }
   ]
 }

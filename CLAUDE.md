@@ -11,7 +11,7 @@
 - **09-09～10** M2 用数字说话：建了 `@reins/eval`，把真实录像脱敏成 fixture，在 DeepSeek 与 Claude 两个模型族上跑了四轮一百多格对照。第一轮门槛未过——模型看到"已整理过一次"就认定旧细节丢了而拒答；我们没有降标准，而是给整理摘要附上被折叠清单并加了 `recall` 逐字取回，两族复测召回 100%、token 反降，**门槛 2 达成，compact 改为推荐默认**。发布前审查修了一个真安全漏洞（伪造审批事件可绕过审批）、补了会话级鉴权，盘了 96 个依赖的许可证，在最严格的 workerd 配置下实证了 edge 兼容。
 - **09-10** Boss 提出多角色 agent 团队场景，一起定了记忆隔离不加角色字段、子代理即工具、MCP 提前到 0.1 三项设计，随后项目进入维护阶段，文档换代到这一版。
 
-10 个包、约 3.1 万行 TypeScript、644 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.2 万行 TypeScript、665 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -59,10 +59,11 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
                           ↑           @reins/lowering-pi（pi-ai）
                           ├── @reins/store-sqlite / store-pg
                           ├── @reins/eval
-                          └── @reins/adapter-tanstack-ai
+                          ├── @reins/adapter-tanstack-ai
+                          └── @reins/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-依赖方向只能指向 core。外部依赖仅三处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、驱动由宿主传入（store-*）。规划中：`@reins/tools-mcp`（0.1，P1）。
+依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：`@reins/lowering-fetch`（0.1 后）。
 
 ## 命令与仓库
 
@@ -90,6 +91,8 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 
 - **`runLoop` 里的 `append` 是全包唯一分配 seq 的地方** — 任何在循环外自己 `log.append` 的代码（投影 emitted、handoff 开场）必须同步 `lastSeq`，漏一处后续整轮 `seq_conflict`。
 - **`resolveSocketContributions` 必须被 runLoop 起步与 server 恢复预校验共用** — configHash 按它算，两处一分叉，装了任何带静态贡献的脑子模块后合法续跑一律误判漂移（B6 修过一次）。
+- **它是 async，各 Socket 依次 await 不并发** — 同名去重以先到者为准，并发会让顺序不定、configHash 抖动；MCP 的 `tools/list` 就在这里发生（P1）。
+- **每次 run 起步都 append 一条 `tools_bound`，有增删再 append 一条模型可见说明** — 任何断言日志开头 / seq / lastSeq 的测试都要把它算进去；说明缺省开（`announceToolChanges: false` 关），首次 run 与工具表不变时不出。
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试（日志里不能有两份半截）；判不出的错误当非瞬断。改这条等于改日志语义。
 - **`beforeTool` 的 `defer` 可被已有批准略过，`block` 永远不能** — 批准只解决"要不要问人"，排在后面的 Socket 仍有权拦。
@@ -113,6 +116,14 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **并行工具之间不能夹说明文本，DeepSeek 400** — `awaiting` / `deferred` 那段代码是唯一防线，改 `to-request.ts` 先跑其测试。
 - **Anthropic 块级 cache 断点满 4 个时静默放弃补顶层断点** — 为避 400；感知说明殿后的 `automatic` 断点处置只在网关与 DeepSeek 实测，直连官方未测。
 - **⚠️ trust 标注尚未落地** — §14 与 filter.ts 注释都说"降级层包裹不可信内容"，lowering-pi 与 TanStack 适配器里都没有；TASKS R9，0.1 前补。
+
+### MCP（tools-mcp）
+
+- **连接懒建、跨 run 复用、断了在下一次需要时按配方重建一次，不做退避重试** — 服务器还在就无感恢复；服务器死了那次调用是 isError、run 起步 list 失败缺省抛（`optional: true` 才空表 + 告警）。
+- **注解只定缺省：readOnly → low、destructive → high + 要审批、其余 medium** — spec 说没写 destructiveHint 等于 true，我们刻意不把"没写"当破坏性，要严用 `override` 或 `approval({ unmatched: "ask" })`。approval 缺省 byRisk 也会把**未声明 risk 的进程内工具**当要问人（示例的 `today` 踩过），只读工具要明说 `risk: "low"`。
+- **`listTools` 必须 `cacheMode: "bypass"`** — client 2.0 缓存列表结果，不绕过拿不到服务器此刻的表。
+- **一个 `WebStandardStreamableHTTPServerTransport` 只服务一个会话** — 自己搭的服务器要用 `createMcpHandler(factory)`，业务状态放工厂外；单客户端绿灯说明不了会话管理（踩坑 2026-09-10）。
+- **模型侧工具名改写为 `^[A-Za-z0-9_-]{1,64}$`** — MCP 名字可带点号，不改写请求 400；调用按原名。
 
 ### 服务端与总包
 
@@ -142,7 +153,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **探针里脑子工具保留、宿主工具清空** — 装 compact / spill 的臂能 `recall` / `fetch_blob`，基线臂不能；召回这一格对两臂不是同一张卷子，DECISIONS 有意为之。
 - **门禁第四条 governance 是候选自己前后比**，"双方都无预埋事实视为通过"——四条里两条可能在无信息时亮绿。
 
-### 工作方法（从 18 条踩坑提炼，见 `docs/踩坑记录.md`）
+### 工作方法（从 19 条踩坑提炼，见 `docs/踩坑记录.md`）
 
 - **行为正确性只能用真模型验，机制正确性才用假模型** — "最近一条用户消息被折进摘要""模型数不准自己的字数"这类缺陷 ScriptedLowering 永远暴露不了。
 - **给模型加"会消失"的机制，就要同时给一条"拿得回来"的路** — 只删说明、不给取回，召回一定掉。
@@ -150,6 +161,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **客户端可控的输入在入口按白名单校验：事件类型、字符集，每个信任边界各一道** — 不能靠下游"应该不会传这个"。
 - **中止检查放在每一个产生副作用的动作之前**，不是循环顶部一次。
 - **第三方兼容端点先做忠实度体检再用**（暗号法 + 让模型逐条复述看到的对话）；**探测脚本的通过判据永远不是状态码**，逐项核对产出内容。
+- **自己搭的示例 / 测试服务器至少让两个客户端先后连一遍** — 单客户端绿灯说明不了会话管理；示例里的服务器写法会被照抄，必须是生产形态。
 
 ### 上游行为（spikes 实测）
 
@@ -157,4 +169,6 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **pi-ai 0.85.1 没有 system 角色** — 注入内容被当 user 发出，靠 `onPayload` 改写；pi-ai 的 `terminated` 是瞬断（E3 三次、输出 0 token）。
 - **Workers 新 compat date 缺省带部分 Node 兼容** — 只跑新 date 会高估 edge 结论，判据取 2023 date 无 flag。
 - **"HTTP 200 假通过"抓过两回** — 真打上游时必须逐项核对产出内容，不能只看状态码。
+- **MCP client 2.0.0 主入口零 `node:*`，靠 `_shims` 条件导出选校验器（workerd → cf-worker，node → Ajv）；`./stdio` 才带 node:process / cross-spawn** — 最严档 workerd 实测 list + call 通过。
+- **aireiter 的 Claude 端点对含历史工具调用的请求回 "stream ended without a stop reason"** — 网关改写截断，不是协议拒绝；协议接受度看 DeepSeek 直连与 OpenAI Responses（历史含已移除工具的两个变体都接受）。
 

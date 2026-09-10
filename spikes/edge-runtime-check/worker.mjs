@@ -17,6 +17,7 @@
  */
 import { createCoreEvent, createCoreRegistry } from "../../packages/core/dist/index.js"
 import { LOSS_MATRIX, PiAiLowering } from "../../packages/lowering-pi/dist/index.js"
+import { httpTransport, mcpTools } from "../../packages/tools-mcp/dist/index.js"
 
 const registry = createCoreRegistry()
 
@@ -144,11 +145,35 @@ async function probeStream(baseUrl, id, apiKey, label, api = "anthropic-messages
   return { ok: true, 事件草稿数: drafts.length, 草稿: drafts, 收尾: r.value }
 }
 
+/**
+ * P1 ③：@reins/tools-mcp 主入口（Streamable HTTP）在 workerd 里真连一台 MCP 服务器：
+ * 起步 tools/list → 翻成 reins Tool → 调 echo → 翻结果。走的是官方 MCP client 的 workerd 条件导出（_shims）。
+ */
+async function probeMcp(base) {
+  const socket = mcpTools({ transport: httpTransport({ url: `${base}/mcp` }) })
+  const tools = await socket.tools({ log: null, model: { provider: "probe", id: "probe" }, hostTools: [] })
+  const echo = tools.find((t) => t.name === "echo")
+  const result = await echo.execute(
+    { text: "from-workerd" },
+    { sessionId: "probe", toolCallId: "c1", log: null, emit() {} },
+  )
+  await socket.close()
+  return {
+    ok: true,
+    工具: tools.map((t) => ({ name: t.name, risk: t.risk, needsApproval: t.needsApproval ?? null })),
+    echo结果: result,
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
     try {
       if (url.pathname === "/load") return json(await probeLoad())
+      if (url.pathname === "/mcp") {
+        if (!env.MCP_BASE) return json({ ok: false, 原因: "未设 MCP_BASE" }, 400)
+        return json(await probeMcp(env.MCP_BASE))
+      }
       if (url.pathname === "/fake") {
         if (!env.FAKE_BASE) return json({ ok: false, 原因: "未设 FAKE_BASE" }, 400)
         return json(await probeStream(env.FAKE_BASE, "fake-model", "sk-test", "fake"))
@@ -173,7 +198,7 @@ export default {
           ),
         )
       }
-      return json({ ok: true, 路由: ["/load", "/fake", "/live", "/live-openai"] })
+      return json({ ok: true, 路由: ["/load", "/mcp", "/fake", "/live", "/live-openai"] })
     } catch (e) {
       // 兼容性问题基本都在这里现形：把 name / message / stack 全带回去，便于判断是哪一层炸的
       return json(

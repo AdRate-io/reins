@@ -10,7 +10,7 @@
 
 | 导出组 | 内容 |
 | --- | --- |
-| `events/` | 事件壳 `EventBase` / `Event`、15 种 `core.*` 载荷、`uuidv7`、schema 注册表与 upcast |
+| `events/` | 事件壳 `EventBase` / `Event`、16 种 `core.*` 载荷、`uuidv7`、schema 注册表与 upcast |
 | `store/` | `EventLog` / `BlobStore` / `MemoryStore` 三接口、内存实现、`readTimeline`（读时升级的唯一正确读法） |
 | `projection/` | 投影策略链（过滤 / 折叠 / 钉住 / 裁剪）、token 粗估、被折叠工具结果清单 |
 | `lowering/` | 降级层**接口与有损矩阵类型**，只有类型，无实现 |
@@ -68,7 +68,7 @@
 | --- | --- |
 | `events/index.ts` | 汇总导出 base / core / create / id / registry |
 | `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image）、各 actor 的默认信任 `DEFAULT_TRUST` |
-| `events/core.ts` | 15 种内置事件的载荷 interface、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite） |
+| `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite） |
 | `events/create.ts` | `EventDraft`（无 id/seq/at/sessionId 的草稿）与 `createEvent` / `createCoreEvent` 工厂：补齐壳字段、从注册表取 schemaVersion |
 | `events/id.ts` | 自实现 `uuidv7`（RFC 9562，只用 `crypto.getRandomValues`，不引依赖） |
 | `events/registry.ts` | `EventSchemaRegistry`：登记 type → 当前版本 + 逐级 upcaster，`read()` fail-closed（6 种 `SchemaError` code）；`CORE_SCHEMAS`（全部 v1）与 `createCoreRegistry()` |
@@ -91,7 +91,7 @@
 | --- | --- |
 | `projection/index.ts` | 汇总导出全部策略与执行器 |
 | `projection/types.ts` | `ProjectionStrategy` / `ProjectionContext`（只读上下文 + `nextSeq()`）/ `ProjectionStep`（events + emitted）/ `ProjectionStats` / `ProjectionResult` |
-| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（8 种运维事件）+ 宿主可覆盖的 `isVisible` |
+| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（9 种运维事件，含 P1 的 `tools_bound`）+ 宿主可覆盖的 `isVisible` |
 | `projection/fold.ts` | 策略 2 折叠：`covers` / `keptBy` / `isPinNote` / `supersededIds` 幸存判定，`foldCompactions` 把摘要插到**被覆盖区间的位置** |
 | `projection/pins.ts` | 策略 3 钉住重注入：把幸存的被覆盖事件挪到覆盖它的最新可见 compaction 之后（去掉本策略投影仍正确，只是顺序不好读） |
 | `projection/truncate.ts` | 策略 5 预算裁剪兜底：`splitTurns` 切轮、三条切点硬规则、`defaultThresholdSummary` 机械摘要（并入旧摘要 + 用户原话 + 被裁工具结果清单），新造 `compaction(decidedBy=threshold)` 经 `emitted` 交出 |
@@ -114,10 +114,11 @@
 | 文件 | 职责 |
 | --- | --- |
 | `loop/index.ts` | 汇总导出 fork / retry / run-loop / state / static / tools / types |
-| `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`；`RunResult` 四态、`SerializedRunState`、`Interruption`、`LoopConfig`（全部循环开关） |
+| `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`；`RunResult` 四态、`SerializedRunState`、`Interruption`、`LoopConfig`（全部循环开关，P1 加 `announceToolChanges`）；`StaticContribution<T>` 的函数形态可返回 Promise（P1） |
 | `loop/run-loop.ts` | `runLoop` 主体（709 行）：append/pause/fail 三个基础动作、恢复与审批校验、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`、`inputDraft` 白名单 |
 | `loop/state.ts` | run 状态：`pendingToolCalls`、`computeConfigHash` / `computePendingDigest`（SHA-256）、`serializeRunState` / `signRunState` / `verifyRunState`（HMAC-SHA256 + 常数时间比较）、`validateResume` 与 8 种 `RunStateError` |
-| `loop/static.ts` | `resolveSocketContributions`：宿主工具 + 各 Socket 静态工具（同名宿主优先）、系统提示按注册顺序拼接；循环起步与 server 预校验共用，configHash 才对得上 |
+| `loop/static.ts` | `resolveSocketContributions`（P1 起 **async**，各 Socket 依次 await 而非并发）：宿主工具 + 各 Socket 静态工具（同名宿主优先）、系统提示按注册顺序拼接；循环起步与 server 预校验共用，configHash 才对得上 |
+| `loop/tools-bound.ts` | P1 纯函数：`lastToolsBound`、`diffToolNames`、`renderToolChangeNote`（给模型的英文文案）、`toolsBoundDrafts`（起步要 append 的 `tools_bound` + 有增删时的 `system_note(kind=host, meta.toolsChanged)`）；runLoop 与 TanStack 适配器共用，两处文案与判定不分叉 |
 | `loop/tools.ts` | 工具纯函数：`defineTool`（擦类型以便放进 `Tool[]`）、`toolSpecOf`、`normalizeToolOutput`（string / ContentPart[] / {content,isError} / undefined / 其余 JSON）、`errorMessageOf` |
 | `loop/retry.ts` | 瞬断判定与退避：`TRANSIENT_PATTERNS`（网络码 / terminated / 超时 / 过载 / 限流 / 5xx）、`isTransientFailure`、`backoffDelayMs`（base×2^(n−1) 封顶，无抖动以便回放）、`defaultSleep`、`resolveRetry` |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |
@@ -147,8 +148,8 @@
 
 ### 一、一次 `runLoop` 从起步到四态（`loop/run-loop.ts`）
 
-1. **起步（不写日志）**：`resolveSocketContributions(cfg)` 把宿主工具与各 Socket 的静态工具、系统提示合成整个 run 不变的两份；`computeConfigHash` 按它们算摘要；`inputDraft(cfg.input)` 过白名单；`readTimeline` 把整条日志过一遍注册表拿到 `lastSeq` —— 以上任一步失败都在写任何东西之前抛。
-2. **恢复与审批（校验先于落笔）**：给了 `resume` 就 `validateResume`（形状→会话→签名→configHash→日志不短于状态→pending 对账），`decisions` 逐条确认指向 pending 调用，全过才 append `run_resumed` 与各条 `approval_decision`。
+1. **起步（不写日志）**：`await resolveSocketContributions(cfg)`（可异步：MCP 在此 `tools/list`）把宿主工具与各 Socket 的静态工具、系统提示合成整个 run 不变的两份；`computeConfigHash` 按它们算摘要；`inputDraft(cfg.input)` 过白名单；`readTimeline` 把整条日志过一遍注册表拿到 `lastSeq` —— 以上任一步失败都在写任何东西之前抛。
+2. **恢复与审批（校验先于落笔）**：给了 `resume` 就 `validateResume`（形状→会话→签名→configHash→日志不短于状态→pending 对账），`decisions` 逐条确认指向 pending 调用，全过才 append `run_resumed` 与各条 `approval_decision`。 随后 **append 工具表快照**（P1）：一条模型不可见的 `core.tools_bound { toolNames, configHash }`；与日志里上一条比对有增删且 `announceToolChanges !== false`（缺省开）则再 append 模型可见的 `system_note(kind=host)` 列出 Added / Removed，首次 run 不出。
 3. **落新输入**：`input` 直接 append，哪怕日志里还有未完成的 tool_call —— 顺序由降级层去满足厂商协议，日志不动。
 4. **每轮开头**：读时间线 → 若 `signal.aborted` 立即 `pause("host")`（先于补齐 pending）→ `pendingToolCalls` 非空则先 `executeToolCalls` 补齐、再走一次 `endTurn` 收尾（R2）→ 否则检查 `maxTurns` → `turns++`。
 5. **投影与钩子**：`project(timeline)` 得到 view 与 `emitted`；emitted 先 `log.append` 再问模型（模型可见 ⟺ 已记录）；各 Socket 的 `beforeModel` 顺序合并补丁，其间 `ctx.emit` 的草稿 `flush` 落库并（非运维类型）并进本轮视图。
@@ -212,5 +213,5 @@
 2. **§7 的 `TurnContext` 代码块 `budget` 只列 6 个字段** —— 代码有 8 个，多出 `targetTokens`（阈值兜底触发点）与 `lastUsage`（最近一次请求真实用量）。这两个字段在 §9.1 / §9.8 的实现段里有描述，只是 §7 的代码块没同步。
 3. **§4 事件表里 `budget_usage` 载荷写"tokens、toolCalls、wallMs、remaining"** —— 代码还有 B8 加的可选 `contextEstimate`（§7 与 §9.8 正文都提到了，表格未同步）。
 4. **§10 的 `Tool` 代码块把 `side` 写成必填** —— 代码里 `side?` 可选，缺省 server；同段的 `ToolSource = inProcess | mcp | openapi` 在 core 里并不存在（工具来源由宿主与 `@reins/tools-mcp` 组装）。
-5. **§10 与 DECISIONS #96 已写入的 `core.tools_bound` 事件尚未落地** —— `events/core.ts` 目前只有 15 种 `core.*`，无 `tools_bound`；属计划中（MCP P1 任务），不是遗漏。
+5. ~~`core.tools_bound` 事件尚未落地~~ —— 2026-09-10 P1 已落地：`events/core.ts` 16 种，`loop/tools-bound.ts` 纯函数，每次 run 起步一条快照、有增删再一条模型可见说明。
 6. **§5 的 `EventLog.append(events: Event[])`** —— 代码签名是 `readonly Event[]`；同理 §8 描述的策略编号（1 过滤 / 2 折叠 / 3 钉住 / 4 感知注入已划掉 / 5 裁剪）在代码注释里原样保留，所以 `truncate.ts` 自称"策略 5"而默认链只有四步，读代码时不必疑惑。

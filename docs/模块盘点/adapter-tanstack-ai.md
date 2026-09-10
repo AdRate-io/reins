@@ -12,7 +12,7 @@ reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddleware
 options: { sessionId, log, blobs?, memory?, sockets?, principal?,
            capabilities: Partial<LoweringCapabilities> & { contextWindow: number },
            registry?, projection?{strategies,estimate,reserveTokens},
-           onLandings?, onEvent?, onHandoff?, emitCustomEvents?, warn?, now?, newId? }
+           onLandings?, onEvent?, onHandoff?, emitCustomEvents?, warn?, announceToolChanges?, now?, newId? }
 ```
 
 **循环归 TanStack，日志仍是唯一真源。** 轮次推进、工具执行、中断暂停全由 TanStack 引擎做；reins 不复制一份循环，只在钩子上"读日志 → 投影 → 覆盖模型入参"和"把模型输出写回日志"。TanStack 自己的 `messages` 数组只服务客户端 UI 与它的内部对账（pending 调用、审批状态），模型真正看到的是 `onConfig` 返回的 `providerMessages`。
@@ -70,7 +70,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 ## 3 核心流程
 
 1. **init**（`onConfig(ctx.phase === "init")` → `initRun`）：`readTimeline(log, sessionId, { registry })` 先把整条日志过一遍注册表——读不出来的事件在写任何东西之前就拒绝（fail-closed）。
-2. 宿主工具 `config.tools` 逐个 `viewOfTanstackTool` 成只读视图，连同 `sockets` 交给 `resolveSocketContributions`，拿回"视图 + 脑子工具"的 `baseTools` 与脑子的规则提示片段；`systemPrompts = [...config.systemPrompts, brainPrompt?]`——宿主原有条目（可能带 `cache_control`）一个字不动，脑子片段追加成最后一条，整个 run 逐字不变。
+2. 宿主工具 `config.tools` 逐个 `viewOfTanstackTool` 成只读视图，连同 `sockets` 交给 `await resolveSocketContributions`（P1 起 async），拿回"视图 + 脑子工具"的 `baseTools` 与脑子的规则提示片段；`systemPrompts = [...config.systemPrompts, brainPrompt?]`——宿主原有条目（可能带 `cache_control`）一个字不动，脑子片段追加成最后一条，整个 run 逐字不变。 随后 append 一条 `core.tools_bound`（P1，与 runLoop 共用 `toolsBoundDrafts`；configHash 只按脑子片段算，与 runLoop 的不可比、只在本适配器内前后自比），工具表与上一条相比有增删且 `announceToolChanges !== false` 则再 append 模型可见说明。
 3. **导入客户端新输入**：日志为空则 `config.messages` 整段接管，否则只取 `trailingUserMessages(config.messages)`（末尾连续的 user），经 `importModelMessages` 变成草稿 `append` 入日志；片段翻不动时 `warn`。init 返回 `{ tools: tanstackToolsOf(...), systemPrompts }`。
 4. **每轮 beforeModel**（`onConfig(phase = "beforeModel" | "structuredOutput")` → `beforeModel`）：重读日志 → `buildTurn` 里 `project()` 按 `capabilities.contextWindow` 投影（策略新造的事件先 `log.append`，保证"模型可见 ⟺ 已记录"）→ 造 `TurnContext`（含 budget：`targetTokens` / `used` / `tokensSpent` / `turns` / `toolCalls` / `wallMs` / `lastUsage`）。
 5. 依次 `sock.beforeModel(tctx)`，补丁可换 `events` / `tools` / `systemPrompt`；随后 `flush` 把钩子 `emit` 的草稿落日志，并把其中非 `DEFAULT_MODEL_INVISIBLE_TYPES` 的事件追加进本轮可见集——**emit 的说明当轮就能被模型看见**。

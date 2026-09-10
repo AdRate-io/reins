@@ -7,12 +7,12 @@
 
 ## 状态一句话
 
-M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：10 个包、约 3.1 万行 TS、644 个用例全绿；PRD §7 门槛 2 两族达成，compact 改为推荐默认。剩下 0.1 发布前的四项与发布本身。
+M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、665 个用例全绿；PRD §7 门槛 2 两族达成，compact 改为推荐默认；P1 MCP 包已落地。剩下 0.1 发布前的三项与发布本身。
 
 ## 0.1 发布前（按顺序）
 
 - 2026-09-10 Boss 设想"多角色 agent 团队"（各角色自己的系统提示 / 工具 / 记忆，会话在数据库）后追加，设计见技术方案 §9.6 隔离设计、§10 MCP、§10.1 子代理即工具；已讨论并记录决策，未实施：
-  - [ ] **P1 `@reins/tools-mcp`**（0.1 必备，Boss 定：自用环节要一个能力完整的库，MCP 提前到 E4 之前）—— ① 核实 `@modelcontextprotocol/client@2.0.0` 的导出面（Client、Streamable HTTP 与 stdio 传输各在哪个入口、`node:*` 依赖分布），结论进 DECISIONS；② `mcpTools(options): Socket`，`tools` 为静态贡献函数：run 起步 `tools/list` 一次 → `Tool[]`，`tools/call` 结果 content 翻 ContentPart、isError 直通，annotations → risk / needsApproval 缺省；③ 主入口只 Streamable HTTP、`/node` 子路径才有 stdio，主入口零 `node:*`（沿用 `spikes/edge-runtime-check` 最严档判据跑一遍）；④ 用官方示例服务器或自写最小服务器做集成测试：列表、调用、isError、断连不崩、`listChanged` 只影响下次 run；⑤ 与 spill / approval 同装跑一条：超长结果外溢、destructiveHint 工具停下等审批。⑥ **免重启**：示例里 MCP 配置从库（或文件）按请求读，改配置后下一次请求生效，进程不重启；同时写一条测试锁住"暂停中换工具表 → 续跑被判配置漂移、`allowConfigDrift` 可放行"的既有行为并在 README 说明；⑦ **工具表变化告知模型**（core 小改，Boss 定默认开）：新事件 `core.tools_bound`（模型不可见）每次 run 起步一条，与上一条比对有增删则追加模型可见的 `system_note(kind=host)` 列出增删的工具名；首次 run 不出说明；事件类型带 schemaVersion 进注册表；⑧ **实测**两条协议在历史含已移除工具的调用时是否接受请求，结论进 DECISIONS 并决定平台策略是否要"删工具新会话生效"的不对称规则。验收：examples 里一个 agent 同时挂进程内工具与 MCP 工具跑通一条真实任务；README 写清连接生命周期、免重启的原理与"不做动态注册"
+  - [x] **P1 `@reins/tools-mcp`** —— 2026-09-10 完成：新包 20 用例 + core `tools_bound` 与静态贡献异步化，665 用例全绿；官方 client 2.0.0 主入口零 `node:*`，最严档 workerd list + call 通过；`examples/mcp` 用 DeepSeek 跑通真实任务（进程内 + MCP 工具同表，同会话 3 次 run、9 次工具调用、写后回读，录像 `recordings/restock-below-threshold.jsonl`）；两条协议对历史含已移除工具均接受，平台不需要不对称规则。细节：`模块盘点/tools-mcp.md`、DECISIONS 2026-09-10 四行、踩坑记录"一个 MCP HTTP 服务端传输只服务一个会话"
   - [ ] **P2 memory 隔离收口**（0.1，小）：`PgMemoryStore` / `SqliteMemoryStore` 表名可配置（缺省 `reins_memory`，`pgStores` / `sqliteStores` 透传，建表语句同步）；README 记忆一节写三层隔离与三段示例（共用 / 按角色 / 按角色再按用户）。挂载表（共享只读 + 私有可写）**不做**，等团队场景真出现"同时挂两块"再做
   - [ ] **P3 子代理手写范式**（0.1，文档 + 示例，不改 core）：`examples/team/` 两个角色（编排者 + 专家）共用一套 pg 存储、各自 systemPrompt / tools / 记忆前缀；专家以 `Tool` 形式挂在编排者工具表上，逐条示范 §10.1 的五件事（联停与否由使用者定：示例同时给"父停子停"与"接力不联停"两种写法、principal、sessionId 关联、子用量汇总、子 paused 的处理）；跑一条真实任务留录像。验收：回放父会话能按记录的 sessionId 找到子会话
   - 0.2（发布后，已写进 §16 M3）：`asTool(agent, opts)` 助手 —— 审批冒泡（`Interruption.kind="subagent"`，子状态随父状态序列化）与预算合算；memory 挂载表按需
@@ -21,6 +21,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：10 个包、约 3.1 万
 
 ## 0.1 之后
 
+- [ ] tools-mcp 后续（0.1 后）：官方 Anthropic 直连对"历史含已移除工具"的接受度未测（无 key；DeepSeek Anthropic 协议与 OpenAI Responses 已实测接受）；OAuth 流程、sampling / elicitation / resources / prompts 待真需求
 - [ ] R3（0.1 后）`loop/retry.ts` 瞬断正则偏宽：`timeout` / `409` 等在整段消息上匹配，含这些字样的 4xx 参数错也会被重试
 - [ ] R4（0.1 后）`projection/types.ts` 注释"emitted 冲突则重跑投影"与 runLoop 不符（实际直接抛 StoreError）：改注释或真做重跑
 - [ ] R5（0.1 后）TanStack 适配器导入客户端消息无幂等键，网络重试重发同一条 user 消息会入日志两次
