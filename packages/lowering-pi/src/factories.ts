@@ -24,6 +24,8 @@ export interface BoundModelOptions {
   midConversationSystem?: boolean
   fetch?: typeof globalThis.fetch
   headers?: Record<string, string | null>
+  /** trust 标注（§14）：untrusted 内容包 <untrusted> 标记。缺省开；关掉是宿主自担风险 */
+  trustMarkers?: boolean
 }
 
 function bound(
@@ -55,6 +57,7 @@ function bound(
     ...(opts.requestOptions ? { requestOptions: () => opts.requestOptions ?? {} } : {}),
     ...(opts.fetch ? { fetch: opts.fetch } : {}),
     ...(opts.headers ? { headers: opts.headers } : {}),
+    ...(opts.trustMarkers !== undefined ? { trustMarkers: opts.trustMarkers } : {}),
   }
   return { model: { provider, id }, lowering: new PiAiLowering(loweringOpts) }
 }

@@ -49,6 +49,11 @@ export interface PiAiLoweringOptions {
    * 缺省 "automatic"（去掉块级断点、请求顶层补自动缓存）；"previous-user" / "drop" 供对照或特殊上游。
    */
   midSystemCacheBreakpoint?: MidSystemCacheBreakpoint
+  /**
+   * trust 标注（技术方案 §14）：trust=untrusted 的事件（工具输出、外部内容）翻译时包上
+   * `<untrusted source="tool:<name>">…</untrusted>`，事件本身不动。缺省 true；传 false 关掉是宿主自担提示注入风险
+   */
+  trustMarkers?: boolean
 }
 
 /** 对外暴露的请求体：pi-ai Context 的结构描述，不引用 pi-ai 类型 */
@@ -96,6 +101,7 @@ export class PiAiLowering implements Lowering<PiLoweredPayload> {
       capabilities,
       ...(input.tools ? { tools: input.tools } : {}),
       ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+      ...(this.opts.trustMarkers !== undefined ? { trustMarkers: this.opts.trustMarkers } : {}),
     })
     return { model: input.model, capabilities, landings, payload: { api: model.api, context } }
   }

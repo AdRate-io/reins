@@ -228,8 +228,16 @@ describe("PiAiLowering — Anthropic Messages", () => {
     expect(assistant1[0]?.signature).toBe("sig-1")
     expect(assistant1[1]).toMatchObject({ id: "toolu_1", input: { city: "上海" } })
 
-    const toolResultMsg = body.messages[3]?.content as { type: string; tool_use_id: string }[]
+    const toolResultMsg = body.messages[3]?.content as {
+      type: string
+      tool_use_id: string
+      content: unknown
+    }[]
     expect(toolResultMsg[0]).toMatchObject({ type: "tool_result", tool_use_id: "toolu_1" })
+    // trust 标注（§14）：工具输出在线协议里被 <untrusted source="tool:get_weather"> 包住
+    const wire = JSON.stringify(toolResultMsg[0]?.content)
+    expect(wire).toContain('<untrusted source=\\"tool:get_weather\\">')
+    expect(wire).toContain("</untrusted>")
 
     // 中途 system：紧跟 user（tool_result），后接 assistant；标记不上线
     const sys = body.messages[4] as { content: { type: string; text: string }[] }

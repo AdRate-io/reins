@@ -12,14 +12,18 @@
  *
  * 入口 `importModelMessages`：客户端发来的 ModelMessage → 事件草稿，首次接入或续接新用户消息时用。
  */
-import type {
-  CoreEvent,
-  Event,
-  EventDraft,
-  LandingRecord,
-  ModelRef,
-  ContentPart as ReinsPart,
-  ToolCallPayload,
+import {
+  type CoreEvent,
+  type Event,
+  type EventDraft,
+  type LandingRecord,
+  type ModelRef,
+  markUntrusted,
+  markUntrustedText,
+  needsUntrustedMark,
+  type ContentPart as ReinsPart,
+  type ToolCallPayload,
+  untrustedSourceOf,
 } from "@reins/core"
 import type { ModelMessage, ToolCall as TanstackToolCall } from "@tanstack/ai"
 import { fromTanstackContent, toTanstackContent } from "./content.js"
@@ -27,6 +31,8 @@ import { fromTanstackContent, toTanstackContent } from "./content.js"
 export interface ToModelMessagesOptions {
   /** 当前请求的模型；thinking 签名只对同一来源回放 */
   model: ModelRef
+  /** trust 标注（§14）：untrusted 的内容包 <untrusted source=…>，与 lowering-pi 同一份 core 函数。缺省 true */
+  trustMarkers?: boolean
 }
 
 export interface LoweredMessages {
@@ -55,6 +61,7 @@ interface AssistantGroup {
  * user 角色说明后移到同批工具结果之后，落点记录里注明。
  */
 const DEFERRED_NOTE = "已后移到同批工具结果之后（工具结果必须紧跟调用）"
+const ESCAPED_NOTE = "不可信内容里含提前闭合的 </untrusted，已转义"
 
 interface DeferredNote {
   msg: ModelMessage
@@ -71,6 +78,19 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
   /** 已下发 tool_call、还没见到结果的调用 id；非空时 user 角色说明要后移 */
   const awaiting = new Set<string>()
   const deferred: DeferredNote[] = []
+  const trustMarkers = opts.trustMarkers !== false
+  /** trust 标注：untrusted 的片段包上标记，事件本身不动；内容里有提前闭合被转义时 escaped=true（落点记 lossy） */
+  const content = (
+    e: Event,
+    parts: readonly ReinsPart[],
+  ): { parts: readonly ReinsPart[]; escaped: boolean } =>
+    trustMarkers && needsUntrustedMark(e)
+      ? markUntrusted(parts, untrustedSourceOf(e))
+      : { parts, escaped: false }
+  const text = (e: Event, s: string): { text: string; escaped: boolean } =>
+    trustMarkers && needsUntrustedMark(e)
+      ? markUntrustedText(s, untrustedSourceOf(e))
+      : { text: s, escaped: false }
 
   const land = (e: Event, kind: LandingRecord["kind"], landing: string, note?: string) => {
     landings.push(
@@ -127,14 +147,23 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
     switch (e.type) {
       case "core.user_message": {
         flush()
-        const msg: ModelMessage = { role: "user", content: toTanstackContent(e.payload.content) }
+        const c = content(e, e.payload.content)
+        const msg: ModelMessage = { role: "user", content: toTanstackContent(c.parts) }
         // 工具结果还没到齐就来了用户消息（续跑带新输入、进程死亡后再发）：后移到同批结果之后，与 lowering-pi 同一规则
         if (awaiting.size > 0) {
-          deferred.push({ msg, event: e, landing: "user", note: "用户消息落在工具调用与结果之间" })
+          deferred.push({
+            msg,
+            event: e,
+            landing: "user",
+            note: c.escaped
+              ? `用户消息落在工具调用与结果之间；${ESCAPED_NOTE}`
+              : "用户消息落在工具调用与结果之间",
+          })
           break
         }
         messages.push(msg)
-        land(e, "exact", "user")
+        if (c.escaped) land(e, "lossy", "user", ESCAPED_NOTE)
+        else land(e, "exact", "user")
         break
       }
 
@@ -177,21 +206,25 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
 
       case "core.tool_result": {
         flush()
+        const c = content(e, e.payload.content)
         const msg: ModelMessage = {
           role: "tool",
           toolCallId: e.payload.toolCallId,
           name: e.payload.name,
-          content: toTanstackContent(e.payload.content),
+          content: toTanstackContent(c.parts),
         }
         if (e.payload.isError) {
-          msg.error = textOf(e.payload.content)
+          msg.error = textOf(c.parts)
           land(
             e,
             "lossy",
             "tool-error-field",
-            "isError 只落在 ModelMessage.error 字段，是否告知模型取决于适配器",
+            c.escaped
+              ? `isError 只落在 ModelMessage.error 字段，是否告知模型取决于适配器；${ESCAPED_NOTE}`
+              : "isError 只落在 ModelMessage.error 字段，是否告知模型取决于适配器",
           )
-        } else land(e, "exact", "tool")
+        } else if (c.escaped) land(e, "lossy", "tool", ESCAPED_NOTE)
+        else land(e, "exact", "tool")
         messages.push(msg)
         awaiting.delete(e.payload.toolCallId)
         if (awaiting.size === 0) releaseDeferred()
@@ -202,7 +235,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
         flush()
         note(
           e,
-          { role: "user", content: framedSystemNote(e.payload.kind, e.payload.text) },
+          { role: "user", content: framedSystemNote(e.payload.kind, text(e, e.payload.text).text) },
           "user-role",
           "TanStack 消息无 system 角色，以 <system_note> 标签包住走 user",
         )
@@ -212,7 +245,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
         flush()
         note(
           e,
-          { role: "user", content: `${COMPACTION_PREFIX}${e.payload.summary}` },
+          { role: "user", content: `${COMPACTION_PREFIX}${text(e, e.payload.summary).text}` },
           "user-text",
           "摘要以 user 角色文本呈现",
         )

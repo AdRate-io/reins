@@ -124,4 +124,4 @@
 
 **不读环境变量** — `apiKey` 是必填的 `(provider) => string | undefined` 回调，工厂的 `apiKey` 也必填（T7 / T14，DECISIONS 2026-09-08）。这样同一份代码能跑在没有 `process.env` 的 Workers / Deno 上。边界：宿主自己决定 key 从哪来。
 
-**trust 标注的归属** — DECISIONS T6 与 `packages/core/src/projection/filter.ts` 的注释都把"不可信内容加显式标记"划给降级层（投影不篡改 payload）。边界：**本包代码目前没有实现它** —— `src/` 全文无 `trust` 字样，`toPiContent` 原样搬运 `tool_result` 的内容片段，不做包裹。
+**trust 标注在翻译那一刻做，逻辑不在本包（R9）** — `eventsToContext` 对 `trust === "untrusted"` 的 user_message / tool_result 片段、system_note / compaction 文本调 core 的 `markUntrusted` / `markUntrustedText`，包成 `<untrusted source="tool:<name>">…</untrusted>`，事件本身不动；内容里的提前闭合被转义时落点记 lossy 并说明。为什么：两条降级路线要输出一模一样的标记，只能共用一份纯函数（T6 把它划给降级层，实现放 core）。边界：`trustMarkers: false`（`ToContextInput` / `PiAiLoweringOptions` / `BoundModelOptions` 三层透传）关掉；不加解释性文字，宿主要强调"数据不是指令"写进 systemPrompt。

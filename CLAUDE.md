@@ -11,7 +11,7 @@
 - **09-09～10** M2 用数字说话：建了 `@reins/eval`，把真实录像脱敏成 fixture，在 DeepSeek 与 Claude 两个模型族上跑了四轮一百多格对照。第一轮门槛未过——模型看到"已整理过一次"就认定旧细节丢了而拒答；我们没有降标准，而是给整理摘要附上被折叠清单并加了 `recall` 逐字取回，两族复测召回 100%、token 反降，**门槛 2 达成，compact 改为推荐默认**。发布前审查修了一个真安全漏洞（伪造审批事件可绕过审批）、补了会话级鉴权，盘了 96 个依赖的许可证，在最严格的 workerd 配置下实证了 edge 兼容。
 - **09-10** Boss 提出多角色 agent 团队场景，一起定了记忆隔离不加角色字段、子代理即工具、MCP 提前到 0.1 三项设计，随后项目进入维护阶段，文档换代到这一版。
 
-11 个包、约 3.2 万行 TypeScript、674 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.2 万行 TypeScript、682 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -115,7 +115,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **用户消息后移记 `lossy(user)`，脑子说明后移仍算 `exact`** — tool_result 未到齐时 user_message 必须后移（Anthropic 400）；说明后移只换位置，用户消息后移改变对话顺序，必须声明有损。
 - **并行工具之间不能夹说明文本，DeepSeek 400** — `awaiting` / `deferred` 那段代码是唯一防线，改 `to-request.ts` 先跑其测试。
 - **Anthropic 块级 cache 断点满 4 个时静默放弃补顶层断点** — 为避 400；感知说明殿后的 `automatic` 断点处置只在网关与 DeepSeek 实测，直连官方未测。
-- **⚠️ trust 标注尚未落地** — §14 与 filter.ts 注释都说"降级层包裹不可信内容"，lowering-pi 与 TanStack 适配器里都没有；TASKS R9，0.1 前补。
+- **trust 标注是 core 一份纯函数，两条降级路线都调它，别在任一包里自己拼标记** — `<untrusted source="tool:<name>">…</untrusted>`，只包文本；内容里的 `</untrusted` 会被转义并把落点记 lossy；事件 payload 永远原文。`trustMarkers: false` 关掉是宿主自担风险。
 
 ### MCP（tools-mcp）
 

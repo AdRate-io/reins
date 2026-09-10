@@ -13,7 +13,7 @@
 | `events/` | 事件壳 `EventBase` / `Event`、16 种 `core.*` 载荷、`uuidv7`、schema 注册表与 upcast |
 | `store/` | `EventLog` / `BlobStore` / `MemoryStore` 三接口、内存实现、`readTimeline`（读时升级的唯一正确读法） |
 | `projection/` | 投影策略链（过滤 / 折叠 / 钉住 / 裁剪）、token 粗估、被折叠工具结果清单 |
-| `lowering/` | 降级层**接口与有损矩阵类型**，只有类型，无实现 |
+| `lowering/` | 降级层**接口与有损矩阵类型**，外加一份两条降级路线共用的 trust 标注纯函数（R9） |
 | `loop/` | `runLoop` 与它的插座（`Socket`、`Tool`）、run 状态签名与恢复校验、静态贡献解析、瞬断重试、fork |
 | `replay/` | 只凭日志重算每轮模型看到了什么 |
 | `testing/`（独立入口） | 三份存储一致性套件 + `ScriptedLowering` 脚本化降级层 |
@@ -100,13 +100,14 @@
 | `projection/project.ts` | 策略链执行器 `project()` + `defaultProjectionChain()`（四步）+ `DEFAULT_RESERVE_RATIO = 0.15`；入参校验 seq 严格升序，逐策略累计 stats 与 emitted |
 | 测试 | `projection.test.ts` 覆盖粗估、四个策略各自的规则、manifest 渲染、supersedes（B3）四种情形、默认链端到端与拒绝条件 |
 
-### `lowering/` — 降级层接口（T7，只有类型）
+### `lowering/` — 降级层接口（T7）与 trust 标注（R9）
 
 | 文件 | 职责 |
 | --- | --- |
-| `lowering/index.ts` | 汇总导出 errors / types |
+| `lowering/index.ts` | 汇总导出 errors / trust / types |
 | `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`、`LoweringCapabilities`、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
 | `lowering/errors.ts` | `LoweringError` 与 4 种 code（unsupported_model / unsupported_api / missing_api_key / invalid_request） |
+| `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
 | 测试 | 无（本目录只有类型；行为由 `@reins/lowering-pi` 的 T8 矩阵测试覆盖） |
 
 ### `loop/` — 循环与插座（T9~T11）

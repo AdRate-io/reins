@@ -121,6 +121,8 @@ export interface ReinsMiddlewareOptions {
   warn?: (message: string) => void
   /** 工具表与上一次 run 相比有增删时追加模型可见的说明（P1，缺省开）；快照事件 `core.tools_bound` 一律记 */
   announceToolChanges?: boolean
+  /** trust 标注（技术方案 §14）：untrusted 内容（工具输出）翻译时包 `<untrusted source=…>`。缺省开；关掉是宿主自担提示注入风险 */
+  trustMarkers?: boolean
   /** 测试注入 */
   now?: () => number
   newId?: (at: number) => string
@@ -450,7 +452,10 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     s.turn = turn
     s.assembler.reset()
 
-    const { messages, landings } = toModelMessages(visible, { model: s.model })
+    const { messages, landings } = toModelMessages(visible, {
+      model: s.model,
+      ...(options.trustMarkers !== undefined ? { trustMarkers: options.trustMarkers } : {}),
+    })
     options.onLandings?.(landings.filter((l) => l.kind !== "exact"))
     return {
       providerMessages: messages,

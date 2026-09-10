@@ -14,13 +14,17 @@ import type {
   Tool,
   ToolCall,
 } from "@earendil-works/pi-ai"
-import type {
-  ContentPart,
-  CoreEvent,
-  Event,
-  LandingRecord,
-  LoweringCapabilities,
-  ToolSpec,
+import {
+  type ContentPart,
+  type CoreEvent,
+  type Event,
+  type LandingRecord,
+  type LoweringCapabilities,
+  markUntrusted,
+  markUntrustedText,
+  needsUntrustedMark,
+  type ToolSpec,
+  untrustedSourceOf,
 } from "@reins/core"
 import type { PiModel } from "./models.js"
 import { framedSystemNote, markSystemNote } from "./system-note.js"
@@ -87,6 +91,7 @@ function foreignOrigin(a: ModelOrigin, target: ModelOrigin): boolean {
 }
 
 const DEFERRED_NOTE = "已后移到同批工具结果之后（工具结果必须紧跟调用）"
+const ESCAPED_NOTE = "不可信内容里含提前闭合的 </untrusted，已转义"
 
 export interface ToContextInput {
   events: readonly Event[]
@@ -94,12 +99,15 @@ export interface ToContextInput {
   model: PiModel
   capabilities: LoweringCapabilities
   systemPrompt?: string
+  /** trust=untrusted 的内容（工具输出、外部内容）以 <untrusted source=…> 包裹（§14）。缺省 true；关掉是宿主自担风险 */
+  trustMarkers?: boolean
 }
 
 export function eventsToContext(input: ToContextInput): { context: Context; landings: LandingRecord[] } {
   const { model, capabilities } = input
   const target: ModelOrigin = { provider: model.provider, api: model.api, model: model.id }
   const isAnthropic = model.api === "anthropic-messages"
+  const trustMarkers = input.trustMarkers !== false
   const messages: Message[] = []
   const landings: LandingRecord[] = []
 
@@ -131,6 +139,18 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       land(d.event, d.kind, d.landing, d.note ? `${d.note}；${DEFERRED_NOTE}` : DEFERRED_NOTE)
     }
     deferred.length = 0
+  }
+  /**
+   * trust 标注（§14）：untrusted 的内容包上 <untrusted source=…>，事件本身不动。
+   * 返回翻译后的片段与"是否因转义而有损"——内容里出现提前闭合的标签时被转义，落点要记 lossy。
+   */
+  const content = (e: Event, parts: readonly ContentPart[]): { parts: ContentPart[]; escaped: boolean } => {
+    if (!trustMarkers || !needsUntrustedMark(e)) return { parts: [...parts], escaped: false }
+    return markUntrusted(parts, untrustedSourceOf(e))
+  }
+  const text = (e: Event, s: string): { text: string; escaped: boolean } => {
+    if (!trustMarkers || !needsUntrustedMark(e)) return { text: s, escaped: false }
+    return markUntrustedText(s, untrustedSourceOf(e))
   }
   /** 说明 / 摘要类消息：工具结果还没到齐就先攒着 */
   const note = (e: Event, msg: Message, kind: LandingRecord["kind"], landing: string, why?: string) => {
@@ -176,7 +196,8 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
     switch (e.type) {
       case "core.user_message": {
         flush()
-        const msg: Message = { role: "user", content: toPiContent(e.payload.content), timestamp: e.at }
+        const c = content(e, e.payload.content)
+        const msg: Message = { role: "user", content: toPiContent(c.parts), timestamp: e.at }
         // 工具结果还没到齐就来了用户消息：后移到同批结果之后，否则 tool_use 后面紧跟的不是 tool_result，厂商 400。
         // 顺序变了所以记 lossy；日志里它仍在原位
         if (awaiting.size > 0) {
@@ -185,12 +206,15 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
             event: e,
             kind: "lossy",
             landing: "user",
-            note: "用户消息落在工具调用与结果之间",
+            note: c.escaped
+              ? `用户消息落在工具调用与结果之间；${ESCAPED_NOTE}`
+              : "用户消息落在工具调用与结果之间",
           })
           break
         }
         messages.push(msg)
-        land(e, "exact", "user")
+        if (c.escaped) land(e, "lossy", "user", ESCAPED_NOTE)
+        else land(e, "exact", "user")
         break
       }
 
@@ -249,48 +273,57 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         break
       }
 
-      case "core.tool_result":
+      case "core.tool_result": {
         flush()
+        const c = content(e, e.payload.content)
         messages.push({
           role: "toolResult",
           toolCallId: e.payload.toolCallId,
           toolName: e.payload.name,
-          content: toPiContent(e.payload.content),
+          content: toPiContent(c.parts),
           isError: e.payload.isError,
           timestamp: e.at,
         })
-        land(e, "exact", isAnthropic ? "tool_result" : "function_call_output")
+        const landing = isAnthropic ? "tool_result" : "function_call_output"
+        if (c.escaped) land(e, "lossy", landing, ESCAPED_NOTE)
+        else land(e, "exact", landing)
         awaiting.delete(e.payload.toolCallId)
         if (awaiting.size === 0) releaseDeferred()
         break
+      }
 
-      case "core.system_note":
+      case "core.system_note": {
         flush()
+        // 宿主注入的外部内容可能把 system_note 标成 untrusted（如抓取的网页），同样包裹
+        const t = text(e, e.payload.text)
         if (capabilities.midConversationSystem) {
           note(
             e,
-            { role: "user", content: markSystemNote(e.payload.text), timestamp: e.at },
-            "exact",
+            { role: "user", content: markSystemNote(t.text), timestamp: e.at },
+            t.escaped ? "lossy" : "exact",
             isAnthropic ? "system" : model.reasoning ? "developer" : "system",
+            t.escaped ? ESCAPED_NOTE : undefined,
           )
         } else {
           note(
             e,
-            { role: "user", content: framedSystemNote(e.payload.kind, e.payload.text), timestamp: e.at },
+            { role: "user", content: framedSystemNote(e.payload.kind, t.text), timestamp: e.at },
             "lossy",
             "user-role",
             "模型不支持中途 system，以 <system_note> 标签包住走 user 角色",
           )
         }
         break
+      }
 
-      case "core.compaction":
+      case "core.compaction": {
         flush()
+        const t = text(e, e.payload.summary)
         note(
           e,
           {
             role: "user",
-            content: `[Summary of earlier conversation]\n${e.payload.summary}`,
+            content: `[Summary of earlier conversation]\n${t.text}`,
             timestamp: e.at,
           },
           "lossy",
@@ -298,6 +331,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
           "摘要以 user 角色文本呈现",
         )
         break
+      }
 
       case "core.approval_request":
       case "core.approval_decision":

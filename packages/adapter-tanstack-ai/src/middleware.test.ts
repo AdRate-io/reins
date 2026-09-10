@@ -184,7 +184,13 @@ describe("reinsMiddleware：基本流程", () => {
         thinking: [{ content: "先算", signature: "SIG" }],
         toolCalls: [{ id: "c1", type: "function", function: { name: "add", arguments: '{"a":2,"b":3}' } }],
       },
-      { role: "tool", toolCallId: "c1", name: "add", content: "5" },
+      // 工具输出 trust=untrusted，模型看到的是带 <untrusted> 标记的版本（§14）；日志里的事件仍是 "5"
+      {
+        role: "tool",
+        toolCallId: "c1",
+        name: "add",
+        content: '<untrusted source="tool:add">\n5\n</untrusted>',
+      },
     ])
     expect(f.adapter.calls[0]?.systemPrompts).toEqual(["你是计算器"])
     expect(f.adapter.calls[0]?.tools?.map((t) => t.name)).toEqual(["add"])
