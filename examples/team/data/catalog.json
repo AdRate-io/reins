@@ -1,0 +1,13 @@
+{
+  "asOf": "2026-09-07",
+  "skus": [
+    { "sku": "T-001", "name": "纯棉基础 T 恤（白）", "stock": 420, "unitCost": 18, "weeklySales": [62, 58, 55, 49, 51, 47] },
+    { "sku": "T-002", "name": "纯棉基础 T 恤（黑）", "stock": 180, "unitCost": 18, "weeklySales": [70, 74, 69, 72, 75, 71] },
+    { "sku": "H-101", "name": "连帽卫衣（灰）", "stock": 610, "unitCost": 45, "weeklySales": [21, 17, 14, 12, 9, 8] },
+    { "sku": "H-102", "name": "连帽卫衣（藏青）", "stock": 95, "unitCost": 45, "weeklySales": [33, 31, 35, 30, 34, 32] },
+    { "sku": "J-201", "name": "牛仔外套", "stock": 540, "unitCost": 88, "weeklySales": [12, 10, 9, 7, 6, 5] },
+    { "sku": "S-301", "name": "运动短裤", "stock": 380, "unitCost": 22, "weeklySales": [40, 36, 28, 19, 14, 11] },
+    { "sku": "S-302", "name": "速干运动 T 恤", "stock": 60, "unitCost": 26, "weeklySales": [45, 48, 44, 47, 46, 49] },
+    { "sku": "A-401", "name": "帆布托特包", "stock": 720, "unitCost": 15, "weeklySales": [8, 7, 9, 6, 5, 6] }
+  ]
+}

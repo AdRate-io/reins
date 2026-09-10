@@ -7,14 +7,14 @@
 
 ## 状态一句话
 
-M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、669 个用例全绿；PRD §7 门槛 2 两族达成，compact 改为推荐默认；P1 MCP 包已落地。剩下 0.1 发布前的两项（P3、R9）与发布本身。
+M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、674 个用例全绿；PRD §7 门槛 2 两族达成，compact 改为推荐默认；P1 MCP 包已落地。剩下 0.1 发布前的一项（R9）与发布本身。
 
 ## 0.1 发布前（按顺序）
 
 - 2026-09-10 Boss 设想"多角色 agent 团队"（各角色自己的系统提示 / 工具 / 记忆，会话在数据库）后追加，设计见技术方案 §9.6 隔离设计、§10 MCP、§10.1 子代理即工具；已讨论并记录决策，未实施：
   - [x] **P1 `@reins/tools-mcp`** —— 2026-09-10 完成：新包 20 用例 + core `tools_bound` 与静态贡献异步化，665 用例全绿；官方 client 2.0.0 主入口零 `node:*`，最严档 workerd list + call 通过；`examples/mcp` 用 DeepSeek 跑通真实任务（进程内 + MCP 工具同表，同会话 3 次 run、9 次工具调用、写后回读，录像 `recordings/restock-below-threshold.jsonl`）；两条协议对历史含已移除工具均接受，平台不需要不对称规则。细节：`模块盘点/tools-mcp.md`、DECISIONS 2026-09-10 四行、踩坑记录"一个 MCP HTTP 服务端传输只服务一个会话"
   - [x] **P2 memory 隔离收口** —— 2026-09-10 完成：`memoryTable` / `table` 选项只换记忆表名（事件表与 blob 表按 session_id 隔离不可配），表名白名单防注入且不合规不碰库，两包 +4 用例、669 用例全绿，dist 产物冒烟通过；README 新增 "Memory and how to isolate it"（三层 + 三段示例）。挂载表仍不做。细节：`模块盘点/store.md`、DECISIONS 2026-09-10 "P2" 行
-  - [ ] **P3 子代理手写范式**（0.1，文档 + 示例，不改 core）：`examples/team/` 两个角色（编排者 + 专家）共用一套 pg 存储、各自 systemPrompt / tools / 记忆前缀；专家以 `Tool` 形式挂在编排者工具表上，逐条示范 §10.1 的五件事（联停与否由使用者定：示例同时给"父停子停"与"接力不联停"两种写法、principal、sessionId 关联、子用量汇总、子 paused 的处理）；跑一条真实任务留录像。验收：回放父会话能按记录的 sessionId 找到子会话
+  - [x] **P3 子代理手写范式** —— 2026-09-10 完成：`examples/team/` 编排者 + 分析师（linked）+ 文案（detached）共用一套 pg（PGlite）存储、记忆按 namespace 分角色再分用户；`subagent-tool.ts` 逐条标号五件事，5 个脚本化用例（674 用例全绿）；DeepSeek 一次跑通真实任务（父 24 事件 / 两子 31 + 14），`replay.ts` 只凭父录像找到两子并核对用量一致、退出码 0。不改 core。细节：示例 README、技术方案 §10.1、DECISIONS 2026-09-10 "P3" 行
   - 0.2（发布后，已写进 §16 M3）：`asTool(agent, opts)` 助手 —— 审批冒泡（`Interruption.kind="subagent"`，子状态随父状态序列化）与预算合算；memory 挂载表按需
 - [ ] **R9 trust 标注落地**（0.1 前，2026-09-10 盘点发现的安全默认值缺口）：技术方案 §14、DECISIONS T6、`core/src/projection/filter.ts` 注释都说"工具输出与外部内容 trust=untrusted，由降级层包裹显式标记"，但 `lowering-pi` 与 `adapter-tanstack-ai` 里都没有任何 trust 处理，`toPiContent` 原样搬运。做法：事件已带 `trust` 字段，两条协议翻译文本时按它包裹（形如 `[untrusted content from tool X] … [end]`，具体文案定了进 DECISIONS），图片不包；TanStack 适配器 `toModelMessages` 同样处理；用例断言包裹出现在请求体且 tool_result 事件本身不变（投影不篡改 payload）。若决定 0.1 不做，必须把 §14 与注释改成"未实现"，不能留空头支票
 - [ ] E4 文档、CHANGELOG、0.1 发布准备（远程仓库与 npm 组织在此之前建，见"待 Boss"）—— 含每个包的 README（对外，英文）、CHANGELOG 首条、changeset、`pnpm build` 产物 import 自检、根 README 状态从 Pre-alpha 改 0.1

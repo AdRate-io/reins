@@ -155,9 +155,9 @@ describe("@reins/store-sqlite：SQLite 特有行为", () => {
     expect(SQLITE_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS reins_memory (")
     expect(SQLITE_SCHEMA_SQL).not.toContain("${")
     // migrateSqlite 单独调也认表名，且幂等
-    migrateSqlite(db, { memoryTable: "m_63_" + "x".repeat(58) })
-    migrateSqlite(db, { memoryTable: "m_63_" + "x".repeat(58) })
-    expect(new SqliteMemoryStore(db, { table: "m_63_" + "x".repeat(58) })).toBeInstanceOf(SqliteMemoryStore)
+    migrateSqlite(db, { memoryTable: `m_63_${"x".repeat(58)}` })
+    migrateSqlite(db, { memoryTable: `m_63_${"x".repeat(58)}` })
+    expect(new SqliteMemoryStore(db, { table: `m_63_${"x".repeat(58)}` })).toBeInstanceOf(SqliteMemoryStore)
   })
 })
 

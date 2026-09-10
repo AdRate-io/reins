@@ -109,6 +109,31 @@ importers:
         specifier: ^22.0.0
         version: 22.20.1
 
+  examples/team:
+    dependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.8
+        version: 0.5.8
+      '@reins/brain':
+        specifier: workspace:*
+        version: link:../../packages/brain
+      '@reins/lowering-pi':
+        specifier: workspace:*
+        version: link:../../packages/lowering-pi
+      '@reins/store-pg':
+        specifier: workspace:*
+        version: link:../../packages/store-pg
+      reins:
+        specifier: workspace:*
+        version: link:../../packages/reins
+    devDependencies:
+      '@reins/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+
   packages/adapter-tanstack-ai:
     dependencies:
       '@reins/core':

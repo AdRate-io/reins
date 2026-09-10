@@ -1,0 +1,22 @@
+{
+  "name": "@reins-examples/team",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "reins 多角色团队：编排者 + 两个专家，专家以工具形式挂在编排者工具表上（子代理即工具，技术方案 §10.1，P3）",
+  "scripts": {
+    "run": "node run.ts",
+    "replay": "node replay.ts"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@reins/brain": "workspace:*",
+    "@reins/lowering-pi": "workspace:*",
+    "@reins/store-pg": "workspace:*",
+    "reins": "workspace:*"
+  },
+  "devDependencies": {
+    "@reins/core": "workspace:*",
+    "@types/node": "^22.0.0"
+  }
+}
