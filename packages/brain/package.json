@@ -2,6 +2,15 @@
   "name": "@reins/brain",
   "version": "0.1.0",
   "description": "reins — brain: perception, compact, pins, spill, handoff, memory, approval, budget",
+  "keywords": [
+    "agent",
+    "llm",
+    "context-compaction",
+    "memory",
+    "approval",
+    "budget",
+    "tool-use"
+  ],
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

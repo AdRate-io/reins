@@ -2,6 +2,17 @@
   "name": "reins",
   "version": "0.1.0",
   "description": "reins — hand the reins to the model. createAgent() + re-exports of @reins/core, @reins/server and @reins/ui-agui",
+  "keywords": [
+    "agent",
+    "llm",
+    "ai",
+    "event-sourcing",
+    "tool-use",
+    "mcp",
+    "ag-ui",
+    "anthropic",
+    "openai"
+  ],
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

@@ -142,13 +142,13 @@ importers:
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
-      '@tanstack/ai':
-        specifier: 0.53.0
-        version: 0.53.0(zod@4.6.1)
     devDependencies:
       '@reins/brain':
         specifier: workspace:*
         version: link:../brain
+      '@tanstack/ai':
+        specifier: 0.53.0
+        version: 0.53.0(zod@4.6.1)
 
   packages/brain:
     dependencies:

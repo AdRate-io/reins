@@ -1,7 +1,16 @@
 {
   "name": "@reins/core",
   "version": "0.1.0",
-  "description": "reins — core",
+  "description": "reins — core: append-only event timeline, projection, the copyable runLoop, serializable run state and the Socket seam. Zero dependencies, zero node:*",
+  "keywords": [
+    "agent",
+    "llm",
+    "event-log",
+    "event-sourcing",
+    "tool-use",
+    "agent-loop",
+    "web-standard"
+  ],
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

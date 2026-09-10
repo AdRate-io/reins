@@ -310,11 +310,16 @@ const waitSeconds = defineTool<{ seconds: number; reason?: string }>({
   },
   async execute({ seconds, reason }, ctx) {
     await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, seconds * 1000)
-      ctx.signal?.addEventListener("abort", () => {
+      // 中止就提前结束；等够了要把监听器摘掉，同一个 signal 会跨多次调用复用，不然每次 wait 都留一个监听器
+      const onAbort = () => {
         clearTimeout(t)
         resolve()
-      })
+      }
+      const t = setTimeout(() => {
+        ctx.signal?.removeEventListener("abort", onAbort)
+        resolve()
+      }, seconds * 1000)
+      ctx.signal?.addEventListener("abort", onAbort, { once: true })
     })
     return `waited ${seconds}s${reason ? `: ${reason}` : ""}`
   },

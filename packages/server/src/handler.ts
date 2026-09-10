@@ -104,12 +104,13 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
           typeof d.toolCallId === "string" &&
           typeof d.approved === "boolean" &&
           typeof d.by === "string" &&
-          (d.sessionId === undefined || typeof d.sessionId === "string"),
+          (d.sessionId === undefined || isValidSessionId(d.sessionId)),
       )
     if (!okDecisions)
       return {
         ok: false,
-        error: "decisions 每项必须含 toolCallId / approved / by（sessionId 可选，给子代理会话的结论用）",
+        error:
+          "decisions 每项必须含 toolCallId / approved / by（sessionId 可选，给子代理会话的结论用，字符集与请求的 sessionId 同一规则）",
       }
   }
   if (b.resume !== undefined && (typeof b.resume !== "object" || b.resume === null)) {
@@ -458,7 +459,10 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
         }
         const pending = pendingToolCalls(timeline)
         const pendingIds = new Set(pending.map((c) => c.payload.toolCallId))
+        // 与 runLoop 同一口径（§10.1）：只有本会话的结论才对照本会话的 pending；带别的 sessionId 的是给子代理会话的，
+        // 这里不校验、原样下传，由 asTool 在子会话里校验。两处一分叉，经 HTTP 续跑子代理审批就会 409（2026-09-10 审查修）
         for (const d of body.decisions ?? []) {
+          if (d.sessionId !== undefined && d.sessionId !== sessionId) continue
           if (!pendingIds.has(d.toolCallId)) {
             throw new RunStateError("unknown_tool_call", `审批结论指向的调用 ${d.toolCallId} 并不在等待中`, {
               toolCallId: d.toolCallId,

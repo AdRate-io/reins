@@ -87,7 +87,19 @@ export class McpConnection {
     return result as McpCallResult
   }
 
+  /**
+   * 关掉当前连接（宿主热轮换 Socket、进程收尾）。
+   * 正在建连时调用：等这次建连有结果再关——否则 `ensure()` 完成后会把新 Client 挂回 `this.client`，
+   * 连接泄漏、`onclose` 回调悬挂（2026-09-10 审查修）。建连失败本来就没有连接，吞掉那个错误。
+   */
   async close(): Promise<void> {
+    if (this.connecting) {
+      try {
+        await this.connecting
+      } catch {
+        // 建连失败：没有连接可关
+      }
+    }
     const client = this.client
     this.client = undefined
     if (client) await client.close()

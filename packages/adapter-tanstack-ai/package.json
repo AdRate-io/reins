@@ -2,6 +2,13 @@
   "name": "@reins/adapter-tanstack-ai",
   "version": "0.1.0",
   "description": "reins — the brain as a TanStack AI chat middleware: EventLog stays the source of truth, sockets drive onConfig / onChunk / tool hooks",
+  "keywords": [
+    "agent",
+    "llm",
+    "tanstack",
+    "tanstack-ai",
+    "middleware"
+  ],
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -19,11 +26,14 @@
   },
   "dependencies": {
     "@reins/core": "workspace:*",
-    "@standard-schema/spec": "^1.1.0",
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "peerDependencies": {
     "@tanstack/ai": "0.53.0"
   },
   "devDependencies": {
-    "@reins/brain": "workspace:*"
+    "@reins/brain": "workspace:*",
+    "@tanstack/ai": "0.53.0"
   },
   "engines": {
     "node": ">=22"

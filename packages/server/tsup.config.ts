@@ -10,4 +10,6 @@ export default defineConfig({
   dts: { compilerOptions: { composite: false, paths: {} } },
   clean: true,
   sourcemap: true,
+  // /node 入口目前只 import type，但和 store-sqlite / tools-mcp 一样显式关掉：tsup 8 缺省会把 "node:*" 剥成裸名
+  removeNodeProtocol: false,
 })

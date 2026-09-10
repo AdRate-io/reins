@@ -897,3 +897,45 @@ describe("sessionId 字符集：越界值给 400，不让它冒成未捕获异�
     }
   })
 })
+
+describe("流开了之后的失败：200 + error 帧，未开跑的名额归还", () => {
+  /** 可按需让读日志抛错的内存日志：模拟补发阶段存储出错 */
+  class FlakyLog extends InMemoryEventLog {
+    fail = false
+    override async *read(
+      sessionId: string,
+      opts?: Parameters<InMemoryEventLog["read"]>[1],
+    ): AsyncIterable<CoreEvent> {
+      if (this.fail) throw new Error("存储读失败（模拟）")
+      yield* super.read(sessionId, opts) as AsyncIterable<CoreEvent>
+    }
+  }
+
+  it("补发读日志抛错：响应仍是 200，流里是 error 帧而非 result；run 未开跑 → abandon 还名额，同会话再 POST 不是 409", async () => {
+    const flaky = new FlakyLog()
+    const script = (_input: unknown, turn: number): ScriptedTurn =>
+      turn % 2 === 0
+        ? { drafts: [callTool(`c${turn}`, "add", { a: 2, b: 3 })] }
+        : { drafts: [say("答案是 5")] }
+    const { handler, log } = setup(script as unknown as ScriptedTurn[], [addTool], { log: flaky })
+    expect(log).not.toBe(flaky) // setup 自建的 log 被 agentExtra.log 覆盖，handler 用的是 flaky
+    const ok = parseFrames(await (await handler(postRequest({ sessionId: "s1", input: "2+3" }))).text())
+    expect(resultOf(ok)?.status).toBe("done")
+
+    flaky.fail = true
+    const res = await handler(postRequest({ sessionId: "s1", input: "再来", lastSeq: 0 }))
+    expect(res.status).toBe(200) // 流已经开了，失败只能在流里说
+    const frames = parseFrames(await res.text())
+    // start 帧在读日志之前就发了；之后只有 error，没有 result
+    expect(frames.map((f) => f.event)).toEqual(["start", "error"])
+    expect(frames[1]?.data).toEqual({ code: "internal", message: "存储读失败（模拟）" })
+    // 那条 run 从没开跑：日志没有新事件
+    flaky.fail = false
+    expect((await flaky.tail("s1", 1))[0]?.seq).toBe(resultOf(ok)?.lastSeq)
+
+    // 名额已还：再 POST 是正常的 run，不是 409 run_in_progress
+    const again = await handler(postRequest({ sessionId: "s1", input: "再来" }))
+    expect(again.status).toBe(200)
+    expect(resultOf(parseFrames(await again.text()))?.status).toBe("done")
+  })
+})

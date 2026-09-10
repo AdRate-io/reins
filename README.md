@@ -4,7 +4,7 @@
 
 reins is an embeddable agent library. Install it, plug in your own model, and you get an agent that knows how to drive a long task: it sees its own context, decides when to tidy it, never loses the constraints you pinned, hands off to a fresh session with a proper summary, remembers what matters, and leaves a timeline you can replay and fork at any point.
 
-The loop is a few hundred lines you can read and copy. Nothing is hidden. Every part is removable. The core runs on any runtime that speaks Web standards: Node, Bun, Deno, Cloudflare Workers, Vercel.
+The loop is a few hundred lines you can read and copy. Nothing is hidden. Every part is removable. The core is written against Web standards only and is verified on Node 22 and Cloudflare Workers (strictest compat, no `nodejs_compat`); Bun, Deno and Vercel Edge should work but are not yet tested.
 
 ## Two principles
 
@@ -13,9 +13,9 @@ The loop is a few hundred lines you can read and copy. Nothing is hidden. Every 
 
 ## Status
 
-**0.1.0** — first public release. Eleven packages, ~32k lines of TypeScript, 695 tests, every default measured on real models (see `examples/eval`). Public types are frozen for the 0.1 line; breaking changes bump the minor version until 1.0.
+**0.1.0** — first public release. Eleven packages, ~32k lines of TypeScript, 702 tests, every default measured on real models (see `examples/eval`). Public types are frozen for the 0.1 line; breaking changes bump the minor version until 1.0.
 
-Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add reins @reins/lowering-pi @reins/brain` — Node ≥ 22, Bun, Deno and Cloudflare Workers.
+Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add reins @reins/lowering-pi @reins/brain` — Node ≥ 22 or Cloudflare Workers (tested); Bun / Deno / Vercel Edge untested.
 
 ## Try it
 
@@ -128,6 +128,8 @@ with a missing `return` produces — answers `404 not_found` rather than `403`, 
 would confirm that the session exists. Throwing a `Response` returns it verbatim, same as
 `principal`. The hook is fail-closed on purpose: a forgotten `return` should lock you out
 loudly, not wave a stranger through quietly.
+
+**Memory is shared unless you namespace it.** `authorizeSession` isolates timelines, not the memory store: `memory()` writes to `/memories/...` for everyone by default. In a multi-tenant deployment pass `memory({ namespace: (ctx) => `/users/${ctx.principal?.id}` })` (or a per-role `memoryTable` on the store, see "Memory and how to isolate it" above) — otherwise one user's model can read what another user's model wrote.
 
 **Runtime footprint.** `@reins/core` and `@reins/brain` have zero external dependencies.
 `@reins/lowering-pi` pulls `pi-ai`, which declares ten dependencies of its own — installing it

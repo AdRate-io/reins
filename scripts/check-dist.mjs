@@ -5,6 +5,7 @@
  *    （tsup 剥 `node:` 前缀、条件导出写错、d.ts 内联依赖，都只在 dist 上炸，见踩坑记录 store-sqlite）。
  * 2. 硬约束（技术方案 §1）：`@reins/core` / `@reins/brain` 及各包主入口零 `node:*`；`node:*` 只允许出现在 `/node` 子路径。
  * 3. `/node` 子路径必须保留 `node:` 协议前缀（tsup 8 缺省 removeNodeProtocol 会把 `node:sqlite` 剥成裸 `sqlite`，运行时找不到模块）。
+ * 4. 运行时版本常量 `REINS_VERSION` 与 `@reins/core` 的 package.json 版本一致（MCP 握手、排错都拿它报版本；0.1 发前审查抓到过 0.0.0）。
  *
  *   node scripts/check-dist.mjs
  */
@@ -55,6 +56,8 @@ for (const dir of (await readdir(packagesDir, { withFileTypes: true })).filter((
       row.exports = `${Object.keys(mod).length}${missing.length ? ` 缺 ${missing.join(",")}` : ""}`
       if (missing.length) throw new Error(`缺少导出 ${missing.join(", ")}`)
       if (!EXPECTED[entry]) throw new Error("check-dist.mjs 的 EXPECTED 表没登记这个入口")
+      if (entry === "@reins/core" && mod.REINS_VERSION !== pkg.version)
+        throw new Error(`REINS_VERSION 是 ${mod.REINS_VERSION}，package.json 是 ${pkg.version}，改 packages/core/src/index.ts`)
     } catch (err) {
       row.ok = false
       failures.push(`${entry}: ${err.message}`)
@@ -86,4 +89,4 @@ if (failures.length) {
   console.error(`\n${failures.length} 处不通过：\n- ${failures.join("\n- ")}`)
   process.exit(1)
 }
-console.log(`\n${rows.length} 个入口全部可 import，node:* 只在 /node 子路径。`)
+console.log(`\n${rows.length} 个入口全部可 import，node:* 只在 /node 子路径，REINS_VERSION 与包版本一致。`)

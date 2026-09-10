@@ -2,6 +2,13 @@
   "name": "@reins/ui-agui",
   "version": "0.1.0",
   "description": "reins — timeline events → AG-UI protocol events (encoder for @reins/server, or standalone mapper)",
+  "keywords": [
+    "agent",
+    "ag-ui",
+    "copilotkit",
+    "sse",
+    "streaming"
+  ],
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

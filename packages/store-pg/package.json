@@ -2,6 +2,13 @@
   "name": "@reins/store-pg",
   "version": "0.1.0",
   "description": "reins — PostgreSQL-backed EventLog / BlobStore / MemoryStore. Works with any client exposing query(text, params) → { rows } (pg, PGlite, …)",
+  "keywords": [
+    "agent",
+    "event-log",
+    "postgres",
+    "postgresql",
+    "pglite"
+  ],
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

@@ -10,7 +10,8 @@ pnpm add @reins/ui-agui
 import { aguiEncoding } from "@reins/ui-agui"
 import { createAgentHandler } from "@reins/server"
 
-export const POST = createAgentHandler(agent, { encode: aguiEncoding() })
+// `agentDefinition` is the AgentDefinition (loop config); with `createAgent()` that is `agent.definition`
+export const POST = createAgentHandler(agentDefinition, { encode: aguiEncoding() })
 ```
 
 The umbrella `reins` package already uses `aguiEncoding()` as the default for `createAgent(...).handler`.

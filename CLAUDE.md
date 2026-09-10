@@ -11,7 +11,7 @@
 - **09-09～10** M2 用数字说话：建了 `@reins/eval`，把真实录像脱敏成 fixture，在 DeepSeek 与 Claude 两个模型族上跑了四轮一百多格对照。第一轮门槛未过——模型看到"已整理过一次"就认定旧细节丢了而拒答；我们没有降标准，而是给整理摘要附上被折叠清单并加了 `recall` 逐字取回，两族复测召回 100%、token 反降，**门槛 2 达成，compact 改为推荐默认**。发布前审查修了一个真安全漏洞（伪造审批事件可绕过审批）、补了会话级鉴权，盘了 96 个依赖的许可证，在最严格的 workerd 配置下实证了 edge 兼容。
 - **09-10** Boss 提出多角色 agent 团队场景，一起定了记忆隔离不加角色字段、子代理即工具、MCP 提前到 0.1 三项设计，随后项目进入维护阶段，文档换代到这一版。
 
-11 个包、约 3.2 万行 TypeScript、682 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.2 万行 TypeScript、702 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -135,6 +135,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **`createAgentHandler` 缺省 `rawEncoder`，`createAgent` 缺省 `aguiEncoding()`** — 两处默认相反，`handler.encode` 可覆盖。
 - **POST 不读 `Last-Event-ID`，只认 `body.lastSeq`；409 `run_in_progress` 是唯一带 `X-Reins-Session` 的错误响应** — 客户端别统一从错误头取会话 id。
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
+- **handler 对 `decisions` 的预校验必须与 runLoop 同一口径：只有本会话的结论对照本会话 pending，带子会话 id 的原样下传** — 两处一分叉，asTool 的 HTTP 续跑必 409（2026-09-10 双审查抓到）；同一个判定写两处就要有一条跨包用例锁住。
 - **续跑带新 `input` 时，`input` 只接受白名单事件草稿** — 伪造 `approval_decision` 曾可绕过审批（2026-09-09 审查修），循环层与 server 层两道白名单都不能删。
 
 ### 存储

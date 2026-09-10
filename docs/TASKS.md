@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、695 个用例全绿；PRD §7 门槛 2 两族达成，compact 推荐默认；P1 MCP、P2 记忆隔离、P3 子代理范式、R9 trust 标注全部落地。**2026-09-10 Boss 定：先清完"发前清单"再一起发 0.1**（筛选规则见 DECISIONS 同日"发包 = 冻结公开接口"）。发前清单已封口，不再往里加。
+M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、702 个用例全绿；PRD §7 门槛 2 两族达成，compact 推荐默认；P1 MCP、P2 记忆隔离、P3 子代理范式、R9 trust 标注全部落地。**2026-09-10 Boss 定：先清完"发前清单"再一起发 0.1**（筛选规则见 DECISIONS 同日"发包 = 冻结公开接口"）。发前清单已封口，不再往里加。
 
 ## 0.1 发前清单（按顺序，已封口 2026-09-10）
 
@@ -19,7 +19,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 - [x] **R4** 投影新造事件冲突 —— 2026-09-10 定"不重跑、抛 StoreError 交宿主"，注释与技术方案 §6 改成如实描述。理由见 DECISIONS "R4" 行
 - [x] **R8** pg 用例标题 —— 2026-09-10 改为"json 列往返不改内容，本包刻意不用 jsonb"
 - [x] **`asTool(agent, opts)` 助手** —— 2026-09-10 落地（`reins` 包）：`Interruption` 加 `kind: "subagent"`、`ApprovalDecisionInput.sessionId?`、`ToolContext.decisions? / spend?`、core `subagentPause` 标记；审批冒泡跨进程续跑与预算合算各有用例（core +3、reins +4，695 全绿）；`examples/team` 改用 asTool，手写版留 `subagent-tool.handwritten.ts` 对照。设计见 DECISIONS "asTool" 行、技术方案 §6 补充与 §10.1 落地段。未做：真模型复跑 examples/team（专家全只读，冒泡路径真模型下无从触发）
-- [ ] **E4** 0.1 发布 —— 2026-09-10 发前准备已做完：11 个包英文 README、changeset → 0.1.0 + CHANGELOG 首条、每包 LICENSE、`pnpm check:dist` 产物自检（15 个入口全过）、根 README 改 0.1.0（DECISIONS "E4" 行）。**剩下只等 Boss**：GitHub / npm 组织建好后补 package.json 的 `repository` / `homepage`，`git remote add` + push，`pnpm changeset publish`
+- [ ] **E4** 0.1 发布 —— 2026-09-10 发前准备已做完：11 个包英文 README、changeset → 0.1.0 + CHANGELOG 首条、每包 LICENSE、`pnpm check:dist` 产物自检（15 个入口全过）、根 README 改 0.1.0（DECISIONS "E4" 行）。2026-09-10 下午两份外部审查（cursor / Grok，报告在 `归档/`）逐条核实：修 handler 子代理审批预校验、MCP 连接 close 竞态、`@tanstack/ai` 改 peer、版本常量 0.0.0 → 0.1.0（check:dist 核对）、eval README 假示例、运行时支持措辞、server README 白名单描述等，+7 用例（702 全绿）；lowering-pi 进阶 API 暴露 pi-ai 类型书面豁免（DECISIONS）。**剩下只等 Boss**：GitHub / npm 组织建好后补 package.json 的 `repository` / `homepage`，`git remote add` + push，`pnpm changeset publish`
 
 ## 0.1 之后（纯新增或有外部依赖）
 

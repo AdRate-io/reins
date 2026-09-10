@@ -1,6 +1,6 @@
 # 模块盘点：`@reins/adapter-tanstack-ai`
 
-> 对应任务 B10。包版本 `0.0.0`，依赖 `@reins/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` pin 精确版本 `0.53.0`**（非 `^`，不随小版本漂移；除主入口外还用了 `@tanstack/ai/adapter-internals` 的中断登记表 Capability，R7）；`@reins/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
+> 对应任务 B10。包版本 `0.1.0`，依赖 `@reins/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` 是 peerDependency，pin 精确版本 `0.53.0`**（2026-09-10 审查改：宿主自装、与库共用同一份实例——R7 的登记检查与引擎的中间件判断都靠引用同一性，装两份会把审批全判成没登记；非 `^`，不随小版本漂移；除主入口外还用了 `@tanstack/ai/adapter-internals` 的中断登记表 Capability，R7）；`@reins/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
 
 ## 1 架构概览
 
@@ -56,7 +56,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | 路径 | 职责 |
 | --- | --- |
 | `src/index.ts` | 唯一导出口；把 middleware / messages / assembler / tools / interrupt / schema / loss-matrix 的公开面拢在一处，并声明"`@tanstack/ai` 的类型只在本包出现"。 |
-| `src/middleware.ts` | 主体（845 行）：`reinsMiddleware()`，十一个 TanStack 钩子 → 五个 Socket 方法的翻译，run 状态、事件 append、审批中断、交接、用量记账都在这里。 |
+| `src/middleware.ts` | 主体（约 930 行）：`reinsMiddleware()`，十一个 TanStack 钩子 → 五个 Socket 方法的翻译，run 状态、事件 append、审批中断、交接、用量记账都在这里。 |
 | `src/messages.ts` | 事件 ⇄ TanStack `ModelMessage` 的纯函数翻译：出口 `toModelMessages`（含 trust 标注：untrusted 内容调 core `markUntrusted` 包 `<untrusted>`，`trustMarkers` 可关）、入口 `importModelMessages`（每条草稿的 `provenance.ref` 是幂等键 `importRef`：消息 id 或客户端数组位置）与 `dedupeImportedUserMessages`（R5 去重），外加 `trailingUserMessages`、`framedSystemNote`、`parseArgs`。 |
 | `src/assembler.ts` | `BlockAssembler`：把流式 AG-UI chunk（TEXT_* / REASONING_* / TOOL_CALL_*）拼成完整内容块的 `EventDraft`，`finish()` 收尾未闭合的块。 |
 | `src/content.ts` | 内容片段互译：`toTanstackParts` / `toTanstackContent` / `fromTanstackContent` / `fromTanstackToolResult`，翻不动的片段留占位文本并报 `dropped`。 |

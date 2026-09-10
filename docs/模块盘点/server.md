@@ -67,10 +67,10 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 **POST：起一个 run**（`handlePost`）
 
 1. `request.json()` 失败 → 400 `bad_request`。
-2. `parseBody` 只做壳校验：请求体必须是非数组对象；`sessionId` 过 `isValidSessionId`；`lastSeq` 非负整数；`input` 是字符串 / 数组 / 带 `type`+`payload` 的对象；`decisions` 每项含 `toolCallId`+`approved`+`by`（`sessionId` 可选，给子代理会话的结论，见 core `SubagentInterruption`）；`resume` 是对象。`resume` 的形状与签名留给 core 的 `validateResume`。
+2. `parseBody` 只做壳校验：请求体必须是非数组对象；`sessionId` 过 `isValidSessionId`；`lastSeq` 非负整数；`input` 是字符串 / 数组 / 带 `type`+`payload` 的对象；`decisions` 每项含 `toolCallId`+`approved`+`by`（`sessionId` 可选，给子代理会话的结论，见 core `SubagentInterruption`；同样过 `isValidSessionId`）；`resume` 是对象。`resume` 的形状与签名留给 core 的 `validateResume`。
 3. `sessionId = body.sessionId ?? newSessionId()`（缺省 `uuidv7()`）。
 4. `denyBySessionAuthz({ sessionId, principal, request, method:"POST", isNew: body.sessionId === undefined })` —— 排在 `readTimeline` / `validateResume` 之前，因为那两步已经在读这条会话的日志了。
-5. 预校验分支：只有 `body.resume !== undefined`、`decisions` 非空、或 `input` 是草稿三者之一成立时才进。里面依次 `readTimeline(log, sessionId, { registry })` → （有 resume 时）`validateResume`，其 `configHash` 用 `computeConfigHash({ model, ...(await resolveSocketContributions(agent)) })` 算（P1 起 async），与 `runLoop` 起步同一份算法 → 每条 `decisions` 必须指向 `pendingToolCalls(timeline)` 里的调用，否则抛 `RunStateError("unknown_tool_call")` → `checkInput(body.input, pending, contributions.tools)`。`RunStateError` 一律翻成 409 + 其 `code`。
+5. 预校验分支：只有 `body.resume !== undefined`、`decisions` 非空、或 `input` 是草稿三者之一成立时才进。里面依次 `readTimeline(log, sessionId, { registry })` → （有 resume 时）`validateResume`，其 `configHash` 用 `computeConfigHash({ model, ...(await resolveSocketContributions(agent)) })` 算（P1 起 async），与 `runLoop` 起步同一份算法 → `decisions` 按 `sessionId` 分流（与 runLoop §10.1 同口径，2026-09-10 审查修）：没带或等于本会话的必须指向 `pendingToolCalls(timeline)` 里的调用，否则抛 `RunStateError("unknown_tool_call")`；带别的会话 id（子代理）的不校验、原样下传给 asTool → `checkInput(body.input, pending, contributions.tools)`。`RunStateError` 一律翻成 409 + 其 `code`。
 6. `checkInput` 是面向网络的第一道白名单（循环层 `inputDraft` 是第二道）：字符串 / `ContentPart[]` / `undefined` 直接放行；草稿只放行两种，且壳字段一律由服务端定 ——
    - `core.user_message`：只取 `payload.content`（须过 `isContentParts`），`actor` 固定 `user`；
    - `core.tool_result`：`toolCallId` 必须在 pending 里（否则 409 `unknown_tool_call`），对应工具必须是客户端工具（`!tool.execute` 或 `tool.side === "client"`，否则 400），`name` / `parentId` / `provenance` 取自 tool_call，客户端只能决定 `content` 与 `isError`；

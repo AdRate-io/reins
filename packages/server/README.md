@@ -1,6 +1,6 @@
 # @reins/server
 
-A Web-standard `(Request) => Promise<Response>` handler around the [reins](../../README.md) loop. `POST` starts or resumes a run and streams the timeline as SSE (`id:` = event `seq`); `GET` replays from `lastSeq` and joins a run in progress. No framework, no private runtime dependency — the same file serves Node, Bun, Deno and Cloudflare Workers.
+A Web-standard `(Request) => Promise<Response>` handler around the [reins](../../README.md) loop. `POST` starts or resumes a run and streams the timeline as SSE (`id:` = event `seq`); `GET` replays from `lastSeq` and joins a run in progress. No framework, no private runtime dependency — written against Web standards only; verified on Node 22 and Cloudflare workerd (strictest compat, no `nodejs_compat`), Bun / Deno / Vercel Edge not yet tested.
 
 ```bash
 pnpm add @reins/server
@@ -34,17 +34,18 @@ The umbrella package `reins` wraps this as `createAgent(...).handler` with the A
 | `POST` | `{ input }` | new session, id returned in the `start` frame and the `X-Reins-Session` header |
 | `POST` | `{ sessionId, input }` | continue a session |
 | `POST` | `{ sessionId, resume, decisions }` | resume a paused run with approval decisions (`resume` is the `state` from the previous `result` frame; a decision for a sub-agent's call carries `sessionId: childSessionId`) |
-| `POST` / `GET` | `lastSeq` | replay `(lastSeq, tail]` first, then continue live |
+| `POST` / `GET` | `lastSeq` | replay `(lastSeq, tail]` first, then continue live. `GET` also honours the `Last-Event-ID` header (so a plain `EventSource` reconnects correctly); `POST` reads `body.lastSeq` only |
 
 Frames: `start`, one frame per event, `delta` (optional streaming increments), `result` (the `RunResult`, including a signed `state` when paused), `error`. One run per session at a time: a second `POST` while a run is active answers `409 run_in_progress`.
 
 ## Security defaults
 
 - **`authorizeSession` is not optional in multi-tenant deployments.** Without it, anyone who knows a `sessionId` can read that timeline and continue that run. Only an explicit `true` allows; `false` or `undefined` answers `404` (not `403`, which would confirm the session exists).
-- **Input is whitelisted twice.** A `POST` body's `input` may be text, content parts, or a draft of type `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`. Anything else — notably a forged `approval_decision` — is refused here and again inside the loop.
+- **Input is whitelisted twice.** A `POST` body's `input` may be text, content parts, or a draft of type `core.user_message` or `core.tool_result` (the latter only for a pending client-side tool). Anything else — a forged `approval_decision`, a `system_note` claiming system trust, a `compaction` hiding history — is refused here with `400`, and the loop keeps its own, slightly wider, whitelist as a second line (it is not reachable through this handler).
 - **Resume is validated before anything is written.** Signature (when `secret` is set), configuration hash, and the digest of pending tool calls must match the log; drift answers `409 config_mismatch` unless the host passes `allowConfigDrift`.
 - **Session ids** must be non-empty printable ASCII without spaces (`400` otherwise).
 - Failures after the stream has opened arrive as a `200` with an `error` frame, and the run slot is released so the session does not stay `409` forever.
+- **Approval decisions are checked against the right session.** A decision without `sessionId` (or with this session's id) must point at one of this session's pending calls, else `409 unknown_tool_call`; a decision carrying a sub-agent's `childSessionId` is passed through untouched and checked by the sub-agent's own run.
 
 ## Options
 

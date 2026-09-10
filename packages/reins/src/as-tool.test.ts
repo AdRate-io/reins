@@ -14,6 +14,7 @@ import {
   type Event,
   memoryStore,
   type RunResult,
+  rawEncoder,
   type Socket,
   type Stores,
   type SubagentOutcome,
@@ -265,5 +266,111 @@ describe("asTool：预算合算与多轮", () => {
       ["expert-1", "答一"],
       ["expert-1", "答二"],
     ])
+  })
+})
+
+/**
+ * 经 HTTP（`agent.handler`）续跑子代理审批：server 的预校验必须与 runLoop 同一口径——带子 sessionId 的结论不对照父会话的 pending。
+ * 修复前这里是 409 unknown_tool_call（2026-09-10 双份审查报告都抓到了这条，见踩坑记录）。
+ */
+describe("asTool × agent.handler（HTTP 续跑）", () => {
+  const post = (body: unknown) =>
+    new Request("http://t/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  /** 原始事件编码下的 SSE：取 `event: result` 帧的 data */
+  const resultFrame = (text: string): RunResult | undefined => {
+    for (const block of text.split("\n\n")) {
+      if (!block.includes("event: result")) continue
+      const line = block.split("\n").find((l) => l.startsWith("data: "))
+      if (line) return JSON.parse(line.slice(6)) as RunResult
+    }
+    return undefined
+  }
+
+  it("父 paused(kind=subagent) 后，POST { resume, decisions:[{ sessionId: childSessionId }] } 是 200 且跑到 done，不是 409", async () => {
+    const store = memoryStore()
+    const child = expert(store, [
+      turn(callTool("c1", "deploy", { env: "prod" })),
+      turn(say("deployed, all good")),
+    ])
+    const parent = createAgent({
+      model: {
+        model: MODEL,
+        lowering: new ScriptedLowering([
+          turn(callTool("p1", "ask_expert", { task: "deploy prod" })),
+          turn(say("汇报")),
+        ]),
+      },
+      store,
+      tools: [asTool(child, { name: "ask_expert", description: "问专家", role: "expert" })],
+      handler: { heartbeatMs: 0, encode: () => rawEncoder, newSessionId: () => "lead" },
+    })
+
+    const first = resultFrame(await (await parent.handler(post({ input: "上线" }))).text())
+    expect(first?.status).toBe("paused")
+    if (first?.status !== "paused") return
+    const sub = first.interruptions[0]
+    expect(sub?.kind).toBe("subagent")
+    if (sub?.kind !== "subagent") return
+    expect(sub.childSessionId).toBe("lead:p1")
+
+    // 按 README / ui-agui 文档的写法回传：结论带 childSessionId
+    const res = await parent.handler(
+      post({
+        sessionId: "lead",
+        lastSeq: first.lastSeq,
+        resume: first.state,
+        decisions: [{ toolCallId: "c1", sessionId: sub.childSessionId, approved: true, by: "boss" }],
+      }),
+    )
+    expect(res.status).toBe(200)
+    const second = resultFrame(await res.text())
+    expect(second?.status).toBe("done")
+    // 子会话入账了结论并补齐了 deploy；父会话没有子的 approval_decision
+    expect(types(await all(store, "lead:p1"))).toContain("approval_decision")
+    expect(types(await all(store, "lead:p1"))).toContain("tool_result")
+    expect((await all(store, "lead")).some((e) => e.type === "core.approval_decision")).toBe(false)
+    expect(outcomeOf(await all(store, "lead"))).toMatchObject({
+      status: "done",
+      answer: "deployed, all good",
+    })
+  })
+
+  it("本会话的结论仍对照 pending：toolCallId 不在等待中 → 409 unknown_tool_call（分流没有放松本会话的校验）", async () => {
+    const store = memoryStore()
+    const child = expert(store, [turn(callTool("c1", "deploy", { env: "prod" }))])
+    const parent = createAgent({
+      model: {
+        model: MODEL,
+        lowering: new ScriptedLowering([turn(callTool("p1", "ask_expert", { task: "deploy prod" }))]),
+      },
+      store,
+      tools: [asTool(child, { name: "ask_expert", description: "问专家", role: "expert" })],
+      handler: { heartbeatMs: 0, encode: () => rawEncoder, newSessionId: () => "lead" },
+    })
+    const first = resultFrame(await (await parent.handler(post({ input: "上线" }))).text())
+    if (first?.status !== "paused") throw new Error("期望 paused")
+    // 没带 sessionId：当成父会话的结论，c1 不是父的 pending
+    const res = await parent.handler(
+      post({
+        sessionId: "lead",
+        resume: first.state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe("unknown_tool_call")
+    // 子会话 id 也走 sessionId 的字符集规则：带空格 → 400
+    const bad = await parent.handler(
+      post({
+        sessionId: "lead",
+        resume: first.state,
+        decisions: [{ toolCallId: "c1", sessionId: "lead :p1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(bad.status).toBe(400)
   })
 })

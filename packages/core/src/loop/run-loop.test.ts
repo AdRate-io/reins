@@ -776,6 +776,41 @@ describe("runLoop：审批暂停与续跑", () => {
   })
 })
 
+describe("runLoop：工具表变化说明（announceToolChanges）", () => {
+  const extraTool = defineTool<Record<string, never>>({
+    name: "extra",
+    description: "第二次 run 才有的工具",
+    inputSchema: {},
+    execute: () => "ok",
+  })
+  it("缺省：第二次 run 工具表有增删 → tools_bound 后跟一条模型可见的 system_note；announceToolChanges: false 只记 tools_bound", async () => {
+    const run = async (announce: boolean | undefined) => {
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering([{ drafts: [say("一")] }, { drafts: [say("二")] }])
+      const base = baseConfig(lowering, log, { tools: [addTool] })
+      const extra = announce === undefined ? {} : { announceToolChanges: announce }
+      await drain(runLoop({ ...base, ...extra, input: "第一次" }))
+      await drain(runLoop({ ...base, ...extra, input: "第二次", tools: [addTool, extraTool] }))
+      return types(await all(log)).slice(4) // 第一次 run 的四条之后
+    }
+    expect(await run(undefined)).toEqual([
+      "tools_bound",
+      "system_note",
+      "user_message",
+      "model_text",
+      "budget_usage",
+    ])
+    expect(await run(true)).toEqual([
+      "tools_bound",
+      "system_note",
+      "user_message",
+      "model_text",
+      "budget_usage",
+    ])
+    expect(await run(false)).toEqual(["tools_bound", "user_message", "model_text", "budget_usage"])
+  })
+})
+
 describe("runLoop：工具的各种失败与客户端工具", () => {
   it("未知工具、执行抛错、入参不合法都以 isError 结果告知模型，循环不崩", async () => {
     const boom: Tool = {

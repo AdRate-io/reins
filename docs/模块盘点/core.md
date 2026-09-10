@@ -108,7 +108,7 @@
 | `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`、`LoweringCapabilities`、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
 | `lowering/errors.ts` | `LoweringError` 与 4 种 code（unsupported_model / unsupported_api / missing_api_key / invalid_request） |
 | `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
-| 测试 | 无（本目录只有类型；行为由 `@reins/lowering-pi` 的 T8 矩阵测试覆盖） |
+| 测试 | `trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reins/lowering-pi` 的 T8 矩阵测试覆盖 |
 
 ### `loop/` — 循环与插座（T9~T11）
 

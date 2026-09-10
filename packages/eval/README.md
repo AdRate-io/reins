@@ -7,18 +7,24 @@ pnpm add -D @reins/eval
 ```
 
 ```ts
+import { compact, perception } from "@reins/brain"
 import { checkGate, noneArm, renderReport, runEval, thresholdArm, withContextWindow } from "@reins/eval"
+import { anthropic } from "@reins/lowering-pi"
+
+const bound = anthropic("claude-sonnet-5", { apiKey: process.env.ANTHROPIC_API_KEY ?? "" })
 
 const report = await runEval({
-  fixtures,                                 // seed log + task + graders, see `recording.ts` for turning a real JSONL into one
+  fixtures,                                 // EvalFixture[]: seed log + task + graders (+ `maxResumes`, default 0: a budget pause counts as "did not finish"); see `recording.ts` for turning a real JSONL into one
   arms: [noneArm(), thresholdArm(), { name: "compact", sockets: [compact(), perception()] }],
-  lowering: withContextWindow(anthropicLowering, 32_000),   // shrink what the mechanisms *believe* the window is
+  lowering: withContextWindow(bound.lowering, 32_000),   // shrink what the mechanisms *believe* the window is
+  model: bound.model,
   repeats: 3,
-  maxResumes: 2,                            // default 0: a budget pause counts as "did not finish"
 })
 console.log(renderReport(report))
-const gate = checkGate(report, { candidate: "compact", baseline: "none" })
+const gate = checkGate(report, { candidate: "compact", reference: "threshold" })
 ```
+
+The reference CLI is `examples/eval/run.ts` in the repository; copy from it rather than from memory.
 
 ## Pieces
 
