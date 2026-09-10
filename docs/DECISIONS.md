@@ -94,9 +94,6 @@
 | 2026-09-10 | **子代理 = 工具**（Boss 提出、评估成立）：角色 B 以 `Tool.execute → agentB.run()` 挂在角色 A 的工具表上，库不做编排器；0.1 只给范式与示例（`examples/team/`），0.2 才做 `asTool` 助手，且助手只解决手写做不对的两件事 —— 审批冒泡（新 `Interruption.kind="subagent"`）与预算合算；**联停与否由使用者决定**（Boss 补充）：范式缺省传 signal，接力式编排（财务做完交法务）可不传 | 叫谁、叫它做什么、信不信结果都在 A 的模型判断里，正是宪法一；OpenAI Agents SDK 与 Claude Agent SDK 同形；手写版今天已能跑，先让 dogfood 暴露真问题再抽助手，避免造没人用的接口 | 高 |
 | 2026-09-10 | **MCP 提前到 0.1**（Boss 定）：新包 `@reins/tools-mcp`，用官方 `@modelcontextprotocol/client@2.0.0`（npm 核实最新、MIT；`@modelcontextprotocol/sdk` 1.30.0 是旧线，不用），`mcpTools(): Socket` 静态贡献形态、run 内工具表不变、`listChanged` 只影响下次 run；annotations → risk / needsApproval 缺省；主入口只 Streamable HTTP，stdio 在 `/node` 子路径；0.1 不做 sampling / elicitation / resources / prompts | 自用环节要一个能力完整的库；静态贡献让 MCP 工具与进程内工具走同一条路进循环，spill / approval / budget 自动生效（P3）；工具表 run 内稳定是 §9.1 缓存约束，也是 PRD"不做动态注册"的落点 | 中（包边界定了，内部实现可调） |
 | 2026-09-10 | **MCP 生效粒度**（Boss 介入定）：库只做"工具表按 run 绑定"一个原语，不做按会话快照、不做 run 中热加载；平台策略推荐"下一条消息生效"，"新会话才生效"由平台自己存配置快照实现；**工具表变化默认告知模型**：新增模型不可见的 `core.tools_bound` 每 run 一条，增删时追加模型可见 `system_note(kind=host)` 列出工具名 | 按 run 是最小原语，平台在其上可收紧不能放宽；用户加工具是为把眼前的事做完，重开对话丢上下文反直觉；宪法一要求让模型看见环境变化，且 tools_bound 让日志有了每次 run 的工具表快照（宪法二）；暂停中漂移拒绝与 `allowConfigDrift` 放行沿用既有机制 | 中（事件加了就要保留 upcast；平台策略随时可调） |
+| 2026-09-10 | **文档换代进入维护阶段**（Boss 提出，借鉴其 TanStack 项目启动资产的体系）：CLAUDE.md 改为正式版（身份历程、宪法、维护阶段工作流、索引、包全景、硬约束、技术要点与风险，红线 300 行）；新增 `docs/README.md`（体系规范 + 写入路由表）、`docs/系统全景图.md`、`docs/模块盘点/`（每包一份，四段式）、`docs/踩坑记录.md`（四段式，首批 18 条回填）；`TASKS.md` 只留未完成项，已完成记录整体迁 `归档/2026-09-10-任务记录-M0-M2.md`；技术方案加阅读指南与 §19"与代码的已知出入"，不回改原文 | 代码 3.1 万行、任务板 47 KB、技术方案 88 KB 后，每次开工整读成本过高；按"阅读时机"分层、活文档少快照多，是 AdRate 两年验证过的做法；任务行不再堆实现记录，细节归模块盘点 | 高（纯文档） |
 
-## 待 Boss 本人操作
-
-- [ ] M2 发布前：在 GitHub 创建组织 `reins` 并授权推送（或授权我用现有账号创建并转移）
-- [ ] M2 发布前：在 npm 创建组织 `reins`
-- [x] M1 B11：从投放工具里选一条真实长任务流程作为 dogfood —— 2026-09-08 Boss 定 CLI 接入 + 测试广告主 7000000000000000001；第一条"巡检降本"已跑通。AdRate 侧 `--status`/`--set` 漂移 09-09 已修复发布（gmvmax 经复核不属漂移）
+> 待 Boss 本人操作的事项已移到 `docs/TASKS.md`「待 Boss 本人操作」（2026-09-10）。

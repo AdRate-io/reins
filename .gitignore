@@ -18,3 +18,6 @@ examples/eval/out/
 .dev.vars
 spikes/**/out.json
 .wrangler/
+
+# 参考资料，不属于本仓库（Boss 的 TanStack 项目启动资产）
+TanStack项目启动资产/
