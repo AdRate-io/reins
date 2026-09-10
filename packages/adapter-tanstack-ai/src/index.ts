@@ -27,10 +27,15 @@ export {
 export { type LossEntry, TANSTACK_LOSS_MATRIX } from "./loss-matrix.js"
 export {
   COMPACTION_PREFIX,
+  type DedupedDrafts,
+  dedupeImportedUserMessages,
   framedSystemNote,
+  IMPORT_SOURCE,
   type ImportedMessages,
+  type ImportOptions,
   type ImportOrigin,
   importModelMessages,
+  importRef,
   type LoweredMessages,
   parseArgs,
   type ToModelMessagesOptions,

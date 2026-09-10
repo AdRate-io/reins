@@ -77,7 +77,12 @@ import type {
 import { BlockAssembler } from "./assembler.js"
 import { fromTanstackToolResult } from "./content.js"
 import { type ReinsApprovalInterrupt, reinsApprovalInterrupt } from "./interrupt.js"
-import { importModelMessages, toModelMessages, trailingUserMessages } from "./messages.js"
+import {
+  dedupeImportedUserMessages,
+  importModelMessages,
+  toModelMessages,
+  trailingUserMessages,
+} from "./messages.js"
 import { isNativeToolView, type ToolBridge, toTanstackTool, viewOfTanstackTool } from "./tools.js"
 
 /** TanStack 原生审批（工具静态 needsApproval）在日志里的策略标识 */
@@ -348,13 +353,19 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       }),
     )
 
-    // 新输入：日志为空则整段接管客户端历史，否则只取末尾新带来的用户消息（历史已在日志里）
+    // 新输入：日志为空则整段接管客户端历史，否则只取末尾新带来的用户消息（历史已在日志里）。
+    // 幂等键按客户端完整数组里的位置（或消息自带 id）算，所以要告诉导入函数这一截从第几条起（R5）
     const origin = { provider: model.provider, api: TANSTACK_API, model: model.id }
     const fresh = timeline.length === 0 ? config.messages : trailingUserMessages(config.messages)
     if (fresh.length > 0) {
-      const imported = importModelMessages(fresh, origin)
+      const imported = importModelMessages(fresh, origin, {
+        startIndex: config.messages.length - fresh.length,
+      })
       if (imported.dropped.length > 0) warn(`导入客户端消息时有片段未能翻译：${imported.dropped.join(", ")}`)
-      await append(ctx, s, imported.drafts)
+      // 网络重试 / 客户端重放会把同一条用户消息再发一遍：日志里已有同键同内容的就跳过，不让它入日志两次
+      const { drafts, skipped } = dedupeImportedUserMessages(imported.drafts, timeline)
+      if (skipped > 0) warn(`客户端重发了 ${skipped} 条已在日志里的用户消息（网络重试？），已跳过`)
+      await append(ctx, s, drafts)
     }
     return s
   }

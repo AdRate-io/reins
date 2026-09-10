@@ -226,7 +226,43 @@ describe("reinsMiddleware：基本流程", () => {
     await f.run({ messages: [user("a"), { role: "assistant", content: "b" }, user("c")] })
     const events = await all(f.log)
     expect(types(events).slice(0, 4)).toEqual(["tools_bound", "user_message", "model_text", "user_message"])
-    expect(events[2]?.provenance).toEqual({ source: "tanstack-ai", ref: "import" })
+    // 幂等键 = 在客户端数组里的位置（R5）
+    expect(events[2]?.provenance).toEqual({ source: "tanstack-ai", ref: "import:1" })
+  })
+
+  it("网络重试重发同一请求：末尾用户消息不入日志两次，模型接着日志里的历史走（R5）", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    const warns: string[] = []
+    const f = fixture([{ blocks: [say("你好")] }], [], { warn: (m) => warns.push(m) }, shared)
+    await f.run({ messages: [user("hi")] })
+    // 客户端没收到回复，把一模一样的请求再发一遍
+    const f2 = fixture([{ blocks: [say("你好（重发）")] }], [], { warn: (m) => warns.push(m) }, shared)
+    await f2.run({ messages: [user("hi")] })
+    expect(types(await all(f.log))).toEqual([
+      "tools_bound",
+      "user_message",
+      "model_text",
+      "budget_usage",
+      "tools_bound",
+      "model_text",
+      "budget_usage",
+    ])
+    expect(f2.adapter.calls[0]?.messages).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "你好" },
+    ])
+    expect(warns).toEqual([expect.stringContaining("重发了 1 条")])
+  })
+
+  it("用户真的连说两遍同样的话：位置不同，照常入日志（R5 只挡同位置同内容）", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    const f = fixture([{ blocks: [say("你好")] }], [], {}, shared)
+    await f.run({ messages: [user("hi")] })
+    const f2 = fixture([{ blocks: [say("又见")] }], [], {}, shared)
+    await f2.run({ messages: [user("hi"), { role: "assistant", content: "你好" }, user("hi")] })
+    const events = await all(f.log)
+    expect(types(events).slice(4)).toEqual(["tools_bound", "user_message", "model_text", "budget_usage"])
+    expect(events[5]?.provenance).toEqual({ source: "tanstack-ai", ref: "import:2" })
   })
 
   it("非正文事件以 CUSTOM chunk 推进流（name = 事件 type）", async () => {

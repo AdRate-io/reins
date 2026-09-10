@@ -11,6 +11,8 @@
  * - 运维事件（审批、预算、暂停等）不下发（投影默认已过滤，这里兜底记 dropped）
  *
  * 入口 `importModelMessages`：客户端发来的 ModelMessage → 事件草稿，首次接入或续接新用户消息时用。
+ * 每条草稿的 `provenance.ref` 是幂等键（`importRef`）：客户端消息自带 `id` 就用 id，否则用它在客户端数组里的位置；
+ * `dedupeImportedUserMessages` 据此把网络重试重发的用户消息挡在日志外（R5）。
  */
 import {
   type CoreEvent,
@@ -289,6 +291,27 @@ export interface ImportedMessages {
   dropped: string[]
 }
 
+export interface ImportOptions {
+  /**
+   * `messages[0]` 在客户端完整消息数组里的下标。只导入末尾新消息时必须传，否则位置键会从 0 起算，
+   * 与首次整段导入时的键撞上（撞上也只是多比一次内容，不会误删）
+   */
+  startIndex?: number
+}
+
+/** 导入来源标识（`provenance.source`） */
+export const IMPORT_SOURCE = "tanstack-ai"
+
+/**
+ * 客户端消息的幂等键（R5），落在草稿的 `provenance.ref`：
+ * - 客户端给了稳定 `id`（TanStack 持久化 / 水合会保留）→ `import:id:<id>`
+ * - 没给 → `import:<index>`，index 是它在客户端完整消息数组里的位置。客户端每次都把整段历史连同新消息一起发来，
+ *   数组只增不减，所以"同一位置 + 同一内容"就是同一条消息；客户端若自行裁剪历史，位置会漂，退化成不去重（今天的行为）
+ */
+export function importRef(message: ModelMessage, index: number): string {
+  return message.id !== undefined && message.id !== "" ? `import:id:${message.id}` : `import:${index}`
+}
+
 /**
  * ModelMessage[] → 事件草稿。assistant 的 thinking 带签名时写进 replay（同 lowering-pi 的字段名），
  * tool 消息的工具名从前面的 toolCalls 反查；解析不了的入参原样存字符串。
@@ -296,13 +319,15 @@ export interface ImportedMessages {
 export function importModelMessages(
   messages: readonly ModelMessage[],
   origin: ImportOrigin,
+  opts: ImportOptions = {},
 ): ImportedMessages {
   const drafts: EventDraft[] = []
   const dropped: string[] = []
   const names = new Map<string, string>()
-  const provenance = { source: "tanstack-ai", ref: "import" }
+  const startIndex = opts.startIndex ?? 0
 
-  for (const m of messages) {
+  for (const [i, m] of messages.entries()) {
+    const provenance = { source: IMPORT_SOURCE, ref: importRef(m, startIndex + i) }
     if (m.role === "user") {
       const c = fromTanstackContent(m.content)
       dropped.push(...c.dropped)
@@ -387,4 +412,48 @@ export function trailingUserMessages(messages: readonly ModelMessage[]): ModelMe
   let i = messages.length
   while (i > 0 && messages[i - 1]?.role === "user") i--
   return messages.slice(i)
+}
+
+export interface DedupedDrafts {
+  drafts: EventDraft[]
+  /** 被判定为重发而跳过的用户消息条数 */
+  skipped: number
+}
+
+/**
+ * 导入前去重（R5）：草稿里的 `core.user_message` 若在日志里已有同源（`tanstack-ai`）、同幂等键、
+ * 且内容逐字相同的一条，就是网络重试 / 客户端重放带来的重发，跳过不入日志。
+ *
+ * 键相同但内容不同一律当新消息导入——位置键在客户端裁剪历史后会漂到别的消息上，宁可多记一条也不能丢用户说过的话。
+ * 内容比对用 `JSON.stringify`：两边都出自同一个翻译函数（键序一致），且 pg 侧刻意用 `json` 不用 `jsonb`（不重排键序），
+ * 比不上的后果只是退化成不去重。非 user 草稿（整段接管时的 assistant / tool）原样放行，它们只在日志为空时才会被导入。
+ */
+export function dedupeImportedUserMessages(
+  drafts: readonly EventDraft[],
+  timeline: readonly Event[],
+): DedupedDrafts {
+  const seen = new Map<string, string>()
+  for (const e of timeline) {
+    if (
+      e.type !== "core.user_message" ||
+      e.provenance?.source !== IMPORT_SOURCE ||
+      e.provenance.ref === undefined
+    )
+      continue
+    seen.set(e.provenance.ref, JSON.stringify((e.payload as { content: unknown }).content))
+  }
+  let skipped = 0
+  const kept: EventDraft[] = []
+  for (const d of drafts) {
+    const ref = d.provenance?.ref
+    if (d.type === "core.user_message" && ref !== undefined) {
+      const prior = seen.get(ref)
+      if (prior !== undefined && prior === JSON.stringify((d.payload as { content: unknown }).content)) {
+        skipped++
+        continue
+      }
+    }
+    kept.push(d)
+  }
+  return { drafts: kept, skipped }
 }

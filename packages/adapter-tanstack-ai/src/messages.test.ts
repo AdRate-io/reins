@@ -2,7 +2,14 @@ import { type CoreEvent, createCoreEvent, createCoreRegistry, type Event } from 
 import { describe, expect, it } from "vitest"
 import { BlockAssembler } from "./assembler.js"
 import { TANSTACK_LOSS_MATRIX } from "./loss-matrix.js"
-import { COMPACTION_PREFIX, importModelMessages, toModelMessages, trailingUserMessages } from "./messages.js"
+import {
+  COMPACTION_PREFIX,
+  dedupeImportedUserMessages,
+  importModelMessages,
+  importRef,
+  toModelMessages,
+  trailingUserMessages,
+} from "./messages.js"
 
 const registry = createCoreRegistry()
 const MODEL = { provider: "scripted", id: "scripted-1" }
@@ -12,7 +19,7 @@ let seq = 0
 function ev<T extends CoreEvent["type"]>(
   type: T,
   payload: Extract<CoreEvent, { type: T }>["payload"],
-  extra: { actor?: Event["actor"]; replay?: Record<string, unknown> } = {},
+  extra: { actor?: Event["actor"]; replay?: Record<string, unknown>; provenance?: Event["provenance"] } = {},
 ): Event {
   seq++
   return createCoreEvent(registry, {
@@ -24,6 +31,7 @@ function ev<T extends CoreEvent["type"]>(
     at: seq,
     id: `e${seq}`,
     ...(extra.replay ? { replay: extra.replay } : {}),
+    ...(extra.provenance ? { provenance: extra.provenance } : {}),
   } as Parameters<typeof createCoreEvent>[1]) as Event
 }
 
@@ -326,6 +334,66 @@ describe("importModelMessages / trailingUserMessages", () => {
         { role: "assistant", content: "b" },
       ]),
     ).toEqual([])
+  })
+
+  it("幂等键（R5）：有 id 用 id，否则用客户端数组里的位置；startIndex 让末尾一截从真实下标起算", () => {
+    expect(importRef({ role: "user", content: "a", id: "m-1" }, 7)).toBe("import:id:m-1")
+    expect(importRef({ role: "user", content: "a", id: "" }, 7)).toBe("import:7")
+    expect(importRef({ role: "user", content: "a" }, 0)).toBe("import:0")
+    const { drafts } = importModelMessages(
+      [
+        { role: "user", content: "c" },
+        { role: "user", content: "d", id: "m-d" },
+      ],
+      ORIGIN,
+      { startIndex: 2 },
+    )
+    expect(drafts.map((d) => d.provenance)).toEqual([
+      { source: "tanstack-ai", ref: "import:2" },
+      { source: "tanstack-ai", ref: "import:id:m-d" },
+    ])
+  })
+
+  it("导入去重（R5）：同键同内容跳过；同键不同内容、同内容不同键、非本适配器导入的都照常放行", () => {
+    const imported = (ref: string, text: string) =>
+      ev(
+        "core.user_message",
+        { content: [{ type: "text", text }] },
+        { provenance: { source: "tanstack-ai", ref } },
+      )
+    const timeline = [
+      imported("import:0", "hi"),
+      ev("core.model_text", { text: "你好" }),
+      imported("import:id:m-2", "again"),
+      // 宿主自己 append 的用户消息，不带 tanstack-ai 来源：不参与去重
+      ev(
+        "core.user_message",
+        { content: [{ type: "text", text: "host" }] },
+        { provenance: { source: "host", ref: "import:5" } },
+      ),
+    ]
+    const { drafts } = importModelMessages(
+      [
+        { role: "user", content: "hi" }, // import:0，重发
+        { role: "user", content: "changed" }, // import:1 → 不同键
+        { role: "user", content: "again", id: "m-2" }, // 同 id 同内容，重发
+        { role: "user", content: "edited", id: "m-2" }, // 同 id 不同内容，当新消息
+      ],
+      ORIGIN,
+    )
+    const hostDup = importModelMessages([{ role: "user", content: "host" }], ORIGIN, { startIndex: 5 }).drafts
+    const out = dedupeImportedUserMessages([...drafts, ...hostDup], timeline)
+    expect(out.skipped).toBe(2)
+    expect(
+      out.drafts.map((d) => [
+        (d.payload as { content: { text: string }[] }).content[0]?.text,
+        d.provenance?.ref,
+      ]),
+    ).toEqual([
+      ["changed", "import:1"],
+      ["edited", "import:id:m-2"],
+      ["host", "import:5"],
+    ])
   })
 })
 

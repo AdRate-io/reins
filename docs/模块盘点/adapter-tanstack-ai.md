@@ -57,7 +57,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | --- | --- |
 | `src/index.ts` | 唯一导出口；把 middleware / messages / assembler / tools / interrupt / schema / loss-matrix 的公开面拢在一处，并声明"`@tanstack/ai` 的类型只在本包出现"。 |
 | `src/middleware.ts` | 主体（845 行）：`reinsMiddleware()`，十一个 TanStack 钩子 → 五个 Socket 方法的翻译，run 状态、事件 append、审批中断、交接、用量记账都在这里。 |
-| `src/messages.ts` | 事件 ⇄ TanStack `ModelMessage` 的纯函数翻译：出口 `toModelMessages`（含 trust 标注：untrusted 内容调 core `markUntrusted` 包 `<untrusted>`，`trustMarkers` 可关）、入口 `importModelMessages`，外加 `trailingUserMessages`、`framedSystemNote`、`parseArgs`。 |
+| `src/messages.ts` | 事件 ⇄ TanStack `ModelMessage` 的纯函数翻译：出口 `toModelMessages`（含 trust 标注：untrusted 内容调 core `markUntrusted` 包 `<untrusted>`，`trustMarkers` 可关）、入口 `importModelMessages`（每条草稿的 `provenance.ref` 是幂等键 `importRef`：消息 id 或客户端数组位置）与 `dedupeImportedUserMessages`（R5 去重），外加 `trailingUserMessages`、`framedSystemNote`、`parseArgs`。 |
 | `src/assembler.ts` | `BlockAssembler`：把流式 AG-UI chunk（TEXT_* / REASONING_* / TOOL_CALL_*）拼成完整内容块的 `EventDraft`，`finish()` 收尾未闭合的块。 |
 | `src/content.ts` | 内容片段互译：`toTanstackParts` / `toTanstackContent` / `fromTanstackContent` / `fromTanstackToolResult`，翻不动的片段留占位文本并报 `dropped`。 |
 | `src/tools.ts` | 工具桥接：`viewOfTanstackTool`（宿主工具 → reins 只读视图，打 `NATIVE_TOOL` 标记）、`toTanstackTool`（reins 工具 → TanStack 工具，包 `ToolContext` 并把归一结果存进 `ToolBridge.outputs`）。 |
@@ -65,13 +65,13 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | `src/schema.ts` | `reinsSchema()`：手写的 Standard Schema（同时满足 `StandardSchemaV1` 与 `StandardJSONSchemaV1`），只为 `defineInterrupt` 服务，不引 zod；附 `isRecord`。 |
 | `src/loss-matrix.ts` | `TANSTACK_LOSS_MATRIX`：本路径每种事件类型的可能落点（exact / lossy / dropped），与 lowering-pi 的矩阵同形。 |
 | `src/testing.ts` | `scriptedAdapter(script)`：脚本化 TanStack 文本适配器，按剧本吐 AG-UI chunk 并把每次 `chatStream` 收到的 `TextOptions` 记进 `calls`（断言"模型看到了什么"就看它）；配套 `say` / `think` / `callTool` 与 `SCRIPTED_MODEL` / `SCRIPTED_PROVIDER`。文本拆两段 delta、thinking 签名故意排在 END 之后，专门压拼块器。 |
-| `src/messages.test.ts`、`src/middleware.test.ts` | 单测与端到端。前者：`toModelMessages`、`importModelMessages / trailingUserMessages`、`BlockAssembler`、`toModelMessages：用户消息后移`；后者跑真实 `chat()` 引擎 + `scriptedAdapter`：`reinsMiddleware：基本流程`、`：脑子模块`、`：审批`。 |
+| `src/messages.test.ts`、`src/middleware.test.ts` | 单测与端到端。前者：`toModelMessages`、`importModelMessages / trailingUserMessages`（含幂等键与去重）、`BlockAssembler`、`toModelMessages：用户消息后移`；后者跑真实 `chat()` 引擎 + `scriptedAdapter`：`reinsMiddleware：基本流程`、`：脑子模块`、`：审批`。 |
 
 ## 3 核心流程
 
 1. **init**（`onConfig(ctx.phase === "init")` → `initRun`）：`readTimeline(log, sessionId, { registry })` 先把整条日志过一遍注册表——读不出来的事件在写任何东西之前就拒绝（fail-closed）。
 2. 宿主工具 `config.tools` 逐个 `viewOfTanstackTool` 成只读视图，连同 `sockets` 交给 `await resolveSocketContributions`（P1 起 async），拿回"视图 + 脑子工具"的 `baseTools` 与脑子的规则提示片段；`systemPrompts = [...config.systemPrompts, brainPrompt?]`——宿主原有条目（可能带 `cache_control`）一个字不动，脑子片段追加成最后一条，整个 run 逐字不变。 随后 append 一条 `core.tools_bound`（P1，与 runLoop 共用 `toolsBoundDrafts`；configHash 只按脑子片段算，与 runLoop 的不可比、只在本适配器内前后自比），工具表与上一条相比有增删且 `announceToolChanges !== false` 则再 append 模型可见说明。
-3. **导入客户端新输入**：日志为空则 `config.messages` 整段接管，否则只取 `trailingUserMessages(config.messages)`（末尾连续的 user），经 `importModelMessages` 变成草稿 `append` 入日志；片段翻不动时 `warn`。init 返回 `{ tools: tanstackToolsOf(...), systemPrompts }`。
+3. **导入客户端新输入**：日志为空则 `config.messages` 整段接管，否则只取 `trailingUserMessages(config.messages)`（末尾连续的 user），经 `importModelMessages`（传 `startIndex` = 这一截在客户端数组里的起始下标）变成草稿，再经 `dedupeImportedUserMessages` 对照日志去掉重发的用户消息（R5，跳过时 `warn` 一句）后 `append` 入日志；片段翻不动时 `warn`。init 返回 `{ tools: tanstackToolsOf(...), systemPrompts }`。
 4. **每轮 beforeModel**（`onConfig(phase = "beforeModel" | "structuredOutput")` → `beforeModel`）：重读日志 → `buildTurn` 里 `project()` 按 `capabilities.contextWindow` 投影（策略新造的事件先 `log.append`，保证"模型可见 ⟺ 已记录"）→ 造 `TurnContext`（含 budget：`targetTokens` / `used` / `tokensSpent` / `turns` / `toolCalls` / `wallMs` / `lastUsage`）。
 5. 依次 `sock.beforeModel(tctx)`，补丁可换 `events` / `tools` / `systemPrompt`；随后 `flush` 把钩子 `emit` 的草稿落日志，并把其中非 `DEFAULT_MODEL_INVISIBLE_TYPES` 的事件追加进本轮可见集——**emit 的说明当轮就能被模型看见**。
 6. `s.assembler.reset()`，`toModelMessages(visible, { model })` 译出 `providerMessages`，非 exact 的落点交 `onLandings`；返回 `{ providerMessages, tools: tanstackToolsOf(s, tools), systemPrompts }`。
@@ -92,7 +92,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 ## 4 核心设计决策
 
 - **日志是唯一真源，TanStack 的 messages 只给 UI** — 每轮 `onConfig` 用日志投影产出 `providerMessages` 覆盖掉 TanStack 手上的历史。理由（DECISIONS 2026-09-08 B10）：两份历史并存时必须有且只有一个真源，否则 compact / spill / pin 的效果会被客户端重发的全文覆盖。边界：宿主若想让客户端历史为真源，就不该用本适配器。
-- **客户端历史只导入"新的那一截"** — 日志为空整段接管，否则只取末尾连续的 user 消息（`trailingUserMessages`）。理由：TanStack 客户端每次把整段历史连同新输入一起发来，历史部分日志里已经有了。边界：**这条路径没有幂等键（TASKS R5，0.1 后）——网络重试重发同一条 user 消息会入日志两次**，本文注明为待办。
+- **客户端历史只导入"新的那一截"** — 日志为空整段接管，否则只取末尾连续的 user 消息（`trailingUserMessages`）。理由：TanStack 客户端每次把整段历史连同新输入一起发来，历史部分日志里已经有了。边界（R5，2026-09-10）：**幂等键 = 客户端消息自带的 `id`，没有就用它在客户端完整数组里的位置，且内容逐字相同才算重发**——同一请求被网络重试时末尾用户消息只入日志一次，模型接着日志里已有的历史走（已有完整回答时会再答一次，不会把用户消息记两遍）；用户真的连说两遍同样的话位置不同、照常导入；客户端自行裁剪历史会让位置漂移，退化成不去重而绝不误删。宿主自己 `append` 的用户消息（来源不是 `tanstack-ai`）不参与去重。
 - **动态审批落成通用中断** — TanStack 自带审批只认工具上静态的 `needsApproval: true`，reins 的审批按入参动态判定（Socket 返回 `defer`），只能在 `beforeTools` 边界以 `reinsApprovalInterrupt` 表达，答复在 `onInterruptResolution` 记成 `approval_decision`。理由（DECISIONS B10 第二条）：两套审批并存但日志形状同一，前端与回放不分路径。边界：宿主必须把它登记到 `chat({ interrupts })`，否则 TanStack 在边界抛错；`ReinsChatMiddleware` 的第二个类型参数让漏登记在类型层就报出来。
 - **原生 needsApproval 只镜像不接管** — 宿主工具的静态审批仍走 TanStack 自己的流，适配器只在 `onToolPhaseComplete` 把请求与结论抄进日志（`policyId = "tanstack.needsApproval"`）。边界：TanStack 不告诉我们是谁拒的，`by` 只能记成 `"tanstack"`。
 - **`validate` 前移到审批判定之前（R1）** — `beforeTools` 里先校验入参再问 `needsApproval` 与生成摘要，与 runLoop、approval 模块三处同序（DECISIONS 2026-09-09 R1）。理由：审批人批的必须是将要执行的那份入参。边界：`rewrite` 仍在 `validate` 之前（钩子改的是模型给的原始入参）；校验不过不问人，直接由执行期报错拒掉。

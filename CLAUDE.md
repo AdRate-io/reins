@@ -144,7 +144,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 ### TanStack 适配器
 
 - **`defer` 让整轮工具全停等审批，runLoop 只挡需要审批的那个** — TanStack 在 `beforeTools` 边界暂停的引擎形状决定，不在适配器里绕。
-- **导入客户端消息没有幂等键**（R5）— 网络重试会把同一条 user 消息写两次。
+- **导入客户端消息的幂等键是"客户端消息 id，没有就用它在客户端数组里的位置"，还要内容逐字相同才算重发**（R5）— 客户端自行裁剪历史会让位置漂移，退化成不去重而不是误删；同键不同内容一律当新消息。
 - **模型看到的历史与 TanStack 手上的 `messages` 是两份，只有日志是真源** — 宿主另装中间件再改 messages 会静默覆盖 compact / spill / pin 的效果。
 
 ### eval
