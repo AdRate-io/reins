@@ -95,6 +95,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **每次 run 起步都 append 一条 `tools_bound`，有增删再 append 一条模型可见说明** — 任何断言日志开头 / seq / lastSeq 的测试都要把它算进去；说明缺省开（`announceToolChanges: false` 关），首次 run 与工具表不变时不出。
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试（日志里不能有两份半截）；判不出的错误当非瞬断。改这条等于改日志语义。
+- **瞬断判定先看状态码，有状态码就只按它定（408/409/429/5xx，与两家 SDK 及 pi-ai 同策略），文案关键词只在没有状态码时兜底且不匹配裸数字**（R3）— SDK 错误文案固定是 "<status> <body>"，pi-ai 原样转成 errorMessage，正文里的 "timeout" / "429" 字样不是信号。
 - **`beforeTool` 的 `defer` 可被已有批准略过，`block` 永远不能** — 批准只解决"要不要问人"，排在后面的 Socket 仍有权拦。
 - **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建，不靠内存。
 
