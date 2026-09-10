@@ -75,7 +75,11 @@ export interface ProjectionStats {
 export interface ProjectionResult {
   /** 模型本轮看到的事件 */
   events: Event[]
-  /** 投影新造、循环必须 append 进日志的事件（seq 已按时间线末尾预分配；冲突则重跑投影） */
+  /**
+   * 投影新造、循环必须 append 进日志的事件，seq 已按时间线末尾预分配。
+   * append 时 seq 冲突**不重跑投影**，`StoreError("seq_conflict")` 原样抛给宿主（R4，DECISIONS 2026-09-10）：
+   * run 进行中还有人往同一会话追加，是会话级并发违规（server 用 409 一会话一 run 挡它），静默重跑只会把并发写入藏起来
+   */
   emitted: Event[]
   stats: ProjectionStats
 }

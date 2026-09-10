@@ -16,8 +16,8 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 - [x] **R5** TanStack 导入幂等键 —— 2026-09-10 落地：键 = 消息 id 或客户端数组位置，内容逐字相同才算重发，同键不同内容放行；+4 用例（686 全绿）。细节：`模块盘点/adapter-tanstack-ai.md`「客户端历史只导入新的那一截」、DECISIONS "R5" 行
 - [x] **R7** 审批中断漏登记的运行时检查 —— 2026-09-10 实现（不是改注释）：init 读引擎登记表，没登记则告警一次、需审批调用降级为拒绝并留痕；反向验证旧代码会被引擎抛错打死；+1 用例（687 全绿）。细节：`模块盘点/adapter-tanstack-ai.md`「动态审批落成通用中断」、DECISIONS "R7" 行
 - [x] **R3** 瞬断判定状态码优先 —— 2026-09-10：结构化 status / 文案开头状态码 / SDK 连接类名 / `x-should-retry` 先定，408/409/429/5xx 与 SDK 同策略，关键词只兜没有状态码的错误且不再匹配裸数字；+1 用例（688 全绿）。细节：`模块盘点/core.md` retry.ts 行、DECISIONS "R3" 行
-- [ ] **R4** `projection/types.ts` 注释"emitted 冲突则重跑投影"与 runLoop 不符（实际直接抛 StoreError）：改注释或真做重跑，二选一记 DECISIONS
-- [ ] **R8** `store-pg/src/pg.test.ts` 有用例标题写"jsonb 往返"，该包刻意用 `json` 不用 `jsonb`，改标题
+- [x] **R4** 投影新造事件冲突 —— 2026-09-10 定"不重跑、抛 StoreError 交宿主"，注释与技术方案 §6 改成如实描述。理由见 DECISIONS "R4" 行
+- [x] **R8** pg 用例标题 —— 2026-09-10 改为"json 列往返不改内容，本包刻意不用 jsonb"
 - [ ] **`asTool(agent, opts)` 助手**（技术方案 §10.1，原 0.2 提前到发前：要给 `Interruption` 加 `kind: "subagent"`、暂停携带子会话 sessionId 与子 `SerializedRunState`，属公开类型，发后再改是破坏性变更）：审批冒泡——子 paused(approval) 时父不结束工具而是整体 paused，宿主批完续跑父 run、父续跑先续跑子再拿结果，状态全部可序列化换进程成立；预算合算——子 run 的 token 计入父 `ctx.budget`。`examples/team/subagent-tool.ts` 的手写范式改为调用它（保留一份手写版对照）。先在对话里把 `Interruption` / `RunResult` 的形状说清并记 DECISIONS 再动手
 - [ ] **E4** 文档、CHANGELOG、0.1 发布准备（远程仓库与 npm 组织在此之前建，见"待 Boss"）—— 含每个包的 README（对外，英文）、CHANGELOG 首条、changeset、`pnpm build` 产物 import 自检、根 README 状态从 Pre-alpha 改 0.1；最后 `pnpm publish`
 

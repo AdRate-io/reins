@@ -65,7 +65,7 @@ for (const backend of backends) {
         expect((await collect(stores.log.read("s1"))).map((e) => e.seq)).toEqual([1, 2, 3])
       })
 
-      it("与内存实现读出来 deepEqual（jsonb 往返不改内容）；fork 后 sessionId 换掉、其余原样", async () => {
+      it("与内存实现读出来 deepEqual（json 列往返不改内容，本包刻意不用 jsonb）；fork 后 sessionId 换掉、其余原样", async () => {
         const stores = await fresh()
         const mem = new InMemoryEventLog()
         const events = makeEvents("s1", 5)
