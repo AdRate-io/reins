@@ -145,6 +145,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 
 - **`defer` 让整轮工具全停等审批，runLoop 只挡需要审批的那个** — TanStack 在 `beforeTools` 边界暂停的引擎形状决定，不在适配器里绕。
 - **导入客户端消息的幂等键是"客户端消息 id，没有就用它在客户端数组里的位置"，还要内容逐字相同才算重发**（R5）— 客户端自行裁剪历史会让位置漂移，退化成不去重而不是误删；同键不同内容一律当新消息。
+- **宿主漏登记 `reinsApprovalInterrupt` 不是类型层能全挡的，运行时 init 会查引擎登记表，没登记则需审批的调用降级为拒绝并留 `approval_decision(by: "reins")`**（R7）— 否则引擎在边界抛 "not registered"，run 死在一条等不到答复的 `run_paused` 上；判据是引用同一性，与引擎一致，装了两份 `@tanstack/ai` 也会判成没登记。
 - **模型看到的历史与 TanStack 手上的 `messages` 是两份，只有日志是真源** — 宿主另装中间件再改 messages 会静默覆盖 compact / spill / pin 的效果。
 
 ### eval

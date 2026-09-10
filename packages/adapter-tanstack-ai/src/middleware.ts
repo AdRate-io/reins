@@ -74,9 +74,14 @@ import type {
   TokenUsage as TanstackUsage,
   ToolPhaseCompleteInfo,
 } from "@tanstack/ai"
+import { GenericInterruptDefinitionRegistryCapability } from "@tanstack/ai/adapter-internals"
 import { BlockAssembler } from "./assembler.js"
 import { fromTanstackToolResult } from "./content.js"
-import { type ReinsApprovalInterrupt, reinsApprovalInterrupt } from "./interrupt.js"
+import {
+  REINS_APPROVAL_INTERRUPT_ID,
+  type ReinsApprovalInterrupt,
+  reinsApprovalInterrupt,
+} from "./interrupt.js"
 import {
   dedupeImportedUserMessages,
   importModelMessages,
@@ -122,7 +127,10 @@ export interface ReinsMiddlewareOptions {
    * name = 事件 type，value = 事件本身（与 @reins/ui-agui 的约定一致）。正文类事件 TanStack 自己已经在流里了。缺省开
    */
   emitCustomEvents?: boolean
-  /** 告警出口（缺 BlobStore、未登记审批中断之类的降级），缺省 console.warn */
+  /**
+   * 告警出口，缺省 console.warn。会告警的降级：审批中断未登记到 `chat({ interrupts })`（需审批的调用按拒绝处理，R7）、
+   * 导入客户端消息时有片段翻不动、客户端重发的用户消息被跳过（R5）。缺 BlobStore 由 spill 模块自己告警，不在这里
+   */
   warn?: (message: string) => void
   /** 工具表与上一次 run 相比有增删时追加模型可见的说明（P1，缺省开）；快照事件 `core.tools_bound` 一律记 */
   announceToolChanges?: boolean
@@ -183,6 +191,11 @@ interface RunState {
   turn?: TurnState
   /** 已包装成 TanStack 工具的 reins 工具（按名字缓存，保持引用稳定） */
   wrapped: Map<string, AnyTool>
+  /**
+   * 宿主是否把 `reinsApprovalInterrupt` 登记到了 `chat({ interrupts })`（R7）。没登记时引擎会在边界抛
+   * "not registered on this chat"，run 死在一条永远等不到答复的 run_paused 上；所以 init 就查，没登记则 defer 降级为拒绝
+   */
+  approvalInterruptRegistered: boolean
 }
 
 function defaultCapabilities(partial: ReinsMiddlewareOptions["capabilities"]): LoweringCapabilities {
@@ -287,6 +300,15 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     return out
   }
 
+  /**
+   * 引擎在构造中间件上下文时就把 `chat({ interrupts })` 以 Capability 形式挂上（0.53.0 源码 `provideGenericInterruptDefinitionRegistry`），
+   * 边界返回的中断按**引用同一性**校验（`definitions.get(id) !== definition` 即抛），这里用同一判据；拿不到登记表也当没登记
+   */
+  const approvalInterruptRegistered = (ctx: ChatMiddlewareContext): boolean =>
+    ctx
+      .getOptional(GenericInterruptDefinitionRegistryCapability)
+      ?.definitions.get(REINS_APPROVAL_INTERRUPT_ID) === reinsApprovalInterrupt
+
   // ---- init：读日志、并入静态贡献、导入新输入 ----
   const initRun = async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig): Promise<RunState> => {
     const model: ModelRef = { provider: ctx.provider, id: ctx.model }
@@ -333,8 +355,13 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       verdicts: new Map(),
       assembler: new BlockAssembler({ provider: model.provider, api: TANSTACK_API, model: model.id }),
       wrapped: new Map(),
+      approvalInterruptRegistered: approvalInterruptRegistered(ctx),
     }
     states.set(ctx, s)
+    if (!s.approvalInterruptRegistered)
+      warn(
+        "reinsApprovalInterrupt 未登记到 chat({ interrupts })，本次 run 无法请求人工审批：需要审批的工具调用一律按拒绝处理（fail-closed）",
+      )
 
     // 工具表快照（P1）：与 runLoop 同一份纯函数。configHash 的系统提示只取脑子片段（宿主提示是 TanStack 的条目，
     // 可能带非文本元数据），所以与 runLoop 的 hash 不可比，只在本适配器内前后自比
@@ -566,6 +593,20 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
             parentId: call.id,
             payload: { toolCallId, policyId: approval.policyId, summary: approval.summary },
           })
+        }
+        // 审批中断没登记就问不了人（R7）：留一条 approval_decision(false) 再拦截，审计上"想问、问不了、按拒绝"三步都在日志里；
+        // 模型看到的是错误结果，而不是引擎抛错把 run 打死在一条等不到答复的 run_paused 上
+        if (!s.approvalInterruptRegistered) {
+          const reason =
+            "审批中断未登记（chat({ interrupts }) 缺 reinsApprovalInterrupt），无法请求人工审批，按拒绝处理"
+          s.emitted.push({
+            type: "core.approval_decision",
+            actor: "system",
+            parentId: call.id,
+            payload: { toolCallId, approved: false, by: "reins", reason },
+          })
+          s.verdicts.set(toolCallId, { kind: "block", text: `审批被拒绝：${reason}` })
+          continue
         }
         interrupts.push(
           reinsApprovalInterrupt.interrupt({

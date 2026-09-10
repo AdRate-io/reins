@@ -1,6 +1,6 @@
 # 模块盘点：`@reins/adapter-tanstack-ai`
 
-> 对应任务 B10。包版本 `0.0.0`，依赖 `@reins/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` pin 精确版本 `0.53.0`**（非 `^`，不随小版本漂移）；`@reins/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
+> 对应任务 B10。包版本 `0.0.0`，依赖 `@reins/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` pin 精确版本 `0.53.0`**（非 `^`，不随小版本漂移；除主入口外还用了 `@tanstack/ai/adapter-internals` 的中断登记表 Capability，R7）；`@reins/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
 
 ## 1 架构概览
 
@@ -61,11 +61,11 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | `src/assembler.ts` | `BlockAssembler`：把流式 AG-UI chunk（TEXT_* / REASONING_* / TOOL_CALL_*）拼成完整内容块的 `EventDraft`，`finish()` 收尾未闭合的块。 |
 | `src/content.ts` | 内容片段互译：`toTanstackParts` / `toTanstackContent` / `fromTanstackContent` / `fromTanstackToolResult`，翻不动的片段留占位文本并报 `dropped`。 |
 | `src/tools.ts` | 工具桥接：`viewOfTanstackTool`（宿主工具 → reins 只读视图，打 `NATIVE_TOOL` 标记）、`toTanstackTool`（reins 工具 → TanStack 工具，包 `ToolContext` 并把归一结果存进 `ToolBridge.outputs`）。 |
-| `src/interrupt.ts` | `reinsApprovalInterrupt`（`defineInterrupt`）：动态审批在 TanStack 里的落点，含 payload / response 两个 schema 与 `REINS_APPROVAL_INTERRUPT_ID = "reins.approval"`。 |
+| `src/interrupt.ts` | `reinsApprovalInterrupt`（`defineInterrupt`）：动态审批在 TanStack 里的落点，含 payload / response 两个 schema 与 `REINS_APPROVAL_INTERRUPT_ID = "reins.approval"`；头注释写明类型层 + 运行时两道漏登记保护（R7）。 |
 | `src/schema.ts` | `reinsSchema()`：手写的 Standard Schema（同时满足 `StandardSchemaV1` 与 `StandardJSONSchemaV1`），只为 `defineInterrupt` 服务，不引 zod；附 `isRecord`。 |
 | `src/loss-matrix.ts` | `TANSTACK_LOSS_MATRIX`：本路径每种事件类型的可能落点（exact / lossy / dropped），与 lowering-pi 的矩阵同形。 |
 | `src/testing.ts` | `scriptedAdapter(script)`：脚本化 TanStack 文本适配器，按剧本吐 AG-UI chunk 并把每次 `chatStream` 收到的 `TextOptions` 记进 `calls`（断言"模型看到了什么"就看它）；配套 `say` / `think` / `callTool` 与 `SCRIPTED_MODEL` / `SCRIPTED_PROVIDER`。文本拆两段 delta、thinking 签名故意排在 END 之后，专门压拼块器。 |
-| `src/messages.test.ts`、`src/middleware.test.ts` | 单测与端到端。前者：`toModelMessages`、`importModelMessages / trailingUserMessages`（含幂等键与去重）、`BlockAssembler`、`toModelMessages：用户消息后移`；后者跑真实 `chat()` 引擎 + `scriptedAdapter`：`reinsMiddleware：基本流程`、`：脑子模块`、`：审批`。 |
+| `src/messages.test.ts`、`src/middleware.test.ts` | 单测与端到端。前者：`toModelMessages`、`importModelMessages / trailingUserMessages`（含幂等键与去重）、`BlockAssembler`、`toModelMessages：用户消息后移`；后者跑真实 `chat()` 引擎 + `scriptedAdapter`：`reinsMiddleware：基本流程`、`：脑子模块`、`：审批`（含漏登记中断的 fail-closed 用例，`withoutInterrupts`）。 |
 
 ## 3 核心流程
 
@@ -80,7 +80,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 9. **`onInterruptBoundary(afterModel)`**：`assembler.finish()` 收尾未闭合的块 → `sock.afterModel(tctx, turn.modelEvents)` → `flush`。
 10. **`onInterruptBoundary(beforeTools)`** → `beforeTools`：`pendingToolCalls(timeline)` 取本批待执行调用；已有拒绝决定的直接记 `block`；否则按 **runLoop 同一顺序**跑管线——逐个 `sock.beforeTool(tctx, seen, tool)`，`rewrite` 替换入参后继续问后续 Socket，任一 `block` / `defer` 即定，已批准的调用遇到 `defer` 略过。
 11. 工具自带 `needsApproval` 的兜底（仅 reins 工具，宿主工具交 TanStack 原生审批）：**先 `tool.validate(args)` 再判 `needsApproval` 与写摘要**（R1，与 runLoop / approval 模块同序）；校验不过就不问人，留给执行时 `toTanstackTool` 报"入参不合法"。
-12. 需要审批的：`emit` 一条 `core.approval_request`（同 id 已请求过则不重复），发 `reinsApprovalInterrupt.interrupt({ key: toolCallId, ... })`，结论缓存成 `{ kind: "await" }`；有中断则 append `core.run_paused(reason: "approval")` 并把 `{ interrupts }` 返回给 TanStack，run 就此暂停。
+12. 需要审批的：`emit` 一条 `core.approval_request`（同 id 已请求过则不重复）；**宿主没把 `reinsApprovalInterrupt` 登记到 `chat({ interrupts })`（init 时经 `GenericInterruptDefinitionRegistryCapability` 查过、已 `warn` 一次）则问不了人，再 `emit` 一条 `approval_decision(approved: false, by: "reins")` 并记 `block`（R7，fail-closed）**；登记了才发 `reinsApprovalInterrupt.interrupt({ key: toolCallId, ... })`，结论缓存成 `{ kind: "await" }`；有中断则 append `core.run_paused(reason: "approval")` 并把 `{ interrupts }` 返回给 TanStack，run 就此暂停。
 13. **`onBeforeToolCall`** 只读缓存结论：`block → { type: "skip", result: { error } }`，`rewrite → { type: "transformArgs", args }`，其余放行——判定与执行分离，同一批调用的判定顺序不受 TanStack 并发执行影响。
 14. **`onAfterToolCall`** → `afterTool`：日志里已有结果就跳过（幂等）；`block` 的写成拦截错误结果；否则优先取 `bridge.outputs` 里 reins 归一后的 `ToolResult`（比 TanStack JSON 化后的形态精确），再逐个 `sock.afterTool(tctx, call, draft)` 允许整条替换（外溢等），最后 `settle`——**先 flush 留痕（`memory_op` / `approval_decision`），再落结果**。
 15. **`onToolPhaseComplete`** 补漏：TanStack 自己处理掉、没走 `onAfterToolCall` 的调用（原生审批拒绝、未知工具、入参解析失败、客户端回填、取消）补记 `core.tool_result`；原生审批的请求与结论镜像进日志（`policyId = "tanstack.needsApproval"`，`by = "tanstack"`）；有待审批 → `run_paused(approval)`，有待客户端执行 → `run_paused(host)`。
@@ -93,7 +93,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 
 - **日志是唯一真源，TanStack 的 messages 只给 UI** — 每轮 `onConfig` 用日志投影产出 `providerMessages` 覆盖掉 TanStack 手上的历史。理由（DECISIONS 2026-09-08 B10）：两份历史并存时必须有且只有一个真源，否则 compact / spill / pin 的效果会被客户端重发的全文覆盖。边界：宿主若想让客户端历史为真源，就不该用本适配器。
 - **客户端历史只导入"新的那一截"** — 日志为空整段接管，否则只取末尾连续的 user 消息（`trailingUserMessages`）。理由：TanStack 客户端每次把整段历史连同新输入一起发来，历史部分日志里已经有了。边界（R5，2026-09-10）：**幂等键 = 客户端消息自带的 `id`，没有就用它在客户端完整数组里的位置，且内容逐字相同才算重发**——同一请求被网络重试时末尾用户消息只入日志一次，模型接着日志里已有的历史走（已有完整回答时会再答一次，不会把用户消息记两遍）；用户真的连说两遍同样的话位置不同、照常导入；客户端自行裁剪历史会让位置漂移，退化成不去重而绝不误删。宿主自己 `append` 的用户消息（来源不是 `tanstack-ai`）不参与去重。
-- **动态审批落成通用中断** — TanStack 自带审批只认工具上静态的 `needsApproval: true`，reins 的审批按入参动态判定（Socket 返回 `defer`），只能在 `beforeTools` 边界以 `reinsApprovalInterrupt` 表达，答复在 `onInterruptResolution` 记成 `approval_decision`。理由（DECISIONS B10 第二条）：两套审批并存但日志形状同一，前端与回放不分路径。边界：宿主必须把它登记到 `chat({ interrupts })`，否则 TanStack 在边界抛错；`ReinsChatMiddleware` 的第二个类型参数让漏登记在类型层就报出来。
+- **动态审批落成通用中断** — TanStack 自带审批只认工具上静态的 `needsApproval: true`，reins 的审批按入参动态判定（Socket 返回 `defer`），只能在 `beforeTools` 边界以 `reinsApprovalInterrupt` 表达，答复在 `onInterruptResolution` 记成 `approval_decision`。理由（DECISIONS B10 第二条）：两套审批并存但日志形状同一，前端与回放不分路径。边界：宿主必须把它登记到 `chat({ interrupts })`，否则 TanStack 在边界抛 "not registered on this chat"，run 会死在一条等不到答复的 `run_paused` 上；`ReinsChatMiddleware` 的第二个类型参数让漏登记在类型层就报出来，**运行时再兜一道（R7，2026-09-10）**：init 用引擎同一判据（`ctx.getOptional(GenericInterruptDefinitionRegistryCapability)` 里按引用查 `reins.approval`，这是 `@tanstack/ai/adapter-internals` 的导出、随主包 pin 0.53.0）判定登记情况，没登记 `warn` 一次、需审批的调用降级为拒绝并留 `approval_request` + `approval_decision(false, by: "reins")`，工具绝不会在没人批的情况下执行。
 - **原生 needsApproval 只镜像不接管** — 宿主工具的静态审批仍走 TanStack 自己的流，适配器只在 `onToolPhaseComplete` 把请求与结论抄进日志（`policyId = "tanstack.needsApproval"`）。边界：TanStack 不告诉我们是谁拒的，`by` 只能记成 `"tanstack"`。
 - **`validate` 前移到审批判定之前（R1）** — `beforeTools` 里先校验入参再问 `needsApproval` 与生成摘要，与 runLoop、approval 模块三处同序（DECISIONS 2026-09-09 R1）。理由：审批人批的必须是将要执行的那份入参。边界：`rewrite` 仍在 `validate` 之前（钩子改的是模型给的原始入参）；校验不过不问人，直接由执行期报错拒掉。
 - **判定与执行分离** — 整批调用的 `beforeTool` 结论在边界一次算完存进 `verdicts`，`onBeforeToolCall` 只查表。理由：钩子形状要求同步给出 skip / transformArgs，且 TanStack 可能并发执行。边界：`defer` 会让**整轮**工具都等审批（TanStack 在边界暂停不执行任何调用），默认循环则会先执行不需审批的——已声明的差异（DECISIONS B10 第三条 ③）。

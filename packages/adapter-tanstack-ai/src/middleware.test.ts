@@ -79,6 +79,8 @@ interface Fixture {
     resume?: RunAgentResumeItem[]
     parentRunId?: string
     runId?: string
+    /** 故意不登记 reinsApprovalInterrupt（R7 用例） */
+    withoutInterrupts?: boolean
   }): Promise<StreamChunk[]>
 }
 
@@ -119,7 +121,8 @@ function fixture(
           tools: input.tools ?? [addTool],
           systemPrompts: input.systemPrompts ?? ["你是计算器"],
           middleware: [middleware],
-          interrupts: [reinsApprovalInterrupt],
+          // 漏登记在类型层就会被 ReinsChatMiddleware 的第二个类型参数报出来，这里靠 unknown 绕过去只为测运行时那道闸
+          ...(input.withoutInterrupts ? {} : { interrupts: [reinsApprovalInterrupt] }),
           agentLoopStrategy: maxIterations(10),
           threadId: "thread",
           debug: { errors: false },
@@ -642,6 +645,43 @@ describe("reinsMiddleware：审批", () => {
     expect((events[4] as CoreEventOf<"core.approval_request">).payload.policyId).toBe(
       TANSTACK_APPROVAL_POLICY,
     )
+  })
+
+  it("宿主漏登记 reinsApprovalInterrupt：init 告警一次，需审批的调用降级为拒绝且留痕，工具未执行（R7 fail-closed）", async () => {
+    const warns: string[] = []
+    const f = fixture(
+      [{ blocks: [callTool("c1", "deploy", { env: "prod" })] }, { blocks: [say("没人能批")] }],
+      [approval({ ask: ["deploy"] })],
+      { warn: (m) => warns.push(m) },
+    )
+    await f.run({ messages: [user("上线")], tools: [deployTool], withoutInterrupts: true })
+    expect(warns).toEqual([expect.stringContaining("未登记")])
+    const events = await all(f.log)
+    expect(types(events)).toEqual([
+      "tools_bound",
+      "user_message",
+      "tool_call",
+      "budget_usage",
+      "approval_request",
+      "approval_decision",
+      "tool_result",
+      "model_text",
+      "budget_usage",
+    ])
+    expect((events[5] as CoreEventOf<"core.approval_decision">).payload).toEqual({
+      toolCallId: "c1",
+      approved: false,
+      by: "reins",
+      reason: expect.stringContaining("未登记"),
+    })
+    const result = events[6] as CoreEventOf<"core.tool_result">
+    expect(result.payload.isError).toBe(true)
+    expect((result.payload.content[0] as { text: string }).text).toContain("审批被拒绝")
+    // 没有 run_paused，也没有引擎抛错：run 正常跑完，模型在下一轮看到拒绝结果
+    expect(f.adapter.calls[1]?.messages?.[2]).toMatchObject({
+      role: "tool",
+      error: expect.stringContaining("审批被拒绝"),
+    })
   })
 
   it("approval 模块 deny：留痕 approval_decision 后拦截，模型看到错误结果", async () => {

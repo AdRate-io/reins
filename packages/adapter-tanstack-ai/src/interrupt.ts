@@ -6,8 +6,10 @@
  * 通用中断表达：run 暂停、客户端拿到 `RUN_FINISHED(interrupt)`，答复后带 `resume` 续跑，
  * 我们在 `onInterruptResolution` 里把答复记成 `approval_decision`。
  *
- * 宿主必须把 `reinsApprovalInterrupt` 登记到 `chat({ interrupts: [reinsApprovalInterrupt] })`，
- * 否则 TanStack 会在边界抛错；适配器会在 init 时检查登记情况，没登记则把 defer 降级为拒绝（fail-closed，见 middleware）。
+ * 宿主必须把 `reinsApprovalInterrupt` 登记到 `chat({ interrupts: [reinsApprovalInterrupt] })`，否则 TanStack 会在边界抛
+ * "not registered on this chat"。两道保护：类型层 `ReinsChatMiddleware` 让漏登记编译不过；运行时 middleware 在 init 读引擎的
+ * 中断登记表（`GenericInterruptDefinitionRegistryCapability`），没登记则 `warn` 一次并把 defer 降级为拒绝——留
+ * `approval_request` + `approval_decision(false, by: "reins")` 再拦截（fail-closed，R7），工具绝不会在没人批的情况下执行。
  */
 import { defineInterrupt } from "@tanstack/ai"
 import { isRecord, reinsSchema } from "./schema.js"
