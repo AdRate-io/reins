@@ -64,6 +64,16 @@ export interface ToolContext {
   signal?: AbortSignal
   /** 工具想留痕（如 memory_op）：草稿由循环补齐后、在 tool_result 之前 append */
   emit(draft: EventDraft): void
+  /**
+   * 宿主本次续跑给**别的会话**（子代理）的审批结论（`ApprovalDecisionInput.sessionId` 指向非本会话的那些），循环不校验、不记事件，
+   * 原样转发；`asTool` 把它们交给子 run，多层嵌套逐层下传。没有就缺省（§10.1）
+   */
+  decisions?: readonly ApprovalDecisionInput[]
+  /**
+   * 把工具代跑的模型用量（子代理的 run）计入本 run 的预算：只加 `TurnContext.budget.tokensSpent`，父的 budget 模块按总账拦。
+   * 不追加父的 budget_usage 事件（那条是感知校准上下文大小的依据）。宿主循环提供；没提供的环境里工具只把用量写进结果
+   */
+  spend?(usage: TokenUsage): void
 }
 
 /**
@@ -254,6 +264,25 @@ export type Interruption =
   | { kind: "client_tool"; toolCallId: string; call: ToolCallPayload }
   | { kind: "budget"; note: string }
   | { kind: "host"; note: string }
+  | SubagentInterruption
+
+/**
+ * 子代理即工具（§10.1，`asTool`）的暂停冒泡：工具里跑的子 run 暂停了，父 run 不落这条 tool_result（调用留作 pending），
+ * 而是整体暂停并把子的中断带给宿主。宿主处理子的审批时，结论带 `sessionId: childSessionId` 放进父的 `decisions` 续跑父 run，
+ * 父续跑补齐这条 pending 时工具再续跑子 run。子 run 任何原因的暂停（approval / budget / host）都冒泡，父的 reason 综合取最需要人的那个
+ */
+export interface SubagentInterruption {
+  kind: "subagent"
+  toolCallId: string
+  call: ToolCallPayload
+  childSessionId: string
+  /** 子 run 的暂停原因 */
+  reason: PauseReason
+  /** 子 run 自己的中断（可能再嵌 subagent） */
+  interruptions: Interruption[]
+  /** 子 run 的可序列化状态，给宿主看（续跑子 run 由工具凭 childSessionId 完成，不需要宿主传回） */
+  state: SerializedRunState
+}
 
 /**
  * 可序列化的 run 状态。只含引用，内容全部从 EventLog 重读，小到能放 URL 参数或 KV。
@@ -278,6 +307,11 @@ export interface ApprovalDecisionInput {
   /** 谁批的：用户标识或策略 ID */
   by: string
   reason?: string
+  /**
+   * 结论针对哪个会话，缺省本会话。指向别的会话（子代理，见 `SubagentInterruption.childSessionId`）的结论本循环不校验、不记事件，
+   * 经 `ToolContext.decisions` 原样转发给工具
+   */
+  sessionId?: string
 }
 
 export type RunResult =

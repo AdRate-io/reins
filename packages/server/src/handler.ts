@@ -103,9 +103,14 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
           d !== null &&
           typeof d.toolCallId === "string" &&
           typeof d.approved === "boolean" &&
-          typeof d.by === "string",
+          typeof d.by === "string" &&
+          (d.sessionId === undefined || typeof d.sessionId === "string"),
       )
-    if (!okDecisions) return { ok: false, error: "decisions 每项必须含 toolCallId / approved / by" }
+    if (!okDecisions)
+      return {
+        ok: false,
+        error: "decisions 每项必须含 toolCallId / approved / by（sessionId 可选，给子代理会话的结论用）",
+      }
   }
   if (b.resume !== undefined && (typeof b.resume !== "object" || b.resume === null)) {
     return { ok: false, error: "resume 必须是对象" }

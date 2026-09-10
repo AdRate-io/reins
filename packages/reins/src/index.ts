@@ -12,4 +12,15 @@
 export * from "@reins/core"
 export * from "@reins/server"
 export * from "@reins/ui-agui"
+export {
+  type AsToolOptions,
+  asTool,
+  defaultChildSessionId,
+  SUBAGENT_TASK_SCHEMA,
+  type SubagentOutcome,
+  type SubagentTask,
+  type SubagentUsage,
+  subagentOutcomesOf,
+  usageOf,
+} from "./as-tool.js"
 export { type Agent, type CreateAgentOptions, createAgent, type RunOptions } from "./create-agent.js"

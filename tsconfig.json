@@ -15,6 +15,7 @@
     { "path": "examples/minimal" },
     { "path": "examples/adrate" },
     { "path": "examples/eval" },
-    { "path": "examples/mcp" }
+    { "path": "examples/mcp" },
+    { "path": "examples/team" }
   ]
 }

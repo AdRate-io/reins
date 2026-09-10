@@ -50,6 +50,21 @@ function interruptsOf(result: Extract<RunResult, { status: "paused" }>): AguiInt
           toolCallId: i.toolCallId,
           metadata: { call: i.call },
         }
+      case "subagent":
+        // 子代理冒泡（§10.1）：子的中断嵌在 metadata 里，前端给子的审批答复时把 childSessionId 放进 decisions[].sessionId
+        return {
+          id: i.toolCallId,
+          reason: "subagent",
+          message: `subagent session ${i.childSessionId} paused (${i.reason})`,
+          toolCallId: i.toolCallId,
+          metadata: {
+            call: i.call,
+            childSessionId: i.childSessionId,
+            childReason: i.reason,
+            interruptions: i.interruptions,
+            state: i.state,
+          },
+        }
       default:
         return { id: `${i.kind}:${result.lastSeq}:${n}`, reason: i.kind, message: i.note }
     }

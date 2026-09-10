@@ -188,12 +188,36 @@ describe("run 结束的三种翻译", () => {
         },
         { kind: "client_tool", toolCallId: "c2", call: { toolCallId: "c2", name: "pick_file", args: {} } },
         { kind: "budget", note: "轮数到顶" },
+        // 子代理冒泡（§10.1）：子的中断与状态嵌进 metadata
+        {
+          kind: "subagent",
+          toolCallId: "c3",
+          call: { toolCallId: "c3", name: "ask_expert", args: { task: "t" } },
+          childSessionId: "s1:c3",
+          reason: "approval",
+          interruptions: [
+            {
+              kind: "approval",
+              toolCallId: "k1",
+              request: { toolCallId: "k1", policyId: "p", summary: "deploy()" },
+              call: { toolCallId: "k1", name: "deploy", args: {} },
+            },
+          ],
+          state: {
+            v: 1,
+            sessionId: "s1:c3",
+            lastSeq: 4,
+            pendingToolCallIds: ["k1"],
+            configHash: "h2",
+            pendingDigest: "d2",
+          },
+        },
       ],
       state: {
         v: 1,
         sessionId: "s1",
         lastSeq: 5,
-        pendingToolCallIds: ["c1", "c2"],
+        pendingToolCallIds: ["c1", "c2", "c3"],
         configHash: "h",
         pendingDigest: "d",
       },
@@ -215,6 +239,17 @@ describe("run 结束的三种翻译", () => {
           },
           { id: "c2", reason: "client_tool", toolCallId: "c2" },
           { id: "budget:5:2", reason: "budget", message: "轮数到顶" },
+          {
+            id: "c3",
+            reason: "subagent",
+            message: "subagent session s1:c3 paused (approval)",
+            toolCallId: "c3",
+            metadata: {
+              childSessionId: "s1:c3",
+              childReason: "approval",
+              interruptions: [{ kind: "approval", toolCallId: "k1" }],
+            },
+          },
         ],
       },
     })

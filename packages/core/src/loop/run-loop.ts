@@ -22,7 +22,13 @@
  * 工具声明 needsApproval 而没有 Socket 做主时转审批；轮数超过 maxTurns 时暂停。
  */
 import type { ContentPart, Event } from "../events/base.js"
-import type { ApprovalDecisionPayload, CoreEvent, CoreEventOf, ErrorPayload } from "../events/core.js"
+import type {
+  ApprovalDecisionPayload,
+  CoreEvent,
+  CoreEventOf,
+  ErrorPayload,
+  TokenUsage,
+} from "../events/core.js"
 import { createEvent, type EventDraft } from "../events/create.js"
 import { uuidv7 } from "../events/id.js"
 import { createCoreRegistry } from "../events/registry.js"
@@ -39,9 +45,11 @@ import {
   validateResume,
 } from "./state.js"
 import { resolveSocketContributions } from "./static.js"
+import { isSubagentPause } from "./subagent.js"
 import { errorMessageOf, normalizeToolOutput, toolSpecOf } from "./tools.js"
 import { toolsBoundDrafts } from "./tools-bound.js"
 import type {
+  ApprovalDecisionInput,
   BeforeToolDecision,
   Interruption,
   LoopConfig,
@@ -145,6 +153,12 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     return { events, result: { status: "paused", sessionId, lastSeq, reason, interruptions, state } }
   }
 
+  /** ToolContext.spend 的实现：工具代跑的模型用量（子代理）计入本 run 的 tokensSpent，父 budget 模块按总账拦（§10.1 ④） */
+  const spendInto = (ctx: TurnContext) => (usage: TokenUsage) => {
+    tokensSpent += usage.input + usage.output
+    ctx.budget.tokensSpent = tokensSpent
+  }
+
   const fail = async (payload: ErrorPayload): Promise<{ events: Event[]; result: RunResult }> => {
     const events = await append([{ type: "core.error", actor: "system", payload }])
     const error = events[0] as CoreEventOf<"core.error">
@@ -152,7 +166,14 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   }
 
   // ---- 恢复与审批结论：先做完全部校验（不通过就抛，一条日志都不写），再写 run_resumed 与 approval_decision ----
-  if (cfg.resume !== undefined || (cfg.decisions && cfg.decisions.length > 0)) {
+  // 结论按 sessionId 分两路（§10.1）：本会话的校验并记事件；指向别的会话（子代理）的不校验、不记，原样经 ToolContext.decisions 转发给工具
+  const ownDecisions = (cfg.decisions ?? []).filter(
+    (d) => d.sessionId === undefined || d.sessionId === sessionId,
+  )
+  const forwardedDecisions: readonly ApprovalDecisionInput[] = (cfg.decisions ?? []).filter(
+    (d) => d.sessionId !== undefined && d.sessionId !== sessionId,
+  )
+  if (cfg.resume !== undefined || ownDecisions.length > 0) {
     const timeline = await readTimeline(log, sessionId, { registry })
     if (cfg.resume !== undefined) {
       await validateResume({
@@ -164,7 +185,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         ...(cfg.allowConfigDrift !== undefined ? { allowConfigDrift: cfg.allowConfigDrift } : {}),
       })
     }
-    const decisions = cfg.decisions ?? []
+    const decisions = ownDecisions
     const pendingIds = new Set(pendingToolCalls(timeline).map((c) => c.payload.toolCallId))
     for (const d of decisions) {
       if (!pendingIds.has(d.toolCallId)) {
@@ -279,7 +300,14 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // ---- 先补齐日志里没结果的 tool_call（上次暂停 / 崩溃留下的），再问模型 ----
     const pending = pendingToolCalls(timeline)
     if (pending.length > 0) {
-      const settled = yield* executeToolCalls(ctx, pending, timeline, { cfg, sockets, append, flush })
+      const settled = yield* executeToolCalls(ctx, pending, timeline, {
+        cfg,
+        sockets,
+        append,
+        flush,
+        forwardedDecisions,
+        spend: spendInto(ctx),
+      })
       toolCallsTotal += settled.executed
       if (settled.interruptions.length > 0) {
         const reason = pauseReasonOf(settled.interruptions)
@@ -443,6 +471,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         sockets,
         append,
         flush,
+        forwardedDecisions,
+        spend: spendInto(ctx),
       })
       toolCallsTotal += settled.executed
       ctx.budget.toolCalls = toolCallsTotal
@@ -542,9 +572,12 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
 }
 
 function pauseReasonOf(interruptions: readonly Interruption[]): PauseReason {
-  // 审批优先：宿主最需要知道的是"有东西等人批"
-  if (interruptions.some((i) => i.kind === "approval")) return "approval"
-  if (interruptions.some((i) => i.kind === "budget")) return "budget"
+  // 审批优先：宿主最需要知道的是"有东西等人批"；子代理冒泡的按它自己的原因算
+  const reasons = interruptions.map((i) =>
+    i.kind === "subagent" ? i.reason : i.kind === "client_tool" ? "host" : i.kind,
+  )
+  if (reasons.includes("approval")) return "approval"
+  if (reasons.includes("budget")) return "budget"
   return "host"
 }
 
@@ -553,6 +586,9 @@ interface ExecuteDeps {
   sockets: readonly Socket[]
   append: (drafts: readonly EventDraft[]) => Promise<Event[]>
   flush: () => Promise<Event[]>
+  /** 宿主给别的会话（子代理）的审批结论，原样进 ToolContext.decisions */
+  forwardedDecisions: readonly ApprovalDecisionInput[]
+  spend: (usage: TokenUsage) => void
 }
 
 interface ExecuteSummary {
@@ -580,7 +616,7 @@ async function* executeToolCalls(
   timeline: readonly Event[],
   deps: ExecuteDeps,
 ): AsyncGenerator<Event, ExecuteSummary> {
-  const { cfg, sockets, append, flush } = deps
+  const { cfg, sockets, append, flush, forwardedDecisions, spend } = deps
   const decisions = new Map<string, ApprovalDecisionPayload>()
   const requested = new Set<string>()
   for (const raw of timeline) {
@@ -659,6 +695,8 @@ async function* executeToolCalls(
       ...(ctx.memory ? { memory: ctx.memory } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
       emit: ctx.emit,
+      ...(forwardedDecisions.length > 0 ? { decisions: forwardedDecisions } : {}),
+      spend,
     }
 
     // 审批：Socket 说 defer，或工具自己声明 needsApproval 且尚无批准 —— 都转审批暂停
@@ -696,6 +734,13 @@ async function* executeToolCalls(
     try {
       summary.executed++
       const out = await tool.execute(args, toolCtx)
+      // 子代理暂停冒泡（§10.1）：不落 tool_result，这次调用留作 pending；父 run 整体暂停，宿主处理完子的中断后续跑父，
+      // 补齐 pending 时工具再续跑子 run
+      if (isSubagentPause(out)) {
+        summary.interruptions.push({ kind: "subagent", toolCallId, call: call.payload, ...out.detail })
+        if (cfg.signal?.aborted) break
+        continue
+      }
       const normalized = tool.toModelOutput ? { content: tool.toModelOutput(out) } : normalizeToolOutput(out)
       result = {
         type: "core.tool_result",

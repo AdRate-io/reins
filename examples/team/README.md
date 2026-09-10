@@ -4,11 +4,12 @@
 
 | 文件 | 管什么 |
 | --- | --- |
-| `subagent-tool.ts` | **范式本体** `expertTool()`：把一个 `Agent` 包成 `Tool`，逐条标号示范手写时容易漏的五件事（见下）；`childSessionsOf()` 从父时间线找回子会话 id |
+| `subagent-tool.ts` | `expertTool()`：一层薄封装，调库里的 **`asTool`**（`reins`，§10.1）；`childSessionsOf` = `subagentOutcomesOf` 从父时间线找回子会话 id |
+| `subagent-tool.handwritten.ts` | **手写对照版**（P3 时的范式）：不用 asTool 自己把 `Agent` 包成 `Tool`，逐条标号五件事（见下）；子 paused 只能当 isError 交给父模型 |
 | `agents.ts` | 三个 `createAgent`：`analyst`（两个只读数据工具）、`writer`（品牌语气指南）、`lead`（编排者，工具表上只有 `ask_analyst` / `ask_writer`）。同一套 `pgStores`，记忆按 `namespace` 前缀分角色再分用户 |
-| `run.ts` | 跑一条真实任务 → 审批逐条问（`--approve-all` 全批）→ 父会话与顺着结果找到的每个子会话各写一份 JSONL |
+| `run.ts` | 跑一条真实任务 → 审批逐条问（`--approve-all` 全批；专家冒泡上来的审批带子会话 id 答回去）→ 父会话与顺着结果找到的每个子会话各写一份 JSONL |
 | `replay.ts` | **验收**：只凭父 JSONL 找到并校验每个子 JSONL，不要 key、不碰库 |
-| `subagent-tool.test.ts` | 五件事的机制用例（脚本化降级层，确定性） |
+| `subagent-tool.handwritten.test.ts` | 手写版五件事的机制用例（脚本化降级层，确定性）；asTool 的用例在 `packages/reins/src/as-tool.test.ts` |
 | `data/catalog.json` | 8 个 SKU 的库存与六周销量 |
 
 ```bash
@@ -19,15 +20,22 @@ node examples/team/replay.ts examples/team/recordings/<父会话 id>.jsonl
 
 缺省模型 DeepSeek（`REINS_PROVIDER=aireiter` 换 Claude），密钥从仓库根《模型API测试信息.md》读；存储缺省 PGlite 文件库 `data/team.pgdata`，真 Postgres 把 `new pg.Pool(...)` 传给 `pgStores` 即可。
 
-## 手写一个子代理工具要做对的五件事
+## asTool 替你做对的两件事（2026-09-10 起示例用它）
 
-`expertTool()` 的 `execute` 就是 `agent.run({ input: task, principal, signal })` 跑到底再把结果交给父模型，五处标号与代码一一对应：
+`asTool(agent, { name, description, role, abort, risk })` 与手写版对模型的形状一样，多做对的是手写做不对的两件：
+
+- **审批冒泡。** 专家的 run 暂停（审批 / 预算 / 中止）时，父 run 不落 tool_result、整体 `paused`，宿主拿到 `Interruption(kind=subagent)`（里面是专家的中断与 `childSessionId`）。宿主把结论带 `sessionId: childSessionId` 放进父的 `decisions` 续跑父：父补齐这条 pending 时，`asTool` 凭子会话 id（缺省 `${父 sessionId}:${toolCallId}`，子日志末条是 `run_paused`）续跑专家，专家做完父再拿结果。状态全可序列化，`run.ts` 里 `askAll()` 就是这个流程，换进程一样成立。
+- **预算合算。** 专家的每次模型请求经 `ctx.spend` 记到父 run 的 `tokensSpent`，`lead` 的 budget 模块按总账拦；父自己的 `budget_usage` 不掺子用量。
+
+## 手写一个子代理工具要做对的五件事（对照版 `subagent-tool.handwritten.ts`）
+
+手写版的 `execute` 就是 `agent.run({ input: task, principal, signal })` 跑到底再把结果交给父模型，五处标号与代码一一对应：
 
 1. **中止传递由使用者自决。** `abort: "linked"`（缺省）把父的 `ctx.signal` 传给子：父停子停，省钱。`abort: "detached"` 不传：父中止时子做完为止——循环层保证正在执行的工具跑完、结果落进父日志，父才 `paused(host)`。示例里"问分析师"是问答，用 linked；"交给文案"是接力，用 detached。联停与否是编排语义的一部分，不是库该替你定的。
 2. **身份传递。** `principal` 原样下传。子会话的鉴权、以及记忆前缀 `(ctx) => /roles/analyst/users/${ctx.principal.id}` 才对得上——三个角色共用一张记忆表，靠前缀隔离；要按角色分表，`pgStores(client, { memoryTable })` 各建一套（P2）。
 3. **时间线关联。** 子会话的 `sessionId` 写进父 `tool_result` 的 JSON（模型可见）。`replay.ts` 只凭父录像就能顺着它找到子录像；eval 同理。
-4. **预算合算。** 子 run 的 `budget_usage` 记在子会话里，父的 budget 模块看不见。范式把子用量（请求数、token、工具次数）汇总写进父结果，让父模型与人都看得到。**已知缺口**：父的 budget 上限管不到子——0.2 的 `asTool` 助手做合算。
-5. **审批。** 子 run 返回 `paused`（审批 / 预算 / 中止）时，工具**不**替人批、不自己循环，以 `isError` 把状态和原因交给父模型决定。信任边界收在父的工具表上：专家不装 approval 模块，专家的每个工具调用都算父的一次 `ask_*`；专家一旦带写工具，把 `ask_*` 的 `risk` 提到 high 让父侧问人。
+4. **预算合算。** 子 run 的 `budget_usage` 记在子会话里，父的 budget 模块看不见。手写版只把子用量（请求数、token、工具次数）汇总写进父结果；`asTool` 另经 `ctx.spend` 计入父账。
+5. **审批。** 子 run 返回 `paused`（审批 / 预算 / 中止）时，工具**不**替人批、不自己循环：手写版以 `isError` 把状态和原因交给父模型决定；`asTool` 则冒泡给宿主（见上）。信任边界收在父的工具表上：专家不装 approval 模块，专家的每个工具调用都算父的一次 `ask_*`；专家一旦带写工具，把 `ask_*` 的 `risk` 提到 high 让父侧问人。
 
 深度守卫靠工具表：专家的工具表里没有 `expertTool` 类工具，所以不会无限套娃。每次调用一个全新的子会话；要与同一个专家多轮对话，把 `childSessionId` 回传做 `sessionId` 即可。
 

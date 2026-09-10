@@ -32,11 +32,10 @@ function stats(events: Event[]) {
   const usage = events
     .filter((e) => e.type === "core.budget_usage")
     .map((e) => (e.payload as { tokens: { input: number; output: number; cacheRead?: number } }).tokens)
-    .reduce((a, t) => ({ input: a.input + t.input, output: a.output + t.output, cacheRead: a.cacheRead + (t.cacheRead ?? 0) }), {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-    })
+    .reduce<{ input: number; output: number; cacheRead: number }>(
+      (a, t) => ({ input: a.input + t.input, output: a.output + t.output, cacheRead: a.cacheRead + (t.cacheRead ?? 0) }),
+      { input: 0, output: 0, cacheRead: 0 },
+    )
   return { events: events.length, requests: count("core.budget_usage"), toolCalls: count("core.tool_call"), memoryOps: count("core.memory_op"), usage }
 }
 
@@ -59,14 +58,14 @@ for (const c of children) {
     const first = child.find((e) => e.type === "core.user_message")
     const consistent = first?.sessionId === c.childSessionId
     console.log(
-      `  └ ${c.role.padEnd(8)} ${c.childSessionId}  ${c.status.padEnd(6)} ${String(cs.events).padStart(3)} 条，请求 ${cs.requests}，工具 ${cs.toolCalls}，记忆 ${cs.memoryOps}，` +
+      `  └ ${(c.role ?? "expert").padEnd(8)} ${c.childSessionId}  ${c.status.padEnd(6)} ${String(cs.events).padStart(3)} 条，请求 ${cs.requests}，工具 ${cs.toolCalls}，记忆 ${cs.memoryOps}，` +
         `tokens in ${cs.usage.input}+cache ${cs.usage.cacheRead} / out ${cs.usage.output}` +
         (cs.usage.input === c.usage.input && cs.usage.output === c.usage.output ? "（与父结果里的汇总一致）" : "（⚠ 与父结果里的汇总不一致）") +
         (consistent ? "" : "（⚠ 子录像的 sessionId 与父记录不符）"),
     )
   } catch (err) {
     missing++
-    console.error(`  └ ${c.role.padEnd(8)} ${c.childSessionId}  ❌ 找不到或读不了子录像 ${path}：${(err as Error).message}`)
+    console.error(`  └ ${(c.role ?? "expert").padEnd(8)} ${c.childSessionId}  ❌ 找不到或读不了子录像 ${path}：${(err as Error).message}`)
   }
 }
 process.exit(missing > 0 ? 1 : 0)

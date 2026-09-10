@@ -67,7 +67,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 **POST：起一个 run**（`handlePost`）
 
 1. `request.json()` 失败 → 400 `bad_request`。
-2. `parseBody` 只做壳校验：请求体必须是非数组对象；`sessionId` 过 `isValidSessionId`；`lastSeq` 非负整数；`input` 是字符串 / 数组 / 带 `type`+`payload` 的对象；`decisions` 每项含 `toolCallId`+`approved`+`by`；`resume` 是对象。`resume` 的形状与签名留给 core 的 `validateResume`。
+2. `parseBody` 只做壳校验：请求体必须是非数组对象；`sessionId` 过 `isValidSessionId`；`lastSeq` 非负整数；`input` 是字符串 / 数组 / 带 `type`+`payload` 的对象；`decisions` 每项含 `toolCallId`+`approved`+`by`（`sessionId` 可选，给子代理会话的结论，见 core `SubagentInterruption`）；`resume` 是对象。`resume` 的形状与签名留给 core 的 `validateResume`。
 3. `sessionId = body.sessionId ?? newSessionId()`（缺省 `uuidv7()`）。
 4. `denyBySessionAuthz({ sessionId, principal, request, method:"POST", isNew: body.sessionId === undefined })` —— 排在 `readTimeline` / `validateResume` 之前，因为那两步已经在读这条会话的日志了。
 5. 预校验分支：只有 `body.resume !== undefined`、`decisions` 非空、或 `input` 是草稿三者之一成立时才进。里面依次 `readTimeline(log, sessionId, { registry })` → （有 resume 时）`validateResume`，其 `configHash` 用 `computeConfigHash({ model, ...(await resolveSocketContributions(agent)) })` 算（P1 起 async），与 `runLoop` 起步同一份算法 → 每条 `decisions` 必须指向 `pendingToolCalls(timeline)` 里的调用，否则抛 `RunStateError("unknown_tool_call")` → `checkInput(body.input, pending, contributions.tools)`。`RunStateError` 一律翻成 409 + 其 `code`。

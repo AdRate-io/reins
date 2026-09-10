@@ -115,15 +115,16 @@
 | 文件 | 职责 |
 | --- | --- |
 | `loop/index.ts` | 汇总导出 fork / retry / run-loop / state / static / tools / types |
-| `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`；`RunResult` 四态、`SerializedRunState`、`Interruption`、`LoopConfig`（全部循环开关，P1 加 `announceToolChanges`）；`StaticContribution<T>` 的函数形态可返回 Promise（P1） |
-| `loop/run-loop.ts` | `runLoop` 主体（709 行）：append/pause/fail 三个基础动作、恢复与审批校验、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`、`inputDraft` 白名单 |
+| `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`（含可选 `decisions` / `spend`，asTool 用）；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`；`RunResult` 四态、`SerializedRunState`、`Interruption`（五种，含 `SubagentInterruption`）、`ApprovalDecisionInput`（可选 `sessionId`）、`LoopConfig`（全部循环开关，P1 加 `announceToolChanges`）；`StaticContribution<T>` 的函数形态可返回 Promise（P1） |
+| `loop/run-loop.ts` | `runLoop` 主体（767 行）：append/pause/fail/spendInto 四个基础动作、恢复与审批校验（结论按 `sessionId` 分本会话 / 转发两路）、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`（含 `isSubagentPause` 冒泡分支）、`inputDraft` 白名单 |
 | `loop/state.ts` | run 状态：`pendingToolCalls`、`computeConfigHash` / `computePendingDigest`（SHA-256）、`serializeRunState` / `signRunState` / `verifyRunState`（HMAC-SHA256 + 常数时间比较）、`validateResume` 与 8 种 `RunStateError` |
 | `loop/static.ts` | `resolveSocketContributions`（P1 起 **async**，各 Socket 依次 await 而非并发）：宿主工具 + 各 Socket 静态工具（同名宿主优先）、系统提示按注册顺序拼接；循环起步与 server 预校验共用，configHash 才对得上 |
+| `loop/subagent.ts` | 子代理暂停标记（§10.1）：`subagentPause(detail)` / `isSubagentPause()`，`Symbol.for` 品牌；工具 `execute` 返回它，循环不落 tool_result、run 整体 paused(kind=subagent) |
 | `loop/tools-bound.ts` | P1 纯函数：`lastToolsBound`、`diffToolNames`、`renderToolChangeNote`（给模型的英文文案）、`toolsBoundDrafts`（起步要 append 的 `tools_bound` + 有增删时的 `system_note(kind=host, meta.toolsChanged)`）；runLoop 与 TanStack 适配器共用，两处文案与判定不分叉 |
 | `loop/tools.ts` | 工具纯函数：`defineTool`（擦类型以便放进 `Tool[]`）、`toolSpecOf`、`normalizeToolOutput`（string / ContentPart[] / {content,isError} / undefined / 其余 JSON）、`errorMessageOf` |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |
-| 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 上线前审查修复 3 例 / R1·R2；`run-state.test.ts` 覆盖跨进程暂停恢复与 12 项 fail-closed 校验；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝 |
+| 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 子代理冒泡 3 例（返回标记即暂停、结论按 sessionId 转发、spend 合算）/ 上线前审查修复 3 例 / R1·R2；`run-state.test.ts` 覆盖跨进程暂停恢复与 12 项 fail-closed 校验；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝 |
 
 ### `replay/` — 回放（T15）
 
@@ -200,6 +201,7 @@
 - **静态贡献与动态补丁分两条路（B2 / B6）** — 模块给模型的工具与规则提示走 `Socket.tools` / `Socket.systemPrompt`（可以是按 `SocketSetup` 算一次的函数），整个 run 逐字不变；每轮的动态改动才走 `beforeModel` 补丁。为什么：prompt cache 要求系统提示与工具表每轮稳定，静态贡献还让续跑补齐 pending 调用时模块工具仍在场。边界：`resolveSocketContributions` 必须被循环起步与 server 预校验**共用**，否则 configHash 对不上、装了模块的会话续跑会被误判成配置漂移。
 - **`input` 事件草稿白名单（DECISIONS 2026-09-09）** — `inputDraft` 只接受 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`，其余在写任何日志之前抛 `RangeError`。为什么：审查实测一条伪造的 `approval_decision(approved=true)` 就能让 pending 调用免审批执行。边界：审批结论只能走 `decisions`（经 T10 校验）；server 层还有更严的一道。
 - **用户插话不改日志顺序（DECISIONS 2026-09-09）** — 日志里有未完成的 tool_call 时，新 `input` 照样追加在当前位置，"tool_result 必须紧跟 tool_use"由降级层把用户消息后移并记 `lossy` 来满足。为什么：什么时候说的就记在什么位置，是宪法二的直接推论；改循环只是把问题挪个地方。边界：这条规则要求每个降级层实现都照做（lowering-pi 与 TanStack 适配器同规则）。
+- **子代理暂停冒泡靠返回值标记，不靠抛错也不靠回调（DECISIONS 2026-09-10 asTool）** — `execute` 返回 `subagentPause(detail)`，循环把调用留作 pending、run 整体 paused，`pauseReasonOf` 按子的原因综合；宿主给子会话的 `decisions` 带 `sessionId`，循环不拿它对自己的 pending 校验、不记事件，原样经 `ToolContext.decisions` 转发；`ToolContext.spend` 只加 `tokensSpent`，不追加 budget_usage（那条是感知校准依据）。边界：TanStack 路径无此机制，适配器把标记降级为 isError。
 - **瞬断重试只在零输出时（DECISIONS 2026-09-10）** — 模型调用失败且判定为瞬断时最多重试 3 次、1s 起翻倍封顶 8s，但只在**本次尝试一块模型输出都没落日志**时重试；每次将要重试的失败记一条模型不可见的 `core.error(willRetry)`。为什么：时间线只追加，落了半截再重说会让日志里有两份半截，UI / eval / 回放都得猜哪份算。边界：判不出的错误一律当非瞬断（重试 400 只是再挨一次），宿主中止与 `LoweringError` 永不重试；退避不加抖动以保证可回放。
 - **入参校验前移到审批之前（R1）** — `beforeTool` 的 rewrite 之后、审批判定之前跑 `tool.validate`，校验不过直接 isError 不问人。为什么：审批人批的必须是将要执行的那份入参，否则 `needsApproval(input: TInput)` 的类型是谎话，也白费一次暂停。边界：`rewrite` 仍在 validate 之前 —— 钩子改的是模型给的原始入参。
 - **被打断的轮在续跑后才收尾（R2）** — 循环抽出 `endTurn`，补齐 pending 之后也调一次（缺省 continue）。为什么：被审批或中止打断的那一轮原本永远等不到 `onTurnEnd`，模块在那一轮记下的决定（如 handoff 意图）会整个丢失；修循环比让每个模块各自补救干净。边界：`ctx.timeline` 仍是轮开始时的快照，模块要按日志重建意图。

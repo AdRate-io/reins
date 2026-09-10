@@ -10,6 +10,7 @@
  */
 import {
   errorMessageOf,
+  isSubagentPause,
   normalizeToolOutput,
   type Tool as ReinsTool,
   type ToolContext,
@@ -87,9 +88,21 @@ export function toTanstackTool(tool: ReinsTool, bridge: ToolBridge): AnyTool {
         throw new Error(result.content[0]?.type === "text" ? result.content[0].text : "入参不合法")
       }
       const raw = await execute(input, ctx)
-      const result: ToolResult = tool.toModelOutput
-        ? { content: tool.toModelOutput(raw) }
-        : normalizeToolOutput(raw)
+      // 子代理暂停冒泡（§10.1）在 TanStack 路径做不到：TanStack 在边界只能整轮暂停，且中断由它自己的 interrupts 表达，
+      // 没法把"子会话等审批"翻成一个可续跑的中断。fail-closed：按失败交给模型，子会话保留（末条 run_paused），宿主可另行续跑
+      const result: ToolResult = isSubagentPause(raw)
+        ? {
+            content: [
+              {
+                type: "text",
+                text: `子代理会话 ${raw.detail.childSessionId} 已暂停（${raw.detail.reason}）等待宿主处理；本路径不支持把暂停冒泡到父 run，这次调用按未完成处理`,
+              },
+            ],
+            isError: true,
+          }
+        : tool.toModelOutput
+          ? { content: tool.toModelOutput(raw) }
+          : normalizeToolOutput(raw)
       bridge.outputs.set(toolCallId, result)
       // isError 在 TanStack 里只能以"执行抛错"表达；正文已存在 outputs，抛出去的文本只给 TanStack 的客户端看
       if (result.isError) throw new Error(textOf(result))

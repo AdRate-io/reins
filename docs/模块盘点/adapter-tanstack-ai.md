@@ -60,7 +60,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | `src/messages.ts` | 事件 ⇄ TanStack `ModelMessage` 的纯函数翻译：出口 `toModelMessages`（含 trust 标注：untrusted 内容调 core `markUntrusted` 包 `<untrusted>`，`trustMarkers` 可关）、入口 `importModelMessages`（每条草稿的 `provenance.ref` 是幂等键 `importRef`：消息 id 或客户端数组位置）与 `dedupeImportedUserMessages`（R5 去重），外加 `trailingUserMessages`、`framedSystemNote`、`parseArgs`。 |
 | `src/assembler.ts` | `BlockAssembler`：把流式 AG-UI chunk（TEXT_* / REASONING_* / TOOL_CALL_*）拼成完整内容块的 `EventDraft`，`finish()` 收尾未闭合的块。 |
 | `src/content.ts` | 内容片段互译：`toTanstackParts` / `toTanstackContent` / `fromTanstackContent` / `fromTanstackToolResult`，翻不动的片段留占位文本并报 `dropped`。 |
-| `src/tools.ts` | 工具桥接：`viewOfTanstackTool`（宿主工具 → reins 只读视图，打 `NATIVE_TOOL` 标记）、`toTanstackTool`（reins 工具 → TanStack 工具，包 `ToolContext` 并把归一结果存进 `ToolBridge.outputs`）。 |
+| `src/tools.ts` | 工具桥接：`viewOfTanstackTool`（宿主工具 → reins 只读视图，打 `NATIVE_TOOL` 标记）、`toTanstackTool`（reins 工具 → TanStack 工具，包 `ToolContext` 并把归一结果存进 `ToolBridge.outputs`；工具返回 core 的 `subagentPause` 时降级为 isError——TanStack 边界不能只暂停一个工具，子会话保留可续跑）。`toolContextBase.spend` 由 middleware 提供，子代理用量计入 `s.tokensSpent`。 |
 | `src/interrupt.ts` | `reinsApprovalInterrupt`（`defineInterrupt`）：动态审批在 TanStack 里的落点，含 payload / response 两个 schema 与 `REINS_APPROVAL_INTERRUPT_ID = "reins.approval"`；头注释写明类型层 + 运行时两道漏登记保护（R7）。 |
 | `src/schema.ts` | `reinsSchema()`：手写的 Standard Schema（同时满足 `StandardSchemaV1` 与 `StandardJSONSchemaV1`），只为 `defineInterrupt` 服务，不引 zod；附 `isRecord`。 |
 | `src/loss-matrix.ts` | `TANSTACK_LOSS_MATRIX`：本路径每种事件类型的可能落点（exact / lossy / dropped），与 lowering-pi 的矩阵同形。 |

@@ -8,7 +8,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises"
 import { createInterface } from "node:readline/promises"
-import type { ApprovalDecisionInput, Event, RunResult } from "reins"
+import type { ApprovalDecisionInput, Event, Interruption, RunResult } from "reins"
 import { closeStore, EXPERT_TOOL_NAMES, lead, store } from "./agents.ts"
 import { childSessionsOf } from "./subagent-tool.ts"
 
@@ -83,9 +83,15 @@ const rl = createInterface({ input: process.stdin, output: process.stdout })
 const startedAt = Date.now()
 let result = await runOnce({ ...(sessionId ? { sessionId } : {}), ...(input ? { input } : {}) })
 sessionId = result.sessionId
-while (result.status === "paused" && result.reason === "approval") {
+/** 逐条问审批；专家（子代理）冒泡上来的审批带上子会话 id，父续跑时会原样转给专家工具续跑子 run（§10.1） */
+async function askAll(interruptions: readonly Interruption[], childSessionId?: string): Promise<ApprovalDecisionInput[]> {
   const decisions: ApprovalDecisionInput[] = []
-  for (const i of result.interruptions) {
+  for (const i of interruptions) {
+    if (i.kind === "subagent") {
+      console.log(`  专家会话 ${i.childSessionId} 暂停（${i.reason}）：`)
+      decisions.push(...(await askAll(i.interruptions, i.childSessionId)))
+      continue
+    }
     if (i.kind !== "approval") continue
     const summary = `${i.call.name}(${JSON.stringify(i.call.args)})`
     let approved = approveAll
@@ -93,9 +99,17 @@ while (result.status === "paused" && result.reason === "approval") {
       const answer = await rl.question(`  审批：${summary}  [y/N] `)
       approved = /^y(es)?$/i.test(answer.trim())
     } else console.log(`  审批：${summary}  → 自动批准`)
-    decisions.push({ toolCallId: i.toolCallId, approved, by: approveAll ? "auto" : principal.id })
+    decisions.push({
+      toolCallId: i.toolCallId,
+      approved,
+      by: approveAll ? "auto" : principal.id,
+      ...(childSessionId !== undefined ? { sessionId: childSessionId } : {}),
+    })
   }
-  result = await runOnce({ sessionId, resume: result, decisions })
+  return decisions
+}
+while (result.status === "paused" && result.reason === "approval") {
+  result = await runOnce({ sessionId, resume: result, decisions: await askAll(result.interruptions) })
 }
 rl.close()
 
@@ -114,7 +128,7 @@ console.log(`\n父会话 ${sessionId}：${parent.length} 条事件，${((Date.no
 for (const c of children) {
   const events = await dump(c.childSessionId)
   console.log(
-    `  └ ${c.role.padEnd(8)} ${c.childSessionId}  ${String(events.length).padStart(3)} 条  ${c.status}  ` +
+    `  └ ${(c.role ?? "expert").padEnd(8)} ${c.childSessionId}  ${String(events.length).padStart(3)} 条  ${c.status}  ` +
       `tokens in ${c.usage.input}+cache ${c.usage.cacheRead} / out ${c.usage.output}，工具 ${c.usage.toolCalls} 次`,
   )
 }

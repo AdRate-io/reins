@@ -358,6 +358,11 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       approvalInterruptRegistered: approvalInterruptRegistered(ctx),
     }
     states.set(ctx, s)
+    // ToolContext.spend（§10.1 ④）：工具代跑的子代理用量计入本 run 的预算，budget 模块按总账拦
+    s.bridge.toolContextBase.spend = (usage) => {
+      s.tokensSpent += usage.input + usage.output
+      if (s.turn) s.turn.ctx.budget.tokensSpent = s.tokensSpent
+    }
     if (!s.approvalInterruptRegistered)
       warn(
         "reinsApprovalInterrupt 未登记到 chat({ interrupts })，本次 run 无法请求人工审批：需要审批的工具调用一律按拒绝处理（fail-closed）",

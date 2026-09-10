@@ -1,10 +1,11 @@
 /**
- * 子代理即工具的五件事，用脚本化降级层逐条验证（机制正确性；行为正确性看 recordings/ 里的真模型录像）。
+ * 手写范式（对照版）的五件事，用脚本化降级层逐条验证（机制正确性；行为正确性看 recordings/ 里的真模型录像）。
+ * 示例实际用的 asTool 版本的用例在 packages/reins/src/as-tool.test.ts。
  */
 import { ScriptedLowering, type ScriptedTurn } from "@reins/core/testing"
 import { type Agent, createAgent, defineTool, type Event, type RunResult, type ToRequestInput, memoryStore } from "reins"
 import { describe, expect, it } from "vitest"
-import { childSessionsOf, type ExpertOutcome, expertTool } from "./subagent-tool.ts"
+import { childSessionsOf, type ExpertOutcome, expertTool } from "./subagent-tool.handwritten.ts"
 
 const MODEL = { provider: "scripted", id: "s" }
 const text = (t: string): ScriptedTurn => ({ drafts: [{ type: "core.model_text", actor: "model", payload: { text: t } }] })

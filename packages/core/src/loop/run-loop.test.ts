@@ -9,8 +9,9 @@ import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
 import { BUILTIN_APPROVAL_POLICY, runLoop } from "./run-loop.js"
 import { resolveSocketContributions } from "./static.js"
+import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
-import type { LoopConfig, RunResult, Socket, Tool } from "./types.js"
+import type { ApprovalDecisionInput, Interruption, LoopConfig, RunResult, Socket, Tool } from "./types.js"
 
 const registry = createCoreRegistry()
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -1447,6 +1448,159 @@ describe("审查遗留 R1 / R2", () => {
       // 第二次起步的工具表快照：排在 approval_decision 之后、补齐 pending 之前
       "tools_bound",
       "tool_result",
+    ])
+  })
+})
+
+describe("子代理暂停冒泡（§10.1，asTool 的机制）", () => {
+  const childState = {
+    v: 1 as const,
+    sessionId: "child",
+    lastSeq: 3,
+    pendingToolCallIds: ["k1"],
+    configHash: "h",
+    pendingDigest: "d",
+  }
+  const innerApproval: Interruption = {
+    kind: "approval",
+    toolCallId: "k1",
+    request: { toolCallId: "k1", policyId: "p", summary: "deploy()" },
+    call: { toolCallId: "k1", name: "deploy", args: {} },
+  }
+
+  it("工具返回 subagentPause：不落 tool_result、调用留作 pending，run 以 paused(kind=subagent) 返回；续跑时给子会话的结论原样转发、父不校验不记", async () => {
+    const seen: (readonly ApprovalDecisionInput[] | undefined)[] = []
+    const delegate = defineTool<{ task: string }>({
+      name: "ask_expert",
+      description: "",
+      inputSchema: {},
+      execute: (_input, ctx) => {
+        seen.push(ctx.decisions)
+        if (ctx.decisions?.some((d) => d.sessionId === "child" && d.approved)) return "expert: done"
+        return subagentPause({
+          childSessionId: "child",
+          reason: "approval",
+          interruptions: [innerApproval],
+          state: childState,
+        })
+      },
+    })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("p1", "ask_expert", { task: "t" })] },
+      { drafts: [say("汇报")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [delegate] })
+    const first = await drain(runLoop({ ...cfg, input: "去" }))
+    expect(first.result.status).toBe("paused")
+    if (first.result.status !== "paused") return
+    // 父的 reason 取子的原因
+    expect(first.result.reason).toBe("approval")
+    expect(first.result.interruptions).toEqual([
+      {
+        kind: "subagent",
+        toolCallId: "p1",
+        call: { toolCallId: "p1", name: "ask_expert", args: { task: "t" } },
+        childSessionId: "child",
+        reason: "approval",
+        interruptions: [innerApproval],
+        state: childState,
+      },
+    ])
+    // 父的 pending 是 p1（子的 k1 不在父账上）；日志里没有 p1 的 tool_result
+    expect(first.result.state.pendingToolCallIds).toEqual(["p1"])
+    expect(types(await all(log))).toEqual([
+      "tools_bound",
+      "user_message",
+      "tool_call",
+      "budget_usage",
+      "run_paused",
+    ])
+    expect(seen).toEqual([undefined])
+
+    // 续跑：结论带 sessionId=child，父不拿它对自己的 pending 校验（否则 unknown_tool_call）、不记 approval_decision，原样进 ctx.decisions
+    const decision: ApprovalDecisionInput = {
+      toolCallId: "k1",
+      sessionId: "child",
+      approved: true,
+      by: "boss",
+    }
+    const second = await drain(runLoop({ ...cfg, resume: first.result.state, decisions: [decision] }))
+    expect(second.result.status).toBe("done")
+    expect(seen[1]).toEqual([decision])
+    const events = await all(log)
+    expect(types(events).slice(5)).toEqual([
+      "run_resumed",
+      "tools_bound",
+      "tool_result",
+      "model_text",
+      "budget_usage",
+    ])
+    expect(events.some((e) => e.type === "core.approval_decision")).toBe(false)
+    const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+    expect(result.payload).toMatchObject({ toolCallId: "p1", isError: false })
+  })
+
+  it("子暂停原因 budget / host 时父 reason 跟随；混批里 approval 优先", async () => {
+    const pauseWith = (reason: "budget" | "host", child: string): Tool => ({
+      name: `ask_${child}`,
+      description: "",
+      inputSchema: {},
+      execute: () =>
+        subagentPause({
+          childSessionId: child,
+          reason,
+          interruptions: [{ kind: reason, note: "n" }],
+          state: { ...childState, sessionId: child, pendingToolCallIds: [] },
+        }),
+    })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("p1", "ask_a", {}), callTool("p2", "ask_b", {})] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [pauseWith("budget", "a"), pauseWith("host", "b")] })
+    const r = await drain(runLoop({ ...cfg, input: "去" }))
+    expect(r.result.status).toBe("paused")
+    if (r.result.status !== "paused") return
+    expect(r.result.reason).toBe("budget")
+    expect(r.result.interruptions.map((i) => i.kind)).toEqual(["subagent", "subagent"])
+    expect(r.result.state.pendingToolCallIds).toEqual(["p1", "p2"])
+  })
+
+  it("ctx.spend 把子代理的用量计入本 run 的 tokensSpent：onTurnEnd 看到的是父 + 子的总账，父 budget_usage 不变", async () => {
+    const spy: number[] = []
+    const probe: Socket = {
+      name: "probe",
+      onTurnEnd: (ctx) => {
+        spy.push(ctx.budget.tokensSpent)
+        return undefined
+      },
+    }
+    const delegate: Tool = {
+      name: "ask_expert",
+      description: "",
+      inputSchema: {},
+      execute: (_input, ctx) => {
+        ctx.spend?.({ input: 100, output: 20 })
+        return "ok"
+      },
+    }
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("p1", "ask_expert", {})] },
+      { drafts: [say("好")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [delegate], sockets: [probe] })
+    const r = await drain(runLoop({ ...cfg, input: "去" }))
+    expect(r.result.status).toBe("done")
+    // 脚本化降级层每次请求 input 10 / output 5：第一轮 15 + 子 120 = 135，第二轮再 +15
+    expect(spy).toEqual([135, 150])
+    const usages = (await all(log)).filter(
+      (e) => e.type === "core.budget_usage",
+    ) as CoreEventOf<"core.budget_usage">[]
+    expect(usages.map((u) => u.payload.tokens)).toEqual([
+      { input: 10, output: 5 },
+      { input: 10, output: 5 },
     ])
   })
 })

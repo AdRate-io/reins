@@ -98,6 +98,8 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **瞬断判定先看状态码，有状态码就只按它定（408/409/429/5xx，与两家 SDK 及 pi-ai 同策略），文案关键词只在没有状态码时兜底且不匹配裸数字**（R3）— SDK 错误文案固定是 "<status> <body>"，pi-ai 原样转成 errorMessage，正文里的 "timeout" / "429" 字样不是信号。
 - **`beforeTool` 的 `defer` 可被已有批准略过，`block` 永远不能** — 批准只解决"要不要问人"，排在后面的 Socket 仍有权拦。
 - **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建，不靠内存。
+- **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发**（asTool）— 拿它对本会话 pending 校验必撞 `unknown_tool_call`；子会话 id 缺省 `${父 sessionId}:${toolCallId}`，asTool 靠子日志末条是否 `run_paused` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
+- **工具返回 `subagentPause` 是暂停不是失败，`ctx.spend` 只加 `tokensSpent` 不追加 `budget_usage`** — 抛错会被 execute 的 catch 吞成 isError；父的 budget_usage 是感知校准上下文大小的依据，掺入子用量会污染。
 
 ### 脑子模块（brain）
 
@@ -144,7 +146,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 
 ### TanStack 适配器
 
-- **`defer` 让整轮工具全停等审批，runLoop 只挡需要审批的那个** — TanStack 在 `beforeTools` 边界暂停的引擎形状决定，不在适配器里绕。
+- **`defer` 让整轮工具全停等审批，runLoop 只挡需要审批的那个** — TanStack 在 `beforeTools` 边界暂停的引擎形状决定，不在适配器里绕；同理 asTool 的 `subagentPause` 在此路径降级为 isError（子会话保留可续跑），审批冒泡只在默认循环成立。
 - **导入客户端消息的幂等键是"客户端消息 id，没有就用它在客户端数组里的位置"，还要内容逐字相同才算重发**（R5）— 客户端自行裁剪历史会让位置漂移，退化成不去重而不是误删；同键不同内容一律当新消息。
 - **宿主漏登记 `reinsApprovalInterrupt` 不是类型层能全挡的，运行时 init 会查引擎登记表，没登记则需审批的调用降级为拒绝并留 `approval_decision(by: "reins")`**（R7）— 否则引擎在边界抛 "not registered"，run 死在一条等不到答复的 `run_paused` 上；判据是引用同一性，与引擎一致，装了两份 `@tanstack/ai` 也会判成没登记。
 - **模型看到的历史与 TanStack 手上的 `messages` 是两份，只有日志是真源** — 宿主另装中间件再改 messages 会静默覆盖 compact / spill / pin 的效果。

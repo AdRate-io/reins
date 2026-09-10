@@ -38,7 +38,7 @@ export type AgentDefinition = Omit<
  * POST 请求体。四种用法都是同一个形状：
  * - 新会话：只给 input（sessionId 缺省由服务端生成，回在 start 帧与 `X-Reins-Session` 头里）
  * - 续聊：sessionId + input
- * - 审批后续跑：sessionId + resume（上次 result 帧里的 state）+ decisions
+ * - 审批后续跑：sessionId + resume（上次 result 帧里的 state）+ decisions（子代理的审批带 `sessionId: childSessionId`，见 Interruption(kind=subagent)）
  * - 补发缺口：任何一种加 lastSeq —— 先把 (lastSeq, 当前末尾] 的事件补给客户端，再开始新的 run
  */
 export interface AgentRequestBody {

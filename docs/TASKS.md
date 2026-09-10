@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、688 个用例全绿；PRD §7 门槛 2 两族达成，compact 推荐默认；P1 MCP、P2 记忆隔离、P3 子代理范式、R9 trust 标注全部落地。**2026-09-10 Boss 定：先清完"发前清单"再一起发 0.1**（筛选规则见 DECISIONS 同日"发包 = 冻结公开接口"）。发前清单已封口，不再往里加。
+M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、695 个用例全绿；PRD §7 门槛 2 两族达成，compact 推荐默认；P1 MCP、P2 记忆隔离、P3 子代理范式、R9 trust 标注全部落地。**2026-09-10 Boss 定：先清完"发前清单"再一起发 0.1**（筛选规则见 DECISIONS 同日"发包 = 冻结公开接口"）。发前清单已封口，不再往里加。
 
 ## 0.1 发前清单（按顺序，已封口 2026-09-10）
 
@@ -18,7 +18,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 - [x] **R3** 瞬断判定状态码优先 —— 2026-09-10：结构化 status / 文案开头状态码 / SDK 连接类名 / `x-should-retry` 先定，408/409/429/5xx 与 SDK 同策略，关键词只兜没有状态码的错误且不再匹配裸数字；+1 用例（688 全绿）。细节：`模块盘点/core.md` retry.ts 行、DECISIONS "R3" 行
 - [x] **R4** 投影新造事件冲突 —— 2026-09-10 定"不重跑、抛 StoreError 交宿主"，注释与技术方案 §6 改成如实描述。理由见 DECISIONS "R4" 行
 - [x] **R8** pg 用例标题 —— 2026-09-10 改为"json 列往返不改内容，本包刻意不用 jsonb"
-- [ ] **`asTool(agent, opts)` 助手**（技术方案 §10.1，原 0.2 提前到发前：要给 `Interruption` 加 `kind: "subagent"`、暂停携带子会话 sessionId 与子 `SerializedRunState`，属公开类型，发后再改是破坏性变更）：审批冒泡——子 paused(approval) 时父不结束工具而是整体 paused，宿主批完续跑父 run、父续跑先续跑子再拿结果，状态全部可序列化换进程成立；预算合算——子 run 的 token 计入父 `ctx.budget`。`examples/team/subagent-tool.ts` 的手写范式改为调用它（保留一份手写版对照）。先在对话里把 `Interruption` / `RunResult` 的形状说清并记 DECISIONS 再动手
+- [x] **`asTool(agent, opts)` 助手** —— 2026-09-10 落地（`reins` 包）：`Interruption` 加 `kind: "subagent"`、`ApprovalDecisionInput.sessionId?`、`ToolContext.decisions? / spend?`、core `subagentPause` 标记；审批冒泡跨进程续跑与预算合算各有用例（core +3、reins +4，695 全绿）；`examples/team` 改用 asTool，手写版留 `subagent-tool.handwritten.ts` 对照。设计见 DECISIONS "asTool" 行、技术方案 §6 补充与 §10.1 落地段。未做：真模型复跑 examples/team（专家全只读，冒泡路径真模型下无从触发）
 - [ ] **E4** 文档、CHANGELOG、0.1 发布准备（远程仓库与 npm 组织在此之前建，见"待 Boss"）—— 含每个包的 README（对外，英文）、CHANGELOG 首条、changeset、`pnpm build` 产物 import 自检、根 README 状态从 Pre-alpha 改 0.1；最后 `pnpm publish`
 
 ## 0.1 之后（纯新增或有外部依赖）

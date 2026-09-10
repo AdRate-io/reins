@@ -71,7 +71,7 @@
 ### 3.3 run 收尾与 SSE 帧
 
 1. `result` 帧：`status === "error"` → `RUN_ERROR`（message 取 `r.error.payload.message`，code 取 `payload.category`）；`paused` → `RUN_FINISHED` 且 `outcome = { type: "interrupt", interrupts }`；其余（`done` / `handoff`）→ `RUN_FINISHED` + `outcome.success`。**完整的 `RunResult`（含 paused 的 state）原样放在 `result` 字段里**，供前端回传续跑。
-2. `interruptsOf` 一一对应 core 的 `Interruption`：`approval` 带 `toolCallId` / `request.summary` / `metadata.policyId`，`client_tool` 带 `toolCallId` 与 `call`，其余种类（budget / host…）合成 `id = "<kind>:<lastSeq>:<n>"`。
+2. `interruptsOf` 一一对应 core 的 `Interruption`：`approval` 带 `toolCallId` / `request.summary` / `metadata.policyId`，`client_tool` 带 `toolCallId` 与 `call`，`subagent`（子代理冒泡）带 `toolCallId` 与 `metadata.{ childSessionId, childReason, interruptions, state }`——前端答子的审批时把 `childSessionId` 放进 `decisions[].sessionId`，其余种类（budget / host…）合成 `id = "<kind>:<lastSeq>:<n>"`。
 3. `end` 帧（GET 补发、本进程没有在跑的 run）也翻成 `RUN_FINISHED(success)`，`result` 是一条合成的 `{ status: "replayed", sessionId, lastSeq }`。
 4. `frames()` 只给一批事件的**最后一帧**挂 `id: String(seq)`，这样 `Last-Event-ID` 永远指向已完整送达的时间线事件，重连不会从半条消息中间接上。控制帧（RUN_STARTED / RUN_FINISHED / RUN_ERROR）不带 id。
 
