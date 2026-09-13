@@ -19,7 +19,8 @@ const packagesDir = new URL("packages/", root)
 const EXPECTED = {
   "@reins/core": ["runLoop", "createCoreRegistry", "project", "readTimeline", "subagentPause", "markUntrusted"],
   "@reins/core/testing": ["ScriptedLowering", "callTool", "say"],
-  "@reins/brain": ["perception", "compact", "pins", "spill", "handoff", "memory", "approval", "budget"],
+  "@reins/brain": ["perception", "compact", "pins", "spill", "handoff", "memory", "approval", "budget", "skills", "inlineSkills"],
+  "@reins/brain/node": ["fsSkillSource"],
   "@reins/lowering-pi": ["anthropic", "openai", "PiAiLowering", "LOSS_MATRIX"],
   "@reins/server": ["createAgentHandler", "rawEncoder"],
   "@reins/server/node": ["nodeListener"],
@@ -35,7 +36,12 @@ const EXPECTED = {
 }
 
 /** 允许出现 `node:` 的入口：只有 /node 子路径 */
-const NODE_ALLOWED = new Set(["@reins/server/node", "@reins/store-sqlite/node", "@reins/tools-mcp/node"])
+const NODE_ALLOWED = new Set([
+  "@reins/server/node",
+  "@reins/store-sqlite/node",
+  "@reins/tools-mcp/node",
+  "@reins/brain/node",
+])
 
 const failures = []
 const rows = []

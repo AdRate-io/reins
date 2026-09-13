@@ -1,7 +1,7 @@
 {
   "name": "@reins/brain",
   "version": "0.1.0",
-  "description": "reins — brain: perception, compact, pins, spill, handoff, memory, approval, budget",
+  "description": "reins — brain: perception, compact, pins, spill, handoff, memory, approval, budget, skills",
   "keywords": [
     "agent",
     "llm",
@@ -9,7 +9,9 @@
     "memory",
     "approval",
     "budget",
-    "tool-use"
+    "tool-use",
+    "skills",
+    "agent-skills"
   ],
   "license": "MIT",
   "type": "module",
@@ -18,6 +20,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "files": [
@@ -28,6 +34,9 @@
   },
   "dependencies": {
     "@reins/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
   },
   "engines": {
     "node": ">=22"

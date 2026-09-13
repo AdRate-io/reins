@@ -638,11 +638,14 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     toolCallId: string,
     name: string,
     result: ToolResult,
+    tool?: Tool,
   ): ToolResultDraft => ({
     type: "core.tool_result",
     actor: "tool",
     ...(call ? { parentId: call.id } : {}),
     provenance: { source: name },
+    // 与 runLoop 同一口径：工具声明的 resultTrust 只用于成功结果（拦截 / 失败仍是缺省 untrusted）
+    ...(tool?.resultTrust !== undefined && !result.isError ? { trust: tool.resultTrust } : {}),
     payload: { toolCallId, name, content: result.content, isError: result.isError ?? false },
   })
   const errorResult = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true })
@@ -676,7 +679,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     s.toolCallsTotal++
     if (s.turn) s.turn.ctx.budget.toolCalls = s.toolCallsTotal
 
-    let draft = resultDraft(call, info.toolCallId, info.toolName, result)
+    const tool = (s.turn?.ctx.tools ?? s.baseTools).find((t) => t.name === info.toolName)
+    let draft = resultDraft(call, info.toolCallId, info.toolName, result, tool)
     if (s.turn && call) {
       for (const sock of sockets) {
         const replaced = await sock.afterTool?.(s.turn.ctx, call, draft)

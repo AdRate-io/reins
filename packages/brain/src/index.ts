@@ -12,6 +12,10 @@
  * - memory/：记忆（B6）。memory 工具（形状对齐 memory_20250818）读写宿主的 MemoryStore，路径限定 /memories，每次读写留 memory_op
  * - approval/：审批与权限（B7）。deny → ask → allow 策略管线在 beforeTool 里跑：deny 留 approval_decision 再拦，ask 转审批暂停，allow 放行；fail-closed
  * - budget/：预算（B8）。五维上限（contextTokens / totalTokens / turns / toolCalls / wallMs），触顶且模型还要继续 → pause(budget)
+ * - skills/：技能（S1）。SKILL.md 菜单进系统提示，skill_read 工具翻书，正文以 tool_result 进时间线；载体是任何 MemoryStore 的只读子集
+ * - shared/：memory 与 skills 共用的纯函数（根目录限定的路径规范化、带行号的文件视图）
+ *
+ * `@reins/brain/node`（单独入口）：文件系统技能载体 fsSkillSource(dir)，brain 唯一出现 node:* 的地方。
  */
 export * from "./approval/index.js"
 export * from "./budget/index.js"
@@ -20,4 +24,5 @@ export * from "./handoff/index.js"
 export * from "./memory/index.js"
 export * from "./perception/index.js"
 export * from "./pins/index.js"
+export * from "./skills/index.js"
 export * from "./spill/index.js"

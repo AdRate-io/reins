@@ -2,7 +2,18 @@
  * 真实 TanStack AI chat() 引擎 + 脚本化适配器 + reins 中间件的端到端用例。
  * 断言两件事：日志里记了什么（真源）、模型看到了什么（适配器收到的 providerMessages / systemPrompts / tools）。
  */
-import { approval, budget, compact, handoff, memory, perception, pins, spill } from "@reins/brain"
+import {
+  approval,
+  budget,
+  compact,
+  handoff,
+  inlineSkills,
+  memory,
+  perception,
+  pins,
+  skills,
+  spill,
+} from "@reins/brain"
 import {
   type CoreEvent,
   type CoreEventOf,
@@ -389,6 +400,37 @@ describe("reinsMiddleware：脑子模块", () => {
     expect(op.payload).toMatchObject({ op: "create", path: "/memories/a.md" })
     expect(op.provenance?.ref).toBe("c1")
     expect((events[5] as CoreEventOf<"core.tool_result">).payload.isError).toBe(false)
+  })
+
+  it("skills：菜单进系统提示，skill_read 的结果 trust=system、模型看到的不套 <untrusted>（与 runLoop 同一口径的 resultTrust）", async () => {
+    const source = inlineSkills({
+      ads: "---\nname: ads\ndescription: Change campaigns safely.\n---\n\nAlways read fresh state first.\n",
+    })
+    const f = fixture(
+      [{ blocks: [callTool("c1", "skill_read", { name: "ads" })] }, { blocks: [say("读完了")] }],
+      [skills({ source, warn: () => {} })],
+    )
+    await f.run({ messages: [user("停投一条")] })
+    const events = await all(f.log)
+    expect(types(events)).toEqual([
+      "tools_bound",
+      "user_message",
+      "tool_call",
+      "budget_usage",
+      "tool_result",
+      "model_text",
+      "budget_usage",
+    ])
+    const result = events[4] as CoreEventOf<"core.tool_result">
+    expect(result.trust).toBe("system")
+    expect(result.payload.isError).toBe(false)
+    expect(f.adapter.calls[0]?.systemPrompts?.join("\n")).toContain(
+      "Available skills:\n- ads: Change campaigns safely.",
+    )
+    const toolMessage = f.adapter.calls[1]?.messages?.[2]
+    expect(toolMessage).toMatchObject({ role: "tool", toolCallId: "c1", name: "skill_read" })
+    expect(textOf(toolMessage)).toContain("Always read fresh state first.")
+    expect(textOf(toolMessage)).not.toContain("<untrusted")
   })
 
   it("spill：宿主工具的大结果外溢，模型下一轮看到预览；fetch_blob 能取回", async () => {

@@ -10,8 +10,9 @@
 - **09-08** 一天完成 M0 骨架：事件时间线、只 append 的 EventLog、投影、几百行可复制的 `runLoop`、pi-ai 降级层、Web 标准 handler、AG-UI 输出；Workers 上跑通。同日推完 M1 八个脑子模块（perception、compact、pins、spill、handoff、memory、approval、budget）、SQLite 与 Postgres 存储、TanStack AI 适配器，并用 Boss 的投放工具 AdRate 经官方 CLI 跑通第一条真实长任务"巡检降本"。
 - **09-09～10** M2 用数字说话：建了 `@reins/eval`，把真实录像脱敏成 fixture，在 DeepSeek 与 Claude 两个模型族上跑了四轮一百多格对照。第一轮门槛未过——模型看到"已整理过一次"就认定旧细节丢了而拒答；我们没有降标准，而是给整理摘要附上被折叠清单并加了 `recall` 逐字取回，两族复测召回 100%、token 反降，**门槛 2 达成，compact 改为推荐默认**。发布前审查修了一个真安全漏洞（伪造审批事件可绕过审批）、补了会话级鉴权，盘了 96 个依赖的许可证，在最严格的 workerd 配置下实证了 edge 兼容。
 - **09-10** Boss 提出多角色 agent 团队场景，一起定了记忆隔离不加角色字段、子代理即工具、MCP 提前到 0.1 三项设计，随后项目进入维护阶段，文档换代到这一版。
+- **09-13** Boss 按变更程序把 Skill 支持追加进 0.1：brain 第九个模块 `skills`（菜单进系统提示、`skill_read` 翻书、载体 = 任何 MemoryStore 的只读子集）、brain 首个 `/node` 入口；AdRate 示例从"两份 Skill 全文塞系统提示"改成菜单 + 翻书，两族真模型都先读技能再动手。
 
-11 个包、约 3.2 万行 TypeScript、702 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.2 万行 TypeScript、751 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -55,7 +56,7 @@
 ```
 reins（createAgent）─ @reins/server ─ @reins/ui-agui
                           │
-                     @reins/core ←── @reins/brain（八个 Socket）
+                     @reins/core ←── @reins/brain（九个 Socket；/node 有 fsSkillSource）
                           ↑           @reins/lowering-pi（pi-ai）
                           ├── @reins/store-sqlite / store-pg
                           ├── @reins/eval
@@ -63,7 +64,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
                           └── @reins/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：brain 第九个 Socket `skills` + `@reins/brain/node` 文件载体（**S1，0.1 发前**，规格 §9.9，取向 DECISIONS 2026-09-13）；`@reins/lowering-fetch`（0.1 后）。
+依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：`@reins/lowering-fetch`（0.1 后）。
 
 ## 命令与仓库
 
@@ -73,7 +74,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 
 ## 工程硬约束（技术方案 §1，违反即返工）
 
-- `@reins/core` 与 `@reins/brain` **零 Node 内置依赖**；`node:*`、子进程、真实文件系统只在可选包或 `/node` 子路径入口。
+- `@reins/core` 与 `@reins/brain` 主入口**零 Node 内置依赖**；`node:*`、子进程、真实文件系统只在可选包或 `/node` 子路径入口（server/node、store-sqlite/node、tools-mcp/node、brain/node）。
 - EventLog **只 append**。压缩、外溢、交接一律以追加事件表达；模型可见的一切都在日志里。
 - run 状态可序列化；暂停是 `runLoop` 的显式返回值，不是阻塞的回调。
 - `runLoop` 是导出的普通异步生成器，几百行，无私有状态，用户可整个复制。
@@ -110,6 +111,9 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **approval 放 sockets 末尾，入参先 `validate` 再判定** — 放首位会被后面的 `rewrite` 绕过按入参写的规则；校验不过的调用不问人。allow **不留任何事件**，审计放行只能看 tool_call / tool_result。
 - **memory / handoff 不默认开，compact 2026-09-10 起推荐默认** — 都是 eval 跑数结论，不是拍脑袋；改缺省先跑 `examples/eval`。
 - **模型看到"已整理过一次"会认定旧细节已丢而拒答，即使原件就在上文** — E3 召回低 3～6 点的机理；解法是让它能取回（清单 + recall），不是删说明。
+- **skills 的载体是 `SkillSource = Pick<MemoryStore, "list" | "read">`，布局 `${root}/<name>/SKILL.md`，缺 source 或无一份合规技能都不注册** — 菜单进 configHash，技能表变了只影响下一 run；`name` 须与目录名一致且匹配 `^[a-z0-9][a-z0-9-]{0,63}$`，不合规的单份跳过、告警一次，不拖垮菜单。
+- **`skill_read` 结果 trust=system 靠 `Tool.resultTrust`，只用于成功结果；缺省上限 40k 字符且 `resultPolicy.maxTokens` 同值** — 两族真模型都不会按截断提示续读"先读再动手"的说明书（16k 上限时 AdRate 技能被截 110 行、两族都直接开工）；上限比 memory view 大是有意的，spill 按这个限额永远放行，否则技能正文会被换成预览。第三期若允许模型写技能，模型写的必须回 untrusted。
+- **AdRate `skills install` 落盘的 SKILL.md 是"请运行 adrate skills read"的存根，正文只在 CLI 里** — 对它用 `fsSkillSource` 会让模型读到一句它做不到的指令；示例用 `inlineSkills` 从 CLI 的 `--json` 拼。接任何技能目录前先看一眼正文，别只看文件存在。
 
 ### 降级层（lowering-pi）
 
@@ -141,7 +145,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 ### 存储
 
 - **pg 的 `data` 列必须是 `json` 不能是 `jsonb`** — jsonb 重排键序，`pendingDigest` / `configHash` 按 `JSON.stringify` 算，一续跑就误报篡改。
-- **store-sqlite 的 tsup 必须 `removeNodeProtocol: false`** — tsup 8 缺省把 `node:sqlite` 剥成裸 `sqlite`，源码与 vitest 全绿，只有跑 dist 才炸。含 `node:*` 的包验收必须跑一次 dist。
+- **store-sqlite 与 brain 的 tsup 必须 `removeNodeProtocol: false`** — tsup 8 缺省把 `node:sqlite` / `node:fs/promises` 剥成裸模块名，源码与 vitest 全绿，只有跑 dist 才炸。含 `node:*` 的包验收必须跑一次 dist（`pnpm check:dist` 的 `NODE_ALLOWED` 表要登记新的 `/node` 入口）。
 - **`memoryTable` / `table` 是字面拼进 SQL 的，`assertTableName` 白名单是唯一防注入闸，两包各一份同一正则** — 标识符绑不了参数；只有记忆表可换名，事件表与 blob 表按 session_id 隔离刻意不可配。
 - **pg 侧刻意不开事务，每个写是单条语句** — 传连接池就是对的；任何"先查后写"两步逻辑都破坏这个前提。
 

@@ -116,6 +116,43 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
     expect(second.payload.content).toEqual([{ type: "text", text: "9" }])
   })
 
+  it("工具声明 resultTrust：成功结果按声明落 trust（如 skill_read 的 system），isError 结果与执行抛错仍是缺省 untrusted", async () => {
+    const readSkill = defineTool<{ ok: boolean }>({
+      name: "read_skill",
+      description: "宿主配置的说明书",
+      inputSchema: { type: "object", properties: { ok: { type: "boolean" } } },
+      resultTrust: "system",
+      execute: ({ ok }) => {
+        if (ok) return "follow these steps"
+        return { content: [{ type: "text", text: "not found" }], isError: true }
+      },
+    })
+    const boom = defineTool<Record<string, never>>({
+      name: "boom",
+      description: "抛错",
+      inputSchema: { type: "object" },
+      resultTrust: "system",
+      execute: () => {
+        throw new Error("nope")
+      },
+    })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "read_skill", { ok: true }), callTool("c2", "read_skill", { ok: false })] },
+      { drafts: [callTool("c3", "boom", {})] },
+      { drafts: [say("done")] },
+    ])
+    await drain(runLoop(baseConfig(lowering, log, { tools: [readSkill, boom], input: "go" })))
+    const results = (await all(log)).filter(
+      (e): e is CoreEventOf<"core.tool_result"> => e.type === "core.tool_result",
+    )
+    expect(results.map((r) => [r.payload.toolCallId, r.trust, r.payload.isError])).toEqual([
+      ["c1", "system", false],
+      ["c2", "untrusted", true],
+      ["c3", "untrusted", true],
+    ])
+  })
+
   it("模型每轮看到的正是日志的投影：日志可完整回放", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering(THREE_TURNS)

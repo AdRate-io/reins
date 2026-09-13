@@ -11,7 +11,11 @@
  * `rename` 目录与 `delete` 目录不是原子的（MemoryStore 没有事务）；顺序都是"先写后删"，中途失败最多多出重复，不会丢。
  */
 import type { MemoryStore } from "@reins/core"
+import { byteLength, formatFileView, humanSize, numbered, splitLines } from "../shared/view.js"
 import { isUnder, MEMORY_ROOT, resolveMemoryPath } from "./paths.js"
+
+// 度量与行号格式在 ../shared/view.ts（与 skills 共用，S1 抽出）；这里再导出是为了不改本模块的公开面
+export { byteLength, humanSize }
 
 export type MemoryOp = "view" | "create" | "str_replace" | "insert" | "delete" | "rename"
 
@@ -188,29 +192,6 @@ export interface MemoryOutcome {
   op?: { op: MemoryOp; path: string; toPath?: string; bytes?: number }
 }
 
-const encoder = new TextEncoder()
-export const byteLength = (s: string): number => encoder.encode(s).length
-
-/** 人读的大小：与参考实现一致用 K / M，1024 进制 */
-export function humanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}M`
-}
-
-/** 按行拆分：末尾换行不产生空行；空文件是零行 */
-function splitLines(content: string): { lines: string[]; trailingNewline: boolean } {
-  if (content.length === 0) return { lines: [], trailingNewline: false }
-  const trailingNewline = content.endsWith("\n")
-  const body = trailingNewline ? content.slice(0, -1) : content
-  return { lines: body.split("\n"), trailingNewline }
-}
-
-/** 参考实现的行号格式：6 位右对齐 + 制表符 */
-function numbered(lines: readonly string[], firstLineNo: number): string {
-  return lines.map((l, i) => `${String(firstLineNo + i).padStart(6)}\t${l}`).join("\n")
-}
-
 /** 某个字符偏移落在第几行（1-indexed） */
 function lineOfOffset(content: string, offset: number): number {
   let line = 1
@@ -291,43 +272,9 @@ async function view(
     if (!(await isDirectory(fs, path))) return notFound(path)
     return listing(fs, path)
   }
-  const bytes = byteLength(content)
-  const { lines } = splitLines(content)
-  const total = lines.length
-  let from = 1
-  let to = total
-  if (range) {
-    const [start, end] = range
-    if (start > Math.max(total, 1)) {
-      return fail(
-        `Invalid \`view_range\`: start_line ${start} is beyond the end of ${path}, which has ${total} lines.`,
-      )
-    }
-    from = start
-    to = end === -1 ? total : Math.min(end, total)
-  }
-  const chosen = lines.slice(from - 1, to)
-
-  // 截断只在模型没指定范围时做：指定了范围就是它自己在分页
-  let shown = chosen
-  let truncatedNote = ""
-  if (!range) {
-    let chars = 0
-    let count = 0
-    for (const l of chosen) {
-      chars += l.length + 1
-      if (chars > limits.maxViewChars && count > 0) break
-      count++
-    }
-    if (count < chosen.length) {
-      shown = chosen.slice(0, count)
-      truncatedNote = `\n[Showing lines 1-${count} of ${total} (${humanSize(bytes)} total). Use view_range, e.g. [${count + 1}, -1], to read the rest.]`
-    }
-  }
-  const header = range
-    ? `Here's the content of ${path} (lines ${from}-${to} of ${total}) with line numbers:`
-    : `Here's the content of ${path} with line numbers:`
-  return ok(`${header}\n${numbered(shown, from)}${truncatedNote}`, { op: "view", path, bytes })
+  const v = formatFileView(path, content, { range, maxChars: limits.maxViewChars, rangeField: "view_range" })
+  if (v.error !== undefined) return fail(v.error)
+  return ok(v.text, { op: "view", path, bytes: byteLength(content) })
 }
 
 /** 目录列表：最多两层深，目录只列名字与合计大小，与参考实现的格式一致（大小 TAB 路径） */

@@ -4,12 +4,16 @@
  * 模型来源（`REINS_PROVIDER`）：`aireiter`（缺省，claude-opus-5）或 `deepseek`（deepseek-v4-flash）；密钥从仓库根
  * `模型API测试信息.md` 读（已 gitignore），也可用 ANTHROPIC_API_KEY 覆盖。`REINS_MODEL` 覆盖模型 id。
  *
- * 系统提示 = 角色与任务约定 + AdRate 自带的两份 Agent Skill 全文（安全契约、广告操作契约）。
- * Skill 文本是给任何 agent 的操作说明，正好当规则；它稳定不变，前缀缓存不受影响。
+ * 系统提示 = 角色与任务约定 + 技能菜单（两份 AdRate Agent Skill 的 name + description）；正文由模型用 `skill_read` 按需翻（S1）。
+ * 2026-09-08 的版本把两份 Skill 全文（约 37k 字符）直接塞进系统提示——"框架替模型决定读什么"，是反面做法，现在改成第一个真实样本。
+ *
+ * 技能载体：`adrate skills install` 落到 ~/.agents/skills/<name>/SKILL.md 的只是一段"请运行 adrate skills read"的存根，
+ * 正文只能从 CLI 的 `skills read` 拿（核实见 DECISIONS 2026-09-13）。所以这里不用 fsSkillSource 读磁盘，而是启动时问 CLI 一次，
+ * 把头部 + 正文拼成 SKILL.md 预填进 inlineSkills——这也正是 Workers 上"把 SKILL.md bundle 成字符串"的用法。
  */
 import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync } from "node:fs"
-import { approval, budget, compact, handoff, memory, perception, pins, spill } from "@reins/brain"
+import { approval, budget, compact, handoff, inlineSkills, memory, perception, pins, skills, spill } from "@reins/brain"
 import { anthropic } from "@reins/lowering-pi"
 import { sqliteStores } from "@reins/store-sqlite"
 import { openSqlite } from "@reins/store-sqlite/node"
@@ -31,7 +35,21 @@ const provider = (process.env.REINS_PROVIDER ?? "aireiter") as "aireiter" | "dee
 const modelId = process.env.REINS_MODEL ?? (provider === "deepseek" ? "deepseek-v4-flash" : "claude-opus-5")
 const baseUrl = provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://aireiter.com/api"
 
-const skill = (name: string) => execFileSync("adrate", ["skills", "read", name], { encoding: "utf8" })
+/** AdRate CLI 自带的 Agent Skills → 内联技能载体：`skills list --json` 给 name / description，`skills read --json` 给正文 */
+function adrateSkills() {
+  const cli = (...args: string[]) =>
+    JSON.parse(execFileSync("adrate", [...args, "--json"], { encoding: "utf8" })) as {
+      ok: boolean
+      data: { skills?: { name: string; description: string }[]; content?: string }
+    }
+  const list = cli("skills", "list")
+  if (!list.ok || !list.data.skills) throw new Error("adrate skills list 失败；先 npm install -g @adrate/cli && adrate skills install")
+  const entries = list.data.skills.map(({ name, description }) => {
+    const body = cli("skills", "read", name).data.content ?? ""
+    return [name, `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`] as const
+  })
+  return inlineSkills(Object.fromEntries(entries))
+}
 
 export const ADVERTISER_ID = "7000000000000000001"
 
@@ -44,8 +62,7 @@ const ROLE = `你是 AdRate（TikTok 广告投放工具）的运营助手，替 
 - 分页要按 meta.pagination 读到需要为止，不要凭一页下结论；报表里 null 是 N/A 不是 0。
 - 长任务中要紧的中间结论（候选清单、已确认的 Command 终态、待办）用 pin 钉住，完成后给 Owner 一张简明汇总表。
 - 用中文向 Owner 汇报，简短直接。
-
-下面是 AdRate 官方给 Agent 的两份操作契约，全文遵守：`
+- AdRate 官方给 Agent 的操作契约以技能（Skills）形式提供，动手前先读相关技能并全文遵守。`
 
 export const agent = createAgent({
   model: anthropic(modelId, {
@@ -60,8 +77,9 @@ export const agent = createAgent({
     return sqliteStores(openSqlite(here("./data/adrate.db").pathname))
   })(),
   tools: adrateTools(),
-  systemPrompt: `${ROLE}\n\n${skill("adrate-shared")}\n\n${skill("adrate-ads")}`,
+  systemPrompt: ROLE,
   sockets: [
+    skills({ source: adrateSkills() }), // 菜单进系统提示；正文由模型 skill_read 按需翻，以 tool_result 进时间线
     perception({ limits: { toolCalls: 120, wallMs: 40 * 60_000 } }),
     compact(),
     pins({ pins: [{ name: "advertiser", text: `本任务只操作测试广告主 ${ADVERTISER_ID}（可随意写，不会投出去）。` }] }),

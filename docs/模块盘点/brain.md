@@ -1,10 +1,10 @@
 # @reins/brain 模块盘点
 
-> 依据 2026-09-10 的 `packages/brain/src/` 源码写成。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
+> 依据 2026-09-13 的 `packages/brain/src/` 源码写成（S1 skills 落地后更新）。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
 
 ## 架构概览
 
-`@reins/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reins/core`（`workspace:*`），零 Node 内置依赖，只用 Web 标准 API。它不含循环、不含存储实现、不含降级层，只提供八个可单独装拆的模块。
+`@reins/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reins/core`（`workspace:*`）；主入口零 Node 内置依赖，只用 Web 标准 API，唯一的 `node:*` 在子路径 `@reins/brain/node`（文件系统技能载体 `fsSkillSource`，tsup `removeNodeProtocol: false`，`pnpm check:dist` 核对）。它不含循环、不含存储实现、不含降级层，只提供九个可单独装拆的模块。
 
 每个模块都是一个工厂函数 `xxx(options): Socket`，返回 core 定义的 `Socket`（`packages/core/src/loop/types.ts`）。Socket 只有五个钩子（`beforeModel` / `afterModel` / `beforeTool` / `afterTool` / `onTurnEnd`）加两项静态贡献（`tools` / `systemPrompt`，run 起步时算一次、整个 run 不变，用于满足 prompt cache 约束、续跑补齐 pending 时在场、并计入 `configHash`）。模块只依赖这份契约，不依赖 `runLoop` 的实现。
 
@@ -20,12 +20,13 @@
 | memory | 无钩子 | 工具 `memory` 与规则提示 `MEMORY_RULES`，均为按 `SocketSetup` 算一次的**函数形态** | 不默认 | 无 `MemoryStore` → **工具与规则都不注册**（§5"缺则不注册"）并告警一次 |
 | approval | beforeTool | 规则提示 `APPROVAL_RULES`（无工具） | 推荐默认 | 不依赖存储 |
 | budget | afterModel、onTurnEnd | 无 | 推荐默认 | 不依赖存储 |
+| skills | 无钩子 | 工具 `skill_read`（`resultTrust: "system"`）与规则提示 `SKILL_RULES` + 菜单，均为按 `SocketSetup` 算一次的**异步函数形态**（菜单只读载体一遍） | opt-in：给了 `source` 即开 | 无 `source`、或 `root/` 下无一份合规 SKILL.md → **工具与菜单都不注册**并告警一次；不合规的单份技能跳过、各告警一次 |
 
 缺省开关的依据：`docs/DECISIONS.md` 2026-09-09 **E3** 行（spill 8k → 16k；compact / memory / handoff 不默认；perception / pins / budget / approval 推荐默认）与 2026-09-10 **E3c 结论**行（compact 含清单与 recall 后改为**推荐默认**，memory / handoff 仍不默认，其余不变），以及 `docs/TASKS.md` 的 E3 / E3c 行。
 
 注册顺序有两处敏感（`onTurnEnd` 第一个给意见的 Socket 说了算）：handoff 应排在 compact 等可能返回 `pause` 的模块**之前**（否则回执说了交接却被别人暂停，回执撒谎）；budget 应排在 handoff **之后**（模型已决定交接就让它交接）。approval 建议排在 `sockets` **末尾**（至少在会 `rewrite` 入参的钩子之后），这样判定的是真正要执行的入参。
 
-八个模块共用的几条写法约定：
+九个模块共用的几条写法约定：
 
 - **规则提示同一形状**：带规则提示的模块（compact / pins / spill / handoff / memory / approval）都接受 `rules?: string | false`——缺省用内置文案，传字符串替换，传 `false` 则本模块完全不碰系统提示（宿主自己把导出的常量放进去）。
 - **给模型看的文字一律英文**：进的是模型上下文而不是给人看的日志，英文 token 更省、各家模型都熟；给人看的告警与构造期错误则是中文。
@@ -37,8 +38,13 @@
 
 | 文件路径 | 职责 |
 | --- | --- |
-| `packages/brain/package.json` | 包声明：`@reins/brain`，唯一依赖 `@reins/core`，ESM、`sideEffects: false` |
-| `packages/brain/src/index.ts` | 门面：八个模块目录的 `export *`，文件头一句话概括每个模块 |
+| `packages/brain/package.json` | 包声明：`@reins/brain`，唯一依赖 `@reins/core`，ESM、`sideEffects: false`；exports `.` 与 `./node` 两个入口 |
+| `packages/brain/tsup.config.ts` | 两个入口（index / node）；`removeNodeProtocol: false` 保住 `node:` 前缀 |
+| `packages/brain/src/index.ts` | 门面：九个模块目录的 `export *`，文件头一句话概括每个模块 |
+| `packages/brain/src/node.ts` | `@reins/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸 |
+| `packages/brain/src/node.test.ts` | fsSkillSource 在真实临时目录上的用例（列 / 读 / 越界 / 隐藏 / 符号链接 / 接到 skills()） |
+| `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
+| `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
 | `packages/brain/src/perception/index.ts` | perception 子模块聚合导出 |
 | `packages/brain/src/perception/perception.ts` | `perception(opts): Socket`：beforeModel 算读数、渲染、与可见的上一条说明按文字判重，不同才 emit `system_note(kind=perception)` |
 | `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数、外溢条数、预算最紧一维余量、加法校准的上下文开销 |
@@ -67,7 +73,7 @@
 | `packages/brain/src/memory/index.ts` | memory 子模块聚合导出 |
 | `packages/brain/src/memory/memory.ts` | `memory(opts): Socket`：只有静态贡献；工具 execute 里执行命令、成功则 emit `memory_op`；缺 MemoryStore 则不注册并告警一次 |
 | `packages/brain/src/memory/commands.ts` | 六个 command 的入参 schema、解析与在 `MemoryFs` 上的执行（view / create / str_replace / insert / delete / rename），以及命名空间绑定 `bindMemoryFs` |
-| `packages/brain/src/memory/paths.ts` | 记忆路径规范化与限定：只认 `/memories` 之下，拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白 |
+| `packages/brain/src/memory/paths.ts` | `MEMORY_ROOT` 与 `resolveMemoryPath`：把 `/memories` 传给 shared 的 `resolveRootedPath`，薄包装 |
 | `packages/brain/src/memory/rules.ts` | `memory` 工具名、工具说明与规则提示 `MEMORY_RULES` |
 | `packages/brain/src/memory/memory.test.ts` | memory 的全部用例（路径限定、入参解析、六个命令、命名空间、与 runLoop 集成） |
 | `packages/brain/src/approval/index.ts` | approval 子模块聚合导出 |
@@ -77,6 +83,12 @@
 | `packages/brain/src/budget/index.ts` | budget 子模块聚合导出 |
 | `packages/brain/src/budget/budget.ts` | `budget({ limits, note? }): Socket`：五维上限定义、`checkBudget` 纯函数、onTurnEnd 触顶即 `pause(budget)` |
 | `packages/brain/src/budget/budget.test.ts` | budget 的全部用例（纯函数、五维各自触顶、收尾轮不拦、续跑再批一份） |
+| `packages/brain/src/skills/index.ts` | skills 子模块聚合导出 |
+| `packages/brain/src/skills/skills.ts` | `skills(opts): Socket`：`loadSkillMenu` 读菜单（按 setup 缓存、按 name 排序）、`parseSkillReadInput` 校验入参、`skill_read` 工具（`risk: low`、`resultTrust: system`、`resultPolicy.maxTokens = maxReadChars`）；缺 source / 空菜单不注册 |
+| `packages/brain/src/skills/frontmatter.ts` | 纯函数 `parseSkillMarkdown`：只认 `name` / `description`，逐行 `key: value`，缩进的嵌套字段跳过；`SKILL_NAME_RE`、description ≤ 1024 |
+| `packages/brain/src/skills/inline.ts` | `inlineSkills({ name: SKILL.md 文本 | { 文件: 内容 } }, { root? })`：字符串预填的只读 SkillSource（Workers、或正文来自别处如 AdRate CLI） |
+| `packages/brain/src/skills/rules.ts` | `skill_read` 工具名 / 说明 / 入参 schema、规则提示 `SKILL_RULES`、菜单排版 `renderSkillMenu` |
+| `packages/brain/src/skills/skills.test.ts` | skills 的全部用例（头部解析、菜单加载、入参与穿越、静态贡献与告警、读 / 附件 / 截断续读、与 runLoop 及 spill 集成） |
 
 ## 核心流程
 
@@ -125,6 +137,13 @@
 2. 工具 `validate` 走 `parseMemoryCommand`：认出六个 command 之一，每个路径都先过 `resolveMemoryPath` 规范化（防穿越）。
 3. `execute`：`bindMemoryFs(ctx.memory, namespace(ctx))` 把命名空间前缀绑上（模型看到的路径始终是 `/memories/...`），再 `executeMemoryCommand(fs, cmd, limits)` 执行。
 4. 成功的读写 `ctx.emit` 一条 `core.memory_op(actor=model, provenance.ref=toolCallId)`，循环把它排在 `tool_result` 之前；失败不留（tool_call 入参 + isError 结果已是审计痕）。`memory_op` 被投影过滤，模型看不见。
+
+### skills
+
+1. run 起步：`tools` 与 `systemPrompt` 都是异步函数，共用按 `SocketSetup` 缓存的 `menuFor(setup)`——`source.list("${root}/")` 一次，只认 `${root}/<name>/SKILL.md`，每份读头部 `parseSkillMarkdown`，`name` 须与目录名一致；不合规的记 `rejected` 并各告警一次；合规的按 name 排序成菜单。菜单为空或没给 `source` → 两项贡献都返回 undefined（不注册）并告警一次。
+2. 系统提示片段 = `SKILL_RULES`（有相关技能先读再动手、读过不重读、附件按需）+ `Available skills:` 每项一行 `- name: description`；进 configHash，run 内不变，下一 run 重读。
+3. 模型调 `skill_read({ name, path?, range? })`：`validate` 用 `SKILL_NAME_RE` 校 name，`path`（缺省 `SKILL.md`）拼到 `${root}/${name}/` 下走共用的 `resolveRootedPath`（穿越、反斜杠、百分号编码在此被拒，错误只提技能自己的根）；`execute` 读 `${root}/${name}/${path}`，null 统一回 "Skill file … does not exist."（不区分技能不在 / 文件不在 / 越界），正文经 `formatFileView` 带行号、超 `maxReadChars`（缺省 40000）按行截断并提示 `range` 续读。
+4. 结果以 `tool_result(trust=system)` 进日志（循环按 `Tool.resultTrust` 落，只用于成功结果），降级层不套 `<untrusted>`；`resultPolicy.maxTokens = maxReadChars` 让 spill 不再把它外溢。不留新事件类型，tool_call / tool_result 就是审计痕。
 
 ### approval
 
@@ -196,5 +215,17 @@
 **连续整理计数按"轮"分段，收尾轮不拦**（B2）— 阈值兜底的 compaction 在日志里紧贴下一轮模型输出之前，按模型轮起点分段会把它算进上一轮，连续三轮兜底就永远数不到 3（`segmentTimelineByTurn` 把开轮时追加的兜底 compaction 与系统说明归入其后那一轮）。模型已收尾作答的轮不拦，理由与 budget 相同。
 
 **规则提示是一等交付物**（B2 / B3 / B4 / B5 / B6 注释）— 什么时候整理、什么值得钉、大结果该不该分页读、什么时候该换会话、记什么进记忆，都是模型的判断，但判断需要经验，这几段文字就是经验。它们只讲经验不下指令，放在整个 run 逐字不变的系统提示里；每轮变化的读数由 perception 以 `system_note` 追加在末尾，两者分工不重叠。
+
+**技能菜单进系统提示、正文走工具结果，不把 SKILL.md 全文塞 system**（S1）— 加载哪个技能是模型的判断（宪法一）：菜单只给 name + description，翻不翻、翻哪份由模型定；正文以 `tool_result` 进时间线（宪法二），compact 折叠 / `recall` 取回 / spill 外溢零改动适用。AdRate 示例 09-08 把两份 Skill 全文（约 37k 字符）塞进系统提示是反面做法，09-13 改成第一个真实样本，两族真模型都在第一轮就先 `skill_read` 两份技能再动手。边界：技能表变了只影响下一 run（菜单进 configHash，暂停中变化按配置漂移处理）。
+
+**载体接口不新造：`SkillSource = Pick<MemoryStore, "list" | "read">`**（S1）— 任何 MemoryStore 天然满足，宿主已有的记忆表直接当技能库（`/skills` 与 `/memories` 同一张表两个前缀，模型的 memory 工具够不到 `/skills`）；文件系统载体放 `@reins/brain/node`，字符串预填用 `inlineSkills`。边界：AdRate `skills install` 落盘的 SKILL.md 只是存根，正文要问 CLI——所以示例用 `inlineSkills` 而不是 `fsSkillSource`（踩坑记录 2026-09-13）。
+
+**`skill_read` 结果 trust 是 system，靠 core 新加的 `Tool.resultTrust` 落**（S1）— 技能是宿主写的说明书，视同系统提示可信，套 `<untrusted>` 会让模型把契约当数据。口子开在 Tool 上而不是模块里的 afterTool：TanStack 适配器与 runLoop 两条路都要认，且只用于成功结果，isError 与执行抛错仍缺省 untrusted。边界：第三期若允许模型写技能，模型写的必须回到 untrusted。
+
+**`skill_read` 缺省上限 40000 字符而不是 memory view 的 16000，且 spill 不再切它**（S1 实测）— Agent Skills 规范建议 SKILL.md ≤ 500 行（约 40k 字符）；AdRate 24.5k 字符的技能在 16k 上限下被截掉 110 行（含"Keep Campaign writes server-owned"），DeepSeek 与 Claude 都没有按截断提示续读就开工。"先读再动手"的说明书被截断等于没读全，缺省要让规范内的技能一次读完；`resultPolicy.maxTokens = maxReadChars`（token 数不会超过字符数）让 spill 的按工具限额永远放行，否则 6k 阈值的示例会把技能正文换成预览 + fetch_blob，让模型再翻一次。
+
+**缺 source 或空菜单都不注册，告警一次**（S1）— 与 memory 的"缺则不注册"同理：空菜单加一个一用就"不存在"的工具只会让被规则要求"先读技能"的模型撞墙。不合规的单份 SKILL.md 单独跳过（各告警一次），一份坏文件不拖垮整个菜单。
+
+**fsSkillSource 不列符号链接、read 走 realpath**（S1）— 技能目录里一个指向外面的链接不能把 `/etc/passwd` 变成"附件"；载体可能被宿主直接拿去用，不能依赖 skills 模块一定过滤过路径，所以 read 自己再拒一次 `..` / 隐藏段 / root 之外。
 
 **预算按每次 run 计，且只拦模型还要继续的轮**（B8）— 收尾作答的轮循环本来就要停，把一次正常结束改成 `paused` 只会让宿主续跑一个没事可做的会话。per-run 让"暂停 = 找宿主要更多预算"最直白；会话级配额由宿主聚合 `budget_usage` 自己做（要"整个会话不超过 X"就把 X 减去已用量再传进来）。

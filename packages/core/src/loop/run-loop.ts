@@ -747,6 +747,8 @@ async function* executeToolCalls(
         actor: "tool",
         parentId: call.id,
         provenance: { source: name },
+        // 工具声明的结果 trust（如 skill_read 的 system）只用于成功结果；isError 结果与执行抛错仍是缺省 untrusted
+        ...(tool.resultTrust !== undefined && !normalized.isError ? { trust: tool.resultTrust } : {}),
         payload: { toolCallId, name, content: normalized.content, isError: normalized.isError ?? false },
       }
     } catch (err) {

@@ -69,6 +69,12 @@ export interface MemoryStore {
   delete(path: string): Promise<void>
 }
 
+/**
+ * 技能载体（技术方案 §9.9，S1）：MemoryStore 的只读子集。任何 MemoryStore（内存 / sqlite / pg）天然满足，
+ * 数据库载体零新代码；文件系统载体 `fsSkillSource(dir)` 在 `@reins/brain/node`。刻意不新造接口——"存哪"由宿主定。
+ */
+export type SkillSource = Pick<MemoryStore, "list" | "read">
+
 /** 一套存储：只有 log 是必需的（§5 允许部分实现），`createAgent({ store })` 接收的就是它 */
 export interface Stores {
   log: EventLog

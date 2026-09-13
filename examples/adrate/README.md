@@ -15,10 +15,25 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
 - `tools.ts`：每个服务端操作一个 reins Tool。inputSchema 用服务端的（拿掉 `idempotencyKey`，幂等键 = `reins-<toolCallId>`，
   审批暂停 / 续跑前后不变，正好是"一个键一次不可变的写"）；execute 以参数数组起子进程，永不拼 shell 字符串；带幂等键的操作 risk=high、
   其余 low，审批模块按风险先问人；列表 / 报表类结果超 6k token 外溢。`CLI_OVERRIDES` 记服务端 schema 与 CLI 实际参数对不上的地方。
-- `agent.ts`：全部脑子模块 + SQLite 存储（`data/`，已 gitignore）+ 系统提示 = 角色约定 + 两份 Skill 全文。
+- `agent.ts`：全部脑子模块 + SQLite 存储（`data/`，已 gitignore）+ 系统提示 = 角色约定 + **技能菜单**（两份 Skill 只进 name / description，
+  正文由模型 `skill_read` 按需翻，S1）。`adrate skills install` 落盘的 SKILL.md 只是"请运行 adrate skills read"的存根，所以载体不是
+  `fsSkillSource` 读磁盘，而是启动时问 CLI `skills list --json` / `skills read --json` 一次，拼成 SKILL.md 喂 `inlineSkills`。
   模型缺省经 aireiter 网关的 claude-opus-5，`REINS_PROVIDER=deepseek` 走 DeepSeek 直连（多轮请求在网关上会被掐断，dogfood 用 DeepSeek）。
 - `run.ts`：跑一条任务，审批逐条问 y/n（`--approve-all` 全批），结束写 JSONL 并用 `examples/minimal/replay.ts --agent` 生成回放页面。
 - `probe.ts`：排障用，单独打一次模型请求。
+
+## 技能改造后的真跑：只读巡检（2026-09-13，S1，`recordings/s1-skills-{deepseek,claude}.jsonl` / `.html`）
+
+任务："统计测试广告主下当前 ENABLE 的计划有多少条、各叫什么名字，不要修改任何东西"。系统提示不再含 Skill 全文，只有菜单。
+
+| 跑法 | 第一轮工具调用 | skill_read 结果 | 结局 |
+| --- | --- | --- | --- |
+| DeepSeek，`maxReadChars` 16k | `skill_read(adrate-ads)` + `skill_read(adrate-shared)`，之后才调 AdRate | trust=system，`adrate-ads` 被截到 245/355 行，**没有**按提示续读 | 55 条事件，正确得出 0 条 ENABLE |
+| Claude（网关 claude-opus-5），16k | 同上 | 同上，同样没续读 | 42 条事件，正确得出 0 条 ENABLE，用 fetch_blob 读完两页 109 条 |
+| DeepSeek，缺省改为 40k | 同上 | `adrate-ads` 一次读到 355 行，未外溢 | 29 条事件，按 `adrate-ads` 技能"定不了授权就列候选问 Owner 一次，绝不猜"停下来问 Owner |
+
+两族都在动手前先翻书，验收过；两族都不按截断提示续读"先读再动手"的说明书，所以 `skill_read` 的缺省上限从 16k 改成 40k（DECISIONS 2026-09-13、踩坑记录同日）。
+录像 `s1-skills-*.jsonl` / `.html` 只在本地（含真实授权 id 与计划名），与 `patrol-disable.jsonl` 一样等 Boss 的脱敏决定后再入库。
 
 ## 第一条真实长任务：巡检降本（2026-09-08，`recordings/patrol-disable.jsonl` / `.html`）
 

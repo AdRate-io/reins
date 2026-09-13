@@ -7,7 +7,7 @@
  * - Socket：脑子与底盘之间唯一的契约，五个钩子。脑子只依赖它，不依赖 runLoop 的实现（P3、P4）。
  * - RunResult / SerializedRunState：暂停是显式返回值，状态小到能放 URL 参数（P6）。
  */
-import type { ContentPart, Event } from "../events/base.js"
+import type { ContentPart, Event, Trust } from "../events/base.js"
 import type {
   ApprovalRequestPayload,
   CoreEventOf,
@@ -99,6 +99,12 @@ export interface Tool<TInput = unknown> {
   /** 执行前是否要人审批。循环内置兜底：为真且没有任何 Socket 做主时，直接转审批暂停（安全默认值） */
   needsApproval?: boolean | ((input: TInput, ctx: ToolContext) => Promise<boolean> | boolean)
   risk?: "low" | "medium" | "high"
+  /**
+   * 这个工具的结果事件（tool_result）的 trust；缺省 `DEFAULT_TRUST.tool`（untrusted：翻译给模型时包 `<untrusted>` 标记）。
+   * 只有输出等同宿主配置的工具才声明 `"system"`——如 brain 的 `skill_read`（技能是宿主写的说明书，视同系统提示）。
+   * 循环与 TanStack 适配器都只在**成功**结果上用它；循环自己生成的错误结果（未知工具、入参不合法、执行抛错）仍按缺省。
+   */
+  resultTrust?: Trust
   /** 暴露策略：延迟加载/发现（后续期次） */
   lazy?: boolean
   allowedCallers?: ("direct" | "code")[]
