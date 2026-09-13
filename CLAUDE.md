@@ -63,7 +63,7 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
                           └── @reins/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：`@reins/lowering-fetch`（0.1 后）。
+依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：brain 第九个 Socket `skills` + `@reins/brain/node` 文件载体（**S1，0.1 发前**，规格 §9.9，取向 DECISIONS 2026-09-13）；`@reins/lowering-fetch`（0.1 后）。
 
 ## 命令与仓库
 
