@@ -100,11 +100,13 @@ export interface Tool<TInput = unknown> {
   needsApproval?: boolean | ((input: TInput, ctx: ToolContext) => Promise<boolean> | boolean)
   risk?: "low" | "medium" | "high"
   /**
-   * 这个工具的结果事件（tool_result）的 trust；缺省 `DEFAULT_TRUST.tool`（untrusted：翻译给模型时包 `<untrusted>` 标记）。
+   * 这个工具**成功**结果事件（tool_result）的 trust；缺省 `DEFAULT_TRUST.tool`（untrusted：翻译给模型时包 `<untrusted>` 标记）。
    * 只有输出等同宿主配置的工具才声明 `"system"`——如 brain 的 `skill_read`（技能是宿主写的说明书，视同系统提示）。
-   * 循环与 TanStack 适配器都只在**成功**结果上用它；循环自己生成的错误结果（未知工具、入参不合法、执行抛错）仍按缺省。
+   * 刻意只开 system / untrusted 两档：principal 是用户本人的权威、model 是模型自己的话，工具输出冒充哪一个都不对。
+   * 落法只有一份纯函数 `toolResultTrust(tool, isError)`：循环（执行结果、宿主回填的客户端工具结果）与 TanStack 适配器
+   * （afterToolCall、toolPhaseComplete）都调它；isError 结果、未知工具、入参不合法、执行抛错一律缺省。
    */
-  resultTrust?: Trust
+  resultTrust?: Extract<Trust, "system" | "untrusted">
   /** 暴露策略：延迟加载/发现（后续期次） */
   lazy?: boolean
   allowedCallers?: ("direct" | "code")[]

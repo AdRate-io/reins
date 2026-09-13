@@ -97,9 +97,9 @@ memory({ namespace: (ctx) => `/roles/finance/users/${ctx.principal?.id ?? "anony
 ```
 
 Table names are checked against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL is assembled; an
-invalid name throws `invalid_argument` and touches nothing. Mounting two namespaces into one agent
-(shared read-only knowledge plus private writable notes) is not supported yet; see
-`docs/技术方案.md` §9.6 for the planned shape.
+invalid name throws `invalid_argument` and touches nothing. Shared read-only knowledge is what
+`skills()` in `@reins/brain` is for (the same store can serve `/skills` and `/memories`); mounting two
+*writable* memory namespaces into one agent is not supported yet, see `docs/技术方案.md` §9.6.
 
 ## Security notes
 

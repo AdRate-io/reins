@@ -12,7 +12,7 @@
 - **09-10** Boss 提出多角色 agent 团队场景，一起定了记忆隔离不加角色字段、子代理即工具、MCP 提前到 0.1 三项设计，随后项目进入维护阶段，文档换代到这一版。
 - **09-13** Boss 按变更程序把 Skill 支持追加进 0.1：brain 第九个模块 `skills`（菜单进系统提示、`skill_read` 翻书、载体 = 任何 MemoryStore 的只读子集）、brain 首个 `/node` 入口；AdRate 示例从"两份 Skill 全文塞系统提示"改成菜单 + 翻书，两族真模型都先读技能再动手。
 
-11 个包、约 3.2 万行 TypeScript、751 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.2 万行 TypeScript、760 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -112,7 +112,9 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 - **memory / handoff 不默认开，compact 2026-09-10 起推荐默认** — 都是 eval 跑数结论，不是拍脑袋；改缺省先跑 `examples/eval`。
 - **模型看到"已整理过一次"会认定旧细节已丢而拒答，即使原件就在上文** — E3 召回低 3～6 点的机理；解法是让它能取回（清单 + recall），不是删说明。
 - **skills 的载体是 `SkillSource = Pick<MemoryStore, "list" | "read">`，布局 `${root}/<name>/SKILL.md`，缺 source 或无一份合规技能都不注册** — 菜单进 configHash，技能表变了只影响下一 run；`name` 须与目录名一致且匹配 `^[a-z0-9][a-z0-9-]{0,63}$`，不合规的单份跳过、告警一次，不拖垮菜单。
-- **`skill_read` 结果 trust=system 靠 `Tool.resultTrust`，只用于成功结果；缺省上限 40k 字符且 `resultPolicy.maxTokens` 同值** — 两族真模型都不会按截断提示续读"先读再动手"的说明书（16k 上限时 AdRate 技能被截 110 行、两族都直接开工）；上限比 memory view 大是有意的，spill 按这个限额永远放行，否则技能正文会被换成预览。第三期若允许模型写技能，模型写的必须回 untrusted。
+- **`skill_read` 结果 trust=system 靠 `Tool.resultTrust`（只有 system / untrusted 两档），落法是 core `toolResultTrust()` 一份纯函数、四处都调（runLoop 执行 / runLoop 接受回填 input / TanStack 两处）** — 只用于成功结果；再加一处产出 tool_result 的路径就必须调它，发前审查抓过两处漏掉。
+- **`skill_read` 缺省上限 40k 字符是硬上限（带 range 也截、超长单行切开），`resultPolicy.maxTokens = 2 × maxReadChars + 256`** — 两族真模型都不会按截断提示续读"先读再动手"的说明书（16k 时 AdRate 技能被截 110 行、两族都直接开工）；上界不能按"token ≤ 字符"取，core 粗估非 ASCII 一字一 token，40k 中文技能会被 spill 外溢成预览且取回来是 untrusted。第三期若允许模型写技能，模型写的必须回 untrusted。
+- **`skills({ root })` 拒绝与 `/memories` 相同或互为前缀；宿主工具表已有同名 `skill_read` 时整个不注册** — 否则模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能；菜单指向宿主另一个同名工具则语义与 trust 都对不上。
 - **AdRate `skills install` 落盘的 SKILL.md 是"请运行 adrate skills read"的存根，正文只在 CLI 里** — 对它用 `fsSkillSource` 会让模型读到一句它做不到的指令；示例用 `inlineSkills` 从 CLI 的 `--json` 拼。接任何技能目录前先看一眼正文，别只看文件存在。
 
 ### 降级层（lowering-pi）

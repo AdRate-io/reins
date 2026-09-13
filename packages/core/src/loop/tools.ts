@@ -1,9 +1,19 @@
 /**
  * 工具相关的纯函数：给模型看的声明、执行结果归一化。与循环解耦，便于适配器（TanStack / pi）复用。
  */
-import type { ContentPart } from "../events/base.js"
+import type { ContentPart, Trust } from "../events/base.js"
 import type { ToolSpec } from "../lowering/types.js"
 import type { Tool, ToolResult } from "./types.js"
+
+/**
+ * 工具结果事件该带的 trust（§14）：工具声明了 `resultTrust` 且结果不是错误 → 按声明；否则 undefined（事件工厂按 actor 缺省，即 untrusted）。
+ * 这是唯一的判定点——循环的两条路（execute 结果、宿主回填的客户端工具结果）与 TanStack 适配器的两条路都调它，
+ * "同一个判定写两处必须同一个纯函数"（踩坑记录 configHash / pendingDigest / decisions 三次教训）。
+ */
+export function toolResultTrust(tool: Tool | undefined, isError: boolean): Trust | undefined {
+  if (!tool || tool.resultTrust === undefined || isError) return undefined
+  return tool.resultTrust
+}
 
 /**
  * 定义一个带入参类型的工具并擦成 Tool：对象字面量里 execute / validate / needsApproval 的 input 都按 TInput 推断，

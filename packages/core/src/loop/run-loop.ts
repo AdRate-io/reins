@@ -21,7 +21,7 @@
  * 决策权在模型（宪法一）：循环自己不判断"该不该继续"以外的任何事。它只在两处兜底 ——
  * 工具声明 needsApproval 而没有 Socket 做主时转审批；轮数超过 maxTurns 时暂停。
  */
-import type { ContentPart, Event } from "../events/base.js"
+import type { ContentPart, Event, Trust } from "../events/base.js"
 import type {
   ApprovalDecisionPayload,
   CoreEvent,
@@ -46,7 +46,7 @@ import {
 } from "./state.js"
 import { resolveSocketContributions } from "./static.js"
 import { isSubagentPause } from "./subagent.js"
-import { errorMessageOf, normalizeToolOutput, toolSpecOf } from "./tools.js"
+import { errorMessageOf, normalizeToolOutput, toolResultTrust, toolSpecOf } from "./tools.js"
 import { toolsBoundDrafts } from "./tools-bound.js"
 import type {
   ApprovalDecisionInput,
@@ -56,6 +56,7 @@ import type {
   PauseReason,
   RunResult,
   Socket,
+  Tool,
   ToolCallEvent,
   ToolContext,
   ToolResultDraft,
@@ -229,7 +230,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   // ---- 新输入 ----
   // 日志里还有没结果的 tool_call 时，新输入照样追加在此（时间线如实记录"用户此时插话"，宪法二）；
   // 工具结果随后补齐、排在它之后，"tool_result 必须紧跟 tool_use"由降级层把用户消息后移来满足，不改日志顺序
-  if (input !== undefined) yield* await append([input])
+  if (input !== undefined) yield* await append([withResultTrust(input, baseTools)])
 
   while (true) {
     const turnStartedAt = now()
@@ -606,6 +607,22 @@ function lastBudgetUsage(timeline: readonly Event[]): CoreEventOf<"core.budget_u
   return undefined
 }
 
+/** `{ trust }` 或空对象：exactOptionalPropertyTypes 下不能写 `trust: undefined` */
+function withTrust(trust: Trust | undefined): { trust?: Trust } {
+  return trust === undefined ? {} : { trust }
+}
+
+/**
+ * 宿主回填的客户端工具结果（`input` 是 tool_result 草稿）也按工具声明落 trust：草稿自己带了 trust 就尊重（宿主直连循环时的显式选择；
+ * 经 server 进来的草稿壳字段已被服务端重建、不含 trust），否则查工具表——与 execute 路径同一个 `toolResultTrust`
+ */
+function withResultTrust(input: EventDraft, tools: readonly Tool[]): EventDraft {
+  if (input.type !== "core.tool_result" || input.trust !== undefined) return input
+  const payload = input.payload as { name?: unknown; isError?: unknown } | null
+  const tool = tools.find((t) => t.name === payload?.name)
+  return { ...input, ...withTrust(toolResultTrust(tool, payload?.isError === true)) }
+}
+
 /**
  * 逐个处理工具调用：beforeTool → 审批判定 → 校验 → 执行 → afterTool → append tool_result。
  * 已有审批决定（timeline 里的 approval_decision）的调用按决定办；已有审批请求但没决定的不重复发请求。
@@ -748,7 +765,7 @@ async function* executeToolCalls(
         parentId: call.id,
         provenance: { source: name },
         // 工具声明的结果 trust（如 skill_read 的 system）只用于成功结果；isError 结果与执行抛错仍是缺省 untrusted
-        ...(tool.resultTrust !== undefined && !normalized.isError ? { trust: tool.resultTrust } : {}),
+        ...withTrust(toolResultTrust(tool, normalized.isError ?? false)),
         payload: { toolCallId, name, content: normalized.content, isError: normalized.isError ?? false },
       }
     } catch (err) {

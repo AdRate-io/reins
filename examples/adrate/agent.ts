@@ -35,18 +35,38 @@ const provider = (process.env.REINS_PROVIDER ?? "aireiter") as "aireiter" | "dee
 const modelId = process.env.REINS_MODEL ?? (provider === "deepseek" ? "deepseek-v4-flash" : "claude-opus-5")
 const baseUrl = provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://aireiter.com/api"
 
-/** AdRate CLI 自带的 Agent Skills → 内联技能载体：`skills list --json` 给 name / description，`skills read --json` 给正文 */
+/**
+ * AdRate CLI 自带的 Agent Skills → 内联技能载体：`skills list --json` 给 name / description，`skills read --json` 给正文。
+ * 任何一步失败都直接抛错、不启动：CLI 不在、未登录、旧版本不认 --json、正文为空，都不能让模型在"以为读过契约"的状态下开工
+ * （发前审查抓到 `?? ""` 会把 read 失败吞成一份只有标题的技能）。
+ */
 function adrateSkills() {
-  const cli = (...args: string[]) =>
-    JSON.parse(execFileSync("adrate", [...args, "--json"], { encoding: "utf8" })) as {
-      ok: boolean
-      data: { skills?: { name: string; description: string }[]; content?: string }
+  const cli = (...args: string[]) => {
+    let raw: string
+    try {
+      raw = execFileSync("adrate", [...args, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    } catch (err) {
+      throw new Error(
+        `adrate ${args.join(" ")} 调用失败：确认已 npm install -g @adrate/cli && adrate skills install，且已 adrate auth login。原始错误：${(err as Error).message}`,
+      )
     }
+    try {
+      return JSON.parse(raw) as {
+        ok: boolean
+        data: { skills?: { name: string; description: string }[]; content?: string }
+      }
+    } catch {
+      throw new Error(`adrate ${args.join(" ")} 的输出不是 JSON（CLI 版本太旧不支持 --json？）：${raw.slice(0, 200)}`)
+    }
+  }
   const list = cli("skills", "list")
-  if (!list.ok || !list.data.skills) throw new Error("adrate skills list 失败；先 npm install -g @adrate/cli && adrate skills install")
+  if (!list.ok || !list.data.skills?.length) throw new Error("adrate skills list 没有返回技能；先 adrate skills install")
   const entries = list.data.skills.map(({ name, description }) => {
-    const body = cli("skills", "read", name).data.content ?? ""
-    return [name, `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`] as const
+    const read = cli("skills", "read", name)
+    if (!read.ok || !read.data.content) throw new Error(`adrate skills read ${name} 没有返回正文`)
+    // 头部按 SKILL.md 规范拼：description 里的换行折成空格（解析侧不做 JSON 反转义，不能用 JSON.stringify 加引号）
+    const oneLine = description.replace(/\s*\n\s*/g, " ").trim()
+    return [name, `---\nname: ${name}\ndescription: ${oneLine}\n---\n\n${read.data.content}`] as const
   })
   return inlineSkills(Object.fromEntries(entries))
 }

@@ -1,7 +1,12 @@
 /**
  * 带行号的文件视图（memory 的 `view` 与 skills 的 `skill_read` 共用，S1 抽出）：
  * 行号格式对齐 Anthropic memory 工具参考实现（6 位右对齐 + 制表符）；模型没指定范围时按字符上限**按行**截断，
- * 并提示用范围续读——截断只在模型没自己分页时做，指定了范围就是它自己在分页。
+ * 并提示用范围续读。
+ *
+ * 两种上限语义（`enforceLimit`）：
+ * - memory（缺省 false）：截断只在模型没指定范围时做——指定了范围就是它自己在分页；单行超长也整行给
+ * - skills（true）：`maxChars` 是硬上限。带范围也照样截、提示下一段从哪续；单行超过上限的按字符切开并说明。
+ *   硬上限才能让 `skill_read` 对 spill 声明一个可证明的 token 上界（发前审查：`range: [1, -1]` 与单行 200k 字符都能绕过软上限）
  */
 
 const encoder = new TextEncoder()
@@ -30,10 +35,12 @@ export function numbered(lines: readonly string[], firstLineNo: number): string 
 export interface FileViewOptions {
   /** [start_line, end_line]，1-indexed 含两端；end -1 到末尾。不给则从头显示并按 maxChars 截断 */
   range?: [number, number] | undefined
-  /** 未指定范围时正文最多的字符数，超过按行截断并提示续读 */
+  /** 正文最多的字符数（按原始行字符累计，每行加 1 个换行），超过按行截断并提示续读 */
   maxChars: number
   /** 提示续读时用的入参名（memory 是 `view_range`，skills 是 `range`） */
   rangeField: string
+  /** true：maxChars 是硬上限（带范围也截、超长单行切开）。缺省 false（memory 语义） */
+  enforceLimit?: boolean
 }
 
 export type FileView = { text: string; error?: undefined } | { error: string; text?: undefined }
@@ -59,8 +66,8 @@ export function formatFileView(path: string, content: string, opts: FileViewOpti
   const chosen = lines.slice(from - 1, to)
 
   let shown = chosen
-  let truncatedNote = ""
-  if (!range) {
+  let note = ""
+  if (!range || opts.enforceLimit) {
     let chars = 0
     let count = 0
     for (const l of chosen) {
@@ -70,11 +77,18 @@ export function formatFileView(path: string, content: string, opts: FileViewOpti
     }
     if (count < chosen.length) {
       shown = chosen.slice(0, count)
-      truncatedNote = `\n[Showing lines 1-${count} of ${total} (${humanSize(bytes)} total). Use ${opts.rangeField}, e.g. [${count + 1}, -1], to read the rest.]`
+      const last = from + count - 1
+      note = `\n[Showing lines ${from}-${last} of ${total} (${humanSize(bytes)} total). Use ${opts.rangeField}, e.g. [${last + 1}, -1], to read the rest.]`
+    }
+    // 硬上限：第一行本身就超过上限时按字符切开（软上限语义下整行照给，那是 memory 的选择）
+    const first = shown[0]
+    if (opts.enforceLimit && first !== undefined && first.length > opts.maxChars) {
+      shown = [first.slice(0, opts.maxChars)]
+      note = `\n[Line ${from} is ${first.length} characters long; only the first ${opts.maxChars} are shown. Split long lines in this file to read it fully.]`
     }
   }
   const header = range
     ? `Here's the content of ${path} (lines ${from}-${to} of ${total}) with line numbers:`
     : `Here's the content of ${path} with line numbers:`
-  return { text: `${header}\n${numbered(shown, from)}${truncatedNote}` }
+  return { text: `${header}\n${numbered(shown, from)}${note}` }
 }

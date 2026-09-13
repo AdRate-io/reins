@@ -41,10 +41,11 @@
 | `packages/brain/package.json` | 包声明：`@reins/brain`，唯一依赖 `@reins/core`，ESM、`sideEffects: false`；exports `.` 与 `./node` 两个入口 |
 | `packages/brain/tsup.config.ts` | 两个入口（index / node）；`removeNodeProtocol: false` 保住 `node:` 前缀 |
 | `packages/brain/src/index.ts` | 门面：九个模块目录的 `export *`，文件头一句话概括每个模块 |
-| `packages/brain/src/node.ts` | `@reins/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸 |
+| `packages/brain/src/node.ts` | `@reins/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸；ENAMETOOLONG / ELOOP / EACCES 等当"不存在"（不让宿主绝对路径进模型上下文） |
+| `packages/brain/src/no-node-builtins.test.ts` | 硬约束闸：除 `src/node.ts` 外源码不得出现 `node:` 导入（tsconfig 为 node.ts 开了 node 类型后编译期不再拦） |
 | `packages/brain/src/node.test.ts` | fsSkillSource 在真实临时目录上的用例（列 / 读 / 越界 / 隐藏 / 符号链接 / 接到 skills()） |
 | `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
-| `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
+| `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读；`enforceLimit` 硬上限模式给 skills：带范围也截、超长单行切开）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
 | `packages/brain/src/perception/index.ts` | perception 子模块聚合导出 |
 | `packages/brain/src/perception/perception.ts` | `perception(opts): Socket`：beforeModel 算读数、渲染、与可见的上一条说明按文字判重，不同才 emit `system_note(kind=perception)` |
 | `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数、外溢条数、预算最紧一维余量、加法校准的上下文开销 |
@@ -84,9 +85,10 @@
 | `packages/brain/src/budget/budget.ts` | `budget({ limits, note? }): Socket`：五维上限定义、`checkBudget` 纯函数、onTurnEnd 触顶即 `pause(budget)` |
 | `packages/brain/src/budget/budget.test.ts` | budget 的全部用例（纯函数、五维各自触顶、收尾轮不拦、续跑再批一份） |
 | `packages/brain/src/skills/index.ts` | skills 子模块聚合导出 |
-| `packages/brain/src/skills/skills.ts` | `skills(opts): Socket`：`loadSkillMenu` 读菜单（按 setup 缓存、按 name 排序）、`parseSkillReadInput` 校验入参、`skill_read` 工具（`risk: low`、`resultTrust: system`、`resultPolicy.maxTokens = maxReadChars`）；缺 source / 空菜单不注册 |
-| `packages/brain/src/skills/frontmatter.ts` | 纯函数 `parseSkillMarkdown`：只认 `name` / `description`，逐行 `key: value`，缩进的嵌套字段跳过；`SKILL_NAME_RE`、description ≤ 1024 |
-| `packages/brain/src/skills/inline.ts` | `inlineSkills({ name: SKILL.md 文本 | { 文件: 内容 } }, { root? })`：字符串预填的只读 SkillSource（Workers、或正文来自别处如 AdRate CLI） |
+| `packages/brain/src/skills/skills.ts` | `skills(opts): Socket`：`assertSkillsRoot`（拒绝与 `/memories` 重叠）、`loadSkillMenu` 读菜单（按 setup 缓存、按 name 排序）、`parseSkillReadInput` 校验入参、`skill_read` 工具（`risk: low`、`resultTrust: system`、硬上限视图、`resultPolicy.maxTokens = 2 × maxReadChars + 256`、载体异常兜住只告警）；缺 source / 空菜单 / 宿主同名工具都不注册 |
+| `packages/brain/src/skills/constants.ts` | 零依赖字面常量：`DEFAULT_SKILLS_ROOT`、`SKILL_FILE_NAME`、`SKILL_NAME_RE`（node.ts 与 inline.ts 共用同一份） |
+| `packages/brain/src/skills/frontmatter.ts` | 纯函数 `parseSkillMarkdown`：只认 `name` / `description`，逐行 `key: value`，对齐 YAML 的几处语义（BOM、`>` / `\|` 块标量、` #` 注释、重复键后者优先、嵌套字段跳过）；description ≤ 1024 |
+| `packages/brain/src/skills/inline.ts` | `inlineSkills({ name: SKILL.md 文本 \| { 文件: 内容 } }, { root? })`：字符串预填的只读 SkillSource（Workers、或正文来自别处如 AdRate CLI）；键与文件路径不合规直接抛错 |
 | `packages/brain/src/skills/rules.ts` | `skill_read` 工具名 / 说明 / 入参 schema、规则提示 `SKILL_RULES`、菜单排版 `renderSkillMenu` |
 | `packages/brain/src/skills/skills.test.ts` | skills 的全部用例（头部解析、菜单加载、入参与穿越、静态贡献与告警、读 / 附件 / 截断续读、与 runLoop 及 spill 集成） |
 
@@ -142,8 +144,8 @@
 
 1. run 起步：`tools` 与 `systemPrompt` 都是异步函数，共用按 `SocketSetup` 缓存的 `menuFor(setup)`——`source.list("${root}/")` 一次，只认 `${root}/<name>/SKILL.md`，每份读头部 `parseSkillMarkdown`，`name` 须与目录名一致；不合规的记 `rejected` 并各告警一次；合规的按 name 排序成菜单。菜单为空或没给 `source` → 两项贡献都返回 undefined（不注册）并告警一次。
 2. 系统提示片段 = `SKILL_RULES`（有相关技能先读再动手、读过不重读、附件按需）+ `Available skills:` 每项一行 `- name: description`；进 configHash，run 内不变，下一 run 重读。
-3. 模型调 `skill_read({ name, path?, range? })`：`validate` 用 `SKILL_NAME_RE` 校 name，`path`（缺省 `SKILL.md`）拼到 `${root}/${name}/` 下走共用的 `resolveRootedPath`（穿越、反斜杠、百分号编码在此被拒，错误只提技能自己的根）；`execute` 读 `${root}/${name}/${path}`，null 统一回 "Skill file … does not exist."（不区分技能不在 / 文件不在 / 越界），正文经 `formatFileView` 带行号、超 `maxReadChars`（缺省 40000）按行截断并提示 `range` 续读。
-4. 结果以 `tool_result(trust=system)` 进日志（循环按 `Tool.resultTrust` 落，只用于成功结果），降级层不套 `<untrusted>`；`resultPolicy.maxTokens = maxReadChars` 让 spill 不再把它外溢。不留新事件类型，tool_call / tool_result 就是审计痕。
+3. 模型调 `skill_read({ name, path?, range? })`：`validate` 用 `SKILL_NAME_RE` 校 name，`path`（缺省 `SKILL.md`）拼到 `${root}/${name}/` 下走共用的 `resolveRootedPath`（穿越、反斜杠、百分号编码在此被拒，错误只提技能自己的根）；`execute` 读 `${root}/${name}/${path}`，载体抛错 → 告警一次 + 模型看 "could not be read right now"，null 统一回 "Skill file … does not exist."（不区分技能不在 / 文件不在 / 越界），正文经 `formatFileView(enforceLimit)` 带行号、超 `maxReadChars`（缺省 40000）按行截断并提示 `range` 续读——带 range 也截、超长单行切开，是硬上限。
+4. 结果以 `tool_result(trust=system)` 进日志（循环按 core `toolResultTrust(tool, isError)` 落，只用于成功结果），降级层不套 `<untrusted>`；`resultPolicy.maxTokens = 2 × maxReadChars + 256` 是硬上限视图的 token 上界，spill 不会再把它外溢。不留新事件类型，tool_call / tool_result 就是审计痕。
 
 ### approval
 
@@ -222,10 +224,14 @@
 
 **`skill_read` 结果 trust 是 system，靠 core 新加的 `Tool.resultTrust` 落**（S1）— 技能是宿主写的说明书，视同系统提示可信，套 `<untrusted>` 会让模型把契约当数据。口子开在 Tool 上而不是模块里的 afterTool：TanStack 适配器与 runLoop 两条路都要认，且只用于成功结果，isError 与执行抛错仍缺省 untrusted。边界：第三期若允许模型写技能，模型写的必须回到 untrusted。
 
-**`skill_read` 缺省上限 40000 字符而不是 memory view 的 16000，且 spill 不再切它**（S1 实测）— Agent Skills 规范建议 SKILL.md ≤ 500 行（约 40k 字符）；AdRate 24.5k 字符的技能在 16k 上限下被截掉 110 行（含"Keep Campaign writes server-owned"），DeepSeek 与 Claude 都没有按截断提示续读就开工。"先读再动手"的说明书被截断等于没读全，缺省要让规范内的技能一次读完；`resultPolicy.maxTokens = maxReadChars`（token 数不会超过字符数）让 spill 的按工具限额永远放行，否则 6k 阈值的示例会把技能正文换成预览 + fetch_blob，让模型再翻一次。
+**`skill_read` 缺省上限 40000 字符而不是 memory view 的 16000，是硬上限，且 spill 不再切它**（S1 实测 + 发前审查）— Agent Skills 规范建议 SKILL.md ≤ 500 行（约 40k 字符）；AdRate 24.5k 字符的技能在 16k 上限下被截掉 110 行（含"Keep Campaign writes server-owned"），DeepSeek 与 Claude 都没有按截断提示续读就开工。"先读再动手"的说明书被截断等于没读全，缺省要让规范内的技能一次读完。spill 不切它靠 `resultPolicy.maxTokens = 2 × maxReadChars + 256`：首版按"token ≤ 字符"取 `maxReadChars`，审查复现 40k 字符中文技能照样被外溢（core 粗估非 ASCII 一字一 token，行号再加 8%），取回来还是 untrusted；软上限又能被 `range: [1, -1]` 与单行 200k 字符绕过。所以视图对 skills 改硬上限（`enforceLimit`），上界才可证明：正文 ≤ maxReadChars token（全非 ASCII 最坏）+ 行号 ≤ 2 × (maxReadChars / 2) token + 表头。memory 的 view 仍是软上限（模型自己在分页）。
 
-**缺 source 或空菜单都不注册，告警一次**（S1）— 与 memory 的"缺则不注册"同理：空菜单加一个一用就"不存在"的工具只会让被规则要求"先读技能"的模型撞墙。不合规的单份 SKILL.md 单独跳过（各告警一次），一份坏文件不拖垮整个菜单。
+**缺 source、空菜单、宿主同名 `skill_read` 都不注册，告警一次**（S1 + 审查）— 与 memory 的"缺则不注册"同理：空菜单加一个一用就"不存在"的工具只会让被规则要求"先读技能"的模型撞墙；宿主工具表里已有 `skill_read` 时去重以宿主为准，菜单会指向那个语义与 trust 都不同的工具，宁可整个不注册。不合规的单份 SKILL.md 单独跳过（各告警一次），一份坏文件不拖垮整个菜单。空菜单的告警文案列出三个最常见原因（root 不一致、目录布局、name 与目录名不符）——审查指出 README 示例用相对路径照抄会静默走到这条分支。
 
-**fsSkillSource 不列符号链接、read 走 realpath**（S1）— 技能目录里一个指向外面的链接不能把 `/etc/passwd` 变成"附件"；载体可能被宿主直接拿去用，不能依赖 skills 模块一定过滤过路径，所以 read 自己再拒一次 `..` / 隐藏段 / root 之外。
+**`root` 不得与 `/memories` 相同或互为前缀**（审查）— 文件头推荐"同一个 MemoryStore 同时给 memory 与 skills"，但 `root: "/memories"` 曾被接受：模型 `memory create` 一份 `/memories/evil/SKILL.md`，下一 run 它就在系统提示菜单里、`skill_read` 读出来是 system 信任——模型给自己写 system 信任的说明书。构造期 fail-closed 拒绝，`.` / `..` 段也拒。
+
+**`resultTrust` 只开 system / untrusted 两档，落法是 core 一份纯函数、四处都调**（审查）— 首版 `Trust` 全开且只落了 runLoop 执行结果与 TanStack afterToolCall 两处，宿主经 HTTP 回填的客户端工具结果与 TanStack toolPhaseComplete 兜底路径静默降级为 untrusted；工具输出冒充 principal / model 都不对。`toolResultTrust(tool, isError)` 现在是唯一判定点，runLoop 接受 `input` 为 tool_result 草稿时也查工具表（草稿自带 trust 优先）。
+
+**fsSkillSource 不列符号链接、read 走 realpath，ENAMETOOLONG 等当不存在**（S1 + 审查）— 技能目录里一个指向外面的链接不能把 `/etc/passwd` 变成"附件"；载体可能被宿主直接拿去用，不能依赖 skills 模块一定过滤过路径，所以 read 自己再拒一次 `..` / 隐藏段 / root 之外 / 单段超 255。指向根内的合法链接是"不在菜单、猜到名字能读"（保守方向，用例锁住语义）。审查复现：300 字符单段让 realpath 抛 ENAMETOOLONG，错误 message 带着宿主技能目录的绝对路径进了模型上下文——所以这类错误码在载体里当 null，skills 的 execute 再兜一层把任何载体异常只给宿主告警、模型只看"读不到"。
 
 **预算按每次 run 计，且只拦模型还要继续的轮**（B8）— 收尾作答的轮循环本来就要停，把一次正常结束改成 `paused` 只会让宿主续跑一个没事可做的会话。per-run 让"暂停 = 找宿主要更多预算"最直白；会话级配额由宿主聚合 `budget_usage` 自己做（要"整个会话不超过 X"就把 X 减去已用量再传进来）。

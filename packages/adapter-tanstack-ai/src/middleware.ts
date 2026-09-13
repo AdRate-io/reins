@@ -60,6 +60,7 @@ import {
   type ToolResultDraft,
   type TurnContext,
   type TurnDecision,
+  toolResultTrust,
   toolsBoundDrafts,
   uuidv7,
 } from "@reins/core"
@@ -644,11 +645,17 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     actor: "tool",
     ...(call ? { parentId: call.id } : {}),
     provenance: { source: name },
-    // 与 runLoop 同一口径：工具声明的 resultTrust 只用于成功结果（拦截 / 失败仍是缺省 untrusted）
-    ...(tool?.resultTrust !== undefined && !result.isError ? { trust: tool.resultTrust } : {}),
+    // 与 runLoop 同一口径（core 同一个纯函数）：工具声明的 resultTrust 只用于成功结果（拦截 / 失败仍是缺省 untrusted）
+    ...(() => {
+      const trust = toolResultTrust(tool, result.isError ?? false)
+      return trust === undefined ? {} : { trust }
+    })(),
     payload: { toolCallId, name, content: result.content, isError: result.isError ?? false },
   })
   const errorResult = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true })
+  /** 本轮工具表里（beforeModel 补丁后的），没有轮上下文就查 run 起步的基表 */
+  const toolNamed = (s: RunState, name: string): Tool | undefined =>
+    (s.turn?.ctx.tools ?? s.baseTools).find((t) => t.name === name)
 
   const afterTool = async (ctx: ChatMiddlewareContext, s: RunState, info: AfterToolCallInfo) => {
     const timeline = await timelineOf()
@@ -679,8 +686,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     s.toolCallsTotal++
     if (s.turn) s.turn.ctx.budget.toolCalls = s.toolCallsTotal
 
-    const tool = (s.turn?.ctx.tools ?? s.baseTools).find((t) => t.name === info.toolName)
-    let draft = resultDraft(call, info.toolCallId, info.toolName, result, tool)
+    let draft = resultDraft(call, info.toolCallId, info.toolName, result, toolNamed(s, info.toolName))
     if (s.turn && call) {
       for (const sock of sockets) {
         const replaced = await sock.afterTool?.(s.turn.ctx, call, draft)
@@ -716,7 +722,11 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         })
       }
       const content = fromTanstackToolResult(r.result)
-      await settle(ctx, s, resultDraft(call, r.toolCallId, r.toolName, { content, isError }))
+      await settle(
+        ctx,
+        s,
+        resultDraft(call, r.toolCallId, r.toolName, { content, isError }, toolNamed(s, r.toolName)),
+      )
       answered.add(r.toolCallId)
     }
     // 原生审批请求：入日志，与 reins 审批同一事件形状

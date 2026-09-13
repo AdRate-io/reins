@@ -153,6 +153,71 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
     ])
   })
 
+  it("宿主回填的客户端工具结果（input 草稿）也按工具的 resultTrust 落 trust：草稿自带 trust 优先，isError 不升级", async () => {
+    const pick = defineTool<Record<string, never>>({
+      name: "pick_policy",
+      description: "宿主前端选一份策略文本",
+      inputSchema: {},
+      side: "client",
+      resultTrust: "system",
+    })
+    const cfg = baseConfig(
+      new ScriptedLowering([{ drafts: [callTool("c1", "pick_policy", {})] }]),
+      new InMemoryEventLog(),
+      {
+        tools: [pick],
+      },
+    )
+    const paused = await drain(runLoop({ ...cfg, input: "选" }))
+    expect(paused.result.status).toBe("paused")
+
+    const backfill = (toolCallId: string, isError: boolean, trust?: "untrusted") => ({
+      type: "core.tool_result" as const,
+      actor: "tool" as const,
+      ...(trust ? { trust } : {}),
+      payload: {
+        toolCallId,
+        name: "pick_policy",
+        content: [{ type: "text" as const, text: "policy" }],
+        isError,
+      },
+    })
+    // 成功回填：按声明落 system
+    const ok = await drain(
+      runLoop({
+        ...cfg,
+        lowering: new ScriptedLowering([{ drafts: [callTool("c2", "pick_policy", {})] }]),
+        input: backfill("c1", false),
+      }),
+    )
+    expect(ok.result.status).toBe("paused")
+    // isError 回填：缺省 untrusted；草稿自带 trust 的原样保留
+    const bad = await drain(
+      runLoop({
+        ...cfg,
+        lowering: new ScriptedLowering([{ drafts: [callTool("c3", "pick_policy", {})] }]),
+        input: backfill("c2", true),
+      }),
+    )
+    expect(bad.result.status).toBe("paused")
+    const explicit = await drain(
+      runLoop({
+        ...cfg,
+        lowering: new ScriptedLowering([{ drafts: [say("done")] }]),
+        input: backfill("c3", false, "untrusted"),
+      }),
+    )
+    expect(explicit.result.status).toBe("done")
+    const results = (await all(cfg.log as InMemoryEventLog)).filter(
+      (e): e is CoreEventOf<"core.tool_result"> => e.type === "core.tool_result",
+    )
+    expect(results.map((r) => [r.payload.toolCallId, r.trust])).toEqual([
+      ["c1", "system"],
+      ["c2", "untrusted"],
+      ["c3", "untrusted"],
+    ])
+  })
+
   it("模型每轮看到的正是日志的投影：日志可完整回放", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering(THREE_TURNS)

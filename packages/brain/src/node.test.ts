@@ -31,6 +31,11 @@ beforeAll(async () => {
   await writeFile(join(outside, "secret.txt"), "top secret")
   // 技能目录里一个指向外面的符号链接：不能借它读到目录之外
   await symlink(join(outside, "secret.txt"), join(dir, "adrate-ads", "leak.md"))
+  // 指向根外的符号链接目录、指向根内的合法链接、成环的链接
+  await symlink(outside, join(dir, "linkdir"))
+  await mkdir(join(dir, "linked"))
+  await symlink(join(dir, "adrate-shared", "SKILL.md"), join(dir, "linked", "SKILL.md"))
+  await symlink(join(dir, "adrate-ads", "loop.md"), join(dir, "adrate-ads", "loop.md"))
 })
 
 afterAll(async () => {
@@ -63,6 +68,20 @@ describe("fsSkillSource", () => {
     expect(await source.read("/skills/.git/SKILL.md")).toBeNull()
     expect(await source.read("/skills/adrate-ads/.DS_Store")).toBeNull()
     expect(await source.read("/skills/adrate-ads/leak.md")).toBeNull()
+  })
+
+  it("发前审查补的边界：链接目录不递归、根内链接“不在菜单但可读”、成环与超长名字当不存在且不泄露宿主路径", async () => {
+    const source = fsSkillSource(dir)
+    const keys = await source.list("/skills/")
+    expect(keys.some((k) => k.startsWith("/skills/linkdir/"))).toBe(false)
+    expect(keys).not.toContain("/skills/linked/SKILL.md")
+    expect(await source.read("/skills/linkdir/secret.txt")).toBeNull()
+    // 指向根内的合法链接：菜单不列（isFile 为 false），猜到名字能读——保守方向，锁住语义
+    expect(await source.read("/skills/linked/SKILL.md")).toBe(md("adrate-shared", "Shared."))
+    expect((await loadSkillMenu(source)).skills.map((s) => s.name)).toEqual(["adrate-ads", "adrate-shared"])
+    // ELOOP / ENAMETOOLONG：null，而不是把带宿主绝对路径的错误抛给模型
+    expect(await source.read("/skills/adrate-ads/loop.md")).toBeNull()
+    expect(await source.read(`/skills/adrate-ads/${"a".repeat(300)}`)).toBeNull()
   })
 
   it("自定义 root 与不存在的目录", async () => {

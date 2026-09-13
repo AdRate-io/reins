@@ -21,7 +21,8 @@
   },
   "files": [
     "dist",
-    "demo"
+    "demo",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup"

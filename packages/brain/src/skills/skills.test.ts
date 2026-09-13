@@ -14,12 +14,13 @@ import {
 import { callTool, ScriptedLowering, say } from "@reins/core/testing"
 import { describe, expect, it } from "vitest"
 import { spill } from "../spill/index.js"
+import { DEFAULT_SKILLS_ROOT, SKILL_NAME_RE } from "./constants.js"
 import { MAX_SKILL_DESCRIPTION_CHARS, parseSkillMarkdown } from "./frontmatter.js"
 import { inlineSkills } from "./inline.js"
 import { renderSkillMenu, SKILL_READ_TOOL_NAME, SKILL_RULES } from "./rules.js"
 import {
-  DEFAULT_MAX_READ_CHARS,
-  DEFAULT_SKILLS_ROOT,
+  assertSkillsRoot,
+  DEFAULT_SKILL_READ_CHARS,
   loadSkillMenu,
   parseSkillReadInput,
   type SkillReadInput,
@@ -122,15 +123,40 @@ describe("SKILL.md 头部解析", () => {
     })
   })
 
-  it("CRLF 与无正文都能解析；重复键以第一个为准", () => {
+  it("CRLF 与无正文都能解析；重复键以后者为准（YAML 语义）", () => {
     expect(parseSkillMarkdown("---\r\nname: a\r\ndescription: x\r\n---")).toMatchObject({
       ok: true,
       skill: { name: "a", description: "x", body: "" },
     })
     expect(parseSkillMarkdown("---\nname: a\nname: b\ndescription: x\n---\n")).toMatchObject({
       ok: true,
-      skill: { name: "a" },
+      skill: { name: "b" },
     })
+  })
+
+  it("发前审查补的边界：BOM、块标量 > 与 |、行内注释、紧贴的 #、空头部", () => {
+    expect(parseSkillMarkdown("\uFEFF---\nname: a\ndescription: x\n---\n")).toMatchObject({ ok: true })
+    expect(
+      parseSkillMarkdown(
+        "---\nname: a\ndescription: >\n  first line\n  second line\n\nmetadata:\n  v: 1\n---\n",
+      ),
+    ).toMatchObject({ ok: true, skill: { description: "first line second line" } })
+    expect(parseSkillMarkdown("---\nname: a\ndescription: |\n  one\n  two\n---\n")).toMatchObject({
+      ok: true,
+      skill: { description: "one\ntwo" },
+    })
+    // YAML 语义：空白后的 # 是注释；紧贴的 # 不是
+    expect(parseSkillMarkdown("---\nname: a # 主技能\ndescription: Use#tags here #c\n---\n")).toMatchObject({
+      ok: true,
+      skill: { name: "a", description: "Use#tags here" },
+    })
+    expect(parseSkillMarkdown('---\nname: a\ndescription: "keep # inside quotes"\n---\n')).toMatchObject({
+      ok: true,
+      skill: { description: "keep # inside quotes" },
+    })
+    const empty = parseSkillMarkdown("---\n---\nbody\n")
+    expect(empty.ok).toBe(false)
+    if (!empty.ok) expect(empty.reason).toContain("no `name`")
   })
 
   it.each([
@@ -241,11 +267,11 @@ describe("skills(): 静态贡献", () => {
     const setup = setupWith(socket, { systemPrompt: "宿主提示" })
     const { tools, systemPrompt } = await resolveSocketContributions(setup)
     expect(tools.map((t) => t.name)).toEqual([SKILL_READ_TOOL_NAME])
-    // resultPolicy 的 maxTokens 等于字符上限：token 数不会超过字符数，spill 不会再把技能正文外溢成 blob
+    // resultPolicy 的 maxTokens 是硬上限视图的 token 上界（正文全非 ASCII + 行号），spill 不会再把技能正文外溢成 blob
     expect(tools[0]).toMatchObject({
       risk: "low",
       resultTrust: "system",
-      resultPolicy: { maxTokens: DEFAULT_MAX_READ_CHARS, overflow: "spill" },
+      resultPolicy: { maxTokens: 2 * DEFAULT_SKILL_READ_CHARS + 256, overflow: "spill" },
     })
     expect(systemPrompt).toBe(
       `宿主提示\n\n${SKILL_RULES}\n\nAvailable skills:\n- adrate-ads: Inspect and change TikTok campaigns safely.\n- adrate-shared: Operate AdRate CLI authentication, pagination and rate limits safely.`,
@@ -304,13 +330,79 @@ describe("skills(): 静态贡献", () => {
     expect(off.tools.map((t) => t.name)).toEqual([SKILL_READ_TOOL_NAME])
   })
 
-  it("构造期校验：root 形状、maxReadChars", () => {
+  it("构造期校验：root 形状、与 /memories 重叠、maxReadChars", () => {
     expect(() => skills({ root: "skills" })).toThrow("skills.root")
     expect(() => skills({ root: "/skills/" })).toThrow("skills.root")
     expect(() => skills({ root: "/a//b" })).toThrow("skills.root")
+    expect(() => skills({ root: "/skills/../memories" })).toThrow("skills.root")
+    expect(() => skills({ root: "/skills/./x" })).toThrow("skills.root")
+    // 与记忆根重叠：模型能 memory create 写进去的东西不能变成 system 信任的技能
+    expect(() => skills({ root: "/memories" })).toThrow("重叠")
+    expect(() => skills({ root: "/memories/skills" })).toThrow("重叠")
+    expect(() => skills({ root: "/" })).toThrow("skills.root")
+    expect(() => assertSkillsRoot("/team/skills")).not.toThrow()
     expect(() => skills({ maxReadChars: 0 })).toThrow("skills.maxReadChars")
     expect(DEFAULT_SKILLS_ROOT).toBe("/skills")
-    expect(DEFAULT_MAX_READ_CHARS).toBe(40_000)
+    expect(DEFAULT_SKILL_READ_CHARS).toBe(40_000)
+  })
+
+  it("宿主工具表里已有同名 skill_read：本模块的工具与菜单都不注册（不留孤儿菜单），告警一次", async () => {
+    const warnings: string[] = []
+    const hostSkillRead: Tool = {
+      name: SKILL_READ_TOOL_NAME,
+      description: "宿主的",
+      inputSchema: {},
+      execute: () => "x",
+    }
+    const socket = skills({ source: sampleSource(), warn: (m) => warnings.push(m) })
+    const r = await resolveSocketContributions(setupWith(socket, { tools: [hostSkillRead] }))
+    expect(r.tools).toEqual([hostSkillRead])
+    expect(r.systemPrompt).toBeUndefined()
+    expect(warnings).toEqual([expect.stringContaining("已有同名工具")])
+  })
+
+  it("inlineSkills 的键必须是合法技能名，文件路径不含 . / ..：不合规直接抛错而不是静默丢失", () => {
+    expect(() => inlineSkills({ "a/b": md("a", "x") })).toThrow("不是合法技能名")
+    expect(() => inlineSkills({ "": md("a", "x") })).toThrow("不是合法技能名")
+    expect(() => inlineSkills({ "../evil": md("a", "x") })).toThrow("不是合法技能名")
+    expect(() => inlineSkills({ Ads: md("a", "x") })).toThrow("不是合法技能名")
+    expect(() => inlineSkills({ a: { "../x.md": "y" } })).toThrow("不合法")
+    expect(SKILL_NAME_RE.test("adrate-ads")).toBe(true)
+  })
+
+  it("载体 list 抛错：run 起步抛错、日志零事件（fail-closed）", async () => {
+    const broken = {
+      list: async () => {
+        throw new Error("db down")
+      },
+      read: async () => null,
+    }
+    const log = new InMemoryEventLog()
+    await expect(
+      drain(
+        runLoop({
+          sessionId: SESSION,
+          log,
+          lowering: new ScriptedLowering([{ drafts: [say("x")] }]),
+          model: MODEL,
+          sockets: [skills({ source: broken, warn: () => {} })],
+          input: "开始",
+          ...deterministic(),
+        }),
+      ),
+    ).rejects.toThrow("db down")
+    expect(await all(log)).toEqual([])
+  })
+
+  it("configHash 的敏感边界：只改 SKILL.md 正文系统提示不变；rules:false 时菜单整个不进贡献", async () => {
+    const store = new InMemoryMemoryStore()
+    await store.write("/skills/a/SKILL.md", md("a", "A.", "v1\n"))
+    const socket = skills({ source: store })
+    const before = (await resolveSocketContributions(setupWith(socket))).systemPrompt
+    await store.write("/skills/a/SKILL.md", md("a", "A.", "v2 完全不同的正文\n"))
+    expect((await resolveSocketContributions(setupWith(socket))).systemPrompt).toBe(before)
+    const silent = skills({ source: store, rules: false })
+    expect((await resolveSocketContributions(setupWith(silent))).systemPrompt).toBeUndefined()
   })
 })
 
@@ -361,6 +453,45 @@ describe("skill_read 执行", () => {
     const beyond = await run({ name: "adrate-shared", range: [999, -1] })
     expect(beyond.isError).toBe(true)
     expect(beyond.content[0]?.text).toContain("Invalid `range`: start_line 999 is beyond the end")
+  })
+
+  it("硬上限：带 range 也按 maxReadChars 截并提示下一段；超长单行按字符切开", async () => {
+    const ranged = await run({ name: "adrate-shared", range: [1, -1] })
+    expect(ranged.content[0]?.text).toMatch(/\[Showing lines 1-\d+ of 407 .*Use range, e\.g\. \[\d+, -1\]/)
+    const longLine = skills({
+      source: inlineSkills({ one: md("one", "One line.", `${"字".repeat(500)}\n`) }),
+      maxReadChars: 200,
+      warn: () => {},
+    })
+    const t = await tool(longLine, setupWith(longLine))()
+    if (!t?.execute || !t.validate) throw new Error("未注册")
+    const r = (await t.execute(t.validate({ name: "one", range: [6, 6] }), ctx)) as {
+      content: { text: string }[]
+    }
+    expect(r.content[0]?.text).toContain("Line 6 is 500 characters long; only the first 200 are shown")
+    expect(r.content[0]?.text.length).toBeLessThan(400)
+  })
+
+  it("载体 read 抛错：模型只看到“现在读不到”，错误细节（可能含宿主路径）只进告警", async () => {
+    const warnings: string[] = []
+    const broken = {
+      list: async () => ["/skills/a/SKILL.md"],
+      read: async (key: string) => {
+        if (key.endsWith("/SKILL.md") && !key.includes("attach")) return md("a", "A.")
+        throw new Error("EIO: /Users/boss/私密目录/skills/a/attach.md")
+      },
+    }
+    const socket = skills({ source: broken, warn: (m) => warnings.push(m) })
+    const t = await tool(socket, setupWith(socket))()
+    if (!t?.execute || !t.validate) throw new Error("未注册")
+    const r = (await t.execute(t.validate({ name: "a", path: "attach.md" }), ctx)) as {
+      content: { text: string }[]
+      isError?: boolean
+    }
+    expect(r.isError).toBe(true)
+    expect(r.content[0]?.text).toBe("Skill file a/attach.md could not be read right now.")
+    expect(r.content[0]?.text).not.toContain("私密目录")
+    expect(warnings.some((w) => w.includes("私密目录"))).toBe(true)
   })
 
   it("技能不存在、文件不存在、被跳过的不合规技能的附件：统一一句“不存在”", async () => {
@@ -430,11 +561,10 @@ describe("skills() 与 runLoop 集成", () => {
     expect(new Set(prompts).size).toBe(1)
   })
 
-  it("与 spill 同装：远超 spill 阈值的技能正文照样整段进时间线，不被外溢成 blob（resultPolicy 按字符上限放行）", async () => {
-    const body = Array.from(
-      { length: 600 },
-      (_, i) => `rule ${i + 1}: keep campaign writes server-owned.`,
-    ).join("\n")
+  it("与 spill 同装：40k 字符、500 行的中文技能（规范上限）整段进时间线，不被外溢成 blob（发前审查：中文 token≈字符）", async () => {
+    const line = "这是一份很长的技能说明书，每一行都是八十个汉字左右，用来核对外溢阈值。".padEnd(78, "字")
+    const body = Array.from({ length: 500 }, () => line).join("\n")
+    expect(body.length).toBeLessThanOrEqual(DEFAULT_SKILL_READ_CHARS)
     const source = inlineSkills({ big: md("big", "A long skill.", `${body}\n`) })
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([
@@ -448,14 +578,14 @@ describe("skills() 与 runLoop 集成", () => {
         blobs: new InMemoryBlobStore(),
         lowering,
         model: MODEL,
-        sockets: [skills({ source, warn: () => {} }), spill({ maxResultTokens: 2000 })],
+        sockets: [skills({ source, warn: () => {} }), spill()],
         input: "开始",
         ...deterministic(),
       }),
     )
     const r = resultOf(await all(log), "c1")
     expect(r.payload.spilled).toBeUndefined()
-    expect(textOf(r)).toContain("rule 600: keep campaign writes server-owned.")
+    expect(textOf(r)).toContain(`   505\t${line}`)
     expect(textOf(r)).not.toContain("Showing lines")
     expect(r.trust).toBe("system")
   })

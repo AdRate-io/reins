@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、751 个用例全绿；PRD §7 门槛 2 两族达成，compact 推荐默认；P1 MCP、P2 记忆隔离、P3 子代理范式、R9 trust 标注全部落地。**2026-09-10 Boss 定：先清完"发前清单"再一起发 0.1**（筛选规则见 DECISIONS 同日"发包 = 冻结公开接口"）。**2026-09-13 变更程序：** Boss 以产品所有者身份定 0.1 必须含 Skill，清单解封一次追加 **S1** 后重新封口；S1 同日落地（brain 第九个模块 `skills` + `@reins/brain/node`），发前清单只剩 E4 等 Boss 操作。
+M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万行 TS、760 个用例全绿；PRD §7 门槛 2 两族达成，compact 推荐默认；P1 MCP、P2 记忆隔离、P3 子代理范式、R9 trust 标注全部落地。**2026-09-10 Boss 定：先清完"发前清单"再一起发 0.1**（筛选规则见 DECISIONS 同日"发包 = 冻结公开接口"）。**2026-09-13 变更程序：** Boss 以产品所有者身份定 0.1 必须含 Skill，清单解封一次追加 **S1** 后重新封口；S1 同日落地（brain 第九个模块 `skills` + `@reins/brain/node`），发前清单只剩 E4 等 Boss 操作。
 
 ## 0.1 发前清单（按顺序，已封口 2026-09-10；2026-09-13 按变更程序追加 S1 后重新封口）
 
@@ -20,7 +20,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 - [x] **R8** pg 用例标题 —— 2026-09-10 改为"json 列往返不改内容，本包刻意不用 jsonb"
 - [x] **`asTool(agent, opts)` 助手** —— 2026-09-10 落地（`reins` 包）：`Interruption` 加 `kind: "subagent"`、`ApprovalDecisionInput.sessionId?`、`ToolContext.decisions? / spend?`、core `subagentPause` 标记；审批冒泡跨进程续跑与预算合算各有用例（core +3、reins +4，695 全绿）；`examples/team` 改用 asTool，手写版留 `subagent-tool.handwritten.ts` 对照。设计见 DECISIONS "asTool" 行、技术方案 §6 补充与 §10.1 落地段。未做：真模型复跑 examples/team（专家全只读，冒泡路径真模型下无从触发）
 - [x] **S1 Skill 支持（Agent Skills 的加载与渐进式披露）** —— 2026-09-13 落地：core `SkillSource` + `Tool.resultTrust`；brain `skills({ source, root?, maxReadChars?, rules? })`（菜单 + `skill_read`，缺 source / 空菜单不注册）、`inlineSkills`、`@reins/brain/node` 的 `fsSkillSource`；memory 的路径规范化与 view 抽成 `shared/` 共用；`examples/adrate` 改成菜单 + 翻书，DeepSeek / Claude 两族真跑都先 `skill_read` 再动手（trust=system），据实测把 `maxReadChars` 缺省定为 40k；+49 用例（751 全绿），`check:dist` 16 入口过。细节：`模块盘点/brain.md` skills 节与决策、技术方案 §9.9"实现"、DECISIONS 2026-09-13 三行、踩坑记录同日两条
-- [ ] **E4** 0.1 发布 —— S1 已落地（2026-09-13），`pnpm check` 751 全绿、`check:dist` 16 入口过；**发前对 brain 新入口（skills / `@reins/brain/node`）做一遍发前审查**（可沿用 09-10 的双审查形式）。2026-09-10 发前准备已做完：11 个包英文 README、changeset → 0.1.0 + CHANGELOG 首条、每包 LICENSE、`pnpm check:dist` 产物自检（15 个入口全过）、根 README 改 0.1.0（DECISIONS "E4" 行）。2026-09-10 下午两份外部审查（cursor / Grok，报告在 `归档/`）逐条核实：修 handler 子代理审批预校验、MCP 连接 close 竞态、`@tanstack/ai` 改 peer、版本常量 0.0.0 → 0.1.0（check:dist 核对）、eval README 假示例、运行时支持措辞、server README 白名单描述等，+7 用例（702 全绿）；lowering-pi 进阶 API 暴露 pi-ai 类型书面豁免（DECISIONS）。**剩下只等 Boss**：GitHub / npm 组织建好后补 package.json 的 `repository` / `homepage`，`git remote add` + push，`pnpm changeset publish`
+- [ ] **E4** 0.1 发布 —— S1 已落地（2026-09-13），同日两个只读审查子代理（安全 / 正确性、接口 / 文档 / 发布就绪）做完发前审查：无阻断项，5 条应修 + 若干建议逐条核实后全部处置（DECISIONS "S1 发前双审查处置"行，+9 用例，760 全绿，`check:dist` 16 入口过）。2026-09-10 发前准备已做完：11 个包英文 README、changeset → 0.1.0 + CHANGELOG 首条、每包 LICENSE、`pnpm check:dist` 产物自检（15 个入口全过）、根 README 改 0.1.0（DECISIONS "E4" 行）。2026-09-10 下午两份外部审查（cursor / Grok，报告在 `归档/`）逐条核实：修 handler 子代理审批预校验、MCP 连接 close 竞态、`@tanstack/ai` 改 peer、版本常量 0.0.0 → 0.1.0（check:dist 核对）、eval README 假示例、运行时支持措辞、server README 白名单描述等，+7 用例（702 全绿）；lowering-pi 进阶 API 暴露 pi-ai 类型书面豁免（DECISIONS）。**剩下只等 Boss**：GitHub / npm 组织建好后补 package.json 的 `repository` / `homepage`，`git remote add` + push，`pnpm changeset publish`
 
 ## 0.1 之后（纯新增或有外部依赖）
 
@@ -28,6 +28,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 - [ ] 四环境验证：Bun / Deno / Vercel Edge 未实测（edge-runtime-check 只测了 Cloudflare workerd）——验证不改接口
 - [ ] tools-mcp 后续：官方 Anthropic 直连对"历史含已移除工具"的接受度未测（无 key；DeepSeek Anthropic 协议与 OpenAI Responses 已实测接受）；OAuth 流程、sampling / elicitation / resources / prompts 待真需求
 - [ ] memory 挂载表（共享只读 + 私有可写，技术方案 §9.6）——等团队场景真出现"同时挂两块"再做
+- [ ] 运行时告警与构造期错误文案英文化（全包十几处字符串，含 memory / spill / budget / skills）——审查指出英文 README + 中文告警对非中文用户是死路；0.1 保持中文（DECISIONS 2026-09-13）
 
 ## 待 Boss 本人操作（不挡开发，挡发布）
 

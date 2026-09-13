@@ -21,7 +21,9 @@ const agent = createAgent({
     pins({ host: ["Never touch prod without approval"] }),
     spill(),                            // big tool results go to the BlobStore; the model gets a preview + fetch_blob
     memory({ namespace: () => "/roles/analyst" }),
-    skills({ source: fsSkillSource("./skills") }),   // a menu of SKILL.md names in the prompt; the model reads one with skill_read
+    // a menu of SKILL.md names in the prompt; the model reads one with skill_read.
+    // fsSkillSource resolves relative paths against process.cwd(): pass an absolute path
+    skills({ source: fsSkillSource(new URL("./skills", import.meta.url).pathname) }),
     budget({ limits: { turns: 30, totalTokens: 400_000 } }),
     approval({ ask: ["deploy", "delete_*"] }),   // keep approval last: it judges the input other sockets may have rewritten
   ],
@@ -40,7 +42,11 @@ const agent = createAgent({
 | `memory()` | A `memory` tool shaped like Anthropic's `memory_20250818` (view / create / str_replace / insert / delete / rename under `/memories`). Every operation leaves a `memory_op` event. Isolation is by `namespace`, invisible to the model. **Off by default.** | a `MemoryStore` |
 | `approval()` | A deny → ask → allow policy pipeline in `beforeTool`. `deny` leaves an `approval_decision` and blocks; `ask` pauses the run for a human; `allow` leaves no event. Default policy `byRisk`: tools without a declared `risk` are treated as medium and **ask** — mark read-only tools `risk: "low"`. Policy evaluation errors deny (fail-closed). | nothing |
 | `budget()` | Five limits — `contextTokens`, `totalTokens`, `turns`, `toolCalls`, `wallMs` — checked in `onTurnEnd`. Hitting one while the model wants to continue pauses the run with `reason: "budget"`; resuming starts a fresh run budget. `totalTokens` includes what sub-agents spent through `asTool`. | nothing |
-| `skills()` | [Agent Skills](https://agentskills.io) with progressive disclosure: the system prompt carries only a menu (each `SKILL.md`'s `name` + `description`); the model reads a skill, or one of its supporting files, with `skill_read({ name, path?, range? })`, and the text lands in the timeline as a `tool_result` — so compaction, `recall` and spill apply to it unchanged. Skills are host-authored, so `skill_read` results are trusted like the system prompt (no `<untrusted>` marker). Skills that fail the spec (bad `name`, missing `description`) are skipped with one warning. **Opt-in**: give it a `source`. | a `SkillSource` — the read-only half of any `MemoryStore` (so a SQLite / Postgres memory table works as-is), `fsSkillSource(dir)` from `@reins/brain/node` for a folder of `<name>/SKILL.md`, or `inlineSkills({ name: "---\nname: …" })` for bundled strings (Workers) |
+| `skills()` | [Agent Skills](https://agentskills.io) with progressive disclosure: the system prompt carries only a menu (each `SKILL.md`'s `name` + `description`); the model reads a skill, or one of its supporting files, with `skill_read({ name, path?, range? })`, and the text lands in the timeline as a `tool_result` — so compaction, `recall` and spill apply to it unchanged. Skills are host-authored, so `skill_read` results are trusted like the system prompt (no `<untrusted>` marker). Skills that fail the spec (bad `name`, missing `description`) are skipped with one warning; no `source`, no valid skill, or a host tool already named `skill_read` means nothing is registered (one warning). **Opt-in**: give it a `source`. | a `SkillSource` — the read-only half of any `MemoryStore` (see below), `fsSkillSource(dir)` from `@reins/brain/node` for a folder of `<name>/SKILL.md`, or `inlineSkills({ "code-review": "---\nname: code-review\ndescription: How we review PRs.\n---\n\n1. …" })` for bundled strings (Workers) — the object key must equal the frontmatter `name` |
+
+### Skills from a database
+
+Any `MemoryStore` (in-memory, `@reins/store-sqlite`, `@reins/store-pg`) is also a `SkillSource`: write `/skills/<name>/SKILL.md` (frontmatter with `name` equal to `<name>` and a `description`) and, optionally, `/skills/<name>/<file>` for supporting files, then pass the same store as `source`. The model's `memory` tool only reaches `/memories`, so one table holds writable private notes and read-only shared skills at once; `memory({ namespace })` prefixes apply to memories only, skills are shared by every principal. `skills()` refuses a `root` that overlaps `/memories` — a skill the model could write itself must never be trusted like the system prompt.
 
 ## Things that are deliberate
 
@@ -48,6 +54,9 @@ const agent = createAgent({
 - **Nothing is hidden from the log.** A note the model sees, a summary it wrote, a memory it changed — each is an event you can replay.
 - **Defaults come from measurements, not taste.** `compact` is recommended-on and `memory` / `handoff` are off because `examples/eval` says so. If you change a default, rerun the eval.
 - **Skills are read, not executed.** A skill's `scripts/` are not run by the library — a child process would break the zero-Node-builtins rule of `@reins/brain` — expose what a skill needs as ordinary tools. Only `@reins/brain/node` touches the file system.
+- **The skill menu is part of the run's config hash.** The menu is read once when a run starts and stays fixed for that run. Adding, removing or renaming a skill (or editing its `description`) while a run is paused makes the resume fail as config drift — editing a skill's *body* does not. Deploy skill changes between runs, or pass `allowConfigDrift`. With `rules: false` the menu is not contributed at all, so this protection is gone unless your own system prompt carries the menu.
+- **Skills are trusted because you wrote them.** `skill_read` results carry `trust: "system"` and skip the `<untrusted>` marker, so whatever fills the source (a folder you deploy, a database row, a CLI's `skills read` output) is trusted like your system prompt. Do not give the model a tool that can write into the skill source. A skill body brought back later by `recall` or `fetch_blob` is `untrusted` again — deliberate, conservative.
+- **Exports beyond this table** (`loadSkillMenu`, `parseSkillMarkdown`, `parseMemoryCommand`, `previewOf`, …) exist for hosts that replace a module's prompt or tool. They follow semver but are documented only in the type declarations.
 - **Compaction never makes information unreachable.** Early runs showed models refusing to answer once they saw "this was summarized", even when the detail was still visible. Attaching the manifest and giving them `recall` fixed it; removing the manifest requires rewriting the rules text too, or the prompt lies.
 
 ## Documentation

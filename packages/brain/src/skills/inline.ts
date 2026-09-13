@@ -5,8 +5,12 @@
  * - 没有文件系统的运行时（Workers）：构建期把 SKILL.md bundle 成字符串
  * - 技能正文来自别处（如 AdRate CLI 的 `skills read` 输出）：拼好头部后直接喂进来
  * 键的布局与其它载体一致：`${root}/<name>/SKILL.md`、`${root}/<name>/<附件相对路径>`。零依赖、无 I/O。
+ *
+ * 对象键就是技能目录名，必须匹配技能名规范且与 SKILL.md 头部的 `name` 一致——不合规的键在这里就抛错，
+ * 而不是拼出一个菜单正则永远匹配不上的键让技能静默消失（发前审查抓到 `"a/b"` / `""` / `"../x"` 三种都会无声丢失）。
  */
 import type { SkillSource } from "@reins/core"
+import { DEFAULT_SKILLS_ROOT, SKILL_FILE_NAME, SKILL_NAME_RE } from "./constants.js"
 
 /** 一个技能：直接给 SKILL.md 全文，或给 `{ "SKILL.md": ..., "reference.md": ... }` 一组文件 */
 export type InlineSkill = string | Readonly<Record<string, string>>
@@ -20,19 +24,26 @@ export function inlineSkills(
   skills: Readonly<Record<string, InlineSkill>>,
   opts: InlineSkillsOptions = {},
 ): SkillSource {
-  const root = opts.root ?? "/skills"
+  const root = opts.root ?? DEFAULT_SKILLS_ROOT
   const files = new Map<string, string>()
   for (const [name, skill] of Object.entries(skills)) {
+    if (!SKILL_NAME_RE.test(name)) {
+      throw new RangeError(
+        `inlineSkills：技能键 ${JSON.stringify(name)} 不是合法技能名（须匹配 ${SKILL_NAME_RE.source}，且与 SKILL.md 头部的 name 一致）`,
+      )
+    }
     if (typeof skill === "string") {
-      files.set(`${root}/${name}/SKILL.md`, skill)
+      files.set(`${root}/${name}/${SKILL_FILE_NAME}`, skill)
       continue
     }
     for (const [rel, content] of Object.entries(skill)) {
-      const clean = rel
-        .split("/")
-        .filter((s) => s.length > 0)
-        .join("/")
-      files.set(`${root}/${name}/${clean}`, content)
+      const segments = rel.split("/").filter((s) => s.length > 0)
+      if (segments.length === 0 || segments.some((s) => s === "." || s === "..")) {
+        throw new RangeError(
+          `inlineSkills：技能 ${name} 的文件路径 ${JSON.stringify(rel)} 不合法（相对路径，不含 . / ..）`,
+        )
+      }
+      files.set(`${root}/${name}/${segments.join("/")}`, content)
     }
   }
   return {

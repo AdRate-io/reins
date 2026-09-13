@@ -54,7 +54,7 @@ const deploy = defineTool<{ env: "staging" | "prod" }>({
 })
 ```
 
-`validate` runs before the approval check so the approver sees exactly the input that will execute. Tools without `execute` (or with `side: "client"`) pause the run until the host appends the `tool_result`. Tool output is `untrusted` by default and is wrapped in `<untrusted source="tool:…">` when lowered to the model.
+`validate` runs before the approval check so the approver sees exactly the input that will execute. Tools without `execute` (or with `side: "client"`) pause the run until the host appends the `tool_result`. Tool output is `untrusted` by default and is wrapped in `<untrusted source="tool:…">` when lowered to the model. A tool may declare `resultTrust: "system"` to opt its **successful** results out of that wrapper — reserve it for content the host itself authored (this is how `@reins/brain`'s `skill_read` works); error results and thrown exceptions stay `untrusted` regardless, and the same rule applies to client-tool results the host appends.
 
 A tool can also *be* another agent: return `subagentPause(...)` from `execute` and the run pauses with `Interruption { kind: "subagent" }`, carrying the child session's own interruptions and state. `reins` ships `asTool(agent, opts)` on top of this.
 
