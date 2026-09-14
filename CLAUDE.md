@@ -183,7 +183,8 @@
 
 ### 上游行为（spikes 实测）
 
-- **官方 Anthropic / OpenAI 端点一律走 Cloudflare AI Gateway 的透传路径**（`gateway.ai.cloudflare.com/v1/<account>/<gateway>/<provider>/…`，头 `cf-aig-authorization`，厂商原模型名）— 后台显眼的 `api.cloudflare.com/…/ai/v1/*` REST 路径认的是另一种账户级 token，用网关令牌打它必 401；Anthropic 流式 `data` 里多一个 `"p"` 填充字段，解析器忽略未知字段。用法见 `spikes/README.md` 末节，私有值在信息文件末尾；F0 体检过之前只算"轻测通"。
+- **官方 Anthropic / OpenAI 端点一律走 Cloudflare AI Gateway 的透传路径**（`gateway.ai.cloudflare.com/v1/<account>/<gateway>/<provider>/…`，头 `cf-aig-authorization`，厂商原模型名）— 后台显眼的 `api.cloudflare.com/…/ai/v1/*` REST 路径认的是另一种账户级 token，用网关令牌打它必 401；Anthropic 流式 `data` 里多一个 `"p"` 填充字段，解析器忽略未知字段。用法见 `spikes/README.md` 末节，私有值在信息文件末尾；**F0 体检 43/43 已过，可当官方靶子**（中途 system / cache_control / beta 头 / 签名校验 / 多轮密钥注入全部原样透传）。账户级限流 429 的正文是 CF 信封不是厂商错误体；模型名打错经网关是 401 不是 404。
+- **暗号法探中途 system 会触发 Anthropic 的 `reasoning_extraction` 拒答（200 + `stop_reason: refusal`、`content: []`），`mid-conversation-output-config` beta 头抬高触发率** — 是厂商分类器不是网关；探针用感知式说明（问上下文用量）；200 + 空内容先看 `stop_reason` / `stop_details` 再怀疑中间层；降级层只带真用到的 beta 头。Opus 5 缺省带 adaptive thinking，`max_tokens` 太小会被 thinking 吃光；Haiku 4.5 最小可缓存 4096 token；OpenAI 强制 `tool_choice` 时 `finish_reason` 是 `stop`。
 - **aireiter 网关的 Claude 端点会改写请求** — 最后一条 user 之后的一切都丢，中途 system 在中段被换成 "Continue"、末尾换成 "OK"；只能测顶层 system 与历史中段。DeepSeek 直连七种落点全到。
 - **pi-ai 0.85.1 没有 system 角色** — 注入内容被当 user 发出，靠 `onPayload` 改写；pi-ai 的 `terminated` 是瞬断（E3 三次、输出 0 token）。
 - **Workers 新 compat date 缺省带部分 Node 兼容** — 只跑新 date 会高估 edge 结论，判据取 2023 date 无 flag。

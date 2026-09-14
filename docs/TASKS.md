@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**当前主线：lowering-fetch**（下一步 F0 靶子体检，网关已就绪；随后 F1）。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**当前主线：lowering-fetch**（F0 靶子体检已过，CF 网关可当官方靶子；下一步 F1 骨架 + Chat Completions）。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
@@ -20,7 +20,7 @@
 
 ## lowering-fetch（2026-09-14 与 Boss 讨论立项，见 DECISIONS 同日「lowering-fetch 立项」；按顺序做，每步一个会话）
 
-- [ ] **F0 靶子体检**：`spikes/cf-gateway-fidelity`——对 CF AI Gateway 统一计费的 Anthropic 与 OpenAI 端点做暗号法忠实度体检（顶层 system、中途 system、tool_result 紧跟、`cache_control` 用量字段、thinking 签名往返、多轮工具调用的密钥注入），逐项核对产出内容不看状态码；结论进 `spikes/README.md`。**依赖 Boss 建好网关**（见"待 Boss"）；网关未就绪先做 F1
+- [x] **F0 靶子体检**（2026-09-14）：`spikes/cf-gateway-fidelity` 暗号法 43/43，三条透传端点请求原样到厂商、响应与错误原文透传、缺省不缓存、六轮工具往返密钥注入稳定，伪造签名 / encrypted_content / 假 beta 头全拿到厂商原文 400；**CF 网关定为官方靶子**（DECISIONS 同日）。顺带实证 F2 摆放规则原文（中途 system 须紧跟 user）与三条非网关坑（踩坑记录）
 - [ ] **F1 骨架 + Chat Completions**：新包 `packages/lowering-fetch`（零 dependencies、零 `node:*`）；三线共用：`fetch` 封装（超时 / signal / 瞬断判据与 core 同策略）、SSE 解析、用量与成本、最小模型表 + `ModelRef` 覆盖；Chat 线 `toRequest` / `stream`：system → `system` 消息、脑子说明落点、工具调用与 `tool` 角色、图片、`reasoning_content` 读侧扩展（DeepSeek）；损失矩阵 Chat 列（thinking 不可回放、无显式缓存断点）；DeepSeek 直连真模型跑通一条带工具的多轮
 - [ ] **F2 Anthropic Messages**：中途 system 摆放规则（S1）、tool_result 紧跟与用户消息后移 `lossy(user)`、四个缓存断点处置、thinking 签名回放、`anthropic-beta`；复用 lowering-pi 的损失矩阵用例逐格对照；经 CF 网关真模型验证（F0 通过为前提）
 - [ ] **F3 OpenAI Responses**：reasoning 加密项回放、`previous_response_id` 不用（时间线是真源）、工具与图片；与 pi 版矩阵逐格对照；经 CF 网关验证
