@@ -9,6 +9,15 @@
 
 **0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。760 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。下一步从「0.1 之后」取。
 
+## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
+
+- [ ] **D1 工具懒发现**：brain 第十个模块（形态照 skills：菜单进系统提示，`tool_find` 取回完整 schema 后该工具在后续轮可见；绑定表 `tools_bound` 仍 run 内固定，只是逐轮暴露不同子集）。动手前核实：逐轮变动请求工具集对 prompt cache 的影响（spike）；"模型能否靠菜单找到该用的工具"要过 eval（fixture 用 `examples/adrate/capabilities.json` 的 200 个工具造），无 eval 不默认开。消费 `Tool.lazy`
+- [ ] **D2 handler 旁路观测钩子** `onEvent(event, ctx)`：只观测不改事件，给 HTTP 路径接 traceId / userId 打日志用（`agent.run()` 本身是生成器已可见，README 把这点写显眼）
+- [ ] **D3 审批过期** `approval({ ttl })`：按 `approval_request` 时间戳，过期批准自动转拒绝并留 `approval_decision(by: "reins")`
+- [ ] **D4 跨进程 run 登记**：`RunRegistry` 从类改成接口（handler 已有 `runs` 注入口），store-pg 出 advisory lock 实现；README 先写"多实例部署须提供共享登记表"红线。今天双实例只浪费一次模型调用、不坏数据（seq_conflict 兜底）
+- [ ] **D5 脱敏配方入 README**（文档，不加接口）：工具结果在 `afterTool` 草稿上脱敏；其他事件包一层 `log.append`。若 AdRate 接入时包 store 太别扭，再考虑核心加极小的 `redactingLog(log, fn)` 助手
+- 不做（记 DECISIONS）：规范化 JSON 序列化算 digest 以放开 jsonb——改的是状态格式，等真有"全库禁 json"硬约束再随版本一起升
+
 ## 0.1 之后（纯新增或有外部依赖）
 
 - [ ] `@reinsjs/lowering-fetch` 零依赖降级层（装机 65 M 的 pi-ai 之外的可选项）——新包，不动已有接口
