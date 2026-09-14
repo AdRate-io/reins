@@ -10,8 +10,8 @@ import type { ModelCost } from "./usage.js"
 /** 本包实现的线协议；F2 / F3 追加 anthropic-messages / openai-responses */
 export type FetchApi = "openai-chat" | "anthropic-messages" | "openai-responses"
 
-/** 当前已实现、可发请求的协议；toRequest / stream 遇到别的就抛 unsupported_api */
-export const SUPPORTED_APIS: ReadonlySet<string> = new Set<FetchApi>(["openai-chat"])
+/** 当前已实现、可发请求的协议；toRequest / stream 遇到别的就抛 unsupported_api（openai-responses 随 F3 追加） */
+export const SUPPORTED_APIS: ReadonlySet<string> = new Set<FetchApi>(["openai-chat", "anthropic-messages"])
 
 /** 一个模型在本降级层眼里的全部描述。字段与 LoweringCapabilities 对齐，方言开关单独成组 */
 export interface FetchModel {
@@ -41,6 +41,8 @@ export interface FetchModel {
   auth?: "bearer" | "x-api-key" | "none"
   /** Chat Completions 方言，只收已验证的扩展（Boss 定：严格按 OpenAI 规范，方言等真有人用再加） */
   chat?: ChatDialect
+  /** Anthropic Messages 线的请求整形选项（beta 头、缓存断点处置） */
+  anthropic?: AnthropicDialect
 }
 
 export interface ChatDialect {
@@ -52,7 +54,50 @@ export interface ChatDialect {
   reasoningContent?: boolean
 }
 
+/**
+ * 感知说明殿后（messages 末条是 system）时，"最后一条 user 末块"的断点没处打，B1 实测三种处置（spikes/b1-perception-cache）：
+ * - "automatic"（缺省）：改在请求顶层放 `cache_control`（Anthropic 自动缓存：断点落在最后一个可缓存块上），命中率与不注入持平；
+ * - "previous-user"：仍打在最后一条 user 的末块上，实测低 3～6 个点（后续请求对不上前一次写入的前缀）；
+ * - "drop"：不打。只在上游自己会补自动缓存（如 DeepSeek 的兼容端口）时不吃亏。
+ * 把断点留在 system 消息上实测几乎零命中，不提供。
+ */
+export type MidSystemCacheBreakpoint = "automatic" | "previous-user" | "drop"
+
+export interface AnthropicDialect {
+  /**
+   * `anthropic-beta` 头的取值，用到才带（F0 结论：中途 system 不需要 beta；某些 beta 会抬高 reasoning_extraction
+   * 拒答率）。模型级 `headers["anthropic-beta"]` 若也给了，以 headers 为准。
+   */
+  betas?: readonly string[]
+  /** 是否打缓存断点（system 末块、tools 末项、最后一条 user 末块）。缺省 true；上游不认断点时可关 */
+  cacheBreakpoints?: boolean
+  /** 断点存活期，缺省 5 分钟（不发 ttl 字段）；"1h" 走 `{ type: "ephemeral", ttl: "1h" }` */
+  cacheTtl?: "5m" | "1h"
+  /** 说明殿后时的断点处置，缺省 "automatic" */
+  midSystemCacheBreakpoint?: MidSystemCacheBreakpoint
+}
+
 const DEEPSEEK_BASE = "https://api.deepseek.com"
+const ANTHROPIC_BASE = "https://api.anthropic.com/v1"
+
+/** Anthropic 官方价目（美元 / 百万 token，2026-09-15 查阅）；缓存写按 1.25 倍、缓存读按 0.1 倍算（Fable 5.1 读价另有公布值） */
+const anthropicModel = (id: string, cost: ModelCost, extra: Partial<FetchModel> = {}): FetchModel => ({
+  provider: "anthropic",
+  id,
+  api: "anthropic-messages",
+  baseUrl: ANTHROPIC_BASE,
+  contextWindow: 1_000_000,
+  maxOutputTokens: 128_000,
+  reasoning: true,
+  images: true,
+  cost,
+  ...extra,
+})
+const HAIKU_4_5 = anthropicModel(
+  "claude-haiku-4-5",
+  { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+  { contextWindow: 200_000, maxOutputTokens: 64_000 },
+)
 const OPENAI_BASE = "https://api.openai.com/v1"
 
 /** DeepSeek 峰值价（美元 / 百万 token）；谷时减半，算出的成本是上限 */
@@ -69,8 +114,15 @@ const DEEPSEEK_FLASH: FetchModel = {
   chat: { reasoningContent: true },
 }
 
-/** 内置最小表。OpenAI 这里只列 Chat 线常用型号，Responses 线（F3）另表 */
+/** 内置最小表。OpenAI 这里只列 Chat 线常用型号，Responses 线（F3）另表；Anthropic 列当前一代 + 常用上一代 */
 export const BUILTIN_MODELS: readonly FetchModel[] = [
+  anthropicModel("claude-fable-5-1", { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 }),
+  anthropicModel("claude-opus-5", { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
+  anthropicModel("claude-opus-4-8", { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
+  anthropicModel("claude-sonnet-5", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }),
+  HAIKU_4_5,
+  // 带日期后缀的正式 id 与短名同一份定义
+  { ...HAIKU_4_5, id: "claude-haiku-4-5-20251001" },
   DEEPSEEK_FLASH,
   // 别名：模型列表里只有 deepseek-flash，请求带 deepseek-v4-flash 照样接受、响应报 deepseek-flash
   { ...DEEPSEEK_FLASH, id: "deepseek-v4-flash" },

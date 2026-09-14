@@ -1,6 +1,7 @@
 /**
  * 一行拿到"模型 + 降级层"：`deepseek("deepseek-flash", { apiKey })`、`openaiChat("gpt-4o-mini", { apiKey })`、
- * 任何 OpenAI 兼容端点用 `chatCompletions("qwen-max", { provider: "qwen", baseUrl, apiKey })`。
+ * `anthropic("claude-opus-5", { apiKey })`；任何 OpenAI 兼容端点用 `chatCompletions("qwen-max", { provider: "qwen", baseUrl, apiKey })`，
+ * 任何 Anthropic 协议端点（DeepSeek 兼容端口、CF 网关）用 `anthropicMessages(id, { provider, baseUrl, apiKey })`。
  * 返回 BoundModel，直接给 `createAgent({ model })`；要多模型共享一个降级层就自己 new FetchLowering。
  *
  * 表内模型取内置定义再按选项覆盖；表外模型用保守缺省（128k 窗口、16k 输出、无推理、不收图），宿主按需覆盖。
@@ -8,22 +9,30 @@
  */
 import type { BoundModel } from "@reinsjs/core"
 import { FetchLowering, type FetchLoweringOptions } from "./lowering.js"
-import { type ChatDialect, type FetchApi, type FetchModel, findBuiltin } from "./models.js"
+import {
+  type AnthropicDialect,
+  type ChatDialect,
+  type FetchApi,
+  type FetchModel,
+  findBuiltin,
+} from "./models.js"
 import type { ModelCost } from "./usage.js"
 
-export interface ChatModelOptions {
+export interface ModelOptions {
   apiKey: string
-  /** 协议根地址（Chat 在其后接 /chat/completions）；表内模型缺省用厂商官方地址 */
+  /** 协议根地址（Chat 在其后接 /chat/completions，Anthropic 接 /messages）；表内模型缺省用厂商官方地址 */
   baseUrl?: string
   contextWindow?: number
   maxOutputTokens?: number
   reasoning?: boolean
   images?: boolean
   cost?: ModelCost
-  /** 上游是否接受中途 role:"system"；Chat 缺省 true */
+  /** 上游是否接受中途 role:"system"；Chat 缺省 true，Anthropic 按模型族推断 */
   midConversationSystem?: boolean
   /** Chat 方言开关，见 models.ts ChatDialect */
   chat?: ChatDialect
+  /** Anthropic 线的 beta 头与缓存断点处置，见 models.ts AnthropicDialect */
+  anthropic?: AnthropicDialect
   /** 凭证怎么带；网关自带凭证头时用 "none" 并把头放 headers */
   auth?: FetchModel["auth"]
   headers?: Record<string, string>
@@ -34,10 +43,15 @@ export interface ChatModelOptions {
   trustMarkers?: boolean
 }
 
-export interface ChatCompletionsOptions extends ChatModelOptions {
+/** @deprecated 改名为 ModelOptions（三条线共用同一组选项），保留别名 */
+export type ChatModelOptions = ModelOptions
+
+export interface ProviderModelOptions extends ModelOptions {
   /** 用作 ModelRef.provider 与 apiKey 回调的键；表外厂商必填 */
   provider: string
 }
+/** @deprecated 改名为 ProviderModelOptions */
+export type ChatCompletionsOptions = ProviderModelOptions
 
 const DEFAULTS = { contextWindow: 128_000, maxOutputTokens: 16_384, reasoning: false, images: false }
 
@@ -51,7 +65,7 @@ export function definitionOf(
   provider: string,
   id: string,
   api: FetchApi,
-  opts: Omit<ChatModelOptions, "apiKey" | "requestOptions" | "fetch" | "timeoutMs" | "trustMarkers">,
+  opts: Omit<ModelOptions, "apiKey" | "requestOptions" | "fetch" | "timeoutMs" | "trustMarkers">,
 ): FetchModel {
   const builtin = findBuiltin(provider, id)
   const base: FetchModel =
@@ -60,6 +74,8 @@ export function definitionOf(
     throw new RangeError(`模型 ${provider}/${id} 不在内置表里，必须给 baseUrl`)
   }
   const chat = base.chat || opts.chat ? { ...base.chat, ...defined(opts.chat ?? {}) } : undefined
+  const anthropic =
+    base.anthropic || opts.anthropic ? { ...base.anthropic, ...defined(opts.anthropic ?? {}) } : undefined
   return {
     ...base,
     ...defined({
@@ -74,10 +90,11 @@ export function definitionOf(
       headers: opts.headers,
     }),
     ...(chat ? { chat } : {}),
+    ...(anthropic ? { anthropic } : {}),
   }
 }
 
-function bound(provider: string, id: string, model: FetchModel, opts: ChatModelOptions): BoundModel {
+function bound(provider: string, id: string, model: FetchModel, opts: ModelOptions): BoundModel {
   const loweringOpts: FetchLoweringOptions = {
     apiKey: (p) => (p === provider ? opts.apiKey : undefined),
     models: [model],
@@ -90,12 +107,12 @@ function bound(provider: string, id: string, model: FetchModel, opts: ChatModelO
 }
 
 /** 任何 OpenAI Chat Completions 兼容端点 */
-export function chatCompletions(id: string, opts: ChatCompletionsOptions): BoundModel {
+export function chatCompletions(id: string, opts: ProviderModelOptions): BoundModel {
   return bound(opts.provider, id, definitionOf(opts.provider, id, "openai-chat", opts), opts)
 }
 
 /** DeepSeek 直连：缺省官方地址、开 reasoning_content 方言（带 tools 时缺它 400） */
-export function deepseek(id: string, opts: ChatModelOptions): BoundModel {
+export function deepseek(id: string, opts: ModelOptions): BoundModel {
   return chatCompletions(id, {
     provider: "deepseek",
     baseUrl: "https://api.deepseek.com",
@@ -107,6 +124,25 @@ export function deepseek(id: string, opts: ChatModelOptions): BoundModel {
 }
 
 /** OpenAI 官方 Chat Completions（Responses 线在 F3 另有 openai()） */
-export function openaiChat(id: string, opts: ChatModelOptions): BoundModel {
+export function openaiChat(id: string, opts: ModelOptions): BoundModel {
   return chatCompletions(id, { provider: "openai", baseUrl: "https://api.openai.com/v1", ...opts })
+}
+
+/**
+ * 任何 Anthropic Messages 协议端点：DeepSeek 的兼容端口（`provider: "deepseek", baseUrl: "https://api.deepseek.com/anthropic"`）、
+ * Cloudflare AI Gateway 透传路径（`auth: "none"` + `cf-aig-authorization` 头）。表外模型从保守缺省起（reasoning 假、不收图），宿主按需声明。
+ */
+export function anthropicMessages(id: string, opts: ProviderModelOptions): BoundModel {
+  return bound(opts.provider, id, definitionOf(opts.provider, id, "anthropic-messages", opts), opts)
+}
+
+/** Anthropic 官方直连：缺省官方地址、x-api-key 鉴权；表内模型带价目与能力位 */
+export function anthropic(id: string, opts: ModelOptions): BoundModel {
+  return anthropicMessages(id, {
+    provider: "anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    reasoning: true,
+    images: true,
+    ...opts,
+  })
 }

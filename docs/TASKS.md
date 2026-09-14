@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**当前主线：lowering-fetch**（F0 靶子体检、F1 Chat 线已过，DeepSeek 直连与 CF 网关真模型各 8/8；下一步 F2 Anthropic Messages）。936 个用例全绿。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**当前主线：lowering-fetch**（F0 靶子体检、F1 Chat 线、F2 Anthropic 线已过，真模型各臂全通；下一步 F3 OpenAI Responses）。1058 个用例全绿。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
@@ -22,7 +22,7 @@
 
 - [x] **F0 靶子体检**（2026-09-14）：`spikes/cf-gateway-fidelity` 暗号法 43/43，三条透传端点请求原样到厂商、响应与错误原文透传、缺省不缓存、六轮工具往返密钥注入稳定，伪造签名 / encrypted_content / 假 beta 头全拿到厂商原文 400；**CF 网关定为官方靶子**（DECISIONS 同日）。顺带实证 F2 摆放规则原文（中途 system 须紧跟 user）与三条非网关坑（踩坑记录）
 - [x] **F1 骨架 + Chat Completions**（2026-09-14）：新包 `@reinsjs/lowering-fetch`（仅依赖 core、零 `node:*`，dist 自检过）；共用层 `http` / `sse` / `usage` / `models` / `ir`（事件 → IR：分组、后移、trust；落点按输入顺序排回），Chat 线 `encodeChatRequest` / `consumeChatStream` / `CHAT_LOSS_MATRIX`，工厂 `deepseek()` / `openaiChat()` / `chatCompletions()`；`payload.body` 即线上请求体，`HttpError` 对齐 SDK 格式让 core 瞬断判据直接适用。范围外发现：DeepSeek 带 tools 时 `reasoning_content` 写侧必回填（缺了 400），方言开关 `chat.reasoningContent`（DECISIONS「F1 定形」、踩坑记录）。+120 用例，936 全绿；`spikes/f1-chat-live` DeepSeek 直连与 CF 网关 gpt-4o-mini 各 8/8
-- [ ] **F2 Anthropic Messages**：中途 system 摆放规则（S1）、tool_result 紧跟与用户消息后移 `lossy(user)`、四个缓存断点处置、thinking 签名回放、`anthropic-beta`；复用 lowering-pi 的损失矩阵用例逐格对照；经 CF 网关真模型验证（F0 通过为前提）
+- [x] **F2 Anthropic Messages**（2026-09-15）：`anthropic/` 三件（`encodeAnthropicRequest` / `consumeAnthropicStream` / `ANTHROPIC_LOSS_MATRIX`）+ 工厂 `anthropic()` / `anthropicMessages()` + 内置五款模型。中途 system 归位规则"攒到下一条 assistant 之前或收尾，前一条不是 user 就退成 user 文本"；同批 tool_result 与后移内容并进同一条 user；thinking 只回放带签名的（无签名 / 别家 dropped 声明，不降正文）；缓存断点自己打三处、说明殿后缺省顶层 `cache_control`（B1 数据）；beta 头用到才带。矩阵与 pi 版逐格对照只差三格（DECISIONS「F2 定形」）。+122 用例，1058 全绿；`spikes/f2-anthropic-live` 经 CF 网关 Haiku 4.5 / Opus 5 各 9/9（签名回放被接受、中途 system 到达、第二个请求起 cacheRead > 0）
 - [ ] **F3 OpenAI Responses**：reasoning 加密项回放、`previous_response_id` 不用（时间线是真源）、工具与图片；与 pi 版矩阵逐格对照；经 CF 网关验证
 - [ ] **F4 收口**：`pnpm check:dist`、workerd 最严档实测（复跑 `spikes/edge-runtime-check` 加 fetch 版）、README（与 pi 版的选择指南）、盘点 / 全景图 / 技术方案 §11 追加、changeset；总包不带它（与 pi 版同规则）
 

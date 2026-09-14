@@ -213,8 +213,10 @@ export function encodeChatRequest(input: ChatEncodeInput): {
     }
   }
 
+  // 宿主选项里的 tools 不透传：工具表只由 input.tools 决定，没有时也不能让宿主塞一份进来
+  const { tools: _tools, ...passthrough } = input.requestOptions ?? {}
   const body: ChatRequestBody = {
-    ...input.requestOptions,
+    ...passthrough,
     model: model.id,
     messages,
     ...(input.tools && input.tools.length > 0

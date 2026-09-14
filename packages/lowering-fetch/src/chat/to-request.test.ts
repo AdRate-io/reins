@@ -95,7 +95,7 @@ describe("encodeChatRequest", () => {
     const { body, landings } = encode(deepseek, events, {
       systemPrompt: "你是助手",
       tools: [{ name: "get_weather", description: "查天气", inputSchema: { type: "object" } }],
-      requestOptions: { max_tokens: 100, messages: "hacked", stream: false },
+      requestOptions: { max_tokens: 100, messages: "hacked", stream: false, tools: [{ hacked: true }] },
     })
     expect(roles(body.messages)).toEqual(["system", "user", "assistant", "tool"])
     expect(body.messages[0]).toEqual({ role: "system", content: "你是助手" })

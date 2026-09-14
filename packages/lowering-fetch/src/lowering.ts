@@ -15,6 +15,8 @@ import {
   type ModelRef,
   type ToRequestInput,
 } from "@reinsjs/core"
+import { consumeAnthropicStream } from "./anthropic/from-stream.js"
+import { encodeAnthropicRequest } from "./anthropic/to-request.js"
 import { capabilitiesOf } from "./capabilities.js"
 import { consumeChatStream } from "./chat/from-stream.js"
 import { encodeChatRequest } from "./chat/to-request.js"
@@ -22,6 +24,9 @@ import { DEFAULT_TIMEOUT_MS, postJson, requestSignals } from "./http.js"
 import { eventsToIr } from "./ir.js"
 import { endpointOf, type FetchApi, type FetchModel, resolveModel } from "./models.js"
 import { parseSse } from "./sse.js"
+
+/** Anthropic Messages 的协议版本头，当前唯一稳定值 */
+export const ANTHROPIC_VERSION = "2023-06-01"
 
 export interface FetchLoweringOptions {
   /** 按 provider 取 key；返回 undefined 视为未配置。本包不读环境变量，由宿主决定来源 */
@@ -74,17 +79,22 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       ...(this.opts.trustMarkers !== undefined ? { trustMarkers: this.opts.trustMarkers } : {}),
     })
     const requestOptions = this.opts.requestOptions?.(input.model)
+    const encodeInput = {
+      ir,
+      events: input.events,
+      model,
+      capabilities,
+      ...(input.tools ? { tools: input.tools } : {}),
+      ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+      ...(requestOptions ? { requestOptions } : {}),
+    }
     switch (model.api) {
       case "openai-chat": {
-        const { body, landings } = encodeChatRequest({
-          ir,
-          events: input.events,
-          model,
-          capabilities,
-          ...(input.tools ? { tools: input.tools } : {}),
-          ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
-          ...(requestOptions ? { requestOptions } : {}),
-        })
+        const { body, landings } = encodeChatRequest(encodeInput)
+        return { model: input.model, capabilities, landings, payload: { api: model.api, body } }
+      }
+      case "anthropic-messages": {
+        const { body, landings } = encodeAnthropicRequest(encodeInput)
         return { model: input.model, capabilities, landings, payload: { api: model.api, body } }
       }
       default:
@@ -113,20 +123,19 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
         errorMessage: "响应没有正文（body 为空）",
       }
     }
-    const origin = { provider: model.provider, api: model.api, model: model.id }
+    const streamInput = {
+      messages: parseSse(res.body),
+      origin: { provider: model.provider, api: model.api, model: model.id },
+      ...(model.cost ? { cost: model.cost } : {}),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+      timedOut: signals.timedOut,
+      timeoutMs: this.timeoutMs,
+    }
     switch (req.payload.api) {
       case "openai-chat":
-        return yield* consumeChatStream(
-          {
-            messages: parseSse(res.body),
-            origin,
-            ...(model.cost ? { cost: model.cost } : {}),
-            ...(ctx.signal ? { signal: ctx.signal } : {}),
-            timedOut: signals.timedOut,
-            timeoutMs: this.timeoutMs,
-          },
-          ctx,
-        )
+        return yield* consumeChatStream(streamInput, ctx)
+      case "anthropic-messages":
+        return yield* consumeAnthropicStream(streamInput, ctx)
       default:
         throw new LoweringError("unsupported_api", `不支持的线协议 ${req.payload.api}`, {
           api: req.payload.api,
@@ -134,9 +143,18 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
     }
   }
 
-  /** 鉴权头按协议缺省（Chat / Responses bearer、Anthropic x-api-key），模型声明 auth:"none" 时凭证由 headers 自带 */
+  /**
+   * 鉴权头按协议缺省（Chat / Responses bearer、Anthropic x-api-key），模型声明 auth:"none" 时凭证由 headers 自带。
+   * Anthropic 线固定带 `anthropic-version`，`anthropic-beta` 只在模型声明了 betas 时带（F0 结论：用到才带）；模型级 headers 最后盖。
+   */
   private headersFor(model: FetchModel): Record<string, string> {
-    const headers: Record<string, string> = { ...this.opts.headers, ...model.headers }
+    const protocol: Record<string, string> = {}
+    if (model.api === "anthropic-messages") {
+      protocol["anthropic-version"] = ANTHROPIC_VERSION
+      const betas = model.anthropic?.betas
+      if (betas && betas.length > 0) protocol["anthropic-beta"] = betas.join(",")
+    }
+    const headers: Record<string, string> = { ...this.opts.headers, ...protocol, ...model.headers }
     const auth = model.auth ?? (model.api === "anthropic-messages" ? "x-api-key" : "bearer")
     if (auth === "none") return headers
     const apiKey = this.opts.apiKey(model.provider)

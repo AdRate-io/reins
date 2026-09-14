@@ -1,11 +1,13 @@
 {
   "name": "@reinsjs/lowering-fetch",
   "version": "0.0.0",
-  "description": "reins — zero-dependency lowering layer on fetch: events ⇄ OpenAI Chat Completions (Anthropic Messages and OpenAI Responses to follow), hand-written SSE, no provider SDK",
+  "description": "reins — zero-dependency lowering layer on fetch: events ⇄ OpenAI Chat Completions / Anthropic Messages (OpenAI Responses to follow), hand-written SSE, no provider SDK",
   "keywords": [
     "agent",
     "llm",
     "openai",
+    "anthropic",
+    "claude",
     "chat-completions",
     "deepseek",
     "fetch",

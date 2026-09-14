@@ -59,7 +59,7 @@
                           │
                      @reinsjs/core ←── @reinsjs/brain（十个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）
-                          ├── @reinsjs/lowering-fetch（零依赖；Chat Completions 已通，Anthropic / Responses 待 F2 / F3，未发布）
+                          ├── @reinsjs/lowering-fetch（零依赖；Chat Completions 与 Anthropic Messages 已通，Responses 待 F3，未发布）
                           ├── @reinsjs/store-sqlite / store-pg
                           ├── @reinsjs/eval
                           ├── @reinsjs/adapter-tanstack-ai
@@ -140,6 +140,10 @@
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败（F0）。
 - **内置模型表是最小表，`definitionOf` 用内置打底、选项覆盖，表外必须给 `baseUrl`** — 价目是 2026-09-14 查阅值，DeepSeek 存峰值价、`costUsd` 是上限；表过期不阻塞使用。
 - **Chat 线四处有损都在矩阵里**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点（什么都不做）。
+- **Anthropic 线的中途 system 是"攒到下一条 assistant 之前或收尾"再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user、后接 assistant 或收尾（F0 A2d 跟在 assistant 后 400）；说明位置比时间线晚一条 user 仍算 exact 并备注。IR 后移到 tool_result 之后的说明也走这条路。
+- **Anthropic 线的缓存断点是本包打的：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 不覆盖且占一格；`anthropic.midSystemCacheBreakpoint` 三档来自 B1 数据，别把断点留在 system 消息上（几乎零命中）。
+- **thinking 回放判据是签名不是正文** — Fable 5.1 缺省 display omitted：正文空、签名在，流侧仍出草稿、写侧照发；无签名（流中断）与别家的 dropped 声明而不是降成正文；`redacted_thinking` 的 data 存在 `replay.thinkingSignature` + `redacted: true`（与 pi 版同字段）。
+- **宿主 `requestOptions` 里的 `system` / `tools` 会被剥掉，`max_tokens` 没给取模型声明的 `maxOutputTokens`，`thinking` 不缺省设置** — Opus 5 起厂商缺省 adaptive，Fable 5.1 对 `type:"disabled"` 400、Haiku 4.5 仍要 `budget_tokens`，代次差异由宿主定；`anthropic-beta` 只在 `anthropic.betas` 声明时带（中途 system 不需要 beta）。
 
 ### MCP（tools-mcp）
 
