@@ -29,7 +29,7 @@ interface CliFlag {
   required: boolean
   description?: string
 }
-interface Operation {
+export interface Operation {
   operationId: string
   method: string
   cliCommand: string
@@ -38,7 +38,7 @@ interface Operation {
   examples?: { command?: string }[]
   available?: boolean
 }
-interface Capability {
+export interface Capability {
   capabilityId: string
   risk: "low" | "medium" | "high"
   rateClass: string
@@ -58,7 +58,7 @@ export const CAPABILITIES: CapabilityFile = JSON.parse(
 )
 
 /** 不暴露给模型的操作：feedback 只能由用户明确要求触发 */
-const EXCLUDED = new Set(["feedback.submit"])
+export const EXCLUDED = new Set(["feedback.submit"])
 
 export const toolNameOf = (operationId: string) => operationId.replaceAll(".", "_")
 
@@ -167,7 +167,8 @@ function argvOf(op: Operation, input: Record<string, unknown>, key: string | und
   return { argv, body }
 }
 
-function describe(cap: Capability, op: Operation): string {
+/** 工具说明（导出给 examples/eval 的工具发现 fixture 复用同一份文案） */
+export function describeOperation(cap: Capability, op: Operation): string {
   const flags = (op.cliFlags ?? [])
     .filter((f) => f.name !== "--idempotency-key" && f.name !== "--file" && f.name !== "--stdin")
     .map((f) => `${f.inputPath}${f.required ? "" : "?"}${f.description ? ` — ${f.description}` : ""}`)
@@ -192,7 +193,7 @@ function slimProperty(prop: Record<string, unknown>): Record<string, unknown> {
   return prop
 }
 
-function inputSchemaOf(op: Operation): Record<string, unknown> {
+export function inputSchemaOf(op: Operation): Record<string, unknown> {
   const props = Object.fromEntries(Object.entries(op.inputSchema.properties ?? {}).map(([k, v]) => [k, slimProperty(v)]))
   delete props.idempotencyKey
   const required = (op.inputSchema.required ?? []).filter((k) => k !== "idempotencyKey")
@@ -219,7 +220,7 @@ function toolOf(cap: Capability, op: Operation): Tool {
   const hasFile = (op.cliFlags ?? []).some((f) => f.name === "--file" || f.name === "--stdin")
   return defineTool<Record<string, unknown>>({
     name: toolNameOf(op.operationId),
-    description: describe(cap, op),
+    description: describeOperation(cap, op),
     inputSchema: inputSchemaOf(op),
     risk: writes ? "high" : "low",
     ...(isBulkRead(op) ? { resultPolicy: { maxTokens: 6000, overflow: "spill" as const } } : {}),

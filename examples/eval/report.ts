@@ -1,7 +1,7 @@
 /**
  * 把 run.ts 落盘的各格结果汇总成一份报告：
  *
- *   node examples/eval/report.ts <out 目录> [--reference threshold] [--candidate brain] [--token-ratio 1]
+ *   node examples/eval/report.ts <out 目录> [--reference threshold] [--candidate brain] [--token-ratio 1] [--suite adrate-patrol|tool-discovery]
  *
  * 读 `cells/*.json`（每格一份，可能来自多次 / 多进程运行，同名后写覆盖先写），用 @reinsjs/eval 的 summarize 求臂均值、
  * checkGate 跑 PRD §7 门槛 2 四条、renderReport 出 Markdown；写 `report.md` 与 `report.json`。
@@ -20,6 +20,7 @@ import {
   summarize,
 } from "@reinsjs/eval"
 import { adratePatrolFixtures } from "./fixtures/adrate-patrol/fixture.ts"
+import { toolDiscoveryFixtures } from "./fixtures/tool-discovery/fixture.ts"
 
 const argv = process.argv.slice(2)
 const dir = argv.find((a) => !a.startsWith("--"))
@@ -31,7 +32,8 @@ const flag = (name: string, dflt: string) => {
 
 /** --rescore：评分器改了口径时，用落盘的时间线把完成度重算一遍，不必重跑模型；改动写回 cell 文件（保留原值 completedBefore） */
 const rescore = argv.includes("--rescore")
-const suite = rescore ? adratePatrolFixtures() : undefined
+const suiteName = flag("--suite", "adrate-patrol")
+const suite = rescore ? (suiteName === "tool-discovery" ? toolDiscoveryFixtures() : adratePatrolFixtures()) : undefined
 
 const files = readdirSync(`${dir}/cells`).filter((f) => f.endsWith(".json")).sort()
 const outcomes: EvalOutcome[] = []

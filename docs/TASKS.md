@@ -7,11 +7,11 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。760 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。下一步从「0.2 候选」D1 起（Boss 定：不等 AdRate 对 0.1 的实测；0.1.x 补丁并行）。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。780 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1 已完成（lazyTools，未发布），下一步 D2（Boss 定：不等 AdRate 对 0.1 的实测；0.1.x 补丁并行）。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
-- [ ] **D1 工具懒发现**：brain 第十个模块（形态照 skills：菜单进系统提示，`tool_find` 取回完整 schema 后该工具在后续轮可见；绑定表 `tools_bound` 仍 run 内固定，只是逐轮暴露不同子集）。动手前核实：逐轮变动请求工具集对 prompt cache 的影响（spike）；"模型能否靠菜单找到该用的工具"要过 eval（fixture 用 `examples/adrate/capabilities.json` 的 200 个工具造），无 eval 不默认开。消费 `Tool.lazy`
+- [x] **D1 工具懒发现**（2026-09-14）：brain 第十个模块 `lazyTools()`，菜单进系统提示、`tool_find` 取回、已取回集合从时间线重建、直接调隐藏工具即 block 指路；+16 用例，eval fixture `tool-discovery`（200 件）+4 用例，780 全绿。spike：Anthropic 上取回后首请求缓存整段重写，频繁换任务按价目加权贵 1.7 倍，一次取回约 7 请求回本——opt-in、README 写边界。eval 两族门禁通过（第二轮，完成度 100% 持平，总 token −59%～−62%）。第一轮 fixture authId 类型缺陷见踩坑记录
 - [ ] **D2 handler 旁路观测钩子** `onEvent(event, ctx)`：只观测不改事件，给 HTTP 路径接 traceId / userId 打日志用（`agent.run()` 本身是生成器已可见，README 把这点写显眼）
 - [ ] **D3 审批过期** `approval({ ttl })`：按 `approval_request` 时间戳，过期批准自动转拒绝并留 `approval_decision(by: "reins")`
 - [ ] **D4 跨进程 run 登记**：`RunRegistry` 从类改成接口（handler 已有 `runs` 注入口），store-pg 出 advisory lock 实现；README 先写"多实例部署须提供共享登记表"红线。今天双实例只浪费一次模型调用、不坏数据（seq_conflict 兜底）
@@ -24,6 +24,7 @@
 - [ ] 四环境验证：Bun / Deno / Vercel Edge 未实测（edge-runtime-check 只测了 Cloudflare workerd）——验证不改接口
 - [ ] tools-mcp 后续：官方 Anthropic 直连对"历史含已移除工具"的接受度未测（无 key；DeepSeek Anthropic 协议与 OpenAI Responses 已实测接受）；OAuth 流程、sampling / elicitation / resources / prompts 待真需求
 - [ ] memory 挂载表（共享只读 + 私有可写，技术方案 §9.6）——等团队场景真出现"同时挂两块"再做
+- [ ] lazy-tools 的 provider 原生路径：Anthropic tool search / `defer_loading` 把取回的工具定义注入 messages 而不改 tools 块，避开取回后的缓存整段重写（D1 spike 实测 Claude 上频繁换任务贵 1.7 倍）——降级层优化，`lazyTools()` 接口不变；MCP 工具也想懒发现须先给 `SocketSetup` 加"此前已并入的工具"
 - [ ] 运行时告警与构造期错误文案英文化（全包十几处字符串，含 memory / spill / budget / skills）——审查指出英文 README + 中文告警对非中文用户是死路；0.1 保持中文（DECISIONS 2026-09-13）
 
 ## 待 Boss 本人操作（不挡开发）

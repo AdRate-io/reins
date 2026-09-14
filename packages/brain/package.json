@@ -1,7 +1,7 @@
 {
   "name": "@reinsjs/brain",
   "version": "0.1.1",
-  "description": "reins — brain: perception, compact, pins, spill, handoff, memory, approval, budget, skills",
+  "description": "reins — brain: perception, compact, pins, spill, handoff, memory, approval, budget, skills, lazy-tools",
   "keywords": [
     "agent",
     "llm",

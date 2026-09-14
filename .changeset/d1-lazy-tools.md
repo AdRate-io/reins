@@ -1,0 +1,5 @@
+---
+"@reinsjs/brain": minor
+---
+
+New module `lazyTools()` — tool discovery for large host tool tables (the consumer of `Tool.lazy`). Host tools marked `lazy: true` appear in the system prompt only as a menu (name + one-line summary); the model loads the ones a task needs with `tool_find({ names })`, which returns their full description and input schema, and from the next turn on those tools are part of the request's tool list. Which tools are loaded is rebuilt from the session timeline (the `tool_find` calls and their non-error results), so pause / resume, later runs on the same session and process restarts all agree; the bound tool table (`tools_bound`, config hash) still holds every tool. Calling a listed-but-unloaded tool is blocked with a message pointing at `tool_find`. Only host tools are affected; tools contributed by other sockets are never hidden. Opt-in: install the socket; with no `lazy` host tool (or a host tool already named `tool_find`) nothing is registered and one warning is emitted.

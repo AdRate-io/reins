@@ -7,6 +7,10 @@
  * 每格（fixture × 臂 × 重复）跑完立刻落盘：`cells/<fixture>__<arm>__<n>.json`（指标、事实问答、状态）与同名 `.jsonl`（全链时间线，
  * 可用 examples/minimal/replay.ts 回放）。进程可以按臂拆开并行跑，也可以只补跑失败的格；最后用 `report.ts <out>` 汇总成报告与门禁。
  *
+ * 套件（--suite）：
+ * - adrate-patrol（缺省）：巡检降本三个 fixture，臂 none / threshold / brain / brain-lean / compact-only（下）
+ * - tool-discovery（D1）：200 件工具找靶六个短任务，臂 eager（200 件全给）/ lazy（装 lazyTools：菜单 + tool_find）
+ *
  * 臂：
  * - none：不装脑子，连 core 的阈值裁剪也拆掉（窗口装不下就报错，"不管"的真实代价）
  * - threshold：只有 core 缺省的阈值裁剪（PRD §7 门槛 2 的基线）
@@ -19,10 +23,11 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import type { Event } from "@reinsjs/core"
-import { approval, budget, compact, handoff, memory, perception, pins, spill } from "@reinsjs/brain"
+import { approval, budget, compact, handoff, lazyTools, memory, perception, pins, spill } from "@reinsjs/brain"
 import { type EvalArm, type EvalOutcome, noneArm, runEval, thresholdArm, toEventsJsonl } from "@reinsjs/eval"
 import { anthropic } from "@reinsjs/lowering-pi"
 import { adratePatrolFixtures, type PatrolWorld } from "./fixtures/adrate-patrol/fixture.ts"
+import { toolDiscoveryFixtures } from "./fixtures/tool-discovery/fixture.ts"
 
 // ---- 参数 ----
 const argv = process.argv.slice(2)
@@ -30,7 +35,10 @@ const flag = (name: string, dflt: string): string => {
   const i = argv.indexOf(name)
   return i >= 0 && argv[i + 1] ? (argv[i + 1] as string) : dflt
 }
-const armNames = flag("--arms", "none,threshold,brain").split(",")
+type Suite = "adrate-patrol" | "tool-discovery"
+const suiteName = flag("--suite", "adrate-patrol") as Suite
+if (suiteName !== "adrate-patrol" && suiteName !== "tool-discovery") throw new Error(`未知的套件：${suiteName}`)
+const armNames = flag("--arms", suiteName === "tool-discovery" ? "eager,lazy" : "none,threshold,brain").split(",")
 const fixtureIds = flag("--fixtures", "").split(",").filter(Boolean)
 const repeats = Number(flag("--repeats", "1"))
 /** 补跑用：重复编号从几开始（如只补第 3 次：--repeats 1 --repeat-start 3） */
@@ -128,16 +136,27 @@ function compactOnlyArm(): EvalArm {
   return { name: "compact-only", sockets: [perception({ limits }), compact()] }
 }
 
-const suite = adratePatrolFixtures({ contextWindow })
-const fixtures = fixtureIds.length ? suite.fixtures.filter((f) => fixtureIds.includes(f.id)) : suite.fixtures
-if (fixtures.length === 0) throw new Error(`没有匹配的 fixture：${fixtureIds.join(",")}`)
-const armsByName: Record<string, EvalArm> = {
-  none: noneArm(),
-  threshold: thresholdArm(),
-  brain: brainArm(suite.world),
-  "brain-lean": brainLeanArm(suite.world),
-  "compact-only": compactOnlyArm(),
+/** 工具发现两臂：同一批 200 件全标 lazy 的工具，只差装不装 lazyTools */
+const discoveryArms: Record<string, EvalArm> = {
+  eager: { name: "eager", sockets: [] },
+  lazy: { name: "lazy", sockets: [lazyTools()] },
 }
+const { allFixtures, armsByName } = ((): { allFixtures: readonly import("@reinsjs/eval").EvalFixture[]; armsByName: Record<string, EvalArm> } => {
+  if (suiteName === "tool-discovery") return { allFixtures: toolDiscoveryFixtures().fixtures, armsByName: discoveryArms }
+  const suite = adratePatrolFixtures({ contextWindow })
+  return {
+    allFixtures: suite.fixtures,
+    armsByName: {
+      none: noneArm(),
+      threshold: thresholdArm(),
+      brain: brainArm(suite.world),
+      "brain-lean": brainLeanArm(suite.world),
+      "compact-only": compactOnlyArm(),
+    },
+  }
+})()
+const fixtures = fixtureIds.length ? allFixtures.filter((f) => fixtureIds.includes(f.id)) : allFixtures
+if (fixtures.length === 0) throw new Error(`没有匹配的 fixture：${fixtureIds.join(",")}`)
 const arms = armNames.map((n) => {
   const a = armsByName[n]
   if (!a) throw new Error(`未知的臂：${n}`)

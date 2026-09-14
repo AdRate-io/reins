@@ -13,7 +13,7 @@
 - **09-13** Boss 按变更程序把 Skill 支持追加进 0.1：brain 第九个模块 `skills`（菜单进系统提示、`skill_read` 翻书、载体 = 任何 MemoryStore 的只读子集）、brain 首个 `/node` 入口；AdRate 示例从"两份 Skill 全文塞系统提示"改成菜单 + 翻书，两族真模型都先读技能再动手。
 - **09-14** 0.1.0 发布：账户定在 Boss 的投放工具公司名下（GitHub `AdRate-io/reins`、npm 组织 `reinsjs`、版权 NewRate Limited，许可证保持 MIT）；npm 拒绝裸名 `reins` 后总包改名 `@reinsjs/agent`；按值扫全历史发现真实广告主 id 散落十个文件，用 filter-repo 一次换成别名再推送；docs/ 随仓库公开，加了一条公开性规则。11 个包全部在官方源，真实安装冒烟通过。
 
-11 个包、约 3.2 万行 TypeScript、760 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.3 万行 TypeScript、780 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -57,7 +57,7 @@
 ```
 @reinsjs/agent（createAgent，总包）─ @reinsjs/server ─ @reinsjs/ui-agui
                           │
-                     @reinsjs/core ←── @reinsjs/brain（九个 Socket；/node 有 fsSkillSource）
+                     @reinsjs/core ←── @reinsjs/brain（十个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）
                           ├── @reinsjs/store-sqlite / store-pg
                           ├── @reinsjs/eval
@@ -117,6 +117,8 @@
 - **`skill_read` 缺省上限 40k 字符是硬上限（带 range 也截、超长单行切开），`resultPolicy.maxTokens = 2 × maxReadChars + 256`** — 两族真模型都不会按截断提示续读"先读再动手"的说明书（16k 时 AdRate 技能被截 110 行、两族都直接开工）；上界不能按"token ≤ 字符"取，core 粗估非 ASCII 一字一 token，40k 中文技能会被 spill 外溢成预览且取回来是 untrusted。第三期若允许模型写技能，模型写的必须回 untrusted。
 - **`skills({ root })` 拒绝与 `/memories` 相同或互为前缀；宿主工具表已有同名 `skill_read` 时整个不注册** — 否则模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能；菜单指向宿主另一个同名工具则语义与 trust 都对不上。
 - **AdRate `skills install` 落盘的 SKILL.md 是"请运行 adrate skills read"的存根，正文只在 CLI 里** — 对它用 `fsSkillSource` 会让模型读到一句它做不到的指令；示例用 `inlineSkills` 从 CLI 的 `--json` 拼。接任何技能目录前先看一眼正文，别只看文件存在。
+- **lazy-tools 的"已取回"集合从时间线重建（`tool_find` 的 tool_call 与非 isError 的 tool_result 配对 ∩ 当前菜单），不留内存状态；菜单只收宿主工具，按 Tool 对象同一性记** — 暂停续跑 / 下次 run / 换进程都对得上；Socket 贡献的 lazy 工具不进菜单也不藏（藏了没菜单等于消失）。没取回就直接调菜单工具会被 `beforeTool` block 并指向 `tool_find`，不是"未知工具"。
+- **取回工具后的第一个请求在 Anthropic 官方 API 上缓存整段重写（tools 一变三段全失效），DeepSeek 保住系统提示那段其余重算** — D1 spike 实测：一次取回约要 7 个后续请求才回本，长任务开头取一次赢、一个会话里频繁换任务亏；规则文案要求一次取全。要彻底避开得走 provider 原生 deferred tools（降级层优化，未做）。
 
 ### 降级层（lowering-pi）
 

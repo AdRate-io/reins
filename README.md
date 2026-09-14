@@ -37,7 +37,7 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 | package | what |
 | --- | --- |
 | `@reinsjs/core` | event timeline, store interfaces, projection, loop, run state, socket, replay |
-| `@reinsjs/brain` | perception, compact, pins, spill, handoff, memory, approval, budget, skills (`./node` has `fsSkillSource`) |
+| `@reinsjs/brain` | perception, compact, pins, spill, handoff, memory, approval, budget, skills, lazy-tools (`./node` has `fsSkillSource`) |
 | `@reinsjs/lowering-pi` | provider lowering on top of pi-ai |
 | `@reinsjs/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
 | `@reinsjs/store-sqlite` | SQLite-backed stores; one SQL layer, driver from the runtime (`node:sqlite`, `bun:sqlite`) |

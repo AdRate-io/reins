@@ -1,10 +1,10 @@
 # @reinsjs/brain 模块盘点
 
-> 依据 2026-09-13 的 `packages/brain/src/` 源码写成（S1 skills 落地后更新）。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
+> 依据 2026-09-14 的 `packages/brain/src/` 源码写成（D1 lazy-tools 落地后更新）。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
 
 ## 架构概览
 
-`@reinsjs/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reinsjs/core`（`workspace:*`）；主入口零 Node 内置依赖，只用 Web 标准 API，唯一的 `node:*` 在子路径 `@reinsjs/brain/node`（文件系统技能载体 `fsSkillSource`，tsup `removeNodeProtocol: false`，`pnpm check:dist` 核对）。它不含循环、不含存储实现、不含降级层，只提供九个可单独装拆的模块。
+`@reinsjs/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reinsjs/core`（`workspace:*`）；主入口零 Node 内置依赖，只用 Web 标准 API，唯一的 `node:*` 在子路径 `@reinsjs/brain/node`（文件系统技能载体 `fsSkillSource`，tsup `removeNodeProtocol: false`，`pnpm check:dist` 核对）。它不含循环、不含存储实现、不含降级层，只提供十个可单独装拆的模块。
 
 每个模块都是一个工厂函数 `xxx(options): Socket`，返回 core 定义的 `Socket`（`packages/core/src/loop/types.ts`）。Socket 只有五个钩子（`beforeModel` / `afterModel` / `beforeTool` / `afterTool` / `onTurnEnd`）加两项静态贡献（`tools` / `systemPrompt`，run 起步时算一次、整个 run 不变，用于满足 prompt cache 约束、续跑补齐 pending 时在场、并计入 `configHash`）。模块只依赖这份契约，不依赖 `runLoop` 的实现。
 
@@ -21,12 +21,13 @@
 | approval | beforeTool | 规则提示 `APPROVAL_RULES`（无工具） | 推荐默认 | 不依赖存储 |
 | budget | afterModel、onTurnEnd | 无 | 推荐默认 | 不依赖存储 |
 | skills | 无钩子 | 工具 `skill_read`（`resultTrust: "system"`）与规则提示 `SKILL_RULES` + 菜单，均为按 `SocketSetup` 算一次的**异步函数形态**（菜单只读载体一遍） | opt-in：给了 `source` 即开 | 无 `source`、或 `root/` 下无一份合规 SKILL.md → **工具与菜单都不注册**并告警一次；不合规的单份技能跳过、各告警一次 |
+| lazy-tools | beforeModel、beforeTool | 工具 `tool_find`（`resultTrust: "system"`）与规则提示 `LAZY_TOOL_RULES` + 菜单（每件 `lazy: true` 的宿主工具一行），按 `SocketSetup` 算一次的函数形态 | opt-in：装了即开（无 eval 不进 README 推荐，eval 见 `examples/eval/fixtures/tool-discovery`） | 宿主没有一件 `lazy: true` 的工具、或已有同名 `tool_find` → **工具与菜单都不注册**并告警一次 |
 
 缺省开关的依据：`docs/DECISIONS.md` 2026-09-09 **E3** 行（spill 8k → 16k；compact / memory / handoff 不默认；perception / pins / budget / approval 推荐默认）与 2026-09-10 **E3c 结论**行（compact 含清单与 recall 后改为**推荐默认**，memory / handoff 仍不默认，其余不变），以及 `docs/TASKS.md` 的 E3 / E3c 行。
 
 注册顺序有两处敏感（`onTurnEnd` 第一个给意见的 Socket 说了算）：handoff 应排在 compact 等可能返回 `pause` 的模块**之前**（否则回执说了交接却被别人暂停，回执撒谎）；budget 应排在 handoff **之后**（模型已决定交接就让它交接）。approval 建议排在 `sockets` **末尾**（至少在会 `rewrite` 入参的钩子之后），这样判定的是真正要执行的入参。
 
-九个模块共用的几条写法约定：
+十个模块共用的几条写法约定：
 
 - **规则提示同一形状**：带规则提示的模块（compact / pins / spill / handoff / memory / approval）都接受 `rules?: string | false`——缺省用内置文案，传字符串替换，传 `false` 则本模块完全不碰系统提示（宿主自己把导出的常量放进去）。
 - **给模型看的文字一律英文**：进的是模型上下文而不是给人看的日志，英文 token 更省、各家模型都熟；给人看的告警与构造期错误则是中文。
@@ -40,7 +41,7 @@
 | --- | --- |
 | `packages/brain/package.json` | 包声明：`@reinsjs/brain`，唯一依赖 `@reinsjs/core`，ESM、`sideEffects: false`；exports `.` 与 `./node` 两个入口 |
 | `packages/brain/tsup.config.ts` | 两个入口（index / node）；`removeNodeProtocol: false` 保住 `node:` 前缀 |
-| `packages/brain/src/index.ts` | 门面：九个模块目录的 `export *`，文件头一句话概括每个模块 |
+| `packages/brain/src/index.ts` | 门面：十个模块目录的 `export *`，文件头一句话概括每个模块 |
 | `packages/brain/src/node.ts` | `@reinsjs/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸；ENAMETOOLONG / ELOOP / EACCES 等当"不存在"（不让宿主绝对路径进模型上下文） |
 | `packages/brain/src/no-node-builtins.test.ts` | 硬约束闸：除 `src/node.ts` 外源码不得出现 `node:` 导入（tsconfig 为 node.ts 开了 node 类型后编译期不再拦） |
 | `packages/brain/src/node.test.ts` | fsSkillSource 在真实临时目录上的用例（列 / 读 / 越界 / 隐藏 / 符号链接 / 接到 skills()） |
@@ -91,6 +92,10 @@
 | `packages/brain/src/skills/inline.ts` | `inlineSkills({ name: SKILL.md 文本 \| { 文件: 内容 } }, { root? })`：字符串预填的只读 SkillSource（Workers、或正文来自别处如 AdRate CLI）；键与文件路径不合规直接抛错 |
 | `packages/brain/src/skills/rules.ts` | `skill_read` 工具名 / 说明 / 入参 schema、规则提示 `SKILL_RULES`、菜单排版 `renderSkillMenu` |
 | `packages/brain/src/skills/skills.test.ts` | skills 的全部用例（头部解析、菜单加载、入参与穿越、静态贡献与告警、读 / 附件 / 截断续读、与 runLoop 及 spill 集成） |
+| `packages/brain/src/lazy-tools/index.ts` | lazy-tools 子模块聚合导出 |
+| `packages/brain/src/lazy-tools/lazy-tools.ts` | `lazyTools(opts): Socket`：`summarizeTool` 缺省摘要、`lazyMenuOf` 从宿主工具挑 `lazy: true` 做菜单（按名排序）、`parseToolFindInput` 校验入参、`revealedLazyTools(timeline, menuNames)` 从时间线重建已取回集合、`toolFindResultBound` 算 resultPolicy 上界；Socket 的 `tools` / `systemPrompt` 按 setup 缓存，`beforeModel` 过滤本轮工具表并记下被藏的（`WeakMap<TurnContext>`），`beforeTool` 对未取回的菜单工具回 block；菜单工具用 `WeakSet<Tool>` 按对象同一性记 |
+| `packages/brain/src/lazy-tools/rules.ts` | `tool_find` 工具名 / 说明 / 入参 schema、规则提示 `LAZY_TOOL_RULES`、菜单排版 `renderLazyToolMenu`、取回条目 `renderLoadedTool` 与结果全文 `renderToolFindResult` |
+| `packages/brain/src/lazy-tools/lazy-tools.test.ts` | lazy-tools 的全部用例（摘要 / 菜单 / 入参 / 重建 / 上界纯函数；静态贡献与告警；与 runLoop 集成：首轮隐藏、取回后可见、block 文案、跨 run 重建、被拦的取回不算、只藏宿主工具、× spill） |
 
 ## 核心流程
 
@@ -146,6 +151,14 @@
 2. 系统提示片段 = `SKILL_RULES`（有相关技能先读再动手、读过不重读、附件按需）+ `Available skills:` 每项一行 `- name: description`；进 configHash，run 内不变，下一 run 重读。
 3. 模型调 `skill_read({ name, path?, range? })`：`validate` 用 `SKILL_NAME_RE` 校 name，`path`（缺省 `SKILL.md`）拼到 `${root}/${name}/` 下走共用的 `resolveRootedPath`（穿越、反斜杠、百分号编码在此被拒，错误只提技能自己的根）；`execute` 读 `${root}/${name}/${path}`，载体抛错 → 告警一次 + 模型看 "could not be read right now"，null 统一回 "Skill file … does not exist."（不区分技能不在 / 文件不在 / 越界），正文经 `formatFileView(enforceLimit)` 带行号、超 `maxReadChars`（缺省 40000）按行截断并提示 `range` 续读——带 range 也截、超长单行切开，是硬上限。
 4. 结果以 `tool_result(trust=system)` 进日志（循环按 core `toolResultTrust(tool, isError)` 落，只用于成功结果），降级层不套 `<untrusted>`；`resultPolicy.maxTokens = 2 × maxReadChars + 256` 是硬上限视图的 token 上界，spill 不会再把它外溢。不留新事件类型，tool_call / tool_result 就是审计痕。
+
+### lazy-tools
+
+1. run 起步：`tools` 与 `systemPrompt` 共用按 `SocketSetup` 缓存的解析——宿主工具表里已有 `tool_find` 或没有一件 `lazy: true` 的工具就都返回 undefined（不注册）并告警一次；否则 `lazyMenuOf(setup.hostTools)` 挑出 lazy 工具按 name 排序，把这些 Tool 对象记进 `WeakSet`（"菜单工具"），并按这次菜单造一个 `tool_find`（名字 / 说明 / schema 逐字固定，闭包里只有菜单不同；`resultPolicy.maxTokens = toolFindResultBound`）。
+2. 系统提示片段 = `LAZY_TOOL_RULES`（先取回再动手、一次取全、只取任务要的、取过的不重取、别按摘要猜参数）+ `Available on request:` 每项一行 `- name: 摘要`；进 configHash，run 内不变。
+3. `beforeModel`：菜单名 = `ctx.tools` 里 `lazy === true` 且在 WeakSet 里的；`revealedLazyTools(ctx.timeline, 菜单名)` 把所有 `tool_find` 的 tool_call 与其 `isError === false` 的 tool_result 按 toolCallId 配对，取 `args.names ∩ 菜单名`；本轮工具表 = 去掉"在菜单里且未取回"的，被藏的记进 `WeakMap<TurnContext, Map<name, Tool>>`；有藏的才返回 `{ tools }` 补丁。
+4. 模型调 `tool_find({ names })`：`validate` 只校形状（非空字符串、去重去空白、≤ maxPerCall），`execute` 按名在菜单里找——找到的输出 `renderLoadedTool`（完整 description + inputSchema 单行 JSON），没找到的在尾部点名"Not on the on-request list"；一件都没找到才 isError。结果 trust=system（`Tool.resultTrust`）。下一轮 beforeModel 重建时这几件就可见了。
+5. `beforeTool`：循环没在本轮工具表里找到工具（`tool === undefined`）且名字在本轮被藏的表里 → `{ block }`，文案指向 `tool_find`；真正未知的名字不管，循环照旧回"未知工具"。续跑补齐 pending 时没有 beforeModel、`ctx.tools` 是全表，隐藏工具照常执行。
 
 ### approval
 
@@ -235,3 +248,11 @@
 **fsSkillSource 不列符号链接、read 走 realpath，ENAMETOOLONG 等当不存在**（S1 + 审查）— 技能目录里一个指向外面的链接不能把 `/etc/passwd` 变成"附件"；载体可能被宿主直接拿去用，不能依赖 skills 模块一定过滤过路径，所以 read 自己再拒一次 `..` / 隐藏段 / root 之外 / 单段超 255。指向根内的合法链接是"不在菜单、猜到名字能读"（保守方向，用例锁住语义）。审查复现：300 字符单段让 realpath 抛 ENAMETOOLONG，错误 message 带着宿主技能目录的绝对路径进了模型上下文——所以这类错误码在载体里当 null，skills 的 execute 再兜一层把任何载体异常只给宿主告警、模型只看"读不到"。
 
 **预算按每次 run 计，且只拦模型还要继续的轮**（B8）— 收尾作答的轮循环本来就要停，把一次正常结束改成 `paused` 只会让宿主续跑一个没事可做的会话。per-run 让"暂停 = 找宿主要更多预算"最直白；会话级配额由宿主聚合 `budget_usage` 自己做（要"整个会话不超过 X"就把 X 减去已用量再传进来）。
+
+**工具菜单进系统提示、schema 走 `tool_find` 结果、已取回集合从时间线重建**（D1）— 加载哪几件工具是模型的判断（宪法一）：菜单只给 name + 一行摘要，取不取、取哪几件由模型定；"哪些已取回"不加事件、不留内存状态，从 `tool_find` 的 tool_call / tool_result 配对重建（宪法二），审批暂停后换进程续跑、同一会话下一次 run、compact 折叠掉那段历史都对得上；handoff 到新会话即重置。绑定表 `tools_bound` 与 configHash 仍含全部工具（§9.1 约束 3 约束的是绑定表），变的只是每轮请求暴露的子集。边界：Anthropic 工具表一变 tools / system / messages 三段缓存全失效，取回后第一个请求整段重写一次，规则文案因此要求一次取全（实测见 `spikes/d1-lazy-tools-cache/`）。
+
+**只对宿主工具生效，Socket 贡献的 lazy 工具不藏**（D1）— 静态贡献阶段各 Socket 互不可见（`SocketSetup.hostTools` 只有宿主的），菜单列不到别的 Socket 的工具；藏一件菜单上没有的工具等于让它消失。用 `WeakSet<Tool>` 按对象同一性记菜单工具而不是按名字或 `lazy` 字段，同一个 Socket 实例给多个 agent 定义共用也不会串。要让 MCP 工具也懒发现须先给 `SocketSetup` 加"此前已并入的工具"，另立任务。
+
+**没取回就直接调菜单工具：block 并指路，不放行也不当未知工具**（D1）— 循环在本轮工具表（beforeModel 补丁后）里找工具，隐藏的找不到会回"未知工具"，模型会以为工具不存在；放行也不对，请求里没给 schema 的调用入参多半不合法。`beforeTool` 排在循环的未知工具判定之前，所以能拦到。
+
+**`tool_find` 结果 trust=system、`resultPolicy.maxTokens` 按最大的 maxPerCall 件估算之和算**（D1）— 工具说明与 schema 是宿主配置，与 skill_read 同一条理由；被 spill 外溢成预览再 `fetch_blob` 取回是 untrusted，等于白取，所以上界在 setup 时按菜单里最大的 maxPerCall 件条目（`estimateTextTokens(renderLoadedTool)`）之和 + 256 算出，20 件大 schema 与 spill 2k 阈值同装的用例锁住。
