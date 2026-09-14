@@ -1,6 +1,6 @@
 /**
  * 内存实现直接跑一致性套件 —— 套件本身也借此得到验证（参考实现必须全绿）。
- * 这里故意从 ../testing 导入而不是相对到具体文件，模拟第三方 `@reins/core/testing` 的用法。
+ * 这里故意从 ../testing 导入而不是相对到具体文件，模拟第三方 `@reinsjs/core/testing` 的用法。
  */
 import { describe, expect, it } from "vitest"
 import { blobStoreConformance, eventLogConformance, memoryStoreConformance } from "../testing/index.js"

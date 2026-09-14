@@ -10,9 +10,9 @@
     "replay": "node replay.ts"
   },
   "dependencies": {
-    "@reins/lowering-pi": "workspace:*",
-    "@reins/server": "workspace:*",
-    "@reins/ui-agui": "workspace:*",
+    "@reinsjs/lowering-pi": "workspace:*",
+    "@reinsjs/server": "workspace:*",
+    "@reinsjs/ui-agui": "workspace:*",
     "reins": "workspace:*"
   },
   "devDependencies": {

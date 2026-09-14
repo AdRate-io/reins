@@ -1,5 +1,5 @@
 {
-  "name": "@reins/lowering-pi",
+  "name": "@reinsjs/lowering-pi",
   "version": "0.1.0",
   "description": "reins — lowering layer on pi-ai: events ⇄ provider wire protocols (Anthropic Messages, OpenAI Responses)",
   "keywords": [
@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.85.1",
-    "@reins/core": "workspace:*"
+    "@reinsjs/core": "workspace:*"
   },
   "engines": {
     "node": ">=22"

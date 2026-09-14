@@ -9,7 +9,7 @@
  * 对象键就是技能目录名，必须匹配技能名规范且与 SKILL.md 头部的 `name` 一致——不合规的键在这里就抛错，
  * 而不是拼出一个菜单正则永远匹配不上的键让技能静默消失（发前审查抓到 `"a/b"` / `""` / `"../x"` 三种都会无声丢失）。
  */
-import type { SkillSource } from "@reins/core"
+import type { SkillSource } from "@reinsjs/core"
 import { DEFAULT_SKILLS_ROOT, SKILL_FILE_NAME, SKILL_NAME_RE } from "./constants.js"
 
 /** 一个技能：直接给 SKILL.md 全文，或给 `{ "SKILL.md": ..., "reference.md": ... }` 一组文件 */

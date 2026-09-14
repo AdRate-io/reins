@@ -10,13 +10,13 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8",
-    "@reins/brain": "workspace:*",
-    "@reins/lowering-pi": "workspace:*",
-    "@reins/store-pg": "workspace:*",
+    "@reinsjs/brain": "workspace:*",
+    "@reinsjs/lowering-pi": "workspace:*",
+    "@reinsjs/store-pg": "workspace:*",
     "reins": "workspace:*"
   },
   "devDependencies": {
-    "@reins/core": "workspace:*",
+    "@reinsjs/core": "workspace:*",
     "@types/node": "^22.0.0"
   }
 }

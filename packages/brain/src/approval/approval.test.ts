@@ -11,8 +11,8 @@ import {
   type Socket,
   type Tool,
   type TurnContext,
-} from "@reins/core"
-import { callTool, ScriptedLowering, say } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it, vi } from "vitest"
 import {
   APPROVAL_POLICY_IDS,

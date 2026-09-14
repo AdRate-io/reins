@@ -63,7 +63,7 @@ import {
   toolResultTrust,
   toolsBoundDrafts,
   uuidv7,
-} from "@reins/core"
+} from "@reinsjs/core"
 import type {
   AfterToolCallInfo,
   AnyTool,
@@ -125,7 +125,7 @@ export interface ReinsMiddlewareOptions {
   onHandoff?: (fromSessionId: string, toSessionId: string) => MaybePromise<void>
   /**
    * 是否把非正文类事件（system_note、compaction、审批、预算、暂停…）作为 AG-UI `CUSTOM` chunk 推进 TanStack 流：
-   * name = 事件 type，value = 事件本身（与 @reins/ui-agui 的约定一致）。正文类事件 TanStack 自己已经在流里了。缺省开
+   * name = 事件 type，value = 事件本身（与 @reinsjs/ui-agui 的约定一致）。正文类事件 TanStack 自己已经在流里了。缺省开
    */
   emitCustomEvents?: boolean
   /**

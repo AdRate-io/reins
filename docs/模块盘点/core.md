@@ -1,12 +1,12 @@
-# 模块盘点：`@reins/core`
+# 模块盘点：`@reinsjs/core`
 
 > 以 2026-09-10 的 `packages/core/src` 代码为准。技术方案 §4~§8、§13 用作术语核对；两处出入在文末"与技术方案的出入"里列出。
 
 ## 架构概览
 
-`@reins/core` 是 reins 的底盘：把"事件时间线"这一唯一真源，变成一次可暂停、可续跑、可回放的模型循环。它自己不认识任何厂商协议，也不含任何"脑子"策略 —— 前者在 `@reins/lowering-pi`，后者在 `@reins/brain`，两边都只通过本包定义的接口接入。
+`@reinsjs/core` 是 reins 的底盘：把"事件时间线"这一唯一真源，变成一次可暂停、可续跑、可回放的模型循环。它自己不认识任何厂商协议，也不含任何"脑子"策略 —— 前者在 `@reinsjs/lowering-pi`，后者在 `@reinsjs/brain`，两边都只通过本包定义的接口接入。
 
-包内共六组能力，`src/index.ts` 平铺导出前五组，第六组走独立入口 `@reins/core/testing`（`tsup` 两个 entry）：
+包内共六组能力，`src/index.ts` 平铺导出前五组，第六组走独立入口 `@reinsjs/core/testing`（`tsup` 两个 entry）：
 
 | 导出组 | 内容 |
 | --- | --- |
@@ -18,7 +18,7 @@
 | `replay/` | 只凭日志重算每轮模型看到了什么 |
 | `testing/`（独立入口） | 三份存储一致性套件 + `ScriptedLowering` 脚本化降级层 |
 
-依赖方向：`package.json` 里**零 dependencies**、零 `node:*`（P5），只用 Web 标准 API（`crypto.getRandomValues`、`crypto.subtle`、`structuredClone`、`TextEncoder`）。被 9 个包依赖：`@reins/brain`、`@reins/lowering-pi`、`@reins/server`、`@reins/ui-agui`、`@reins/adapter-tanstack-ai`、`@reins/store-sqlite`、`@reins/store-pg`、`@reins/eval`、`@reins/reins`（聚合包）。core 不反向依赖其中任何一个。
+依赖方向：`package.json` 里**零 dependencies**、零 `node:*`（P5），只用 Web 标准 API（`crypto.getRandomValues`、`crypto.subtle`、`structuredClone`、`TextEncoder`）。被 9 个包依赖：`@reinsjs/brain`、`@reinsjs/lowering-pi`、`@reinsjs/server`、`@reinsjs/ui-agui`、`@reinsjs/adapter-tanstack-ai`、`@reinsjs/store-sqlite`、`@reinsjs/store-pg`、`@reinsjs/eval`、`@reinsjs/reins`（聚合包）。core 不反向依赖其中任何一个。
 
 ```
   宿主 input（string / ContentPart[] / EventDraft）
@@ -108,7 +108,7 @@
 | `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`、`LoweringCapabilities`、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
 | `lowering/errors.ts` | `LoweringError` 与 4 种 code（unsupported_model / unsupported_api / missing_api_key / invalid_request） |
 | `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
-| 测试 | `trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reins/lowering-pi` 的 T8 矩阵测试覆盖 |
+| 测试 | `trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reinsjs/lowering-pi` 的 T8 矩阵测试覆盖 |
 
 ### `loop/` — 循环与插座（T9~T11）
 
@@ -138,7 +138,7 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `testing/index.ts` | `@reins/core/testing` 入口 |
+| `testing/index.ts` | `@reinsjs/core/testing` 入口 |
 | `testing/harness.ts` | 只要 `{ describe, it }` 的最小 `TestHarness`，自带 `assert` / `assertEqual` / `assertThrowsCode` / `collect`，不绑任何测试框架 |
 | `testing/event-log.ts` | `eventLogConformance`：16 条契约（seq 连续性与原子性、区间读、tail、会话隔离、副本语义、fork 四例）+ `makeEvents` 造数助手 |
 | `testing/blob-store.ts` | `blobStoreConformance`：字节/字符串往返、meta、id 唯一、not_found、副本语义、可选 slice |
@@ -207,7 +207,7 @@
 - **被打断的轮在续跑后才收尾（R2）** — 循环抽出 `endTurn`，补齐 pending 之后也调一次（缺省 continue）。为什么：被审批或中止打断的那一轮原本永远等不到 `onTurnEnd`，模块在那一轮记下的决定（如 handoff 意图）会整个丢失；修循环比让每个模块各自补救干净。边界：`ctx.timeline` 仍是轮开始时的快照，模块要按日志重建意图。
 - **`supersedes` 是撤销一条 pin 的唯一表达（B3）** — 被后来某条 `system_note.supersedes` 指到的事件，一旦被覆盖就不再幸存，不论谁的 `pinsKept` 保留过它；取代者在完整时间线里找，自己被折叠了也算。为什么：append-only 日志里没有"删除"，`pinsKept` 记的是当时的契约，后来的取代说明优先。边界：未折叠时取代不隐藏任何东西，历史原样展示。
 - **摘要放在被覆盖区间的位置** — `foldCompactions` 把 compaction 插到区间之后的第一条可见事件前，而不是它自己的 seq 位置，所以投影输出顺序可以与 seq 不一致。为什么：折叠中间段时"摘要出现在原段位置"读起来才顺；视图是给模型看的，日志才按 seq。边界：`budgetTruncate` 因此必须额外守"seq 封闭"，否则新 `coversSeq` 会误伤保留下来的事件。
-- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reins/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，措辞由调用方给（core 不知道取回工具叫什么）。
+- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reinsjs/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，措辞由调用方给（core 不知道取回工具叫什么）。
 - **轮边界按模型输出类型而非 actor（E1，DECISIONS 2026-09-09）** — `replayTurns` 与 `splitTurns` 都按 `model_thinking / model_text / tool_call` 三种类型切轮。为什么：脑子模块在工具执行期间留下的事件 actor 也是 `model`，并行工具时按 actor 切会把它们误当成一个新轮。边界：一条模型输出都没回来的失败轮识别不出请求边界，不计入 turns。
 
 ## 与技术方案的出入（以代码为准）
@@ -215,6 +215,6 @@
 1. **§7 说 runLoop "约 600 行（M0 收口实测 578 行含注释）"** —— 实际 `loop/run-loop.ts` 已 **709 行**（后续加了瞬断重试循环与 `endTurn`）。数量级仍符合 P3"几百行、可整个复制"。
 2. **§7 的 `TurnContext` 代码块 `budget` 只列 6 个字段** —— 代码有 8 个，多出 `targetTokens`（阈值兜底触发点）与 `lastUsage`（最近一次请求真实用量）。这两个字段在 §9.1 / §9.8 的实现段里有描述，只是 §7 的代码块没同步。
 3. **§4 事件表里 `budget_usage` 载荷写"tokens、toolCalls、wallMs、remaining"** —— 代码还有 B8 加的可选 `contextEstimate`（§7 与 §9.8 正文都提到了，表格未同步）。
-4. **§10 的 `Tool` 代码块把 `side` 写成必填** —— 代码里 `side?` 可选，缺省 server；同段的 `ToolSource = inProcess | mcp | openapi` 在 core 里并不存在（工具来源由宿主与 `@reins/tools-mcp` 组装）。
+4. **§10 的 `Tool` 代码块把 `side` 写成必填** —— 代码里 `side?` 可选，缺省 server；同段的 `ToolSource = inProcess | mcp | openapi` 在 core 里并不存在（工具来源由宿主与 `@reinsjs/tools-mcp` 组装）。
 5. ~~`core.tools_bound` 事件尚未落地~~ —— 2026-09-10 P1 已落地：`events/core.ts` 16 种，`loop/tools-bound.ts` 纯函数，每次 run 起步一条快照、有增删再一条模型可见说明。
 6. **§5 的 `EventLog.append(events: Event[])`** —— 代码签名是 `readonly Event[]`；同理 §8 描述的策略编号（1 过滤 / 2 折叠 / 3 钉住 / 4 感知注入已划掉 / 5 裁剪）在代码注释里原样保留，所以 `truncate.ts` 自称"策略 5"而默认链只有四步，读代码时不必疑惑。

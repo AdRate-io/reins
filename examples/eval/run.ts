@@ -18,10 +18,10 @@
  * REINS_MODEL 覆盖模型 id（relay 缺省 claude-sonnet-5，可用 claude-opus-5）。
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import type { Event } from "@reins/core"
-import { approval, budget, compact, handoff, memory, perception, pins, spill } from "@reins/brain"
-import { type EvalArm, type EvalOutcome, noneArm, runEval, thresholdArm, toEventsJsonl } from "@reins/eval"
-import { anthropic } from "@reins/lowering-pi"
+import type { Event } from "@reinsjs/core"
+import { approval, budget, compact, handoff, memory, perception, pins, spill } from "@reinsjs/brain"
+import { type EvalArm, type EvalOutcome, noneArm, runEval, thresholdArm, toEventsJsonl } from "@reinsjs/eval"
+import { anthropic } from "@reinsjs/lowering-pi"
 import { adratePatrolFixtures, type PatrolWorld } from "./fixtures/adrate-patrol/fixture.ts"
 
 // ---- 参数 ----

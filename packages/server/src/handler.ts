@@ -27,7 +27,7 @@ import {
   type ToolCallEvent,
   uuidv7,
   validateResume,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { type ActiveRun, type Channel, RunConflictError, RunRegistry, type RunSignal } from "./runs.js"
 import { encodeSseFrame, rawEncoder, SSE_HEADERS, SSE_HEARTBEAT } from "./sse.js"
 import type {

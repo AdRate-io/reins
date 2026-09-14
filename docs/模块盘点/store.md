@@ -1,25 +1,25 @@
-# 模块盘点：@reins/store-sqlite / @reins/store-pg
+# 模块盘点：@reinsjs/store-sqlite / @reinsjs/store-pg
 
 > 对应技术方案 §5、任务 B9（S3 为 SQLite 驱动选型 spike）。以代码为准，写于 2026-09-10。
 
 ## 1 架构概览
 
-两个**可选**存储包，各自把 `@reins/core` 的三个接口（`EventLog` / `BlobStore` / `MemoryStore`，定义在 `packages/core/src/store/types.ts`）落到一种数据库上，合起来由 `sqliteStores(db, opts)` / `pgStores(client, opts)` 打包成 `Stores`，直接交给 `createAgent({ store })`。
+两个**可选**存储包，各自把 `@reinsjs/core` 的三个接口（`EventLog` / `BlobStore` / `MemoryStore`，定义在 `packages/core/src/store/types.ts`）落到一种数据库上，合起来由 `sqliteStores(db, opts)` / `pgStores(client, opts)` 打包成 `Stores`，直接交给 `createAgent({ store })`。
 
 依赖方向是单向的：
 
 ```
-@reins/core（接口 types.ts + 错误 errors.ts + 一致性套件 core/src/testing/）
+@reinsjs/core（接口 types.ts + 错误 errors.ts + 一致性套件 core/src/testing/）
         ▲                                  ▲
         │ dependencies: workspace:*        │
-@reins/store-sqlite                 @reins/store-pg
+@reinsjs/store-sqlite                 @reinsjs/store-pg
    └ /node 子路径 → node:sqlite        └ devDep: pg / @electric-sql/pglite（仅测试）
 ```
 
 - 两个 store 包**互不依赖**，也不被 core 依赖；core 不知道它们存在。
-- 运行时依赖只有 `@reins/core` 一个。数据库驱动**不进 dependencies**：由宿主自己 `new DatabaseSync(...)` / `new Pool(...)` 后把对象传进来，包只认接口形状。
-- 零 `node:*` 的硬约束：`@reins/store-sqlite` 主入口与 `@reins/store-pg` 全包都没有 `node:*`；唯一的例外是子路径 `@reins/store-sqlite/node`（`src/node.ts`），它存在的目的就是 import `node:sqlite`。
-- **共跑一套一致性测试**：`@reins/core/testing` 导出 `eventLogConformance` / `blobStoreConformance` / `memoryStoreConformance`（文件 `packages/core/src/testing/event-log.ts`、`blob-store.ts`、`memory-store.ts`，公共断言与 `collect` 在 `harness.ts`）。套件只要 `{ describe, it }`，断言自带、不绑 vitest。两包各自把 `sqliteStores(...)` / `pgStores(...)` 的三个成员喂给同一组套件（`sqlite.test.ts` 顶部、`pg.test.ts` 的 `fresh()`），内存实现 `InMemoryEventLog` 是基准，特有行为测试再直接与它 `deepEqual` 对比。
+- 运行时依赖只有 `@reinsjs/core` 一个。数据库驱动**不进 dependencies**：由宿主自己 `new DatabaseSync(...)` / `new Pool(...)` 后把对象传进来，包只认接口形状。
+- 零 `node:*` 的硬约束：`@reinsjs/store-sqlite` 主入口与 `@reinsjs/store-pg` 全包都没有 `node:*`；唯一的例外是子路径 `@reinsjs/store-sqlite/node`（`src/node.ts`），它存在的目的就是 import `node:sqlite`。
+- **共跑一套一致性测试**：`@reinsjs/core/testing` 导出 `eventLogConformance` / `blobStoreConformance` / `memoryStoreConformance`（文件 `packages/core/src/testing/event-log.ts`、`blob-store.ts`、`memory-store.ts`，公共断言与 `collect` 在 `harness.ts`）。套件只要 `{ describe, it }`，断言自带、不绑 vitest。两包各自把 `sqliteStores(...)` / `pgStores(...)` 的三个成员喂给同一组套件（`sqlite.test.ts` 顶部、`pg.test.ts` 的 `fresh()`），内存实现 `InMemoryEventLog` 是基准，特有行为测试再直接与它 `deepEqual` 对比。
 
 ## 2 文件清单
 
@@ -77,12 +77,12 @@
 
 ## 4 核心设计决策
 
-- **一份 SQL、驱动由运行时给（S3）** — 只依赖 `{ exec, prepare }` 这个最小形状，`node:sqlite` 的 `DatabaseSync` 与 `bun:sqlite` 的 `Database` 天然满足，SQL 层一份不分叉。为什么：不用 better-sqlite3（原生编译、装机负担）也不用 sqlite-wasm（Node 下无持久化），零原生依赖。边界：Cloudflare 不走本包，Durable Objects SQLite 另起 `@reins/store-do`（第二期）。
+- **一份 SQL、驱动由运行时给（S3）** — 只依赖 `{ exec, prepare }` 这个最小形状，`node:sqlite` 的 `DatabaseSync` 与 `bun:sqlite` 的 `Database` 天然满足，SQL 层一份不分叉。为什么：不用 better-sqlite3（原生编译、装机负担）也不用 sqlite-wasm（Node 下无持久化），零原生依赖。边界：Cloudflare 不走本包，Durable Objects SQLite 另起 `@reinsjs/store-do`（第二期）。
 - **Postgres 只认 `query(text, params) → { rows }`，且每个写都是单条语句** — pg 的 Pool / Client 与 PGlite 都直接满足，标签模板类库（postgres.js）包一层即可。为什么：单条语句在 Postgres 里天然原子，省掉"从池里借同一条连接跑 BEGIN/COMMIT"的复杂度，传连接池即正确。边界：这条约束反过来限制了实现——`fork` 因此不能用事务包"先查后插"，只能靠 `WHERE NOT EXISTS` 把守卫塞进同一条语句。
 - **`data` 用 `json` 而不是 `jsonb`（B9）** — jsonb 会重排对象键序，读回来 `JSON.stringify` 就变了；而 T10 的 `pendingDigest` / `configHash` 正是按 `JSON.stringify` 算的，存 Postgres 的会话一续跑就会误报"pending 被篡改"。json 按文本原样存取，各后端逐字节一致。边界：代价是失去 jsonb 的索引与 `jsonb_set`，`fork` 只能在 JS 里改 sessionId。
 - **seq 由调用方分配、存储层只校验连续性（T4）** — 日志不发号，只校验"同一批同会话、从末尾 +1 连续"，不符就 `seq_conflict`。为什么：存储层不知道 seq 该是多少，只有循环层知道；这样并发写入者会明确报错而不是静默交错，乐观并发就这么简单。边界：主键 `(session_id, seq)` 的唯一约束是最后一道闸（多进程 / 多实例），两边都把它翻译成同一个 `seq_conflict`。
 - **fork 保留原事件 id（T4）** — 复制时只换 `sessionId`，`id` 与 `seq` 原样。为什么：`parentId` / `pinsKept` 这类会话内引用要继续有效。边界：事件 id 的唯一性范围因此是"会话内"而非全局。
-- **一致性套件不绑测试框架（T4/T5）** — `@reins/core/testing` 只接收 `{ describe, it }`，断言自带（`ConformanceError`）。为什么：Bun、node:test 都能跑同一套件，第三方后端可自证合规。边界：套件里不能用 `expect`，特有行为测试才用 vitest。
+- **一致性套件不绑测试框架（T4/T5）** — `@reinsjs/core/testing` 只接收 `{ describe, it }`，断言自带（`ConformanceError`）。为什么：Bun、node:test 都能跑同一套件，第三方后端可自证合规。边界：套件里不能用 `expect`，特有行为测试才用 vitest。
 - **测试缺省 PGlite，真库按需（B9）** — pg 包缺省用进程内 WASM Postgres 跑全套，设 `REINS_PG_URL` 才对真库再跑一遍。为什么：真 Postgres 引擎但不需要服务器，CI 免依赖。边界：dogfood 前必须在真库上绿过。
 - **只让记忆表换名，事件表与 blob 表不可配（P2）** — `memoryTable` 只作用于 `reins_memory`。为什么：隔离需求只出现在记忆（按角色各一套），事件与 blob 按 `session_id` 隔离已足够，多开选项只会让"一个库多套 reins"这种未出现的场景提前定型；构造器从 `(db, now)` 改成 `(db, { table, now })` 选项对象，再加项不破坏签名。边界：真要整套隔离，用不同数据库 / schema（Postgres `search_path`）而不是表名前缀。
 - **`removeNodeProtocol: false`（B11 附）** — store-sqlite 的 tsup 配置必须关掉这个缺省项。为什么：tsup 8 会把 `node:sqlite` 剥成裸的 `sqlite`（一个不存在的 npm 包），运行时 `ERR_MODULE_NOT_FOUND`；源码与 vitest 路径全绿完全掩盖了它，只有真跑 dist 才暴露。边界：所有含 `node:*` 子路径的包，验收都要加一条"跑一次 dist 产物"。

@@ -1,4 +1,4 @@
-import { createCoreEvent, createCoreRegistry, type Event } from "@reins/core"
+import { createCoreEvent, createCoreRegistry, type Event } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { JsonlParseError, parseEventsJsonl, toEventsJsonl } from "./jsonl.js"
 

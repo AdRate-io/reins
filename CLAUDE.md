@@ -8,7 +8,7 @@
 
 - **09-07** 八路调研得出结论——agent 的"底盘"已经饱和，空白是可拆的"驾驭经验"层，且没人把"决策权在模型"当立场。Boss 反复确认这是理念不是功能，两条宪法由此而来。
 - **09-08** 一天完成 M0 骨架：事件时间线、只 append 的 EventLog、投影、几百行可复制的 `runLoop`、pi-ai 降级层、Web 标准 handler、AG-UI 输出；Workers 上跑通。同日推完 M1 八个脑子模块（perception、compact、pins、spill、handoff、memory、approval、budget）、SQLite 与 Postgres 存储、TanStack AI 适配器，并用 Boss 的投放工具 AdRate 经官方 CLI 跑通第一条真实长任务"巡检降本"。
-- **09-09～10** M2 用数字说话：建了 `@reins/eval`，把真实录像脱敏成 fixture，在 DeepSeek 与 Claude 两个模型族上跑了四轮一百多格对照。第一轮门槛未过——模型看到"已整理过一次"就认定旧细节丢了而拒答；我们没有降标准，而是给整理摘要附上被折叠清单并加了 `recall` 逐字取回，两族复测召回 100%、token 反降，**门槛 2 达成，compact 改为推荐默认**。发布前审查修了一个真安全漏洞（伪造审批事件可绕过审批）、补了会话级鉴权，盘了 96 个依赖的许可证，在最严格的 workerd 配置下实证了 edge 兼容。
+- **09-09～10** M2 用数字说话：建了 `@reinsjs/eval`，把真实录像脱敏成 fixture，在 DeepSeek 与 Claude 两个模型族上跑了四轮一百多格对照。第一轮门槛未过——模型看到"已整理过一次"就认定旧细节丢了而拒答；我们没有降标准，而是给整理摘要附上被折叠清单并加了 `recall` 逐字取回，两族复测召回 100%、token 反降，**门槛 2 达成，compact 改为推荐默认**。发布前审查修了一个真安全漏洞（伪造审批事件可绕过审批）、补了会话级鉴权，盘了 96 个依赖的许可证，在最严格的 workerd 配置下实证了 edge 兼容。
 - **09-10** Boss 提出多角色 agent 团队场景，一起定了记忆隔离不加角色字段、子代理即工具、MCP 提前到 0.1 三项设计，随后项目进入维护阶段，文档换代到这一版。
 - **09-13** Boss 按变更程序把 Skill 支持追加进 0.1：brain 第九个模块 `skills`（菜单进系统提示、`skill_read` 翻书、载体 = 任何 MemoryStore 的只读子集）、brain 首个 `/node` 入口；AdRate 示例从"两份 Skill 全文塞系统提示"改成菜单 + 翻书，两族真模型都先读技能再动手。
 
@@ -54,17 +54,17 @@
 ## 包全景
 
 ```
-reins（createAgent）─ @reins/server ─ @reins/ui-agui
+reins（createAgent）─ @reinsjs/server ─ @reinsjs/ui-agui
                           │
-                     @reins/core ←── @reins/brain（九个 Socket；/node 有 fsSkillSource）
-                          ↑           @reins/lowering-pi（pi-ai）
-                          ├── @reins/store-sqlite / store-pg
-                          ├── @reins/eval
-                          ├── @reins/adapter-tanstack-ai
-                          └── @reins/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
+                     @reinsjs/core ←── @reinsjs/brain（九个 Socket；/node 有 fsSkillSource）
+                          ↑           @reinsjs/lowering-pi（pi-ai）
+                          ├── @reinsjs/store-sqlite / store-pg
+                          ├── @reinsjs/eval
+                          ├── @reinsjs/adapter-tanstack-ai
+                          └── @reinsjs/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：`@reins/lowering-fetch`（0.1 后）。
+依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：`@reinsjs/lowering-fetch`（0.1 后）。
 
 ## 命令与仓库
 
@@ -74,13 +74,13 @@ reins（createAgent）─ @reins/server ─ @reins/ui-agui
 
 ## 工程硬约束（技术方案 §1，违反即返工）
 
-- `@reins/core` 与 `@reins/brain` 主入口**零 Node 内置依赖**；`node:*`、子进程、真实文件系统只在可选包或 `/node` 子路径入口（server/node、store-sqlite/node、tools-mcp/node、brain/node）。
+- `@reinsjs/core` 与 `@reinsjs/brain` 主入口**零 Node 内置依赖**；`node:*`、子进程、真实文件系统只在可选包或 `/node` 子路径入口（server/node、store-sqlite/node、tools-mcp/node、brain/node）。
 - EventLog **只 append**。压缩、外溢、交接一律以追加事件表达；模型可见的一切都在日志里。
 - run 状态可序列化；暂停是 `runLoop` 的显式返回值，不是阻塞的回调。
 - `runLoop` 是导出的普通异步生成器，几百行，无私有状态，用户可整个复制。
 - 每个事件 type 带 `schemaVersion`，读时 upcast，查不到升级函数即拒绝。
 - 每个脑子模块可单独关闭、按模型族配置；模型自决类机制**无 eval 不默认开**（缺省开关由 `examples/eval` 跑数决定）。
-- 降级层复用 pi-ai，pin 精确版本，pi-ai 类型不出 `@reins/lowering-pi`；同理 `@tanstack/ai` 类型不出适配器。
+- 降级层复用 pi-ai，pin 精确版本，pi-ai 类型不出 `@reinsjs/lowering-pi`；同理 `@tanstack/ai` 类型不出适配器。
 - 不自造前端协议：AG-UI 为一等输出。不做 MCP 动态注册（工具表 run 内不变）。多智能体只做子代理即工具与 handoff，不做编排器。
 - 安全默认值 fail-closed：鉴权只认显式 `true`；策略求值异常视为 deny；越权资源一律当不存在（404，不用 403）。
 

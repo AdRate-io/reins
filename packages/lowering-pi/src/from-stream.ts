@@ -6,7 +6,7 @@
  * 中断或出错时把已产出的部分内容也交出去 —— 日志要记录"发生过什么"，是否继续由循环决定。
  */
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai"
-import type { CoreEventDraft, LoweringOutcome, LoweringStreamContext } from "@reins/core"
+import type { CoreEventDraft, LoweringOutcome, LoweringStreamContext } from "@reinsjs/core"
 import type { ModelOrigin } from "./to-request.js"
 
 export function draftsOf(msg: AssistantMessage): CoreEventDraft[] {

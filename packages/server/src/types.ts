@@ -1,11 +1,11 @@
 /**
- * @reins/server 的公开类型（技术方案 §12）。
+ * @reinsjs/server 的公开类型（技术方案 §12）。
  *
  * 设计要点：
  * - handler 是 Web 标准的 `(Request) => Promise<Response>`，不依赖任何运行时私有 API，Node / Bun / Workers / Deno 同一份代码。
  * - 流里推的就是时间线事件本身（宪法二）：SSE 的 `id:` 字段 = 事件 seq，浏览器 EventSource 断线重连自动带
  *   `Last-Event-ID`，服务端从 EventLog 补发 —— 重连不需要 Redis，也不需要额外的"消息队列"。
- * - 编码可换：缺省原样推事件；`@reins/ui-agui`（T13）提供 AG-UI 编码器，同一个 handler 换一个 encode 即可。
+ * - 编码可换：缺省原样推事件；`@reinsjs/ui-agui`（T13）提供 AG-UI 编码器，同一个 handler 换一个 encode 即可。
  */
 import type {
   ApprovalDecisionInput,
@@ -18,7 +18,7 @@ import type {
   Principal,
   RunResult,
   SerializedRunState,
-} from "@reins/core"
+} from "@reinsjs/core"
 import type { RunRegistry } from "./runs.js"
 
 // ---- agent 定义 ----
@@ -75,7 +75,7 @@ export interface SseFrame {
   data: unknown
 }
 
-/** 编码器：StreamItem → SSE 帧。缺省 rawEncoder 原样推事件；AG-UI 编码器在 @reins/ui-agui */
+/** 编码器：StreamItem → SSE 帧。缺省 rawEncoder 原样推事件；AG-UI 编码器在 @reinsjs/ui-agui */
 export type StreamEncoder = (item: StreamItem) => readonly SseFrame[]
 
 /**

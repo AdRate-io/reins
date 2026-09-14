@@ -25,7 +25,7 @@ import type {
   ToolCallEvent,
   ToolResultDraft,
   TurnContext,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { PIN_RULES, PIN_TOOL_NAME, pinToolDescription } from "./rules.js"
 
 /**

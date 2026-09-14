@@ -1,14 +1,14 @@
-# @reins/adapter-tanstack-ai
+# @reinsjs/adapter-tanstack-ai
 
 Run the [reins](../../README.md) brain inside [TanStack AI](https://tanstack.com/ai)'s `chat()` as a middleware. TanStack drives the loop, executes tools and handles interrupts; reins keeps the event log as the single source of truth, projects it into what the model sees on every turn, and runs its brain modules (compaction, pins, spill, memory, approval, budget, perception) on TanStack's hooks.
 
 ```bash
-pnpm add @reins/adapter-tanstack-ai @tanstack/ai@0.53.0
+pnpm add @reinsjs/adapter-tanstack-ai @tanstack/ai@0.53.0
 ```
 
 ```ts
-import { reinsApprovalInterrupt, reinsMiddleware } from "@reins/adapter-tanstack-ai"
-import { approval, compact, perception, spill } from "@reins/brain"
+import { reinsApprovalInterrupt, reinsMiddleware } from "@reinsjs/adapter-tanstack-ai"
+import { approval, compact, perception, spill } from "@reinsjs/brain"
 import { chat } from "@tanstack/ai"
 
 const stream = chat({

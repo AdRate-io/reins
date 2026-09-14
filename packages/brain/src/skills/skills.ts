@@ -10,7 +10,7 @@
  * 读哪份、什么时候读是模型的判断；规则提示只给经验（rules.ts）。
  *
  * 载体接口不新造：`SkillSource = Pick<MemoryStore, "list" | "read">`，任何 MemoryStore 都是数据库载体，
- * 文件系统载体 `fsSkillSource(dir)` 在 `@reins/brain/node`，字符串预填用 `inlineSkills({...})`。
+ * 文件系统载体 `fsSkillSource(dir)` 在 `@reinsjs/brain/node`，字符串预填用 `inlineSkills({...})`。
  * 布局 `${root}/<name>/SKILL.md` + 同目录附件，`root` 缺省 `/skills`；同一个 MemoryStore 同时给 memory（/memories）
  * 与本模块（/skills）时，模型的 memory 工具够不到技能——技能对模型天然只读、对宿主可写。
  * 因此 `root` **不得**与 `/memories` 相同或互为前缀（构造期拒绝）：否则模型用 memory 工具写一份 SKILL.md，下一 run 就进了
@@ -27,7 +27,7 @@
  * 都只会让模型撞墙。不合规的技能单独跳过并告警一次，不拖垮整个菜单。
  * 不做：脚本执行（子进程越硬约束，技能要的动作宿主用普通 Tool 暴露）、热刷新、`allowed-tools` 等私有字段。
  */
-import type { SkillSource, Socket, SocketSetup, Tool } from "@reins/core"
+import type { SkillSource, Socket, SocketSetup, Tool } from "@reinsjs/core"
 import { MEMORY_ROOT } from "../memory/paths.js"
 import { resolveRootedPath } from "../shared/paths.js"
 import { formatFileView } from "../shared/view.js"

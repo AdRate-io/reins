@@ -5,7 +5,7 @@
  * 本包不读环境变量（T7 决策），apiKey 必填、由宿主决定来源。
  * 带 baseUrl 即走代理 / 网关：此时按 ModelDefinition 登记，能力字段给了缺省值，可用 contextWindow 等覆盖。
  */
-import type { BoundModel } from "@reins/core"
+import type { BoundModel } from "@reinsjs/core"
 import type { ModelDefinition } from "./models.js"
 import { PiAiLowering, type PiAiLoweringOptions } from "./pi-lowering.js"
 

@@ -4,7 +4,7 @@
  * 但这份配置只够本地体验：没有 `authorizeSession`（知道 sessionId 就能读走整条时间线、续别人的 run）、`secret` 有开发缺省值。
  * 上多用户的生产路由前，按根 README「Security notes」补 `handler: { principal, authorizeSession }` 并换真密钥。
  */
-import { anthropic } from "@reins/lowering-pi"
+import { anthropic } from "@reinsjs/lowering-pi"
 import { createAgent, defineTool, memoryStore } from "reins"
 
 const getWeather = defineTool<{ city: string }>({
@@ -28,7 +28,7 @@ export const agent = createAgent({
     ...(process.env.REINS_GATEWAY_BASE ? { baseUrl: process.env.REINS_GATEWAY_BASE } : {}), // 走网关或代理时才需要
   }),
   tools: [getWeather, deploy],
-  store: memoryStore(), // 或 sqliteStores(openSqlite("./agent.db"))（@reins/store-sqlite 及其 /node 入口），或自己实现 EventLog 接口
+  store: memoryStore(), // 或 sqliteStores(openSqlite("./agent.db"))（@reinsjs/store-sqlite 及其 /node 入口），或自己实现 EventLog 接口
   systemPrompt: "你是一个简短直接的助手。",
   secret: process.env.REINS_SECRET ?? "dev-only-secret", // 签名暂停状态；这个缺省值只给本地用，生产必须从环境变量注入
 })

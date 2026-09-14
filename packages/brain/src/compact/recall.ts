@@ -13,7 +13,7 @@
  * 取回的内容再次进入上下文，是模型有意识的花费；结果超过外溢上限时由 spill 模块照常处理（recall 不在它的排除名单里）。
  * 已外溢的原件事件里只剩预览，这里不复述预览，而是指向 blob 让模型用 fetch_blob 读全文。
  */
-import type { ContentPart, CoreEventOf, Tool, ToolContext } from "@reins/core"
+import type { ContentPart, CoreEventOf, Tool, ToolContext } from "@reinsjs/core"
 import { FETCH_BLOB_TOOL_NAME } from "../spill/rules.js"
 import { RECALL_TOOL_DESCRIPTION, RECALL_TOOL_NAME } from "./rules.js"
 

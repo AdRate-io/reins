@@ -1,4 +1,4 @@
-import { StoreError } from "@reins/core"
+import { StoreError } from "@reinsjs/core"
 import type { PgClient } from "./client.js"
 
 /** 记忆表缺省名。事件表与 blob 表不可配：它们由 EventLog / BlobStore 的契约唯一确定，隔离靠 session_id */

@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
-import { InMemoryEventLog, type StoreError } from "@reins/core"
+import { InMemoryEventLog, type StoreError } from "@reinsjs/core"
 import {
   blobStoreConformance,
   collect,
   eventLogConformance,
   makeEvents,
   memoryStoreConformance,
-} from "@reins/core/testing"
+} from "@reinsjs/core/testing"
 import { afterAll, describe, expect, it } from "vitest"
 import {
   DEFAULT_MEMORY_TABLE,
@@ -34,7 +34,7 @@ memoryStoreConformance(
   () => sqliteStores(memoryDb()).memory as NonNullable<ReturnType<typeof sqliteStores>["memory"]>,
 )
 
-describe("@reins/store-sqlite：SQLite 特有行为", () => {
+describe("@reinsjs/store-sqlite：SQLite 特有行为", () => {
   const dir = mkdtempSync(join(tmpdir(), "reins-sqlite-"))
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 

@@ -1,15 +1,15 @@
-# @reins/eval
+# @reinsjs/eval
 
 The eval harness [reins](../../README.md) uses to decide its own defaults with numbers instead of taste. Real sessions become fixtures; recorded tools replay deterministically so every arm faces the same world; arms (a baseline, a threshold-only fallback, or a full brain configuration) run side by side on real models; metrics come straight from the timelines; a gate says pass or fail.
 
 ```bash
-pnpm add -D @reins/eval
+pnpm add -D @reinsjs/eval
 ```
 
 ```ts
-import { compact, perception } from "@reins/brain"
-import { checkGate, noneArm, renderReport, runEval, thresholdArm, withContextWindow } from "@reins/eval"
-import { anthropic } from "@reins/lowering-pi"
+import { compact, perception } from "@reinsjs/brain"
+import { checkGate, noneArm, renderReport, runEval, thresholdArm, withContextWindow } from "@reinsjs/eval"
+import { anthropic } from "@reinsjs/lowering-pi"
 
 const bound = anthropic("claude-sonnet-5", { apiKey: process.env.ANTHROPIC_API_KEY ?? "" })
 
@@ -34,7 +34,7 @@ The reference CLI is `examples/eval/run.ts` in the repository; copy from it rath
 | `recording` | turn a real recording into fixture material: re-attach spilled blobs, redact deterministically |
 | `recorded-tools` | tools that answer from the recording so arms compare like with like |
 | `metrics` | pure functions over a timeline: tokens and cache hits, turns / tool calls / duplicate calls, compaction count and streaks, governance decay windows |
-| `arms` | `noneArm`, `thresholdArm`, `withCapabilities` / `withContextWindow` lowering wrappers; brain-driven arms are assembled by the caller from `@reins/brain` |
+| `arms` | `noneArm`, `thresholdArm`, `withCapabilities` / `withContextWindow` lowering wrappers; brain-driven arms are assembled by the caller from `@reinsjs/brain` |
 | `runner` | fixture × arm × repeat runner with approval auto-answering, budget resumes, handoff following and a forked probe question at the end |
 | `gate` | the four hard rules from the PRD (§7 threshold 2 / P8): recall, token cost, governance, no regressions |
 | `report` | Markdown tables |

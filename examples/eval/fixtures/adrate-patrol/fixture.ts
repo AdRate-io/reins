@@ -15,7 +15,7 @@
  * 评分全是确定性的：完成度看 Command 终态与汇总表里的 id；预埋事实用包含 / 正则判；约束看每个 tool_call 的入参。
  */
 import { readFileSync } from "node:fs"
-import type { ContentPart, CoreEventOf, Event, Tool, ToolContext, ToolResult } from "@reins/core"
+import type { ContentPart, CoreEventOf, Event, Tool, ToolContext, ToolResult } from "@reinsjs/core"
 import {
   type EvalFixture,
   type EvalOutcomeDraft,
@@ -25,7 +25,7 @@ import {
   type PlantedFact,
   type RecordedToolSpec,
   recordedTools,
-} from "@reins/eval"
+} from "@reinsjs/eval"
 
 const here = (p: string) => new URL(p, import.meta.url)
 

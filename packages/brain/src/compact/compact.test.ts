@@ -9,8 +9,8 @@ import {
   type LoopConfig,
   type RunResult,
   runLoop,
-} from "@reins/core"
-import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { perception } from "../perception/index.js"
 import { pins } from "../pins/index.js"

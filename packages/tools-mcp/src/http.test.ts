@@ -6,8 +6,8 @@
  */
 
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server"
-import { type Event, InMemoryEventLog, type RunResult, runLoop } from "@reins/core"
-import { callTool, ScriptedLowering, say } from "@reins/core/testing"
+import { type Event, InMemoryEventLog, type RunResult, runLoop } from "@reinsjs/core"
+import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { z } from "zod"
 import { httpTransport } from "./http.js"

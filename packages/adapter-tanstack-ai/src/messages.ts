@@ -26,7 +26,7 @@ import {
   type ContentPart as ReinsPart,
   type ToolCallPayload,
   untrustedSourceOf,
-} from "@reins/core"
+} from "@reinsjs/core"
 import type { ModelMessage, ToolCall as TanstackToolCall } from "@tanstack/ai"
 import { fromTanstackContent, toTanstackContent } from "./content.js"
 

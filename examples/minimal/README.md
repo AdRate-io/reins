@@ -1,7 +1,7 @@
 # examples/minimal —— 五分钟体验
 
 `agent.ts` 就是 PRD §5.1 那段代码：一个模型、两个工具（其中 `deploy` 需要审批）、内存存储，导出一个 Web 标准 handler。
-`server.ts` 用 node:http 把它挂到 `/agent`，并送出 `@reins/ui-agui` 自带的最小页面。
+`server.ts` 用 node:http 把它挂到 `/agent`，并送出 `@reinsjs/ui-agui` 自带的最小页面。
 
 ```bash
 pnpm install && pnpm build

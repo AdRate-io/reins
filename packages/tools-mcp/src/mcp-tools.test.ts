@@ -3,7 +3,7 @@
  * 机制正确性用 ScriptedLowering 验（模型说什么由剧本定），真模型行为在 examples/mcp 里跑。
  */
 
-import { approval, spill } from "@reins/brain"
+import { approval, spill } from "@reinsjs/brain"
 import {
   type CoreEvent,
   type CoreEventOf,
@@ -14,8 +14,8 @@ import {
   type RunResult,
   RunStateError,
   runLoop,
-} from "@reins/core"
-import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { z } from "zod"
 import { mcpTools } from "./mcp-tools.js"
@@ -78,7 +78,7 @@ describe("mcpTools：run 起步 tools/list → reins Tool", () => {
     })
 
     // 风险档与审批缺省要看 Tool 本身（ToolSpec 里没有），从 tools_bound 之外再解析一次
-    const resolved = await (socket.tools as (s: never) => Promise<readonly import("@reins/core").Tool[]>)(
+    const resolved = await (socket.tools as (s: never) => Promise<readonly import("@reinsjs/core").Tool[]>)(
       undefined as never,
     )
     const byName = new Map(resolved.map((t) => [t.name, t]))

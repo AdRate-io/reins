@@ -3,7 +3,7 @@
  *
  * - noneArm：什么都不装，连 core 的阈值裁剪也拆掉。窗口装不下就让降级层报错 —— 这是"不管"的真实代价。
  * - thresholdArm：不装脑子，只留 core 投影链缺省的 budgetTruncate（机械折叠 + 兜底摘要）。PRD §7 门槛 2 的对照基线。
- * - 模型自决臂请用 @reins/brain 自己组（本包只依赖 core）：
+ * - 模型自决臂请用 @reinsjs/brain 自己组（本包只依赖 core）：
  *     { name: "brain", sockets: [perception(), compact(), pins(), spill(), budget({...})] }
  *
  * withContextWindow：eval 里把窗口缩到几千 token，让中等长度任务也触发整理。它只改 capabilities，
@@ -16,7 +16,7 @@ import {
   type ModelRef,
   reinjectPins,
   visibilityFilter,
-} from "@reins/core"
+} from "@reinsjs/core"
 import type { EvalArm } from "./types.js"
 
 export function noneArm(name = "none"): EvalArm {

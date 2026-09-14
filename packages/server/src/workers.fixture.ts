@@ -3,8 +3,8 @@
  * 模块级的 log 在同一个 isolate 内跨请求存活，所以 POST 之后 GET 能补发到。
  * 也是"在 Workers 上怎么用"的最小示例：handler 直接接 fetch 的 (request, env, ctx)。
  */
-import { defineTool, InMemoryEventLog } from "@reins/core"
-import { callTool, ScriptedLowering, say } from "@reins/core/testing"
+import { defineTool, InMemoryEventLog } from "@reinsjs/core"
+import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { createAgentHandler } from "./index.js"
 
 const add = defineTool<{ a: number; b: number }>({

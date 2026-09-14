@@ -7,7 +7,7 @@
  *
  * 只管本进程。跨进程的"同一会话同时两个 run"由 EventLog 的 seq 连续性校验兜底（append 报 seq_conflict）。
  */
-import type { Event, LoweringDelta, RunResult } from "@reins/core"
+import type { Event, LoweringDelta, RunResult } from "@reinsjs/core"
 
 export type RunSignal =
   | { kind: "event"; event: Event }

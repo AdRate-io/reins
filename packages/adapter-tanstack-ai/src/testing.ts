@@ -1,6 +1,6 @@
 /**
  * 测试用的脚本化 TanStack 文本适配器：按剧本逐次吐 AG-UI chunk，并记录每次 chatStream 收到的选项
- * （providerMessages / systemPrompts / tools），断言"模型看到了什么"就看它。与 @reins/core/testing 的
+ * （providerMessages / systemPrompts / tools），断言"模型看到了什么"就看它。与 @reinsjs/core/testing 的
  * ScriptedLowering 同一思路，只是产出的是 TanStack 流而不是 reins 草稿。
  */
 import type { AnyTextAdapter, StreamChunk, TextOptions, TokenUsage } from "@tanstack/ai"

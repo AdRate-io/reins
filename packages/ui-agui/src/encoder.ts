@@ -1,5 +1,5 @@
 /**
- * AG-UI 编码器：给 @reins/server 的 `encode` 用，把一条 SSE 流翻成 AG-UI 事件流。
+ * AG-UI 编码器：给 @reinsjs/server 的 `encode` 用，把一条 SSE 流翻成 AG-UI 事件流。
  *
  *   start            → RUN_STARTED（threadId = 会话 id，runId = 本条流）
  *   event            → mapEvent（见 map-event.ts）
@@ -13,9 +13,9 @@
  * 由增量开出的消息 id 是临时生成的（增量里没有事件 id）；不带增量的补发路径直接用事件 id。
  * SSE 的 `id:`（= seq）只挂在一个时间线事件翻出的最后一帧上，这样 Last-Event-ID 永远指向已完整送达的事件。
  */
-import type { Event, LoweringDelta, RunResult } from "@reins/core"
-import { uuidv7 } from "@reins/core"
-import type { SseFrame, StreamEncoder, StreamEncoderFactory, StreamItem } from "@reins/server"
+import type { Event, LoweringDelta, RunResult } from "@reinsjs/core"
+import { uuidv7 } from "@reinsjs/core"
+import type { SseFrame, StreamEncoder, StreamEncoderFactory, StreamItem } from "@reinsjs/server"
 import { mapEvent } from "./map-event.js"
 import type { AguiEvent, AguiInterrupt } from "./types.js"
 
@@ -71,7 +71,7 @@ function interruptsOf(result: Extract<RunResult, { status: "paused" }>): AguiInt
   })
 }
 
-/** 一条流一个实例（有状态）。接 @reins/server 请用 `aguiEncoding()`，它按流创建实例。 */
+/** 一条流一个实例（有状态）。接 @reinsjs/server 请用 `aguiEncoding()`，它按流创建实例。 */
 export function createAguiEncoder(options: AguiEncoderOptions = {}): StreamEncoder {
   const newRunId = options.newRunId ?? (() => uuidv7())
   const newMessageId = options.newMessageId ?? (() => uuidv7())

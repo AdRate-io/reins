@@ -1,5 +1,5 @@
 {
-  "name": "@reins/brain",
+  "name": "@reinsjs/brain",
   "version": "0.1.0",
   "description": "reins — brain: perception, compact, pins, spill, handoff, memory, approval, budget, skills",
   "keywords": [
@@ -42,7 +42,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@reins/core": "workspace:*"
+    "@reinsjs/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

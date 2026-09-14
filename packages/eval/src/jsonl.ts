@@ -4,7 +4,7 @@
  * 读是 fail-closed 的（P9）：每一行都过注册表 `read`，旧版本升级到当前形状，未登记的类型或未来版本直接抛，
  * 报错带行号。只做字符串 ↔ 事件，不碰文件系统（本包零 node:*），读文件由调用方负责。
  */
-import { createCoreRegistry, type Event, type EventSchemaRegistry } from "@reins/core"
+import { createCoreRegistry, type Event, type EventSchemaRegistry } from "@reinsjs/core"
 
 export interface ParseJsonlOptions {
   /** 有 ext.* 事件时传宿主注册表；缺省内置 core 注册表 */

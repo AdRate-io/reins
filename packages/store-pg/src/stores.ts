@@ -1,4 +1,4 @@
-import type { Stores } from "@reins/core"
+import type { Stores } from "@reinsjs/core"
 import { PgBlobStore } from "./blob-store.js"
 import type { PgClient } from "./client.js"
 import { PgEventLog } from "./event-log.js"

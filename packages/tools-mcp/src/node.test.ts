@@ -1,8 +1,8 @@
-/** `@reins/tools-mcp/node`：起子进程当 MCP 服务器，list + call，close 后子进程结束 */
+/** `@reinsjs/tools-mcp/node`：起子进程当 MCP 服务器，list + call，close 后子进程结束 */
 
 import { fileURLToPath } from "node:url"
-import { type Event, InMemoryEventLog, type RunResult, runLoop } from "@reins/core"
-import { callTool, ScriptedLowering, say } from "@reins/core/testing"
+import { type Event, InMemoryEventLog, type RunResult, runLoop } from "@reinsjs/core"
+import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { mcpTools } from "./mcp-tools.js"
 import { stdioTransport } from "./node.js"

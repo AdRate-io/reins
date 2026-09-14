@@ -2,7 +2,7 @@
  * TanStack AI 路径的有损矩阵：每种事件在 `toModelMessages` 里可能的落点（P7：有损必须声明，测试断言实际落点必在其中）。
  * 与 lowering-pi 的 LossMatrix 同形（事件 type → 可能落点列表）。
  */
-import type { LossKind } from "@reins/core"
+import type { LossKind } from "@reinsjs/core"
 
 export interface LossEntry {
   kind: LossKind

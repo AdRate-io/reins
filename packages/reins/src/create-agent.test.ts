@@ -1,4 +1,4 @@
-import { callTool, ScriptedLowering, say } from "@reins/core/testing"
+import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { type BoundModel, createAgent, defineTool, memoryStore, rawEncoder } from "./index.js"
 

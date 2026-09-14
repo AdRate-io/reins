@@ -1,13 +1,13 @@
-# @reins/lowering-pi
+# @reinsjs/lowering-pi
 
 The lowering layer for [reins](../../README.md) built on [pi-ai](https://github.com/badlogic/pi-mono): timeline events → provider messages → Anthropic Messages or OpenAI Responses wire protocol, and streaming responses → event drafts. Every event type has a declared landing per API (`LOSS_MATRIX`: exact, lossy, dropped); nothing is dropped silently.
 
 ```bash
-pnpm add @reins/lowering-pi
+pnpm add @reinsjs/lowering-pi
 ```
 
 ```ts
-import { anthropic, openai } from "@reins/lowering-pi"
+import { anthropic, openai } from "@reinsjs/lowering-pi"
 import { createAgent } from "reins"
 
 const claude = anthropic("claude-opus-5", { apiKey: process.env.ANTHROPIC_API_KEY! })

@@ -1,5 +1,5 @@
 /**
- * @reins/adapter-tanstack-ai —— 脑子作为 TanStack AI 的 chat middleware（B10）。
+ * @reinsjs/adapter-tanstack-ai —— 脑子作为 TanStack AI 的 chat middleware（B10）。
  *
  * 用法：
  *   chat({

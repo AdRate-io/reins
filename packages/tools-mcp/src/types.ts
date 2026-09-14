@@ -1,8 +1,8 @@
 /**
- * @reins/tools-mcp 的公开类型。MCP SDK 的类型一律不出本包（同降级层对 pi-ai 的约束）：
+ * @reinsjs/tools-mcp 的公开类型。MCP SDK 的类型一律不出本包（同降级层对 pi-ai 的约束）：
  * 对外只有 reins 自己的 `Tool` / `Socket`，加上这里几个纯数据形状。
  */
-import type { Socket, Tool } from "@reins/core"
+import type { Socket, Tool } from "@reinsjs/core"
 
 /** MCP 工具注解（spec 里全部是"提示"，只用来给 risk / needsApproval 定缺省值，不当权限判定） */
 export interface McpToolAnnotations {
@@ -25,7 +25,7 @@ export interface McpToolInfo {
 
 /**
  * 一条 MCP 传输的"配方"：怎么建出底层连接。主入口只有 `httpTransport`（Streamable HTTP，纯 Web 标准），
- * `@reins/tools-mcp/node` 才有 `stdioTransport`（起子进程）。连接本身由 `mcpTools()` 懒建、跨 run 复用，
+ * `@reinsjs/tools-mcp/node` 才有 `stdioTransport`（起子进程）。连接本身由 `mcpTools()` 懒建、跨 run 复用，
  * 断了在下一次需要时按这个配方重建一次 —— 所以配方必须可重复调用。
  */
 export interface McpTransport {

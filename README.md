@@ -15,7 +15,7 @@ The loop is a few hundred lines you can read and copy. Nothing is hidden. Every 
 
 **0.1.0** — first public release. Eleven packages, ~32k lines of TypeScript, 702 tests, every default measured on real models (see `examples/eval`). Public types are frozen for the 0.1 line; breaking changes bump the minor version until 1.0.
 
-Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add reins @reins/lowering-pi @reins/brain` — Node ≥ 22 or Cloudflare Workers (tested); Bun / Deno / Vercel Edge untested.
+Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add reins @reinsjs/lowering-pi @reinsjs/brain` — Node ≥ 22 or Cloudflare Workers (tested); Bun / Deno / Vercel Edge untested.
 
 ## Try it
 
@@ -36,21 +36,21 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 
 | package | what |
 | --- | --- |
-| `@reins/core` | event timeline, store interfaces, projection, loop, run state, socket, replay |
-| `@reins/brain` | perception, compact, pins, spill, handoff, memory, approval, budget, skills (`./node` has `fsSkillSource`) |
-| `@reins/lowering-pi` | provider lowering on top of pi-ai |
-| `@reins/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
-| `@reins/store-sqlite` | SQLite-backed stores; one SQL layer, driver from the runtime (`node:sqlite`, `bun:sqlite`) |
-| `@reins/store-pg` | Postgres-backed stores; any `query(text, params)` client (pg, PGlite) |
-| `@reins/eval` | Eval harness: fixtures from event logs, recorded-tool replay, metrics, arm-vs-arm runner, the P8 gate |
-| `@reins/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
-| `@reins/tools-mcp` | MCP servers as one socket: tools bound per run, annotations as defaults, `/node` stdio transport |
-| `@reins/adapter-tanstack-ai` | the brain as a TanStack AI chat middleware, the log stays the single source of truth |
+| `@reinsjs/core` | event timeline, store interfaces, projection, loop, run state, socket, replay |
+| `@reinsjs/brain` | perception, compact, pins, spill, handoff, memory, approval, budget, skills (`./node` has `fsSkillSource`) |
+| `@reinsjs/lowering-pi` | provider lowering on top of pi-ai |
+| `@reinsjs/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
+| `@reinsjs/store-sqlite` | SQLite-backed stores; one SQL layer, driver from the runtime (`node:sqlite`, `bun:sqlite`) |
+| `@reinsjs/store-pg` | Postgres-backed stores; any `query(text, params)` client (pg, PGlite) |
+| `@reinsjs/eval` | Eval harness: fixtures from event logs, recorded-tool replay, metrics, arm-vs-arm runner, the P8 gate |
+| `@reinsjs/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
+| `@reinsjs/tools-mcp` | MCP servers as one socket: tools bound per run, annotations as defaults, `/node` stdio transport |
+| `@reinsjs/adapter-tanstack-ai` | the brain as a TanStack AI chat middleware, the log stays the single source of truth |
 | `reins` | `createAgent()` and `asTool()` plus re-exports of core / server / ui-agui |
 
 ## Memory and how to isolate it
 
-The `memory()` socket in `@reins/brain` gives the model a `memory` tool shaped like Anthropic's
+The `memory()` socket in `@reinsjs/brain` gives the model a `memory` tool shaped like Anthropic's
 `memory_20250818` (view / create / str_replace / insert / delete / rename under `/memories`). What
 to remember and when is the model's call; the library only decides *where the bytes go*. Isolation
 is layered, and each layer has exactly one owner:
@@ -98,12 +98,12 @@ memory({ namespace: (ctx) => `/roles/finance/users/${ctx.principal?.id ?? "anony
 
 Table names are checked against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL is assembled; an
 invalid name throws `invalid_argument` and touches nothing. Shared read-only knowledge is what
-`skills()` in `@reins/brain` is for (the same store can serve `/skills` and `/memories`); mounting two
+`skills()` in `@reinsjs/brain` is for (the same store can serve `/skills` and `/memories`); mounting two
 *writable* memory namespaces into one agent is not supported yet, see `docs/技术方案.md` §9.6.
 
 ## Security notes
 
-Read these before putting `@reins/server` on a public route.
+Read these before putting `@reinsjs/server` on a public route.
 
 **Session access is not authorized by default.** The handler identifies a session by `sessionId`
 alone — a `GET ?sessionId=…` replays that session's entire timeline, and a `POST` with someone
@@ -131,8 +131,8 @@ loudly, not wave a stranger through quietly.
 
 **Memory is shared unless you namespace it.** `authorizeSession` isolates timelines, not the memory store: `memory()` writes to `/memories/...` for everyone by default. In a multi-tenant deployment pass `memory({ namespace: (ctx) => `/users/${ctx.principal?.id}` })` (or a per-role `memoryTable` on the store, see "Memory and how to isolate it" above) — otherwise one user's model can read what another user's model wrote.
 
-**Runtime footprint.** `@reins/core` and `@reins/brain` have zero external dependencies.
-`@reins/lowering-pi` pulls `pi-ai`, which declares ten dependencies of its own — installing it
+**Runtime footprint.** `@reinsjs/core` and `@reinsjs/brain` have zero external dependencies.
+`@reinsjs/lowering-pi` pulls `pi-ai`, which declares ten dependencies of its own — installing it
 fetches roughly 65 MB, of which about 29 MB (`@google/genai`, the AWS Bedrock SDK) is outside
 the import graph reins actually reaches. Nothing Node-specific ends up on the paths we use:
 the lowering layer is verified on Cloudflare workerd with no `nodejs_compat` flag

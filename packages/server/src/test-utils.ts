@@ -1,7 +1,7 @@
 /**
  * 测试辅助：SSE 帧解析（整段与逐帧）、可控闸门、断言用的小工具。只被 *.test.ts 引用。
  */
-import type { Event } from "@reins/core"
+import type { Event } from "@reinsjs/core"
 
 export interface Frame {
   event?: string

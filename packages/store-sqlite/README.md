@@ -1,15 +1,15 @@
-# @reins/store-sqlite
+# @reinsjs/store-sqlite
 
 SQLite-backed `EventLog`, `BlobStore` and `MemoryStore` for [reins](../../README.md). One SQL layer, driver supplied by the runtime: Node 22.13+ ships `node:sqlite`, Bun ships `bun:sqlite`. The main entry has no `node:*` import and only needs an object with `exec(sql)` and `prepare(sql)`.
 
 ```bash
-pnpm add @reins/store-sqlite
+pnpm add @reinsjs/store-sqlite
 ```
 
 ```ts
 // Node
-import { sqliteStores } from "@reins/store-sqlite"
-import { openSqlite } from "@reins/store-sqlite/node"
+import { sqliteStores } from "@reinsjs/store-sqlite"
+import { openSqlite } from "@reinsjs/store-sqlite/node"
 
 const store = sqliteStores(openSqlite("./agent.db"))   // WAL on by default; ":memory:" for tests
 
@@ -34,7 +34,7 @@ Table names are validated against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL
 
 ## Verified
 
-Passes the conformance suite in `@reins/core/testing`. The published `dist` keeps the `node:sqlite` protocol prefix (tsup's default would strip it to a bare `sqlite`, which only fails at runtime — `pnpm check:dist` guards this).
+Passes the conformance suite in `@reinsjs/core/testing`. The published `dist` keeps the `node:sqlite` protocol prefix (tsup's default would strip it to a bare `sqlite`, which only fails at runtime — `pnpm check:dist` guards this).
 
 Cloudflare Workers are not a target of this package; Durable Objects SQLite would be a separate store.
 

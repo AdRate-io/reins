@@ -18,14 +18,14 @@ import {
   type SerializedRunState,
   type Stores,
   uuidv7,
-} from "@reins/core"
+} from "@reinsjs/core"
 import {
   type AgentDefinition,
   type AgentHandler,
   createAgentHandler,
   type HandlerOptions,
-} from "@reins/server"
-import { aguiEncoding } from "@reins/ui-agui"
+} from "@reinsjs/server"
+import { aguiEncoding } from "@reinsjs/ui-agui"
 
 export interface CreateAgentOptions
   extends Omit<AgentDefinition, "model" | "lowering" | "log" | "blobs" | "memory"> {
@@ -52,7 +52,7 @@ export interface RunOptions {
 export interface Agent {
   /** 跨请求不变的循环配置；要自己起 runLoop 或接别的传输层时用它 */
   readonly definition: AgentDefinition
-  /** Web 标准 handler：POST 起 run、GET 补发，见 @reins/server */
+  /** Web 标准 handler：POST 起 run、GET 补发，见 @reinsjs/server */
   readonly handler: AgentHandler
   /** 不经 HTTP 直接跑一次：yield 每条刚 append 的事件，返回 RunResult 四态 */
   run(options?: RunOptions): AsyncGenerator<Event, RunResult>

@@ -1,7 +1,7 @@
 {
   "name": "reins",
   "version": "0.1.0",
-  "description": "reins — hand the reins to the model. createAgent() + re-exports of @reins/core, @reins/server and @reins/ui-agui",
+  "description": "reins — hand the reins to the model. createAgent() + re-exports of @reinsjs/core, @reinsjs/server and @reinsjs/ui-agui",
   "keywords": [
     "agent",
     "llm",
@@ -38,9 +38,9 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@reins/core": "workspace:*",
-    "@reins/server": "workspace:*",
-    "@reins/ui-agui": "workspace:*"
+    "@reinsjs/core": "workspace:*",
+    "@reinsjs/server": "workspace:*",
+    "@reinsjs/ui-agui": "workspace:*"
   },
   "engines": {
     "node": ">=22"

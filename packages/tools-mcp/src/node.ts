@@ -1,5 +1,5 @@
 /**
- * @reins/tools-mcp/node —— stdio 传输配方：起一个子进程当 MCP 服务器。
+ * @reinsjs/tools-mcp/node —— stdio 传输配方：起一个子进程当 MCP 服务器。
  * 只有这个子路径带 Node 依赖（SDK 的 stdio 入口用 node:process / node:stream / cross-spawn）；主入口保持纯 Web 标准。
  */
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio"

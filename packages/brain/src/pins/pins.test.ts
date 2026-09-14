@@ -12,8 +12,8 @@ import {
   type RunResult,
   runLoop,
   type TurnContext,
-} from "@reins/core"
-import { callTool, ScriptedLowering, say } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { compact } from "../compact/index.js"
 import { findModelPin, lastHostPin, parsePinArgs, pinMetaOf, pins } from "./pins.js"

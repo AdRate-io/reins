@@ -14,7 +14,7 @@
  * 录像里已外溢（`spilled`）的结果，日志里只剩预览与 blob id，全文在原会话的 BlobStore 里；
  * 回放时原样给预览（blob 不在），`stats.spilled` 记数，fixture 作者要么录制时关外溢、要么用 fallback 补全文。
  */
-import type { ContentPart, CoreEventOf, Event, Tool, ToolContext, ToolResult } from "@reins/core"
+import type { ContentPart, CoreEventOf, Event, Tool, ToolContext, ToolResult } from "@reinsjs/core"
 
 export interface RecordedToolSpec {
   description?: string

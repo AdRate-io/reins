@@ -8,7 +8,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai"
 import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.models"
 import { OPENAI_MODELS } from "@earendil-works/pi-ai/providers/openai.models"
-import { LoweringError, type ModelRef } from "@reins/core"
+import { LoweringError, type ModelRef } from "@reinsjs/core"
 
 /** 本包内部使用的 pi-ai 模型类型 */
 export type PiModel = Model<Api>

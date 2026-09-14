@@ -31,8 +31,8 @@ import type {
   ToolCallEvent,
   ToolResultDraft,
   TurnContext,
-} from "@reins/core"
-import { isModelOutput, supersededIds } from "@reins/core"
+} from "@reinsjs/core"
+import { isModelOutput, supersededIds } from "@reinsjs/core"
 import { HANDOFF_RULES, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME } from "./rules.js"
 
 export interface HandoffOptions {

@@ -27,7 +27,7 @@ import {
   type Stores,
   type Tool,
   uuidv7,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { withContextWindow } from "./arms.js"
 import {
   addTokens,

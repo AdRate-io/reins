@@ -7,7 +7,7 @@ import {
   createCoreRegistry,
   createEvent,
   type Event,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { AGUI_MAPPING, mapEvent, partsToText } from "./map-event.js"
 import type { AguiEvent } from "./types.js"

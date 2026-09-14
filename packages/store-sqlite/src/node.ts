@@ -1,5 +1,5 @@
 /**
- * @reins/store-sqlite/node —— 用 Node 22.13+ 内置的 node:sqlite 打开数据库。只有这个子路径出现 `node:*`。
+ * @reinsjs/store-sqlite/node —— 用 Node 22.13+ 内置的 node:sqlite 打开数据库。只有这个子路径出现 `node:*`。
  *
  * 文件库缺省开 WAL 与 5 秒 busy_timeout：多进程（如 server 的多个 worker）写同一个文件时排队而不是立刻报 SQLITE_BUSY。
  * node:sqlite 在 22.x 仍会打一条 ExperimentalWarning，属 Node 行为，本包不吞（宿主可用 --no-warnings）。

@@ -1,4 +1,4 @@
-import type { MemoryStore } from "@reins/core"
+import type { MemoryStore } from "@reinsjs/core"
 import type { SqliteDatabase } from "./driver.js"
 import { assertTableName, DEFAULT_MEMORY_TABLE } from "./schema.js"
 

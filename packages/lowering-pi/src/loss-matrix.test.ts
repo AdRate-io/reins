@@ -2,7 +2,7 @@
  * T8 有损声明测试：每种事件在两家 API 上实际落点必须是 LOSS_MATRIX 声明过的一种。
  * 这里逐类型、逐变体地过一遍 toRequest，矩阵漏一项就红 —— "禁止静默丢弃"由测试守着。
  */
-import { type CoreEventType, createCoreEvent, createCoreRegistry, type Event } from "@reins/core"
+import { type CoreEventType, createCoreEvent, createCoreRegistry, type Event } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { declaredLandings, LOSS_MATRIX } from "./loss-matrix.js"
 import { PiAiLowering } from "./pi-lowering.js"

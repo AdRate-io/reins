@@ -15,9 +15,9 @@
  */
 import { mkdirSync, readFileSync } from "node:fs"
 import { PGlite } from "@electric-sql/pglite"
-import { approval, budget, compact, memory, perception, pins } from "@reins/brain"
-import { anthropic } from "@reins/lowering-pi"
-import { pgStores } from "@reins/store-pg"
+import { approval, budget, compact, memory, perception, pins } from "@reinsjs/brain"
+import { anthropic } from "@reinsjs/lowering-pi"
+import { pgStores } from "@reinsjs/store-pg"
 import { type Agent, createAgent, defineTool, type ToolContext } from "reins"
 import { expertTool } from "./subagent-tool.ts"
 

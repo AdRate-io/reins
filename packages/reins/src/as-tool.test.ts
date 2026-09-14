@@ -2,7 +2,7 @@
  * asTool（§10.1）：审批冒泡与预算合算用脚本化降级层验机制；行为正确性看 examples/team 的真模型录像。
  * 父子两个 agent 共用一套存储；"换进程"用新建 agent 实例（脚本从头）+ 同一存储来模拟。
  */
-import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reins/core/testing"
+import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import {
   type Agent,

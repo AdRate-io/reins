@@ -74,7 +74,7 @@ export function createInventoryServer(items: Item[]): { server: McpServer; items
   return { server, items }
 }
 
-/** node:http ⇄ Web 标准 Request / Response 的搬运（与 @reins/server/node 同一套写法） */
+/** node:http ⇄ Web 标准 Request / Response 的搬运（与 @reinsjs/server/node 同一套写法） */
 async function toRequest(req: IncomingMessage, base: string): Promise<Request> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)

@@ -8,8 +8,8 @@ import {
   type RunResult,
   type SerializedRunState,
   type Tool,
-} from "@reins/core"
-import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { afterEach, describe, expect, it } from "vitest"
 import { createAgentHandler, SESSION_HEADER } from "./handler.js"
 import { nodeListener } from "./node.js"

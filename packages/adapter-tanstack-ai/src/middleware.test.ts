@@ -13,7 +13,7 @@ import {
   pins,
   skills,
   spill,
-} from "@reins/brain"
+} from "@reinsjs/brain"
 import {
   type CoreEvent,
   type CoreEventOf,
@@ -24,7 +24,7 @@ import {
   InMemoryEventLog,
   InMemoryMemoryStore,
   type Socket,
-} from "@reins/core"
+} from "@reinsjs/core"
 import {
   type AnyTool,
   chat,

@@ -8,8 +8,8 @@ import {
   runLoop,
   type Socket,
   type TurnContext,
-} from "@reins/core"
-import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { handoff } from "../handoff/index.js"
 import { assertLimits, budget, budgetUsedOf, checkBudget, defaultBudgetNote } from "./budget.js"

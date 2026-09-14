@@ -1,4 +1,4 @@
-import { type Event, type EventLog, type ReadOptions, StoreError } from "@reins/core"
+import { type Event, type EventLog, type ReadOptions, StoreError } from "@reinsjs/core"
 import { isUniqueViolation, type SqliteDatabase, transaction } from "./driver.js"
 
 /** 每次分页读取的条数：既不把整条长会话一次拉进内存，也不至于一条一查 */

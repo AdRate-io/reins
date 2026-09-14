@@ -1,5 +1,5 @@
 /**
- * @reins/brain/node —— 文件系统技能载体 `fsSkillSource(dir)`（技术方案 §9.9）。brain 只有这个子路径出现 `node:*`。
+ * @reinsjs/brain/node —— 文件系统技能载体 `fsSkillSource(dir)`（技术方案 §9.9）。brain 只有这个子路径出现 `node:*`。
  *
  * 目录布局即 Agent Skills 规范：`<dir>/<name>/SKILL.md` + 同目录附件，映射成载体键 `${root}/<name>/SKILL.md`
  * （`root` 须与 `skills({ root })` 一致，缺省 `/skills`）。只读；每次 `list` 重新遍历目录（run 起步一次，不缓存，
@@ -21,7 +21,7 @@
 import type { Dirent } from "node:fs"
 import { readdir, readFile, realpath } from "node:fs/promises"
 import { join, resolve, sep } from "node:path"
-import type { SkillSource } from "@reins/core"
+import type { SkillSource } from "@reinsjs/core"
 import { DEFAULT_SKILLS_ROOT } from "./skills/constants.js"
 
 export interface FsSkillSourceOptions {

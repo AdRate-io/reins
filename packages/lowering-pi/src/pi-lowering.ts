@@ -1,5 +1,5 @@
 /**
- * PiAiLowering：@reins/core 的 Lowering 接口在 pi-ai 上的实现。
+ * PiAiLowering：@reinsjs/core 的 Lowering 接口在 pi-ai 上的实现。
  *
  * 只导入 api/<api>（流函数）与 providers/<name>.models（静态模型表）子路径（S4）。
  * pi-ai 的类型不出本包：对外暴露的 payload 用我们自己的结构描述。
@@ -17,7 +17,7 @@ import {
   type LoweringStreamContext,
   type ModelRef,
   type ToRequestInput,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { type CapabilityOverrides, capabilitiesOf } from "./capabilities.js"
 import { consumeStream } from "./from-stream.js"
 import { definitionToModel, type ModelDefinition, type PiModel, resolveModel } from "./models.js"

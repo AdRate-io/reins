@@ -1,5 +1,5 @@
 /**
- * @reins/server/node —— 把 Web 标准 handler 挂到 node:http 上的十几行适配。
+ * @reinsjs/server/node —— 把 Web 标准 handler 挂到 node:http 上的十几行适配。
  *
  * 只在这个子路径出现 `node:*`；主入口保持纯 Web 标准。Hono / TanStack Start / Fastify 等框架
  * 自带同类适配，用它们的即可；这里是给"只想 node server.ts 跑起来"的人。

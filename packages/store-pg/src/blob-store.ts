@@ -1,4 +1,4 @@
-import { type BlobMeta, type BlobStore, StoreError, uuidv7 } from "@reins/core"
+import { type BlobMeta, type BlobStore, StoreError, uuidv7 } from "@reinsjs/core"
 import type { PgClient } from "./client.js"
 
 interface MetaRow {

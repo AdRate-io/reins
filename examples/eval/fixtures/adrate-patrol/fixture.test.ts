@@ -10,9 +10,9 @@ import {
   createCoreRegistry,
   type Event,
   type ToRequestInput,
-} from "@reins/core"
-import { callTool, type Script, ScriptedLowering, say } from "@reins/core/testing"
-import { noneArm, runEval } from "@reins/eval"
+} from "@reinsjs/core"
+import { callTool, type Script, ScriptedLowering, say } from "@reinsjs/core/testing"
+import { noneArm, runEval } from "@reinsjs/eval"
 import { describe, expect, it } from "vitest"
 import { adratePatrolFixtures, auditCompletion, disableCompletion, loadRecording, reportTextOf, seedOf, worldOf } from "./fixture.ts"
 

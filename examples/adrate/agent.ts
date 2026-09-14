@@ -13,10 +13,10 @@
  */
 import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync } from "node:fs"
-import { approval, budget, compact, handoff, inlineSkills, memory, perception, pins, skills, spill } from "@reins/brain"
-import { anthropic } from "@reins/lowering-pi"
-import { sqliteStores } from "@reins/store-sqlite"
-import { openSqlite } from "@reins/store-sqlite/node"
+import { approval, budget, compact, handoff, inlineSkills, memory, perception, pins, skills, spill } from "@reinsjs/brain"
+import { anthropic } from "@reinsjs/lowering-pi"
+import { sqliteStores } from "@reinsjs/store-sqlite"
+import { openSqlite } from "@reinsjs/store-sqlite/node"
 import { createAgent } from "reins"
 import { adrateTools } from "./tools.ts"
 

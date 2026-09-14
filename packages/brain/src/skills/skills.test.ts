@@ -10,8 +10,8 @@ import {
   resolveSocketContributions,
   runLoop,
   type Tool,
-} from "@reins/core"
-import { callTool, ScriptedLowering, say } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { spill } from "../spill/index.js"
 import { DEFAULT_SKILLS_ROOT, SKILL_NAME_RE } from "./constants.js"

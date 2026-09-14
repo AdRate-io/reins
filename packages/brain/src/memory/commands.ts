@@ -10,7 +10,7 @@
  * 全部是纯的存储操作，不知道 Socket / 事件 / 命名空间：命名空间由 memory.ts 用 `bindMemoryFs` 包一层。
  * `rename` 目录与 `delete` 目录不是原子的（MemoryStore 没有事务）；顺序都是"先写后删"，中途失败最多多出重复，不会丢。
  */
-import type { MemoryStore } from "@reins/core"
+import type { MemoryStore } from "@reinsjs/core"
 import { byteLength, formatFileView, humanSize, numbered, splitLines } from "../shared/view.js"
 import { isUnder, MEMORY_ROOT, resolveMemoryPath } from "./paths.js"
 

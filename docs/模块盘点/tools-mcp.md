@@ -1,4 +1,4 @@
-# @reins/tools-mcp 模块盘点
+# @reinsjs/tools-mcp 模块盘点
 
 > 依据 2026-09-10 的 `packages/tools-mcp/src/` 源码写成（任务 P1）。规格在 `docs/技术方案.md` §10，决策在 `docs/DECISIONS.md` 2026-09-10 的 MCP 三行。
 
@@ -6,11 +6,11 @@
 
 把一台 MCP 服务器接成 reins 的**一个 Socket**。形状刻意最小：只用 Socket 的静态贡献 `tools`（异步函数），一个钩子都不挂 —— run 起步 `tools/list` 一次翻成 `Tool[]`，`execute` 就是 `tools/call`。其余全部交给既有机制：spill 在 afterTool 外溢大结果、approval 在 beforeTool 按 risk 问人、budget 计数、循环把抛错记成 `tool_result(isError)`。服务器不需要知道 reins（P3）。
 
-依赖只有两个：`@reins/core`（workspace）与官方 `@modelcontextprotocol/client@2.0.0`（pin 精确版本）。MCP SDK 的类型**不出本包**：对外只有 reins 的 `Tool` / `Socket` 和本包几个纯数据形状（`McpToolInfo`、`McpToolAnnotations`、`McpTransport`）。
+依赖只有两个：`@reinsjs/core`（workspace）与官方 `@modelcontextprotocol/client@2.0.0`（pin 精确版本）。MCP SDK 的类型**不出本包**：对外只有 reins 的 `Tool` / `Socket` 和本包几个纯数据形状（`McpToolInfo`、`McpToolAnnotations`、`McpTransport`）。
 
 两个入口：
-- `@reins/tools-mcp`（主入口）：`mcpTools()`、`httpTransport()`（Streamable HTTP）与翻译纯函数。零 `node:*`；官方 client 主入口实测也零 `node:*`（靠 `_shims` 条件导出在 workerd 选 cf-worker 校验器、Node 选 Ajv）。最严档 workerd（2023 compat date、无 `nodejs_compat`）实测 list + call 通过。
-- `@reins/tools-mcp/node`：`stdioTransport()`，起子进程。只有这里牵进 `node:process` / `node:stream` / `cross-spawn`。
+- `@reinsjs/tools-mcp`（主入口）：`mcpTools()`、`httpTransport()`（Streamable HTTP）与翻译纯函数。零 `node:*`；官方 client 主入口实测也零 `node:*`（靠 `_shims` 条件导出在 workerd 选 cf-worker 校验器、Node 选 Ajv）。最严档 workerd（2023 compat date、无 `nodejs_compat`）实测 list + call 通过。
+- `@reinsjs/tools-mcp/node`：`stdioTransport()`，起子进程。只有这里牵进 `node:process` / `node:stream` / `cross-spawn`。
 
 ```
 mcpTools({ transport })                    ── Socket { name: "mcp:<label>", tools: async () => Tool[], close() }
@@ -26,7 +26,7 @@ transport.create() → MCP SDK Transport → Client.connect
 
 | 文件路径 | 职责 |
 | --- | --- |
-| `packages/tools-mcp/package.json` | `@reins/tools-mcp`，exports `.` 与 `./node`；依赖 `@reins/core` + `@modelcontextprotocol/client` 2.0.0（精确）；devDeps 官方 server、zod、brain（测试用） |
+| `packages/tools-mcp/package.json` | `@reinsjs/tools-mcp`，exports `.` 与 `./node`；依赖 `@reinsjs/core` + `@modelcontextprotocol/client` 2.0.0（精确）；devDeps 官方 server、zod、brain（测试用） |
 | `packages/tools-mcp/tsup.config.ts` | 两个入口，`removeNodeProtocol: false`，dts 清 paths |
 | `packages/tools-mcp/README.md` | 对外说明（英文）：用法、按 run 绑定、注解映射、连接生命周期、免重启原理与漂移三选一、上游实测 |
 | `packages/tools-mcp/src/index.ts` | 主入口门面：`mcpTools`、`httpTransport`、翻译纯函数、公开类型 |

@@ -4,7 +4,7 @@
 
 ## 1 架构概览
 
-`reins` 是"装一个包就能用"的门面，本身只有 `create-agent.ts`（86 行）与 `as-tool.ts`（219 行）两份实现。它做三件事：提供 `createAgent`、提供 `asTool`（子代理即工具，§10.1），以及原样再导出 `@reins/core`、`@reins/server`、`@reins/ui-agui` 三个包的全部公开面。降级层（`@reins/lowering-pi`，带 pi-ai 依赖）**不**在再导出之列，要单独 import。
+`reins` 是"装一个包就能用"的门面，本身只有 `create-agent.ts`（86 行）与 `as-tool.ts`（219 行）两份实现。它做三件事：提供 `createAgent`、提供 `asTool`（子代理即工具，§10.1），以及原样再导出 `@reinsjs/core`、`@reinsjs/server`、`@reinsjs/ui-agui` 三个包的全部公开面。降级层（`@reinsjs/lowering-pi`，带 pi-ai 依赖）**不**在再导出之列，要单独 import。
 
 `createAgent` 不引入任何新概念，只做两次拆包 + 一个缺省值：把 `BoundModel` 拆成 `model` + `lowering`，把 `Stores` 拆成 `log` / `blobs` / `memory`，拼成 `AgentDefinition`；再用它建 handler，缺省编码换成 AG-UI。
 
@@ -28,7 +28,7 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 
 | 路径 | 职责 |
 | --- | --- |
-| `packages/reins/package.json` | 包元数据：包名就是 `reins`，单个 exports，依赖 `@reins/core` + `@reins/server` + `@reins/ui-agui`（无 lowering-pi） |
+| `packages/reins/package.json` | 包元数据：包名就是 `reins`，单个 exports，依赖 `@reinsjs/core` + `@reinsjs/server` + `@reinsjs/ui-agui`（无 lowering-pi） |
 | `packages/reins/tsconfig.json` / `tsup.config.ts` | 单入口打 ESM + `.d.ts`；打声明时清空 `paths`，否则依赖包的类型会被内联而不是保留 import |
 | `packages/reins/src/index.ts` | 门面：`export * from` core / server / ui-agui 三包，加上 `createAgent`（`Agent` / `CreateAgentOptions` / `RunOptions`）与 `asTool`（`AsToolOptions` / `SubagentOutcome` / `SubagentUsage` / `SubagentTask` / `subagentOutcomesOf` / `usageOf` / `defaultChildSessionId` / `SUBAGENT_TASK_SCHEMA`） |
 | `packages/reins/src/as-tool.ts` | `asTool(agent, opts)`：把 `Agent` 包成 `Tool`；子 run 暂停 → 返回 core `subagentPause`（审批冒泡），子 `budget_usage` → `ctx.spend`（预算合算），principal / signal（`abort`）下传，结果 JSON `SubagentOutcome` 带 childSessionId；`usageOf` 从子时间线算用量，`subagentOutcomesOf` 从父时间线找子会话 |
@@ -60,7 +60,7 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 ## 4 核心设计决策
 
 - **T14 总包只做 `createAgent` 并原样再导出 core / server / ui-agui，不导出 lowering-pi** — 一个包装完即用，但把带 pi-ai 依赖的降级层留在可选包，才能换别的降级层实现而不必带着它。边界：DECISIONS 标注"中，发布前可调"。
-- **T14 handler 缺省 AG-UI 编码** — PRD 定的"AG-UI 是一等输出"；想推原始时间线事件传 `handler: { encode: () => rawEncoder }` 覆盖。注意这与 `@reins/server` 直接用时的缺省相反（那边缺省是 `rawEncoder`）。
+- **T14 handler 缺省 AG-UI 编码** — PRD 定的"AG-UI 是一等输出"；想推原始时间线事件传 `handler: { encode: () => rawEncoder }` 覆盖。注意这与 `@reinsjs/server` 直接用时的缺省相反（那边缺省是 `rawEncoder`）。
 - **T14 `apiKey` 必填、不读环境变量** — 沿用 T7 决策，key 由宿主决定来源；显式传 key 才能让 Workers / Deno 等没有 `process.env` 的运行时跑同一份代码。`BoundModel = { model, lowering }` 与 `Stores = { log, blobs?, memory? }` 都定义在 core，工厂 `anthropic(id, { apiKey })` / `openai(...)` 在 lowering-pi。
 - **`createAgent` 不引入新概念** — `definition` 就是 `runLoop` 的跨请求配置，`handler` 就是 `createAgentHandler`；本包只负责拆 `BoundModel` 与 `Stores`。这样"只装脑子不装底盘"的人跳过总包也不会看到两套说法。
 - **`asTool` 住在总包而不是 core** — 它要的是 `Agent`（`run` + `definition.log`），core 没有这个概念；子代理的暂停标记 `subagentPause` 与 `Interruption(kind=subagent)` 则在 core，因为循环要认得它。边界：子 run 续跑不带 `resume` 状态（子会话只有这个工具在写，签名与 pendingDigest 防的是不可信客户端与并发写者），子 state 只给宿主看。

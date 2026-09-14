@@ -30,7 +30,7 @@ import {
   type ToolCallEvent,
   type ToolResultDraft,
   type TurnContext,
-} from "@reins/core"
+} from "@reinsjs/core"
 import {
   type CompactPlan,
   type ManifestOptions,

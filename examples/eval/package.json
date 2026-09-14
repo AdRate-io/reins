@@ -8,10 +8,10 @@
     "build:adrate-patrol": "node fixtures/adrate-patrol/build.ts"
   },
   "dependencies": {
-    "@reins/brain": "workspace:*",
-    "@reins/core": "workspace:*",
-    "@reins/eval": "workspace:*",
-    "@reins/lowering-pi": "workspace:*"
+    "@reinsjs/brain": "workspace:*",
+    "@reinsjs/core": "workspace:*",
+    "@reinsjs/eval": "workspace:*",
+    "@reinsjs/lowering-pi": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

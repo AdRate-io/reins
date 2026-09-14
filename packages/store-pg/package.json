@@ -1,5 +1,5 @@
 {
-  "name": "@reins/store-pg",
+  "name": "@reinsjs/store-pg",
   "version": "0.1.0",
   "description": "reins — PostgreSQL-backed EventLog / BlobStore / MemoryStore. Works with any client exposing query(text, params) → { rows } (pg, PGlite, …)",
   "keywords": [
@@ -34,7 +34,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@reins/core": "workspace:*"
+    "@reinsjs/core": "workspace:*"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",

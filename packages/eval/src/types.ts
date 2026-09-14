@@ -15,7 +15,7 @@ import type {
   RunResult,
   Socket,
   Tool,
-} from "@reins/core"
+} from "@reinsjs/core"
 
 // ---- fixture ----
 
@@ -92,7 +92,7 @@ export interface EvalFixture {
 /**
  * 对照组的一臂：只描述"循环怎么配"，与 fixture、模型无关。
  * 内置 noneArm（无脑子、无阈值兜底）与 thresholdArm（只有 core 的阈值裁剪）；
- * "模型自决"臂由调用方用 @reins/brain 组（本包只依赖 core）。
+ * "模型自决"臂由调用方用 @reinsjs/brain 组（本包只依赖 core）。
  */
 export interface EvalArm {
   name: string

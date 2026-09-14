@@ -27,7 +27,7 @@ import {
   type ToolCallEvent,
   type ToolContext,
   type TurnContext,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { APPROVAL_RULES } from "./rules.js"
 
 /** 规则看到的一次调用 */

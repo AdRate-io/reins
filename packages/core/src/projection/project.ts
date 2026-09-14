@@ -2,7 +2,7 @@
  * 策略链执行器与默认链。
  *
  * 默认链（技术方案 §8）：过滤 → 折叠 → 钉住 → 预算裁剪。
- * 感知注入（§9.1）不在这条链上：它是 `@reins/brain` 的 Socket，在 beforeModel 里把 system_note 作为新事件
+ * 感知注入（§9.1）不在这条链上：它是 `@reinsjs/brain` 的 Socket，在 beforeModel 里把 system_note 作为新事件
  * 追加到时间线末尾（prompt cache 约束：只追加、不改前缀）。投影只负责"看历史"，不负责"说话"。
  */
 import type { Event } from "../events/base.js"

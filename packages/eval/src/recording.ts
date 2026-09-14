@@ -11,7 +11,7 @@
  *
  * 本文件是纯函数、零 node:*；读写文件与决定"哪些字段算敏感"由调用方（examples/eval 的 build 脚本）负责。
  */
-import type { ContentPart, CoreEventOf, Event } from "@reins/core"
+import type { ContentPart, CoreEventOf, Event } from "@reinsjs/core"
 
 // ---- 去外溢 ----
 

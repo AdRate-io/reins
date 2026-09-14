@@ -16,7 +16,7 @@
  * 注册顺序：onTurnEnd 第一个给意见的 Socket 说了算。本模块应排在 handoff 之后（模型已决定交接就让它交接，
  * 新会话由宿主再起时照样受限），其余位置不敏感 —— compact 的暂停同样是 budget 原因。
  */
-import { contextTokensOf, type Socket, type TurnContext } from "@reins/core"
+import { contextTokensOf, type Socket, type TurnContext } from "@reinsjs/core"
 
 /** 五维上限；给了哪几维就只查哪几维。与 perception 的 limits 是同一个形状 */
 export interface BudgetLimits {

@@ -26,13 +26,13 @@ importers:
 
   examples/adrate:
     dependencies:
-      '@reins/brain':
+      '@reinsjs/brain':
         specifier: workspace:*
         version: link:../../packages/brain
-      '@reins/lowering-pi':
+      '@reinsjs/lowering-pi':
         specifier: workspace:*
         version: link:../../packages/lowering-pi
-      '@reins/store-sqlite':
+      '@reinsjs/store-sqlite':
         specifier: workspace:*
         version: link:../../packages/store-sqlite
       reins:
@@ -45,16 +45,16 @@ importers:
 
   examples/eval:
     dependencies:
-      '@reins/brain':
+      '@reinsjs/brain':
         specifier: workspace:*
         version: link:../../packages/brain
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@reins/eval':
+      '@reinsjs/eval':
         specifier: workspace:*
         version: link:../../packages/eval
-      '@reins/lowering-pi':
+      '@reinsjs/lowering-pi':
         specifier: workspace:*
         version: link:../../packages/lowering-pi
     devDependencies:
@@ -64,16 +64,16 @@ importers:
 
   examples/mcp:
     dependencies:
-      '@reins/brain':
+      '@reinsjs/brain':
         specifier: workspace:*
         version: link:../../packages/brain
-      '@reins/lowering-pi':
+      '@reinsjs/lowering-pi':
         specifier: workspace:*
         version: link:../../packages/lowering-pi
-      '@reins/store-sqlite':
+      '@reinsjs/store-sqlite':
         specifier: workspace:*
         version: link:../../packages/store-sqlite
-      '@reins/tools-mcp':
+      '@reinsjs/tools-mcp':
         specifier: workspace:*
         version: link:../../packages/tools-mcp
       reins:
@@ -92,13 +92,13 @@ importers:
 
   examples/minimal:
     dependencies:
-      '@reins/lowering-pi':
+      '@reinsjs/lowering-pi':
         specifier: workspace:*
         version: link:../../packages/lowering-pi
-      '@reins/server':
+      '@reinsjs/server':
         specifier: workspace:*
         version: link:../../packages/server
-      '@reins/ui-agui':
+      '@reinsjs/ui-agui':
         specifier: workspace:*
         version: link:../../packages/ui-agui
       reins:
@@ -114,20 +114,20 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.8
         version: 0.5.8
-      '@reins/brain':
+      '@reinsjs/brain':
         specifier: workspace:*
         version: link:../../packages/brain
-      '@reins/lowering-pi':
+      '@reinsjs/lowering-pi':
         specifier: workspace:*
         version: link:../../packages/lowering-pi
-      '@reins/store-pg':
+      '@reinsjs/store-pg':
         specifier: workspace:*
         version: link:../../packages/store-pg
       reins:
         specifier: workspace:*
         version: link:../../packages/reins
     devDependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@types/node':
@@ -136,14 +136,14 @@ importers:
 
   packages/adapter-tanstack-ai:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
     devDependencies:
-      '@reins/brain':
+      '@reinsjs/brain':
         specifier: workspace:*
         version: link:../brain
       '@tanstack/ai':
@@ -152,7 +152,7 @@ importers:
 
   packages/brain:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -164,11 +164,11 @@ importers:
 
   packages/eval:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
-      '@reins/brain':
+      '@reinsjs/brain':
         specifier: workspace:*
         version: link:../brain
 
@@ -177,25 +177,25 @@ importers:
       '@earendil-works/pi-ai':
         specifier: 0.85.1
         version: 0.85.1(ws@8.21.3)(zod@4.6.1)
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
 
   packages/reins:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
-      '@reins/server':
+      '@reinsjs/server':
         specifier: workspace:*
         version: link:../server
-      '@reins/ui-agui':
+      '@reinsjs/ui-agui':
         specifier: workspace:*
         version: link:../ui-agui
 
   packages/server:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -211,7 +211,7 @@ importers:
 
   packages/store-pg:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -230,7 +230,7 @@ importers:
 
   packages/store-sqlite:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -243,14 +243,14 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 2.0.0
         version: 2.0.0
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
       '@modelcontextprotocol/server':
         specifier: 2.0.0
         version: 2.0.0
-      '@reins/brain':
+      '@reinsjs/brain':
         specifier: workspace:*
         version: link:../brain
       '@types/node':
@@ -262,10 +262,10 @@ importers:
 
   packages/ui-agui:
     dependencies:
-      '@reins/core':
+      '@reinsjs/core':
         specifier: workspace:*
         version: link:../core
-      '@reins/server':
+      '@reinsjs/server':
         specifier: workspace:*
         version: link:../server
     devDependencies:

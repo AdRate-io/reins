@@ -15,7 +15,7 @@ import {
   type Tool as ReinsTool,
   type ToolContext,
   type ToolResult,
-} from "@reins/core"
+} from "@reinsjs/core"
 import type { AnyTool, JSONSchema, ToolExecutionContext } from "@tanstack/ai"
 import { convertSchemaToJsonSchema } from "@tanstack/ai"
 import { toTanstackContent } from "./content.js"

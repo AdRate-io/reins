@@ -8,8 +8,8 @@ import {
   type RunResult,
   runLoop,
   type Tool,
-} from "@reins/core"
-import { callTool, ScriptedLowering, say, think } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, say, think } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { compact } from "../compact/index.js"
 import { pins } from "../pins/index.js"

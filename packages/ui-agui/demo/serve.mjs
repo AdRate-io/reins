@@ -6,7 +6,7 @@
  *   ANTHROPIC_API_KEY=… REINS_GATEWAY_BASE=https://host/api node packages/ui-agui/demo/serve.mjs   # 真模型
  * 可选：REINS_ANTHROPIC_MODEL（缺省 claude-opus-5）、PORT（缺省 8787）。
  *
- * node:http 适配用 @reins/server/node 的 nodeListener；用框架的话用框架自带的即可。
+ * node:http 适配用 @reinsjs/server/node 的 nodeListener；用框架的话用框架自带的即可。
  * 存储用内存实现：重启即清空，演示"重连补发"要在同一进程内做。
  */
 import { readFile } from "node:fs/promises"

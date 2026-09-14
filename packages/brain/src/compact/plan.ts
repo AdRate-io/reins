@@ -26,7 +26,7 @@ import {
   renderFoldedToolResults,
   splitTurns,
   supersededIds,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { PIN_TOOL_NAME } from "../pins/rules.js"
 import { FETCH_BLOB_TOOL_NAME } from "../spill/rules.js"
 import { COMPACT_TOOL_NAME, RECALL_TOOL_NAME } from "./rules.js"

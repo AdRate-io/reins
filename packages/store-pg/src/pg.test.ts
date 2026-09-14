@@ -1,12 +1,12 @@
 import { PGlite } from "@electric-sql/pglite"
-import { InMemoryEventLog, type Stores } from "@reins/core"
+import { InMemoryEventLog, type Stores } from "@reinsjs/core"
 import {
   blobStoreConformance,
   collect,
   eventLogConformance,
   makeEvents,
   memoryStoreConformance,
-} from "@reins/core/testing"
+} from "@reinsjs/core/testing"
 import pg from "pg"
 import { afterAll, describe, expect, it } from "vitest"
 import {
@@ -45,7 +45,7 @@ for (const backend of backends) {
     return stores
   }
 
-  describe(`@reins/store-pg on ${backend.name}`, () => {
+  describe(`@reinsjs/store-pg on ${backend.name}`, () => {
     eventLogConformance({ describe, it }, async () => (await fresh()).log)
     blobStoreConformance({ describe, it }, async () => (await fresh()).blobs as NonNullable<Stores["blobs"]>)
     memoryStoreConformance(

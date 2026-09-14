@@ -15,7 +15,7 @@
  * 没有 MemoryStore 时按 §5"缺则不注册"：静态贡献是按运行环境算一次的函数（core `StaticContribution`），
  * 工具与规则都不出现，并告警一次 —— 而不是注册一个一用就报错的工具，那会让模型每轮都撞墙。
  */
-import type { Socket, SocketSetup, Tool, ToolContext } from "@reins/core"
+import type { Socket, SocketSetup, Tool, ToolContext } from "@reinsjs/core"
 import {
   bindMemoryFs,
   executeMemoryCommand,

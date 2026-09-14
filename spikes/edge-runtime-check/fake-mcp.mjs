@@ -1,5 +1,5 @@
 /**
- * 假 MCP 服务器（Streamable HTTP）—— 跑在 Node 里，给 workerd 里的 @reins/tools-mcp dist 打。
+ * 假 MCP 服务器（Streamable HTTP）—— 跑在 Node 里，给 workerd 里的 @reinsjs/tools-mcp dist 打。
  * 用官方 @modelcontextprotocol/server 的 Web 标准传输，node:http 只做 IncomingMessage ⇄ Request/Response 的搬运。
  * 依赖从 packages/tools-mcp 的 node_modules 解析（spikes 不在 workspace 里）。
  */

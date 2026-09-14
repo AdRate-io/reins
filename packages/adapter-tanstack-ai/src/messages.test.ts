@@ -1,4 +1,4 @@
-import { type CoreEvent, createCoreEvent, createCoreRegistry, type Event } from "@reins/core"
+import { type CoreEvent, createCoreEvent, createCoreRegistry, type Event } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { BlockAssembler } from "./assembler.js"
 import { TANSTACK_LOSS_MATRIX } from "./loss-matrix.js"

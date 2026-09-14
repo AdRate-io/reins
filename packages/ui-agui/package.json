@@ -1,7 +1,7 @@
 {
-  "name": "@reins/ui-agui",
+  "name": "@reinsjs/ui-agui",
   "version": "0.1.0",
-  "description": "reins — timeline events → AG-UI protocol events (encoder for @reins/server, or standalone mapper)",
+  "description": "reins — timeline events → AG-UI protocol events (encoder for @reinsjs/server, or standalone mapper)",
   "keywords": [
     "agent",
     "ag-ui",
@@ -36,8 +36,8 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@reins/core": "workspace:*",
-    "@reins/server": "workspace:*"
+    "@reinsjs/core": "workspace:*",
+    "@reinsjs/server": "workspace:*"
   },
   "devDependencies": {
     "@ag-ui/core": "0.0.59"

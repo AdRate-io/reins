@@ -1,14 +1,14 @@
 # reins
 
-**Hand the reins to the model.** `reins` is the umbrella package: `createAgent()` plus everything from `@reins/core`, `@reins/server` and `@reins/ui-agui` re-exported, so one install gives you an agent with a Web-standard handler and an AG-UI stream. Bring a lowering layer (`@reins/lowering-pi`) and, optionally, the brain (`@reins/brain`) and a store (`@reins/store-sqlite`, `@reins/store-pg`).
+**Hand the reins to the model.** `reins` is the umbrella package: `createAgent()` plus everything from `@reinsjs/core`, `@reinsjs/server` and `@reinsjs/ui-agui` re-exported, so one install gives you an agent with a Web-standard handler and an AG-UI stream. Bring a lowering layer (`@reinsjs/lowering-pi`) and, optionally, the brain (`@reinsjs/brain`) and a store (`@reinsjs/store-sqlite`, `@reinsjs/store-pg`).
 
 ```bash
-pnpm add reins @reins/lowering-pi @reins/brain
+pnpm add reins @reinsjs/lowering-pi @reinsjs/brain
 ```
 
 ```ts
-import { anthropic } from "@reins/lowering-pi"
-import { approval, compact, perception } from "@reins/brain"
+import { anthropic } from "@reinsjs/lowering-pi"
+import { approval, compact, perception } from "@reinsjs/brain"
 import { createAgent, defineTool, memoryStore } from "reins"
 
 const deploy = defineTool<{ env: "staging" | "prod" }>({

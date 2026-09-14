@@ -1,5 +1,5 @@
 {
-  "name": "@reins/server",
+  "name": "@reinsjs/server",
   "version": "0.1.0",
   "description": "reins — Web-standard (Request) => Response handler: runs the loop, streams the timeline as SSE, replays from lastSeq on reconnect",
   "keywords": [
@@ -39,7 +39,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@reins/core": "workspace:*"
+    "@reinsjs/core": "workspace:*"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

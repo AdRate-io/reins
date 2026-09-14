@@ -5,7 +5,7 @@
  * 它是唯一允许出现"角色"概念的地方。每种事件在每家 API 上落到哪里、有没有损失，
  * 必须在 LossMatrix 里声明，并在每次 toRequest 的 landings 里逐条记录 —— 禁止静默丢弃（P7）。
  *
- * 本文件只有类型；具体实现（如 @reins/lowering-pi）在可选包里，厂商 SDK 类型不得出现在这里。
+ * 本文件只有类型；具体实现（如 @reinsjs/lowering-pi）在可选包里，厂商 SDK 类型不得出现在这里。
  */
 import type { Event } from "../events/base.js"
 import type { TokenUsage } from "../events/core.js"

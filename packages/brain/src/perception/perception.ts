@@ -14,7 +14,7 @@
  * "每档只变一次"：所有数值先离散成档位，读数不变 → 文字不变 → 不追加。判重比较的是文字而非读数，
  * 因为宿主自定义 render 后，只要模型看到的东西没变就没必要多一条。
  */
-import type { CoreEventOf, Event, Socket, TurnContext } from "@reins/core"
+import type { CoreEventOf, Event, Socket, TurnContext } from "@reinsjs/core"
 import {
   type PerceptionLimits,
   type PerceptionReading,

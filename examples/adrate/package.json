@@ -10,9 +10,9 @@
     "run": "node run.ts"
   },
   "dependencies": {
-    "@reins/brain": "workspace:*",
-    "@reins/lowering-pi": "workspace:*",
-    "@reins/store-sqlite": "workspace:*",
+    "@reinsjs/brain": "workspace:*",
+    "@reinsjs/lowering-pi": "workspace:*",
+    "@reinsjs/store-sqlite": "workspace:*",
     "reins": "workspace:*"
   },
   "devDependencies": {

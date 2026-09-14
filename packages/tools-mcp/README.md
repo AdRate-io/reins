@@ -1,12 +1,12 @@
-# @reins/tools-mcp
+# @reinsjs/tools-mcp
 
 Plug an [MCP](https://modelcontextprotocol.io) server into a reins agent as one `Socket`. Every tool the server
 lists becomes a reins `Tool`; the loop, the brain modules (spill, approval, budget, compact…) and the timeline treat
 them exactly like in-process tools. The server never learns that reins exists.
 
 ```ts
-import { httpTransport, mcpTools } from "@reins/tools-mcp"
-import { approval, spill } from "@reins/brain"
+import { httpTransport, mcpTools } from "@reinsjs/tools-mcp"
+import { approval, spill } from "@reinsjs/brain"
 import { createAgent } from "reins"
 
 const github = mcpTools({
@@ -27,7 +27,7 @@ export const agent = createAgent({
 Node-only stdio servers (a subprocess speaking JSON-RPC over stdin/stdout) live behind the `/node` entry:
 
 ```ts
-import { stdioTransport } from "@reins/tools-mcp/node"
+import { stdioTransport } from "@reinsjs/tools-mcp/node"
 
 const files = mcpTools({
   transport: stdioTransport({ command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"] }),
@@ -56,7 +56,7 @@ the run continues and the model decides what to do.
 **Annotations set defaults, not permissions.** `readOnlyHint` → `risk: "low"`; `destructiveHint` → `risk: "high"` and
 `needsApproval: true`; anything else (including no annotations) → `risk: "medium"`. The MCP spec says annotations are
 hints and that untrusted servers' annotations must not drive authorization — so reins only uses them to *default*
-the fields that `@reins/brain`'s `approval()` policies read, and `override` lets the host change any of it:
+the fields that `@reinsjs/brain`'s `approval()` policies read, and `override` lets the host change any of it:
 
 ```ts
 mcpTools({

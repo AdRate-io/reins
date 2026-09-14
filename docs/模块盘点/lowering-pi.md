@@ -1,12 +1,12 @@
-# @reins/lowering-pi 模块盘点
+# @reinsjs/lowering-pi 模块盘点
 
 > 以 `packages/lowering-pi/src/` 代码为准；术语对照 `docs/技术方案.md` §11、决策出处标 `docs/DECISIONS.md`。
 
 ## 1 架构概览
 
-本包是 `@reins/core` 的 `Lowering` 接口在 **pi-ai** 上的第一个实现，只做两件事：把投影后的事件翻成某家 API 的请求（`toRequest`），把流式响应翻回事件草稿（`stream`）。它是整个仓库里唯一允许出现"角色"概念的地方（宪法二）。
+本包是 `@reinsjs/core` 的 `Lowering` 接口在 **pi-ai** 上的第一个实现，只做两件事：把投影后的事件翻成某家 API 的请求（`toRequest`），把流式响应翻回事件草稿（`stream`）。它是整个仓库里唯一允许出现"角色"概念的地方（宪法二）。
 
-依赖只有两个：`@earendil-works/pi-ai` **pin 精确版本 `0.85.1`**（package.json 里没有 `^`，S4 决策）与 `@reins/core`（workspace）。第一版只认两条线协议：`anthropic-messages` 与 `openai-responses`（`SUPPORTED_APIS`），其余在 `resolveModel` 里就抛 `LoweringError("unsupported_api")`。
+依赖只有两个：`@earendil-works/pi-ai` **pin 精确版本 `0.85.1`**（package.json 里没有 `^`，S4 决策）与 `@reinsjs/core`（workspace）。第一版只认两条线协议：`anthropic-messages` 与 `openai-responses`（`SUPPORTED_APIS`），其余在 `resolveModel` 里就抛 `LoweringError("unsupported_api")`。
 
 翻译分两跳，这是理解本包的关键：
 
@@ -14,7 +14,7 @@
 - 第二跳（pi-ai 内部）：`Context` → 线协议 JSON。本包不碰这一步，只在 pi-ai 公开的 `onPayload` 钩子上改写产物（`system-note.ts`），把带内部标记的 user 消息还原成真正的 `system` / `developer` 消息并按厂商规则归位。
 
 ```
-   投影后的 events[]                        ┌──────── @reins/lowering-pi ────────┐
+   投影后的 events[]                        ┌──────── @reinsjs/lowering-pi ────────┐
    tools / systemPrompt / ModelRef  ───────►│ toRequest()                        │
                                             │  resolveModel ─► capabilitiesOf    │
                                             │        └─► eventsToContext         │

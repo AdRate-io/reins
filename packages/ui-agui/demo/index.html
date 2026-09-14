@@ -69,7 +69,7 @@
 
 <script>
 /**
- * 消费 @reins/server + @reins/ui-agui 吐出的 AG-UI 事件流。只用 fetch 与 TextDecoder，没有任何依赖。
+ * 消费 @reinsjs/server + @reinsjs/ui-agui 吐出的 AG-UI 事件流。只用 fetch 与 TextDecoder，没有任何依赖。
  * 状态只有三样：sessionId、lastSeq（SSE 帧的 id）、当前挂起的审批（RUN_FINISHED 的 interrupt outcome）。
  */
 const $ = (id) => document.getElementById(id)

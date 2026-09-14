@@ -1,6 +1,6 @@
 # examples/eval —— 首批 fixture 与对照跑数
 
-`@reins/eval`（`packages/eval`）是 harness：fixture 形状、录像回放工具、指标、门禁。这里放**具体的 fixture** 与跑真模型的脚本。
+`@reinsjs/eval`（`packages/eval`）是 harness：fixture 形状、录像回放工具、指标、门禁。这里放**具体的 fixture** 与跑真模型的脚本。
 
 ```bash
 pnpm build                                                     # 示例跑的是 dist

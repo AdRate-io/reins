@@ -1,5 +1,5 @@
 {
-  "name": "@reins/adapter-tanstack-ai",
+  "name": "@reinsjs/adapter-tanstack-ai",
   "version": "0.1.0",
   "description": "reins — the brain as a TanStack AI chat middleware: EventLog stays the source of truth, sockets drive onConfig / onChunk / tool hooks",
   "keywords": [
@@ -34,14 +34,14 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@reins/core": "workspace:*",
+    "@reinsjs/core": "workspace:*",
     "@standard-schema/spec": "^1.1.0"
   },
   "peerDependencies": {
     "@tanstack/ai": "0.53.0"
   },
   "devDependencies": {
-    "@reins/brain": "workspace:*",
+    "@reinsjs/brain": "workspace:*",
     "@tanstack/ai": "0.53.0"
   },
   "engines": {

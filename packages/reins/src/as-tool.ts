@@ -25,7 +25,7 @@ import {
   type Tool,
   type ToolContext,
   type ToolResult,
-} from "@reins/core"
+} from "@reinsjs/core"
 import type { Agent } from "./create-agent.js"
 
 export interface SubagentTask {

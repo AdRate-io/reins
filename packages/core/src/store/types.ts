@@ -71,7 +71,7 @@ export interface MemoryStore {
 
 /**
  * 技能载体（技术方案 §9.9，S1）：MemoryStore 的只读子集。任何 MemoryStore（内存 / sqlite / pg）天然满足，
- * 数据库载体零新代码；文件系统载体 `fsSkillSource(dir)` 在 `@reins/brain/node`。刻意不新造接口——"存哪"由宿主定。
+ * 数据库载体零新代码；文件系统载体 `fsSkillSource(dir)` 在 `@reinsjs/brain/node`。刻意不新造接口——"存哪"由宿主定。
  */
 export type SkillSource = Pick<MemoryStore, "list" | "read">
 

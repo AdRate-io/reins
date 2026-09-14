@@ -2,7 +2,7 @@
  * 运行器端到端：用脚本化降级层当"模型"。剧本是输入的函数（看视图决定说什么），
  * 所以同一个剧本能跨臂、跨格、跨探针复用，不依赖全局轮计数。
  */
-import { compact } from "@reins/brain"
+import { compact } from "@reinsjs/brain"
 import {
   type CoreEventOf,
   createCoreEvent,
@@ -12,8 +12,8 @@ import {
   type Lowering,
   type Tool,
   type ToRequestInput,
-} from "@reins/core"
-import { callTool, type Script, ScriptedLowering, say } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, type Script, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { noneArm, thresholdArm } from "./arms.js"
 import { checkGate } from "./gate.js"
@@ -144,7 +144,7 @@ describe("runEval：对照运行器", () => {
     expect(md).toContain("## 明细")
   })
 
-  it("模型自决臂：装 @reins/brain 的 compact 后，模型调 compact 工具记为 model 整理", async () => {
+  it("模型自决臂：装 @reinsjs/brain 的 compact 后，模型调 compact 工具记为 model 整理", async () => {
     const script: Script = (input) => {
       const q = lastUserText(input)
       if (q.startsWith("Q:")) return { drafts: [say(visibleMentions(input, "4711") ? "4711" : "unknown")] }

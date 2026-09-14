@@ -9,7 +9,7 @@
  * - annotations → `risk` 与 `needsApproval` 缺省（readOnly → low；destructive → high + 要审批；其余 medium）。
  * spill / approval / budget 在 afterTool / beforeTool 上自动生效，MCP 服务器不需要知道 reins（P3）。
  */
-import { defineTool, REINS_VERSION, type Tool } from "@reins/core"
+import { defineTool, REINS_VERSION, type Tool } from "@reinsjs/core"
 import { McpConnection } from "./connection.js"
 import { modelToolName, riskOf, toContentParts } from "./translate.js"
 import type { McpToolInfo, McpToolsOptions, McpToolsSocket } from "./types.js"

@@ -1,4 +1,4 @@
-import type { Stores } from "@reins/core"
+import type { Stores } from "@reinsjs/core"
 import { SqliteBlobStore } from "./blob-store.js"
 import type { SqliteDatabase } from "./driver.js"
 import { SqliteEventLog } from "./event-log.js"
@@ -19,7 +19,7 @@ export interface SqliteStoresOptions {
 
 /**
  * 一套 SQLite 存储：`createAgent({ store: sqliteStores(db) })`。
- * db 是 node:sqlite 的 DatabaseSync 或 bun:sqlite 的 Database（Node 下可用 `@reins/store-sqlite/node` 的 openSqlite 打开）。
+ * db 是 node:sqlite 的 DatabaseSync 或 bun:sqlite 的 Database（Node 下可用 `@reinsjs/store-sqlite/node` 的 openSqlite 打开）。
  */
 export function sqliteStores(db: SqliteDatabase, opts: SqliteStoresOptions = {}): Stores {
   const schema: SqliteSchemaOptions = {}

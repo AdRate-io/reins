@@ -1,4 +1,4 @@
-# @reins/ui-agui 模块盘点
+# @reinsjs/ui-agui 模块盘点
 
 > 以 `packages/ui-agui/src/` 代码为准；术语对照 `docs/技术方案.md` §12，决策出处标 `docs/DECISIONS.md`（T13）。
 
@@ -7,12 +7,12 @@
 本包把 reins 的时间线事件翻成 **AG-UI 协议事件**。它只是一层翻译（宪法二：时间线是唯一真源，前端协议不反过来定义事件），分两个层次：
 
 - **`mapEvent`**（`map-event.ts`）：纯函数、无状态，一条**完整**事件 → 零到多条 AG-UI 事件。可以脱离 server 单独用（比如把一段历史日志渲染成 AG-UI 流）。
-- **`createAguiEncoder`**（`encoder.ts`）：**一条流一个实例**、有状态，吃 `@reins/server` 的 `StreamItem`（含流式增量），吐 `SseFrame[]`。`aguiEncoding()` 是它的工厂形态，直接塞进 `createAgentHandler(agent, { encode: aguiEncoding() })`。
+- **`createAguiEncoder`**（`encoder.ts`）：**一条流一个实例**、有状态，吃 `@reinsjs/server` 的 `StreamItem`（含流式增量），吐 `SseFrame[]`。`aguiEncoding()` 是它的工厂形态，直接塞进 `createAgentHandler(agent, { encode: aguiEncoding() })`。
 
-运行时对第三方零依赖：AG-UI 的事件形状在 `types.ts` 里按 `@ag-ui/core` 0.0.59 的 zod schema **手抄成本地类型**，官方包只作 devDependency 在测试里逐条校验，不把 zod 带给用户。（package.json 里 `@reins/core` 是真实运行时依赖 —— `uuidv7`；`@reins/server` 只被 `import type` 用到。）
+运行时对第三方零依赖：AG-UI 的事件形状在 `types.ts` 里按 `@ag-ui/core` 0.0.59 的 zod schema **手抄成本地类型**，官方包只作 devDependency 在测试里逐条校验，不把 zod 带给用户。（package.json 里 `@reinsjs/core` 是真实运行时依赖 —— `uuidv7`；`@reinsjs/server` 只被 `import type` 用到。）
 
 ```
-  @reins/server 的一条 SSE 流
+  @reinsjs/server 的一条 SSE 流
         │
         │ StreamItem
         ▼
@@ -40,7 +40,7 @@
 | `src/encoder.ts` | 有状态编码器：增量与完整事件接成同一条消息、`parentMessageId` 维护、run 四态收尾、`interruptsOf` 把 core 的 `Interruption` 翻成 AG-UI interrupt、SSE 帧的 id 归属 |
 | `demo/index.html` | 无依赖的最小页面：直连 SSE、按 AG-UI 事件渲染 |
 | `demo/serve.mjs` | 最小演示服务（node:http + `createAgentHandler` + `aguiEncoding()`），无密钥时用 core testing 的剧本假模型离线跑 |
-| 测试（2 个 `*.test.ts`） | `map-event.test.ts` 逐种事件核对映射表与字段细节；`encoder.test.ts` 测增量与完整事件接成同一条消息、run 结束的三种翻译、以及接上 `@reins/server` 的端到端 |
+| 测试（2 个 `*.test.ts`） | `map-event.test.ts` 逐种事件核对映射表与字段细节；`encoder.test.ts` 测增量与完整事件接成同一条消息、run 结束的三种翻译、以及接上 `@reinsjs/server` 的端到端 |
 
 ## 3 核心流程
 
@@ -83,7 +83,7 @@
 
 **每条事件带 `metadata.reins`** — `{ seq, eventId, type, dropped? }` 让任何 AG-UI 客户端都能把渲染出来的消息对回时间线（去重、定位、重连）。边界：AG-UI 原生字段装不下的 reins 信息（`isError`、`spilled`、图片占位）也走这里，属约定而非协议。
 
-**编码器是按流的工厂** — `aguiEncoding()` 返回 `StreamEncoderFactory`，server 每开一条流调用一次（T13；`@reins/server` 的 `StreamEncoderFactory` 注释同样写明）。因为把增量与随后的完整事件接成同一条消息必须有状态，而多条流会并发交错，状态必须按流隔离。边界：`mapEvent` 本身仍是纯函数，不想要状态的场景可以只用它。
+**编码器是按流的工厂** — `aguiEncoding()` 返回 `StreamEncoderFactory`，server 每开一条流调用一次（T13；`@reinsjs/server` 的 `StreamEncoderFactory` 注释同样写明）。因为把增量与随后的完整事件接成同一条消息必须有状态，而多条流会并发交错，状态必须按流隔离。边界：`mapEvent` 本身仍是纯函数，不想要状态的场景可以只用它。
 
 **tool_args 增量丢弃** — 增量里没有 toolCallId 与工具名，凑不出 `TOOL_CALL_START`（`encoder.ts` 注释、T13）。边界：前端看不到工具参数的逐字流出，要等完整 `core.tool_call` 事件一次拿到整段 JSON。
 

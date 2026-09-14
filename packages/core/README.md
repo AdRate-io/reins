@@ -1,4 +1,4 @@
-# @reins/core
+# @reinsjs/core
 
 The kernel of [reins](../../README.md): an append-only event timeline, the projection that decides what the model sees on each turn, a loop of a few hundred lines you can read and copy, a serializable run state for pause/resume across processes, and the `Socket` seam that everything else plugs into. Zero dependencies, zero `node:*` — Web standards only; verified on Node 22 and Cloudflare workerd, Bun / Deno / Vercel Edge not yet tested.
 
@@ -8,10 +8,10 @@ Two principles shape every type in here:
 2. **The timeline is the single source of truth; roles are a translation.** There is one kind of data: an `Event` with an `actor` (`user` / `model` / `tool` / `system` / `host`). Provider message roles only appear in the lowering layer, and every lossy landing is declared.
 
 ```bash
-pnpm add @reins/core
+pnpm add @reinsjs/core
 ```
 
-Most applications import the umbrella package `reins` instead; `@reins/core` is for people who bring their own loop, transport or lowering layer.
+Most applications import the umbrella package `reins` instead; `@reinsjs/core` is for people who bring their own loop, transport or lowering layer.
 
 ## What is in the box
 
@@ -20,10 +20,10 @@ Most applications import the umbrella package `reins` instead; `@reins/core` is 
 | `events/` | `Event`, `EventDraft`, `createCoreRegistry`, `createEvent`, `CoreEvent` types | Event shell + payloads, `schemaVersion` on every type, upcast-on-read (unknown types are rejected, not skipped) |
 | `store/` | `EventLog`, `BlobStore`, `MemoryStore`, `InMemory*`, `memoryStore()`, `readTimeline` | Storage contracts. `EventLog.append` is the only write; `seq` is assigned by the caller and must be contiguous (optimistic concurrency) |
 | `projection/` | `project`, `ProjectionStrategy`, `DEFAULT_MODEL_INVISIBLE_TYPES` | Pure function: timeline → what the model sees this turn (filter → fold → pin → trim to budget). Strategies may create events, but they go through the loop into the log first |
-| `lowering/` | `Lowering`, `LoweredRequest`, `LandingRecord`, `markUntrusted` | Interface to a provider wire protocol plus the loss matrix types; implementation in `@reins/lowering-pi` |
+| `lowering/` | `Lowering`, `LoweredRequest`, `LandingRecord`, `markUntrusted` | Interface to a provider wire protocol plus the loss matrix types; implementation in `@reinsjs/lowering-pi` |
 | `loop/` | `runLoop`, `Socket`, `Tool`, `defineTool`, `RunResult`, `SerializedRunState`, `Interruption`, `subagentPause`, `retry` | The default loop and its seams |
 | `replay/` | `replayTurns` | Recompute what the model saw on every turn from the log alone (audit UIs, eval) |
-| `@reins/core/testing` | `ScriptedLowering`, `callTool`, `say`, `think`, store conformance suites | Deterministic model scripts and a suite any `EventLog` / `BlobStore` / `MemoryStore` implementation should pass |
+| `@reinsjs/core/testing` | `ScriptedLowering`, `callTool`, `say`, `think`, store conformance suites | Deterministic model scripts and a suite any `EventLog` / `BlobStore` / `MemoryStore` implementation should pass |
 
 ## The loop in one paragraph
 
@@ -42,7 +42,7 @@ Pausing is a return value, not a blocking callback. `state` is small (ids and ha
 ## Tools
 
 ```ts
-import { defineTool } from "@reins/core"
+import { defineTool } from "@reinsjs/core"
 
 const deploy = defineTool<{ env: "staging" | "prod" }>({
   name: "deploy",
@@ -54,7 +54,7 @@ const deploy = defineTool<{ env: "staging" | "prod" }>({
 })
 ```
 
-`validate` runs before the approval check so the approver sees exactly the input that will execute. Tools without `execute` (or with `side: "client"`) pause the run until the host appends the `tool_result`. Tool output is `untrusted` by default and is wrapped in `<untrusted source="tool:…">` when lowered to the model. A tool may declare `resultTrust: "system"` to opt its **successful** results out of that wrapper — reserve it for content the host itself authored (this is how `@reins/brain`'s `skill_read` works); error results and thrown exceptions stay `untrusted` regardless, and the same rule applies to client-tool results the host appends.
+`validate` runs before the approval check so the approver sees exactly the input that will execute. Tools without `execute` (or with `side: "client"`) pause the run until the host appends the `tool_result`. Tool output is `untrusted` by default and is wrapped in `<untrusted source="tool:…">` when lowered to the model. A tool may declare `resultTrust: "system"` to opt its **successful** results out of that wrapper — reserve it for content the host itself authored (this is how `@reinsjs/brain`'s `skill_read` works); error results and thrown exceptions stay `untrusted` regardless, and the same rule applies to client-tool results the host appends.
 
 A tool can also *be* another agent: return `subagentPause(...)` from `execute` and the run pauses with `Interruption { kind: "subagent" }`, carrying the child session's own interruptions and state. `reins` ships `asTool(agent, opts)` on top of this.
 

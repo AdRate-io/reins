@@ -1,7 +1,7 @@
 /**
- * @reins/brain —— 预装的"驾驭经验"（技术方案 §9）。
+ * @reinsjs/brain —— 预装的"驾驭经验"（技术方案 §9）。
  *
- * 每个模块是一个 Socket（或 Socket + 工具），只依赖 @reins/core 的契约，不依赖 runLoop 的实现；
+ * 每个模块是一个 Socket（或 Socket + 工具），只依赖 @reinsjs/core 的契约，不依赖 runLoop 的实现；
  * 每个都可以单独不装、按模型族配置。宪法一：模块只让模型看见、给它能力、给它边界、给它记录，不替它决定。
  *
  * - perception/：感知（B1）。把上下文用量、历史长度、预算余量等按档位写成 system_note 追加到时间线末尾
@@ -15,7 +15,7 @@
  * - skills/：技能（S1）。SKILL.md 菜单进系统提示，skill_read 工具翻书，正文以 tool_result 进时间线；载体是任何 MemoryStore 的只读子集
  * - shared/：memory 与 skills 共用的纯函数（根目录限定的路径规范化、带行号的文件视图）
  *
- * `@reins/brain/node`（单独入口）：文件系统技能载体 fsSkillSource(dir)，brain 唯一出现 node:* 的地方。
+ * `@reinsjs/brain/node`（单独入口）：文件系统技能载体 fsSkillSource(dir)，brain 唯一出现 node:* 的地方。
  */
 export * from "./approval/index.js"
 export * from "./budget/index.js"

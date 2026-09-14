@@ -5,7 +5,7 @@
  * 有损的地方都在这里明说（P7）：reins 的 ContentPart 只有文本与图片，MCP 的 audio / 二进制 resource
  * 翻成一行说明文字告诉模型"有这么个东西但看不到"，不静默丢。
  */
-import type { ContentPart, Tool } from "@reins/core"
+import type { ContentPart, Tool } from "@reinsjs/core"
 import type { McpToolAnnotations, McpToolInfo } from "./types.js"
 
 /** Anthropic / OpenAI 对工具名的共同要求；MCP 没有这个限制，不合规的名字要改写，否则请求 400 */

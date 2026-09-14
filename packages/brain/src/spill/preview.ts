@@ -2,7 +2,7 @@
  * spill 的纯函数部分：度量一段工具输出、按 token 上限裁一段、做首尾预览。
  * 不碰存储与事件，方便单测与宿主复用；随机与时间都不在这里。
  */
-import { estimateTextTokens } from "@reins/core"
+import { estimateTextTokens } from "@reinsjs/core"
 
 /** 文本 token 估算器；缺省用 core 的粗估（ASCII 4 字一 token、非 ASCII 一字一 token），宿主可注入精确 tokenizer */
 export type TextTokenEstimator = (text: string) => number

@@ -1,7 +1,7 @@
 /**
  * 按模型声明能力（技术方案 §11）。脑子模块只看这些布尔值，不看模型名。
  */
-import type { LoweringCapabilities } from "@reins/core"
+import type { LoweringCapabilities } from "@reinsjs/core"
 import type { PiModel } from "./models.js"
 
 /**

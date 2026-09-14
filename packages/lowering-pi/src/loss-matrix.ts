@@ -4,7 +4,7 @@
  * 这是"合同"：toRequest 对每条事件实际记录的落点必须是这里声明过的一种（T8 测试逐项断言）。
  * 新增事件类型或新 API 而不补这张表，测试就红 —— 宁可编译期/测试期吵，不要线上静默丢。
  */
-import type { LandingSpec, LossMatrix } from "@reins/core"
+import type { LandingSpec, LossMatrix } from "@reinsjs/core"
 
 const exact = (landing: string, note?: string, when?: string): LandingSpec => {
   const spec: LandingSpec = { kind: "exact", landing }

@@ -24,7 +24,7 @@ import {
   scrubEvents,
   toEventsJsonl,
   unspillRecording,
-} from "@reins/eval"
+} from "@reinsjs/eval"
 import { adrateTools } from "../../../adrate/tools.ts"
 
 const here = (p: string) => new URL(p, import.meta.url)

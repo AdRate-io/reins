@@ -30,7 +30,7 @@ import {
   type ToolContext,
   type ToolResultDraft,
   type TurnContext,
-} from "@reins/core"
+} from "@reinsjs/core"
 import {
   clipEndByTokens,
   defaultTextTokens,

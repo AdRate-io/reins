@@ -1,5 +1,5 @@
 {
-  "name": "@reins/core",
+  "name": "@reinsjs/core",
   "version": "0.1.0",
   "description": "reins — core: append-only event timeline, projection, the copyable runLoop, serializable run state and the Socket seam. Zero dependencies, zero node:*",
   "keywords": [

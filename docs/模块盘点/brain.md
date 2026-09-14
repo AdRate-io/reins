@@ -1,10 +1,10 @@
-# @reins/brain 模块盘点
+# @reinsjs/brain 模块盘点
 
 > 依据 2026-09-13 的 `packages/brain/src/` 源码写成（S1 skills 落地后更新）。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
 
 ## 架构概览
 
-`@reins/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reins/core`（`workspace:*`）；主入口零 Node 内置依赖，只用 Web 标准 API，唯一的 `node:*` 在子路径 `@reins/brain/node`（文件系统技能载体 `fsSkillSource`，tsup `removeNodeProtocol: false`，`pnpm check:dist` 核对）。它不含循环、不含存储实现、不含降级层，只提供九个可单独装拆的模块。
+`@reinsjs/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reinsjs/core`（`workspace:*`）；主入口零 Node 内置依赖，只用 Web 标准 API，唯一的 `node:*` 在子路径 `@reinsjs/brain/node`（文件系统技能载体 `fsSkillSource`，tsup `removeNodeProtocol: false`，`pnpm check:dist` 核对）。它不含循环、不含存储实现、不含降级层，只提供九个可单独装拆的模块。
 
 每个模块都是一个工厂函数 `xxx(options): Socket`，返回 core 定义的 `Socket`（`packages/core/src/loop/types.ts`）。Socket 只有五个钩子（`beforeModel` / `afterModel` / `beforeTool` / `afterTool` / `onTurnEnd`）加两项静态贡献（`tools` / `systemPrompt`，run 起步时算一次、整个 run 不变，用于满足 prompt cache 约束、续跑补齐 pending 时在场、并计入 `configHash`）。模块只依赖这份契约，不依赖 `runLoop` 的实现。
 
@@ -38,10 +38,10 @@
 
 | 文件路径 | 职责 |
 | --- | --- |
-| `packages/brain/package.json` | 包声明：`@reins/brain`，唯一依赖 `@reins/core`，ESM、`sideEffects: false`；exports `.` 与 `./node` 两个入口 |
+| `packages/brain/package.json` | 包声明：`@reinsjs/brain`，唯一依赖 `@reinsjs/core`，ESM、`sideEffects: false`；exports `.` 与 `./node` 两个入口 |
 | `packages/brain/tsup.config.ts` | 两个入口（index / node）；`removeNodeProtocol: false` 保住 `node:` 前缀 |
 | `packages/brain/src/index.ts` | 门面：九个模块目录的 `export *`，文件头一句话概括每个模块 |
-| `packages/brain/src/node.ts` | `@reins/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸；ENAMETOOLONG / ELOOP / EACCES 等当"不存在"（不让宿主绝对路径进模型上下文） |
+| `packages/brain/src/node.ts` | `@reinsjs/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸；ENAMETOOLONG / ELOOP / EACCES 等当"不存在"（不让宿主绝对路径进模型上下文） |
 | `packages/brain/src/no-node-builtins.test.ts` | 硬约束闸：除 `src/node.ts` 外源码不得出现 `node:` 导入（tsconfig 为 node.ts 开了 node 类型后编译期不再拦） |
 | `packages/brain/src/node.test.ts` | fsSkillSource 在真实临时目录上的用例（列 / 读 / 越界 / 隐藏 / 符号链接 / 接到 skills()） |
 | `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
@@ -220,7 +220,7 @@
 
 **技能菜单进系统提示、正文走工具结果，不把 SKILL.md 全文塞 system**（S1）— 加载哪个技能是模型的判断（宪法一）：菜单只给 name + description，翻不翻、翻哪份由模型定；正文以 `tool_result` 进时间线（宪法二），compact 折叠 / `recall` 取回 / spill 外溢零改动适用。AdRate 示例 09-08 把两份 Skill 全文（约 37k 字符）塞进系统提示是反面做法，09-13 改成第一个真实样本，两族真模型都在第一轮就先 `skill_read` 两份技能再动手。边界：技能表变了只影响下一 run（菜单进 configHash，暂停中变化按配置漂移处理）。
 
-**载体接口不新造：`SkillSource = Pick<MemoryStore, "list" | "read">`**（S1）— 任何 MemoryStore 天然满足，宿主已有的记忆表直接当技能库（`/skills` 与 `/memories` 同一张表两个前缀，模型的 memory 工具够不到 `/skills`）；文件系统载体放 `@reins/brain/node`，字符串预填用 `inlineSkills`。边界：AdRate `skills install` 落盘的 SKILL.md 只是存根，正文要问 CLI——所以示例用 `inlineSkills` 而不是 `fsSkillSource`（踩坑记录 2026-09-13）。
+**载体接口不新造：`SkillSource = Pick<MemoryStore, "list" | "read">`**（S1）— 任何 MemoryStore 天然满足，宿主已有的记忆表直接当技能库（`/skills` 与 `/memories` 同一张表两个前缀，模型的 memory 工具够不到 `/skills`）；文件系统载体放 `@reinsjs/brain/node`，字符串预填用 `inlineSkills`。边界：AdRate `skills install` 落盘的 SKILL.md 只是存根，正文要问 CLI——所以示例用 `inlineSkills` 而不是 `fsSkillSource`（踩坑记录 2026-09-13）。
 
 **`skill_read` 结果 trust 是 system，靠 core 新加的 `Tool.resultTrust` 落**（S1）— 技能是宿主写的说明书，视同系统提示可信，套 `<untrusted>` 会让模型把契约当数据。口子开在 Tool 上而不是模块里的 afterTool：TanStack 适配器与 runLoop 两条路都要认，且只用于成功结果，isError 与执行抛错仍缺省 untrusted。边界：第三期若允许模型写技能，模型写的必须回到 untrusted。
 

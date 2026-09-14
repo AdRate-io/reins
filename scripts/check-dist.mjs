@@ -3,9 +3,9 @@
  *
  * 1. 每个包 package.json `exports` 里的每个 JS 入口都能被 `import()`，且约定的关键导出存在——源码与 vitest 全绿不代表 dist 能跑
  *    （tsup 剥 `node:` 前缀、条件导出写错、d.ts 内联依赖，都只在 dist 上炸，见踩坑记录 store-sqlite）。
- * 2. 硬约束（技术方案 §1）：`@reins/core` / `@reins/brain` 及各包主入口零 `node:*`；`node:*` 只允许出现在 `/node` 子路径。
+ * 2. 硬约束（技术方案 §1）：`@reinsjs/core` / `@reinsjs/brain` 及各包主入口零 `node:*`；`node:*` 只允许出现在 `/node` 子路径。
  * 3. `/node` 子路径必须保留 `node:` 协议前缀（tsup 8 缺省 removeNodeProtocol 会把 `node:sqlite` 剥成裸 `sqlite`，运行时找不到模块）。
- * 4. 运行时版本常量 `REINS_VERSION` 与 `@reins/core` 的 package.json 版本一致（MCP 握手、排错都拿它报版本；0.1 发前审查抓到过 0.0.0）。
+ * 4. 运行时版本常量 `REINS_VERSION` 与 `@reinsjs/core` 的 package.json 版本一致（MCP 握手、排错都拿它报版本；0.1 发前审查抓到过 0.0.0）。
  *
  *   node scripts/check-dist.mjs
  */
@@ -17,30 +17,30 @@ const packagesDir = new URL("packages/", root)
 
 /** 每个入口至少要有的导出名（抽样，不求全） */
 const EXPECTED = {
-  "@reins/core": ["runLoop", "createCoreRegistry", "project", "readTimeline", "subagentPause", "markUntrusted"],
-  "@reins/core/testing": ["ScriptedLowering", "callTool", "say"],
-  "@reins/brain": ["perception", "compact", "pins", "spill", "handoff", "memory", "approval", "budget", "skills", "inlineSkills"],
-  "@reins/brain/node": ["fsSkillSource"],
-  "@reins/lowering-pi": ["anthropic", "openai", "PiAiLowering", "LOSS_MATRIX"],
-  "@reins/server": ["createAgentHandler", "rawEncoder"],
-  "@reins/server/node": ["nodeListener"],
-  "@reins/store-sqlite": ["sqliteStores"],
-  "@reins/store-sqlite/node": ["openSqlite"],
-  "@reins/store-pg": ["pgStores"],
-  "@reins/eval": ["runEval", "checkGate", "renderReport"],
-  "@reins/ui-agui": ["aguiEncoding", "createAguiEncoder", "mapEvent"],
-  "@reins/adapter-tanstack-ai": ["reinsMiddleware", "reinsApprovalInterrupt"],
-  "@reins/tools-mcp": ["mcpTools", "httpTransport"],
-  "@reins/tools-mcp/node": ["stdioTransport"],
+  "@reinsjs/core": ["runLoop", "createCoreRegistry", "project", "readTimeline", "subagentPause", "markUntrusted"],
+  "@reinsjs/core/testing": ["ScriptedLowering", "callTool", "say"],
+  "@reinsjs/brain": ["perception", "compact", "pins", "spill", "handoff", "memory", "approval", "budget", "skills", "inlineSkills"],
+  "@reinsjs/brain/node": ["fsSkillSource"],
+  "@reinsjs/lowering-pi": ["anthropic", "openai", "PiAiLowering", "LOSS_MATRIX"],
+  "@reinsjs/server": ["createAgentHandler", "rawEncoder"],
+  "@reinsjs/server/node": ["nodeListener"],
+  "@reinsjs/store-sqlite": ["sqliteStores"],
+  "@reinsjs/store-sqlite/node": ["openSqlite"],
+  "@reinsjs/store-pg": ["pgStores"],
+  "@reinsjs/eval": ["runEval", "checkGate", "renderReport"],
+  "@reinsjs/ui-agui": ["aguiEncoding", "createAguiEncoder", "mapEvent"],
+  "@reinsjs/adapter-tanstack-ai": ["reinsMiddleware", "reinsApprovalInterrupt"],
+  "@reinsjs/tools-mcp": ["mcpTools", "httpTransport"],
+  "@reinsjs/tools-mcp/node": ["stdioTransport"],
   reins: ["createAgent", "asTool", "runLoop"],
 }
 
 /** 允许出现 `node:` 的入口：只有 /node 子路径 */
 const NODE_ALLOWED = new Set([
-  "@reins/server/node",
-  "@reins/store-sqlite/node",
-  "@reins/tools-mcp/node",
-  "@reins/brain/node",
+  "@reinsjs/server/node",
+  "@reinsjs/store-sqlite/node",
+  "@reinsjs/tools-mcp/node",
+  "@reinsjs/brain/node",
 ])
 
 const failures = []
@@ -62,7 +62,7 @@ for (const dir of (await readdir(packagesDir, { withFileTypes: true })).filter((
       row.exports = `${Object.keys(mod).length}${missing.length ? ` 缺 ${missing.join(",")}` : ""}`
       if (missing.length) throw new Error(`缺少导出 ${missing.join(", ")}`)
       if (!EXPECTED[entry]) throw new Error("check-dist.mjs 的 EXPECTED 表没登记这个入口")
-      if (entry === "@reins/core" && mod.REINS_VERSION !== pkg.version)
+      if (entry === "@reinsjs/core" && mod.REINS_VERSION !== pkg.version)
         throw new Error(`REINS_VERSION 是 ${mod.REINS_VERSION}，package.json 是 ${pkg.version}，改 packages/core/src/index.ts`)
     } catch (err) {
       row.ok = false

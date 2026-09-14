@@ -10,7 +10,7 @@
  * 后接 assistant 或收尾；连续多条 system 视为一组。
  * OpenAI Responses：input 项里 developer / system 消息可出现在任意位置，无归位需求。
  */
-import type { SystemNotePayload } from "@reins/core"
+import type { SystemNotePayload } from "@reinsjs/core"
 
 export const SYSTEM_NOTE_MARK = "[[reins:system_note]]"
 

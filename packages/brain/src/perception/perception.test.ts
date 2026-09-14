@@ -11,8 +11,8 @@ import {
   type RunResult,
   runLoop,
   type TurnContext,
-} from "@reins/core"
-import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reins/core/testing"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { lastVisiblePerceptionNote, perception } from "./perception.js"
 import { contextOverheadOf, readPerception } from "./reading.js"

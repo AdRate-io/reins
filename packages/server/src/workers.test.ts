@@ -1,5 +1,5 @@
 /**
- * 在真实的 workerd（经 miniflare）里跑 handler：证明 @reins/server + @reins/core 只用了 Workers 也有的 Web API。
+ * 在真实的 workerd（经 miniflare）里跑 handler：证明 @reinsjs/server + @reinsjs/core 只用了 Workers 也有的 Web API。
  * 步骤：esbuild 把 workers.fixture.ts 连同 core 源码打成单文件 → miniflare 起 isolate → dispatchFetch。
  */
 import { fileURLToPath } from "node:url"
@@ -24,7 +24,7 @@ describe("Cloudflare Workers（miniflare / workerd）", () => {
       target: "es2022",
       conditions: ["workerd", "worker", "browser"],
       // 工作区包直接指到源码，不依赖先 build
-      alias: { "@reins/core": here("../../core/src") },
+      alias: { "@reinsjs/core": here("../../core/src") },
       logLevel: "silent",
     })
     const script = bundled.outputFiles[0]?.text

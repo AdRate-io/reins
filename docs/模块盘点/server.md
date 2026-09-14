@@ -1,12 +1,12 @@
-# 模块盘点：`@reins/server`
+# 模块盘点：`@reinsjs/server`
 
 > 依据 `packages/server/src/` 的实际代码（2026-09-10，`main` @ 9e0b99e）。与 `docs/技术方案.md` §12、根 `README.md` 的 Security notes 相互核对，冲突以代码为准。
 
 ## 1 架构概览
 
-`@reins/server` 只做一件事：把 `@reins/core` 的 `runLoop` 装进一个 Web 标准 handler —— `(Request, ctx?) => Promise<Response>`。主入口不碰任何 `node:*`，Node / Bun / Workers / Deno 用同一份代码；运行时依赖只有 `@reins/core`。
+`@reinsjs/server` 只做一件事：把 `@reinsjs/core` 的 `runLoop` 装进一个 Web 标准 handler —— `(Request, ctx?) => Promise<Response>`。主入口不碰任何 `node:*`，Node / Bun / Workers / Deno 用同一份代码；运行时依赖只有 `@reinsjs/core`。
 
-它不做路由、不做 CORS、不做鉴权实现，只留两个鉴权钩子（`principal` 解析"谁在问"，`authorizeSession` 决定"他能碰哪条会话"）。传输格式也不绑死：SSE 帧由可替换的编码器工厂产出，缺省原样推时间线事件，AG-UI 编码器在 `@reins/ui-agui`。
+它不做路由、不做 CORS、不做鉴权实现，只留两个鉴权钩子（`principal` 解析"谁在问"，`authorizeSession` 决定"他能碰哪条会话"）。传输格式也不绑死：SSE 帧由可替换的编码器工厂产出，缺省原样推时间线事件，AG-UI 编码器在 `@reinsjs/ui-agui`。
 
 ```
 Request ──▶ options.principal(request)?            抛 Response → 原样返回
@@ -44,7 +44,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 
 | 路径 | 职责 |
 | --- | --- |
-| `packages/server/package.json` | 包元数据：两个 exports（`.` 与 `./node`）、运行时只依赖 `@reins/core`、devDep 里 miniflare pin 在 `4.20260730.0` |
+| `packages/server/package.json` | 包元数据：两个 exports（`.` 与 `./node`）、运行时只依赖 `@reinsjs/core`、devDep 里 miniflare pin 在 `4.20260730.0` |
 | `packages/server/tsconfig.json` | 加了 `types: ["node"]`（供 tsup 为 `./node` 子路径出声明），引用 `../core` |
 | `packages/server/tsup.config.ts` | 两个入口打 ESM + `.d.ts`；打声明时清空 `paths`，否则 core 的类型会被内联而不是保留 import |
 | `packages/server/src/index.ts` | 公开面：`createAgentHandler` / `DEFAULT_HEARTBEAT_MS` / `SESSION_HEADER`、runs 三件套、sse 四件套、`export type * from "./types.js"` |
@@ -99,7 +99,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 
 **帧与响应头**
 
-- 缺省 `rawEncoder`：时间线事件帧**不带 `event` 名**（落 `EventSource.onmessage`）、`id:` = `event.seq`；控制项带 event 名 `start` / `delta` / `result` / `end` / `error`，只监听 `onmessage` 的客户端自然看不到。换 `options.encode` 即整套替换（`aguiEncoding()` 见 `@reins/ui-agui`）。
+- 缺省 `rawEncoder`：时间线事件帧**不带 `event` 名**（落 `EventSource.onmessage`）、`id:` = `event.seq`；控制项带 event 名 `start` / `delta` / `result` / `end` / `error`，只监听 `onmessage` 的客户端自然看不到。换 `options.encode` 即整套替换（`aguiEncoding()` 见 `@reinsjs/ui-agui`）。
 - 所有 SSE 响应带 `SSE_HEADERS` + `X-Reins-Session`（常量 `SESSION_HEADER = "x-reins-session"`），客户端不必等 `start` 帧就能拿到会话 id。
 
 **错误码表**

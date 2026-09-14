@@ -7,11 +7,11 @@
  * 《模型API测试信息.md》读，也可用 ANTHROPIC_API_KEY 覆盖；REINS_MODEL 覆盖模型 id。
  */
 import { mkdirSync, readFileSync } from "node:fs"
-import { approval, budget, compact, perception, pins, spill } from "@reins/brain"
-import { anthropic } from "@reins/lowering-pi"
-import { sqliteStores } from "@reins/store-sqlite"
-import { openSqlite } from "@reins/store-sqlite/node"
-import { httpTransport, type McpToolsSocket, mcpTools } from "@reins/tools-mcp"
+import { approval, budget, compact, perception, pins, spill } from "@reinsjs/brain"
+import { anthropic } from "@reinsjs/lowering-pi"
+import { sqliteStores } from "@reinsjs/store-sqlite"
+import { openSqlite } from "@reinsjs/store-sqlite/node"
+import { httpTransport, type McpToolsSocket, mcpTools } from "@reinsjs/tools-mcp"
 import { type Agent, createAgent, defineTool } from "reins"
 
 const here = (p: string) => new URL(p, import.meta.url)

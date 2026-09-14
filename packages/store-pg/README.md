@@ -1,13 +1,13 @@
-# @reins/store-pg
+# @reinsjs/store-pg
 
 PostgreSQL-backed `EventLog`, `BlobStore` and `MemoryStore` for [reins](../../README.md). It needs exactly one method from your client — `query(text, params) → { rows }` — so `pg`'s `Pool` or `Client`, PGlite, and most pooled drivers work unchanged. No `node:*` imports.
 
 ```bash
-pnpm add @reins/store-pg
+pnpm add @reinsjs/store-pg
 ```
 
 ```ts
-import { pgStores } from "@reins/store-pg"
+import { pgStores } from "@reinsjs/store-pg"
 import pg from "pg"
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
@@ -30,7 +30,7 @@ const perRole = await pgStores(pool, { memoryTable: "analyst_memory" })
 
 Table names are validated against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL is assembled; an invalid name throws `invalid_argument` and touches nothing. Only the memory table is renamable.
 
-Passes the conformance suite in `@reins/core/testing` (run against PGlite in CI).
+Passes the conformance suite in `@reinsjs/core/testing` (run against PGlite in CI).
 
 ## Documentation
 

@@ -8,9 +8,9 @@ import {
   type Event,
   InMemoryEventLog,
   type RunResult,
-} from "@reins/core"
-import { callTool, ScriptedLowering, say, think } from "@reins/core/testing"
-import { createAgentHandler, type SseFrame, type StreamItem } from "@reins/server"
+} from "@reinsjs/core"
+import { callTool, ScriptedLowering, say, think } from "@reinsjs/core/testing"
+import { createAgentHandler, type SseFrame, type StreamItem } from "@reinsjs/server"
 import { describe, expect, it } from "vitest"
 import { aguiEncoding, createAguiEncoder } from "./encoder.js"
 import type { AguiEvent } from "./types.js"
@@ -282,7 +282,7 @@ describe("run 结束的三种翻译", () => {
   })
 })
 
-describe("接上 @reins/server", () => {
+describe("接上 @reinsjs/server", () => {
   const addTool = defineTool<{ a: number; b: number }>({
     name: "add",
     description: "两数相加",

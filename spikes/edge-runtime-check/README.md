@@ -1,6 +1,6 @@
 # edge-runtime-check —— 降级层在 Cloudflare Workers（workerd）上的运行时兼容性核实
 
-**结论（2026-09-09，pi-ai 0.85.1）：`@reins/lowering-pi` 的打包产物在 workerd 上跑得通，且不需要 `nodejs_compat`。**
+**结论（2026-09-09，pi-ai 0.85.1）：`@reinsjs/lowering-pi` 的打包产物在 workerd 上跑得通，且不需要 `nodejs_compat`。**
 两条协议路径（Anthropic Messages / OpenAI Responses）各自真打了一次线上 API，均正常产出事件。
 
 ## 为什么要做这个
@@ -10,7 +10,7 @@ PRD 把"跑在任何 Web 标准运行时"当卖点，但此前从未在 edge 运
 （只有 require / types / default），靠运行时探测打 shim。静态 import 链实测零 `node:` 内置，
 但"静态干净"不等于"真能跑"。
 
-一条纪律：**一律打 `dist`，不打源码。** B11 的教训 —— `@reins/store-sqlite` 的 `node:sqlite` 被 tsup 缺省
+一条纪律：**一律打 `dist`，不打源码。** B11 的教训 —— `@reinsjs/store-sqlite` 的 `node:sqlite` 被 tsup 缺省
 `removeNodeProtocol` 剥成 `sqlite`，运行时 `ERR_MODULE_NOT_FOUND`，就因为只跑过源码与 vitest 路径。
 
 ## 怎么跑
@@ -81,7 +81,7 @@ flag 也能 `import("node:fs")`）。所以只跑新 date 会**高估**结论。
   各自实现有差异，未验。
 - **只测了单轮首个请求。** 多轮回放 thinking 签名、中途 `system_note` 的落点等语义行为不在此列 ——
   那些由 lowering-pi 单测与 `t7-live-roundtrip` 覆盖，与运行时无关。
-- **没测 `@reins/server` / `store-*` 在 edge 上的表现。** store-sqlite 明确是 Node-only 可选包，
+- **没测 `@reinsjs/server` / `store-*` 在 edge 上的表现。** store-sqlite 明确是 Node-only 可选包，
   store-pg 依赖驱动，本探针只管降级层。
 - **体积问题原样存在。** 跑得通不等于跑得轻：pi-ai 把 10 个依赖全列在 `dependencies`，
   安装时无条件下载约 65 M（其中 `@google/genai` 14 M + aws-sdk 全家桶 15 M 在我们的可达链之外，纯死重）。

@@ -8,7 +8,7 @@
  *      REASONING_ENCRYPTED_VALUE(subtype=tool-call) 是 Gemini 类的 thoughtSignature，写进 replay。
  * replay 记 { provider, api, model }（与 lowering-pi 同字段），回放时据此判断签名能否复用。
  */
-import type { EventDraft } from "@reins/core"
+import type { EventDraft } from "@reinsjs/core"
 import type { StreamChunk } from "@tanstack/ai"
 import { parseArgs } from "./messages.js"
 

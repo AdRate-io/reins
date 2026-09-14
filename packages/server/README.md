@@ -1,13 +1,13 @@
-# @reins/server
+# @reinsjs/server
 
 A Web-standard `(Request) => Promise<Response>` handler around the [reins](../../README.md) loop. `POST` starts or resumes a run and streams the timeline as SSE (`id:` = event `seq`); `GET` replays from `lastSeq` and joins a run in progress. No framework, no private runtime dependency — written against Web standards only; verified on Node 22 and Cloudflare workerd (strictest compat, no `nodejs_compat`), Bun / Deno / Vercel Edge not yet tested.
 
 ```bash
-pnpm add @reins/server
+pnpm add @reinsjs/server
 ```
 
 ```ts
-import { createAgentHandler } from "@reins/server"
+import { createAgentHandler } from "@reinsjs/server"
 
 export const POST = createAgentHandler(agentDefinition, {
   principal: (req) => verifyToken(req.headers.get("authorization")),
@@ -21,7 +21,7 @@ export const POST = createAgentHandler(agentDefinition, {
 Node's `http` module needs a tiny adapter, which is the only place `node:*` appears:
 
 ```ts
-import { nodeListener } from "@reins/server/node"
+import { nodeListener } from "@reinsjs/server/node"
 createServer(nodeListener(handler)).listen(8787)
 ```
 
@@ -51,7 +51,7 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 
 | option | default | meaning |
 | --- | --- | --- |
-| `encode` | raw events | `StreamEncoderFactory`; `aguiEncoding()` from `@reins/ui-agui` |
+| `encode` | raw events | `StreamEncoderFactory`; `aguiEncoding()` from `@reinsjs/ui-agui` |
 | `deltas` | `true` | forward streaming text/thinking deltas as `delta` frames |
 | `heartbeatMs` | 15 000 | SSE comment heartbeat; `0` disables |
 | `onDisconnect` | `"continue"` | or `"abort"` the run when the client goes away |

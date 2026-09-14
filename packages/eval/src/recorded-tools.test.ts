@@ -6,7 +6,7 @@ import {
   type Event,
   type ToolContext,
   type ToolResult,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { canonicalArgs, recordedTools } from "./recorded-tools.js"
 

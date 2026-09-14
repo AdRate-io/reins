@@ -3,7 +3,7 @@
  *
  *   node examples/eval/report.ts <out 目录> [--reference threshold] [--candidate brain] [--token-ratio 1]
  *
- * 读 `cells/*.json`（每格一份，可能来自多次 / 多进程运行，同名后写覆盖先写），用 @reins/eval 的 summarize 求臂均值、
+ * 读 `cells/*.json`（每格一份，可能来自多次 / 多进程运行，同名后写覆盖先写），用 @reinsjs/eval 的 summarize 求臂均值、
  * checkGate 跑 PRD §7 门槛 2 四条、renderReport 出 Markdown；写 `report.md` 与 `report.json`。
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -18,7 +18,7 @@ import {
   probeAnswerOf,
   renderReport,
   summarize,
-} from "@reins/eval"
+} from "@reinsjs/eval"
 import { adratePatrolFixtures } from "./fixtures/adrate-patrol/fixture.ts"
 
 const argv = process.argv.slice(2)

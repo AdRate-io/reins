@@ -8,7 +8,7 @@ import {
   createCoreEvent,
   createCoreRegistry,
   type Event,
-} from "@reins/core"
+} from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import {
   aliasTable,

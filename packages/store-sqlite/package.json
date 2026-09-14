@@ -1,5 +1,5 @@
 {
-  "name": "@reins/store-sqlite",
+  "name": "@reinsjs/store-sqlite",
   "version": "0.1.0",
   "description": "reins — SQLite-backed EventLog / BlobStore / MemoryStore. One SQL layer, driver supplied by the runtime (node:sqlite, bun:sqlite)",
   "keywords": [
@@ -38,7 +38,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@reins/core": "workspace:*"
+    "@reinsjs/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

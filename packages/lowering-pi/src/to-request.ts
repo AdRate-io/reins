@@ -25,7 +25,7 @@ import {
   needsUntrustedMark,
   type ToolSpec,
   untrustedSourceOf,
-} from "@reins/core"
+} from "@reinsjs/core"
 import type { PiModel } from "./models.js"
 import { framedSystemNote, markSystemNote } from "./system-note.js"
 

@@ -1,4 +1,4 @@
-import { type Event, type EventLog, type ReadOptions, StoreError } from "@reins/core"
+import { type Event, type EventLog, type ReadOptions, StoreError } from "@reinsjs/core"
 import { isUniqueViolation, type PgClient } from "./client.js"
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {

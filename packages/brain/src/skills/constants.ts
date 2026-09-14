@@ -1,5 +1,5 @@
 /**
- * skills 模块的字面常量，单独成文件、零依赖：`@reins/brain/node` 的 fsSkillSource 也要用同一份 `/skills`，
+ * skills 模块的字面常量，单独成文件、零依赖：`@reinsjs/brain/node` 的 fsSkillSource 也要用同一份 `/skills`，
  * 而它不能把整个 skills 模块拖进 `dist/node.js`（"同一个值在两处必须同一份"，踩坑记录）。
  */
 

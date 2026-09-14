@@ -1,6 +1,6 @@
-# 模块盘点：`@reins/adapter-tanstack-ai`
+# 模块盘点：`@reinsjs/adapter-tanstack-ai`
 
-> 对应任务 B10。包版本 `0.1.0`，依赖 `@reins/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` 是 peerDependency，pin 精确版本 `0.53.0`**（2026-09-10 审查改：宿主自装、与库共用同一份实例——R7 的登记检查与引擎的中间件判断都靠引用同一性，装两份会把审批全判成没登记；非 `^`，不随小版本漂移；除主入口外还用了 `@tanstack/ai/adapter-internals` 的中断登记表 Capability，R7）；`@reins/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
+> 对应任务 B10。包版本 `0.1.0`，依赖 `@reinsjs/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` 是 peerDependency，pin 精确版本 `0.53.0`**（2026-09-10 审查改：宿主自装、与库共用同一份实例——R7 的登记检查与引擎的中间件判断都靠引用同一性，装两份会把审批全判成没登记；非 `^`，不随小版本漂移；除主入口外还用了 `@tanstack/ai/adapter-internals` 的中断登记表 Capability，R7）；`@reinsjs/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
 
 ## 1 架构概览
 
@@ -98,7 +98,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 - **`validate` 前移到审批判定之前（R1）** — `beforeTools` 里先校验入参再问 `needsApproval` 与生成摘要，与 runLoop、approval 模块三处同序（DECISIONS 2026-09-09 R1）。理由：审批人批的必须是将要执行的那份入参。边界：`rewrite` 仍在 `validate` 之前（钩子改的是模型给的原始入参）；校验不过不问人，直接由执行期报错拒掉。
 - **判定与执行分离** — 整批调用的 `beforeTool` 结论在边界一次算完存进 `verdicts`，`onBeforeToolCall` 只查表。理由：钩子形状要求同步给出 skip / transformArgs，且 TanStack 可能并发执行。边界：`defer` 会让**整轮**工具都等审批（TanStack 在边界暂停不执行任何调用），默认循环则会先执行不需审批的——已声明的差异（DECISIONS B10 第三条 ③）。
 - **有损必须声明：`TANSTACK_LOSS_MATRIX`** — `ModelMessage` 只有 user / assistant / tool 三角色，于是 `system_note` 以 `<system_note kind=…>` 标签走 user、`compaction` 走 user 文本、同一响应多段正文合成一个字符串（`merged-text`）、`isError` 只落 `ModelMessage.error` 字段、运维事件不下发。每条事件都记一条 `LandingRecord`，测试断言实际落点必在矩阵中且矩阵无死条目。
-- **trust 标注与 lowering-pi 同一份函数（R9）** — `toModelMessages` 对 `trust === "untrusted"` 的事件调 `@reins/core` 的 `markUntrusted` / `markUntrustedText`，`tool` 消息的 `content` 与 `error` 字段都是包裹后的文本；`ReinsMiddlewareOptions.trustMarkers: false` 关掉。理由：两条降级路线的标记必须逐字一致，共用纯函数是唯一不会漂移的办法。边界：TanStack 的 `content` 全文本时是单个字符串，包裹后仍是单个字符串；含图片时是片段数组，标记落在首尾文本片段上。
+- **trust 标注与 lowering-pi 同一份函数（R9）** — `toModelMessages` 对 `trust === "untrusted"` 的事件调 `@reinsjs/core` 的 `markUntrusted` / `markUntrustedText`，`tool` 消息的 `content` 与 `error` 字段都是包裹后的文本；`ReinsMiddlewareOptions.trustMarkers: false` 关掉。理由：两条降级路线的标记必须逐字一致，共用纯函数是唯一不会漂移的办法。边界：TanStack 的 `content` 全文本时是单个字符串，包裹后仍是单个字符串；含图片时是片段数组，标记落在首尾文本片段上。
 - **thinking 无同源签名不下发** — 只有 `replay.thinkingSignature` 存在且 `provider`/`model` 与本次请求一致才回放，否则记 `dropped`。理由（`messages.ts` 注释）：多数厂商拒收无签名的 thinking 块，让适配器崩掉比丢一段思考更糟。
 - **`lossy(user)`：用户消息与说明后移** — 落在 `tool_call` 与 `tool_result` 之间的 user 角色内容（`system_note`、`compaction` 留痕，以及用户在结果回来前插的话）在翻译时后移到同批工具结果之后，落点备注注明。理由（DECISIONS 2026-09-09 上线前审查）：日志顺序不动（宪法二：插话就是再追加一个事件），"tool_result 必须紧跟 tool_use"是厂商线协议约束，属降级层职责。边界：只后移，不合并、不丢弃。
 - **宿主 systemPrompts 原样保留** — 不把宿主提示交给 `resolveSocketContributions`，只取它算出的工具表与脑子片段，脑子片段追加成最后一条且整个 run 逐字不变。理由（`initRun` 注释）：宿主条目可能带 `cache_control` 之类元数据，改动前缀会打掉缓存。边界：Socket 在 `beforeModel` 返回 `systemPrompt` 时本轮改为只发这一条。

@@ -1,11 +1,11 @@
 /**
- * `@reins/brain/node` 的 fsSkillSource：真实临时目录上跑。这里只验载体本身（列 / 读 / 越界 / 隐藏文件），
+ * `@reinsjs/brain/node` 的 fsSkillSource：真实临时目录上跑。这里只验载体本身（列 / 读 / 越界 / 隐藏文件），
  * 菜单与 skill_read 的逻辑在 skills/skills.test.ts 用内存载体验过，两者只通过 SkillSource 契约相接。
  */
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { InMemoryEventLog, resolveSocketContributions } from "@reins/core"
+import { InMemoryEventLog, resolveSocketContributions } from "@reinsjs/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { fsSkillSource } from "./node.js"
 import { loadSkillMenu, SKILL_READ_TOOL_NAME, skills } from "./skills/index.js"

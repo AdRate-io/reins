@@ -1,12 +1,12 @@
 /**
- * Workers（workerd）运行时兼容性探针 —— 在真 edge 运行时里加载并驱动 @reins/lowering-pi 的**打包产物**。
+ * Workers（workerd）运行时兼容性探针 —— 在真 edge 运行时里加载并驱动 @reinsjs/lowering-pi 的**打包产物**。
  *
  * 为什么要有：PRD 把"跑在任何 Web 标准运行时"当卖点，但降级层 lowering-pi 经 pi-ai 间接牵进
  * @anthropic-ai/sdk 与 openai 两个 SDK，二者的 exports 没有 worker / edge 条件导出（只有
  * require / types / default），靠运行时探测打 shim。静态 import 链实测零 node: 内置，
  * 但"能不能真在 workerd 里跑起来"此前从未实证。
  *
- * 为什么打 dist 而不打源码：B11 的教训 —— @reins/store-sqlite 的 node:sqlite 被 tsup 缺省
+ * 为什么打 dist 而不打源码：B11 的教训 —— @reinsjs/store-sqlite 的 node:sqlite 被 tsup 缺省
  * removeNodeProtocol 剥成 sqlite，运行时 ERR_MODULE_NOT_FOUND，就因为只跑过源码与 vitest 路径。
  * 这里一律 import 各包 dist/index.js，验的是用户真正装到的东西。
  *
@@ -146,7 +146,7 @@ async function probeStream(baseUrl, id, apiKey, label, api = "anthropic-messages
 }
 
 /**
- * P1 ③：@reins/tools-mcp 主入口（Streamable HTTP）在 workerd 里真连一台 MCP 服务器：
+ * P1 ③：@reinsjs/tools-mcp 主入口（Streamable HTTP）在 workerd 里真连一台 MCP 服务器：
  * 起步 tools/list → 翻成 reins Tool → 调 echo → 翻结果。走的是官方 MCP client 的 workerd 条件导出（_shims）。
  */
 async function probeMcp(base) {

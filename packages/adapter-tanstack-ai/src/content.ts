@@ -5,7 +5,7 @@
  * 多媒体片段统一是 `{ source: { type: "data" | "url", value, mimeType } }`。能一一对应的逐字翻译，
  * 对不上的（音频、视频、文档、URL 图片）以占位文本代替并在返回值里声明丢了什么（P7：有损必声明）。
  */
-import type { ContentPart as ReinsPart } from "@reins/core"
+import type { ContentPart as ReinsPart } from "@reinsjs/core"
 import type { ContentPart as TanstackPart } from "@tanstack/ai"
 
 export interface ImportedContent {

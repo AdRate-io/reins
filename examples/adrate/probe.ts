@@ -1,7 +1,7 @@
 /** 排障：单独打一次模型请求，按开关带 / 不带工具表与 Skill 长提示。node examples/adrate/probe.ts [tools] [skills] */
 import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
-import { anthropic } from "@reins/lowering-pi"
+import { anthropic } from "@reinsjs/lowering-pi"
 import { toolSpecOf } from "reins"
 import { adrateTools } from "./tools.ts"
 

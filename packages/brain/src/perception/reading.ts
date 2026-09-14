@@ -5,7 +5,7 @@
  * - `ctx.events`（模型本轮将看到的投影）：算"未折叠历史有多长"、"有几条外溢结果可取"—— 这些是模型视角的量；
  * - `ctx.timeline`（完整日志）：算"整理过几次"、"本会话累计花了多少 token"—— 这些是会话全局的量。
  */
-import { type CoreEvent, contextTokensOf, type Event, type TurnContext } from "@reins/core"
+import { type CoreEvent, contextTokensOf, type Event, type TurnContext } from "@reinsjs/core"
 import type { BudgetDimension, BudgetLimits } from "../budget/budget.js"
 import { compactNumber, countTier, percent, rangeTier, type Tier } from "./tiers.js"
 

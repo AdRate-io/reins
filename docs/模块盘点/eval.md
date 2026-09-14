@@ -1,8 +1,8 @@
-# 模块盘点：`packages/eval`（`@reins/eval`）
+# 模块盘点：`packages/eval`（`@reinsjs/eval`）
 
 > 对照 `docs/技术方案.md` §13 与 `docs/TASKS.md` E1～E3c，**以代码为准**。
 > 一句话：把"同一个 fixture、同一个模型、只换循环配置"这件事跑起来，并把结果变成可机器判定的数字与一张 Markdown 表。
-> 依赖只有 `@reins/core`（`@reins/brain` 仅 devDependency），零 `node:*`；文件读写与 CLI 都在调用方 `examples/eval`。
+> 依赖只有 `@reinsjs/core`（`@reinsjs/brain` 仅 devDependency），零 `node:*`；文件读写与 CLI 都在调用方 `examples/eval`。
 
 ## 1 架构概览
 
@@ -40,7 +40,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 
 | 路径 | 职责 |
 | --- | --- |
-| `packages/eval/package.json` | 包声明：只依赖 `@reins/core`，`@reins/brain` 是 devDependency（模型自决臂由调用方组） |
+| `packages/eval/package.json` | 包声明：只依赖 `@reinsjs/core`，`@reinsjs/brain` 是 devDependency（模型自决臂由调用方组） |
 | `packages/eval/tsup.config.ts` | 单入口 ESM 打包；打 `.d.ts` 时清空 `paths`，避免把 core 的类型内联进本包声明 |
 | `packages/eval/src/index.ts` | 桶文件，`export *` 全部九个模块，并在头注释里列出每个模块干什么 |
 | `packages/eval/src/types.ts` | 全部数据形状：`EvalTask` / `PlantedFact` / `PlantedConstraint` / `EvalFixture` / `EvalArm` / `Judge` / `TokenTotals` / `EvalMetrics` / `FactResult` / `EvalOutcome(Draft)` / `ArmSummary` / `EvalReport` |
@@ -114,7 +114,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 
 ## 4 核心设计决策
 
-- **eval 独立成包、只依赖 core，臂就是 `LoopConfig` 片段** — `EvalArm = { name, sockets?, projection?, systemPrompt? }`，模型自决臂由调用方用 `@reins/brain` 组，包本身不依赖 brain（`@reins/brain` 只在 devDependencies）。理由：eval 要能评第三方脑子模块与用户自己改的循环配置，绑死 brain 就评不了别人；三臂共用同一个 `runLoop`，差异才只来自臂。边界：本包不做 CLI、不碰文件系统，`examples/eval` 负责这两件事。（DECISIONS 2026-09-09 E1）
+- **eval 独立成包、只依赖 core，臂就是 `LoopConfig` 片段** — `EvalArm = { name, sockets?, projection?, systemPrompt? }`，模型自决臂由调用方用 `@reinsjs/brain` 组，包本身不依赖 brain（`@reinsjs/brain` 只在 devDependencies）。理由：eval 要能评第三方脑子模块与用户自己改的循环配置，绑死 brain 就评不了别人；三臂共用同一个 `runLoop`，差异才只来自臂。边界：本包不做 CLI、不碰文件系统，`examples/eval` 负责这两件事。（DECISIONS 2026-09-09 E1）
 - **回放匹配宁缺毋滥** — 同名 + 键排序后入参逐字相同才算命中，没命中缺省给 `isError` 说明，`fallback` / `sequence` 必须显式开。理由：三臂必须面对同一个世界，且不碰真服务（写操作有副作用、要审批）；宁可让模型知道"这里没数据"，也不给一条错答案让它接着推理。边界：匹配策略可加，`spilled` 的结果回放时只剩预览（`stats.spilled` 记数报警）。（DECISIONS 2026-09-09 E1）
 - **fixture 的"世界"必须完整，所以先去外溢再脱敏** — `unspillRecording` 从模型自己 `fetch_blob` 取回的分片把全文拼回来，拼不齐的原样保留并进 `incomplete`，不硬凑。理由：不还原的话无脑子臂拿到的只是一段预览加一个取不回的 blob id。边界：只处理符合 `FETCH_HEADER` 格式的分片，blob 本体不从 BlobStore 读。（代码注释 + 技术方案 §13 E2）
 - **脱敏在 JSON 文本层逐字替换** — 长的 `from` 先换，替换双方按 JSON 字面量写法转义，于是入参、工具结果、模型正文、思考里的同一个值一起变，回放时模型看到的 id 和它要传给工具的 id 仍然一致；命中数返回但不带原文。边界：**事件的 `id` / `sessionId` / `seq` 同样会被替换**，调用方不想动就别把那些值放进表里。（代码注释 + DECISIONS 2026-09-09 E2）
