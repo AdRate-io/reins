@@ -1,5 +1,15 @@
 # @reinsjs/agent
 
+## 0.1.1
+
+### Patch Changes
+
+- Docs only: the umbrella package is `@reinsjs/agent` (npm refused the bare name `reins` as too similar to `redis`). READMEs and the 0.1.0 changelog text now say so; no code changes.
+- Updated dependencies
+  - @reinsjs/core@0.1.1
+  - @reinsjs/server@0.1.1
+  - @reinsjs/ui-agui@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes

@@ -4,7 +4,7 @@
 
 ## 1 架构概览
 
-`reins` 是"装一个包就能用"的门面，本身只有 `create-agent.ts`（86 行）与 `as-tool.ts`（219 行）两份实现。它做三件事：提供 `createAgent`、提供 `asTool`（子代理即工具，§10.1），以及原样再导出 `@reinsjs/core`、`@reinsjs/server`、`@reinsjs/ui-agui` 三个包的全部公开面。降级层（`@reinsjs/lowering-pi`，带 pi-ai 依赖）**不**在再导出之列，要单独 import。
+`@reinsjs/agent` 是"装一个包就能用"的门面，本身只有 `create-agent.ts`（86 行）与 `as-tool.ts`（219 行）两份实现。它做三件事：提供 `createAgent`、提供 `asTool`（子代理即工具，§10.1），以及原样再导出 `@reinsjs/core`、`@reinsjs/server`、`@reinsjs/ui-agui` 三个包的全部公开面。降级层（`@reinsjs/lowering-pi`，带 pi-ai 依赖）**不**在再导出之列，要单独 import。
 
 `createAgent` 不引入任何新概念，只做两次拆包 + 一个缺省值：把 `BoundModel` 拆成 `model` + `lowering`，把 `Stores` 拆成 `log` / `blobs` / `memory`，拼成 `AgentDefinition`；再用它建 handler，缺省编码换成 AG-UI。
 
@@ -28,7 +28,7 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 
 | 路径 | 职责 |
 | --- | --- |
-| `packages/agent/package.json` | 包元数据：包名就是 `reins`，单个 exports，依赖 `@reinsjs/core` + `@reinsjs/server` + `@reinsjs/ui-agui`（无 lowering-pi） |
+| `packages/agent/package.json` | 包元数据：包名 `@reinsjs/agent`（2026-09-14 前 `reins`，npm 拒绝裸名），单个 exports，依赖 `@reinsjs/core` + `@reinsjs/server` + `@reinsjs/ui-agui`（无 lowering-pi） |
 | `packages/agent/tsconfig.json` / `tsup.config.ts` | 单入口打 ESM + `.d.ts`；打声明时清空 `paths`，否则依赖包的类型会被内联而不是保留 import |
 | `packages/agent/src/index.ts` | 门面：`export * from` core / server / ui-agui 三包，加上 `createAgent`（`Agent` / `CreateAgentOptions` / `RunOptions`）与 `asTool`（`AsToolOptions` / `SubagentOutcome` / `SubagentUsage` / `SubagentTask` / `subagentOutcomesOf` / `usageOf` / `defaultChildSessionId` / `SUBAGENT_TASK_SCHEMA`） |
 | `packages/agent/src/as-tool.ts` | `asTool(agent, opts)`：把 `Agent` 包成 `Tool`；子 run 暂停 → 返回 core `subagentPause`（审批冒泡），子 `budget_usage` → `ctx.spend`（预算合算），principal / signal（`abort`）下传，结果 JSON `SubagentOutcome` 带 childSessionId；`usageOf` 从子时间线算用量，`subagentOutcomesOf` 从父时间线找子会话 |

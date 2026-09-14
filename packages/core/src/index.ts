@@ -22,4 +22,4 @@ export * from "./replay/index.js"
 export * from "./store/index.js"
 
 /** 库版本，与 packages/core/package.json 的 version 同步（发布前 `pnpm check:dist` 会核对） */
-export const REINS_VERSION = "0.1.0"
+export const REINS_VERSION = "0.1.1"
