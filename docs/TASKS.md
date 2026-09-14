@@ -14,7 +14,7 @@
 - [x] **D1 工具懒发现**（2026-09-14）：brain 第十个模块 `lazyTools()`，菜单进系统提示、`tool_find` 取回、已取回集合从时间线重建、直接调隐藏工具即 block 指路；+16 用例，eval fixture `tool-discovery`（200 件）+4 用例，780 全绿。spike：Anthropic 上取回后首请求缓存整段重写，频繁换任务按价目加权贵 1.7 倍，一次取回约 7 请求回本——opt-in、README 写边界。eval 两族门禁通过（第二轮，完成度 100% 持平，总 token −59%～−62%）。第一轮 fixture authId 类型缺陷见踩坑记录
 - [x] **D2 handler 旁路观测钩子**（2026-09-14）：`HandlerOptions.onEvent(event, { sessionId, principal, request })` + `warn` 出口；只 live 不 replay、先广播再调不挡 run、出错只告警一次、run 收尾等观测链（Workers waitUntil 覆盖）；不进 core。+4 用例，784 全绿。server README 加 Observability 节、根 README 写明 `agent.run()` 本身可 `for await`
 - [x] **D3 审批过期**（2026-09-14）：`approval({ ttlMs })`，比 `approval_request.at` 与宿主批准事件 `at`（循环时钟，不读墙钟），过期在 ask 落点 deny + block、留 `approval_decision(by: "approval.expired")`，模型看到"可重新发起"；`by` 用策略 id 而非 `"reins"`（理由见 DECISIONS）。+4 用例，788 全绿
-- [ ] **D4 跨进程 run 登记**：`RunRegistry` 从类改成接口（handler 已有 `runs` 注入口），store-pg 出 advisory lock 实现；README 先写"多实例部署须提供共享登记表"红线。今天双实例只浪费一次模型调用、不坏数据（seq_conflict 兜底）
+- [ ] **D4 跨进程 run 登记**：`RunRegistry` 从类改成接口（handler 已有 `runs` 注入口），store-pg 出跨进程实现；README 先写"多实例部署须提供共享登记表"红线。今天双实例只浪费一次模型调用、不坏数据（seq_conflict 兜底）。**开工前先定三件事**（2026-09-14 评估，需一个完整会话）：① 公开形状——`RunRegistry` 类已随 0.1 发布，接口化要保留老名字兼容，`create` / `get` 变异步，handler 两条同步路径随之改；② 实现机制——任务行写的 advisory lock 绑连接，与 store-pg "传连接池就是对的"冲突，倾向租约表（会话一行、持有者 + 过期时间、心跳续租、崩溃到期自动释放），先在 PGlite 实测再记 DECISIONS；③ 跨包用例——两个 handler 实例共用一张表时第二个 POST 必须 409
 - [ ] **D5 脱敏配方入 README**（文档，不加接口）：工具结果在 `afterTool` 草稿上脱敏；其他事件包一层 `log.append`。若 AdRate 接入时包 store 太别扭，再考虑核心加极小的 `redactingLog(log, fn)` 助手
 - 不做（记 DECISIONS）：规范化 JSON 序列化算 digest 以放开 jsonb——改的是状态格式，等真有"全库禁 json"硬约束再随版本一起升
 
