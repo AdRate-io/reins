@@ -6,7 +6,7 @@ import { type CoreEventType, createCoreEvent, createCoreRegistry, type Event } f
 import { describe, expect, it } from "vitest"
 import { declaredLandings, LOSS_MATRIX } from "../index.js"
 import { FetchLowering } from "../lowering.js"
-import type { FetchModel } from "../models.js"
+import { type FetchModel, findBuiltin } from "../models.js"
 
 const registry = createCoreRegistry([{ type: "ext.host_ping", version: 1 }])
 
@@ -21,7 +21,11 @@ const NO_MID: FetchModel = {
   images: false,
   midConversationSystem: false,
 }
-const lowering = new FetchLowering({ apiKey: () => "k", models: [NO_MID] })
+// gpt-4o-mini 无协议解析缺省走 Responses（F3 起），这里显式取 Chat 条目
+const lowering = new FetchLowering({
+  apiKey: () => "k",
+  models: [NO_MID, findBuiltin("openai", "gpt-4o-mini", "openai-chat") as FetchModel],
+})
 
 interface Variant {
   label: string

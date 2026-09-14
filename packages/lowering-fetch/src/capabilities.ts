@@ -39,6 +39,14 @@ export function capabilitiesOf(model: FetchModel): LoweringCapabilities {
         thinkingReplay: model.reasoning,
         taskBudget: ANTHROPIC_TASK_BUDGET.test(model.id),
       }
+    case "openai-responses":
+      return {
+        ...base,
+        // input 项里 developer / system 消息可出现在任意位置（F0 R3 实测中途 developer 到达），无归位需求
+        midConversationSystem: model.midConversationSystem ?? true,
+        // reasoning 项以 encrypted_content 原样回放（F0 R3 接受、伪造 400）；关掉 encryptedReasoning 就没有可回放的东西
+        thinkingReplay: model.reasoning && model.responses?.encryptedReasoning !== false,
+      }
     default:
       return { ...base, midConversationSystem: model.midConversationSystem ?? false, thinkingReplay: false }
   }

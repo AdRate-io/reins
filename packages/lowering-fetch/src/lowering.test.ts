@@ -38,6 +38,12 @@ const usage = (prompt: number, completion: number) => ({
 function anthropicSse(events: Record<string, unknown>[]): string {
   return events.map((e) => `event: ${String(e.type)}\ndata: ${JSON.stringify(e)}\n\n`).join("")
 }
+/** Responses 风格 SSE：每帧带 event: 行与 sequence_number，无 [DONE] */
+function responsesSse(events: Record<string, unknown>[]): string {
+  return events
+    .map((e, i) => `event: ${String(e.type)}\ndata: ${JSON.stringify({ ...e, sequence_number: i })}\n\n`)
+    .join("")
+}
 
 /** 按调用顺序回放预设响应的假 fetch，并截获每次请求 */
 function fakeFetch(responses: (string | Response)[]) {
@@ -174,10 +180,11 @@ describe("FetchLowering", () => {
       apiKey: () => "k",
       models: [
         {
-          provider: "openai",
-          id: "gpt-5.5",
-          api: "openai-responses",
-          baseUrl: "https://api.openai.com/v1",
+          provider: "acme",
+          id: "grpc-model",
+          // 宿主声明了一个本包不认的协议名（类型层挡不住 JSON 配置里来的值）
+          api: "acme-grpc" as never,
+          baseUrl: "https://acme/v1",
           contextWindow: 1,
           maxOutputTokens: 1,
           reasoning: true,
@@ -187,9 +194,227 @@ describe("FetchLowering", () => {
     expect(() => lowering.toRequest({ events: [], model: { provider: "nobody", id: "x" } })).toThrow(
       /unsupported_model/,
     )
-    expect(() => lowering.toRequest({ events: [], model: { provider: "openai", id: "gpt-5.5" } })).toThrow(
+    expect(() => lowering.toRequest({ events: [], model: { provider: "acme", id: "grpc-model" } })).toThrow(
       /unsupported_api/,
     )
+  })
+
+  it("Responses 线：打到 /responses，Bearer 鉴权；请求体 store:false + include 加密项；草稿与 outcome 正确", async () => {
+    const body = responsesSse([
+      { type: "response.created", response: { id: "resp_1", model: "gpt-5-mini-2025-08-07" } },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "hi", annotations: [] }],
+        },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_1",
+          status: "completed",
+          usage: { input_tokens: 10, input_tokens_details: { cached_tokens: 4 }, output_tokens: 2 },
+        },
+      },
+    ])
+    const { fetch, captured } = fakeFetch([body])
+    const lowering = new FetchLowering({ apiKey: (p) => (p === "openai" ? "sk-oa" : undefined), fetch })
+    const req = lowering.toRequest({
+      events: [user("hi")],
+      model: { provider: "openai", id: "gpt-5-mini" },
+      systemPrompt: "简短",
+    })
+    expect(req.payload.api).toBe("openai-responses")
+    expect(req.capabilities).toMatchObject({
+      thinkingReplay: true,
+      midConversationSystem: true,
+      images: true,
+    })
+    expect(req.payload.body).toEqual({
+      model: "gpt-5-mini",
+      input: [
+        { role: "developer", content: [{ type: "input_text", text: "简短" }] },
+        { role: "user", content: [{ type: "input_text", text: "hi" }] },
+      ],
+      stream: true,
+      store: false,
+      include: ["reasoning.encrypted_content"],
+    })
+    const { drafts, outcome } = await collect(lowering.stream(req))
+    expect(captured[0]?.url).toBe("https://api.openai.com/v1/responses")
+    expect(captured[0]?.headers).toMatchObject({ authorization: "Bearer sk-oa" })
+    expect(captured[0]?.body).toEqual(req.payload.body)
+    expect(drafts).toEqual([
+      {
+        type: "core.model_text",
+        actor: "model",
+        payload: { text: "hi" },
+        replay: { provider: "openai", api: "openai-responses", model: "gpt-5-mini", textSignature: "msg_1" },
+      },
+    ])
+    expect(outcome).toMatchObject({
+      stopReason: "stop",
+      usage: { input: 6, output: 2, cacheRead: 4 },
+      responseModel: "gpt-5-mini-2025-08-07",
+    })
+    expect((outcome as { costUsd: number }).costUsd).toBeGreaterThan(0)
+  })
+
+  it("集成（Responses）：core runLoop 上跑一条带工具的多轮——reasoning 带加密项 + function_call → 结果以 function_call_output 回传、reasoning 项原样回放 → 作答", async () => {
+    const reasoningItem = {
+      id: "rs_1",
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: "要算加法" }],
+      encrypted_content: "gAAAA-enc",
+    }
+    const { fetch, captured } = fakeFetch([
+      responsesSse([
+        { type: "response.created", response: { id: "resp_1", model: "gpt-5-mini" } },
+        {
+          type: "response.output_item.added",
+          output_index: 0,
+          item: { id: "rs_1", type: "reasoning", summary: [] },
+        },
+        { type: "response.reasoning_summary_text.delta", output_index: 0, delta: "要算加法" },
+        { type: "response.output_item.done", output_index: 0, item: reasoningItem },
+        {
+          type: "response.output_item.added",
+          output_index: 1,
+          item: { id: "fc_1", type: "function_call", call_id: "call_1", name: "add", arguments: "" },
+        },
+        { type: "response.function_call_arguments.delta", output_index: 1, delta: '{"a":2,"b":3}' },
+        {
+          type: "response.output_item.done",
+          output_index: 1,
+          item: {
+            id: "fc_1",
+            type: "function_call",
+            call_id: "call_1",
+            name: "add",
+            arguments: '{"a":2,"b":3}',
+          },
+        },
+        {
+          type: "response.completed",
+          response: {
+            id: "resp_1",
+            status: "completed",
+            usage: { input_tokens: 30, input_tokens_details: { cache_write_tokens: 20 }, output_tokens: 8 },
+          },
+        },
+      ]),
+      responsesSse([
+        { type: "response.created", response: { id: "resp_2", model: "gpt-5-mini" } },
+        {
+          type: "response.output_item.done",
+          output_index: 0,
+          item: {
+            id: "msg_2",
+            type: "message",
+            role: "assistant",
+            status: "completed",
+            content: [{ type: "output_text", text: "等于 5", annotations: [] }],
+          },
+        },
+        {
+          type: "response.completed",
+          response: {
+            id: "resp_2",
+            status: "completed",
+            usage: { input_tokens: 55, input_tokens_details: { cached_tokens: 50 }, output_tokens: 4 },
+          },
+        },
+      ]),
+    ])
+    const lowering = new FetchLowering({
+      apiKey: () => "k",
+      fetch,
+      requestOptions: () => ({ reasoning: { effort: "low", summary: "auto" } }),
+    })
+    const add = defineTool<{ a: number; b: number }>({
+      name: "add",
+      description: "两数相加",
+      inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
+      execute: ({ a, b }) => a + b,
+    })
+    const log = new InMemoryEventLog()
+    let t = 1_800_000_000_000
+    let n = 0
+    const gen = runLoop({
+      sessionId: "s3",
+      log,
+      lowering,
+      model: { provider: "openai", id: "gpt-5-mini" },
+      tools: [add],
+      input: "2+3 等于几？",
+      systemPrompt: "你会算数",
+      now: () => ++t,
+      newId: () => `id${++n}`,
+    })
+    const events: Event[] = []
+    let result: RunResult | undefined
+    while (true) {
+      const step = await gen.next()
+      if (step.done) {
+        result = step.value
+        break
+      }
+      events.push(step.value)
+    }
+    expect(result?.status).toBe("done")
+    expect(events.map((e) => e.type.replace("core.", ""))).toEqual([
+      "tools_bound",
+      "user_message",
+      "model_thinking",
+      "tool_call",
+      "tool_result",
+      "budget_usage",
+      "model_text",
+      "budget_usage",
+    ])
+    const usage1 = events[5]?.payload as { tokens: Record<string, number> }
+    expect(usage1.tokens).toEqual({ input: 10, output: 8, cacheWrite: 20 })
+    // 第二个请求：developer 系统提示 → user → reasoning 项原样 → function_call（带 fc_ 项 id）→ function_call_output（untrusted 标记）
+    const second = captured[1]?.body as {
+      input: Record<string, unknown>[]
+      tools: unknown[]
+      include: string[]
+      store: boolean
+    }
+    expect(second.input.map((i) => i.type ?? i.role)).toEqual([
+      "developer",
+      "user",
+      "reasoning",
+      "function_call",
+      "function_call_output",
+    ])
+    expect(second.input[2]).toEqual(reasoningItem)
+    expect(second.input[3]).toEqual({
+      type: "function_call",
+      id: "fc_1",
+      call_id: "call_1",
+      name: "add",
+      arguments: '{"a":2,"b":3}',
+    })
+    expect(second.input[4]).toMatchObject({ type: "function_call_output", call_id: "call_1" })
+    expect(String(second.input[4]?.output)).toContain('<untrusted source="tool:add">')
+    expect(second.tools).toEqual([
+      {
+        type: "function",
+        name: "add",
+        description: "两数相加",
+        parameters: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
+        strict: false,
+      },
+    ])
+    expect(second.include).toEqual(["reasoning.encrypted_content"])
+    expect(second.store).toBe(false)
+    expect((second as Record<string, unknown>).reasoning).toEqual({ effort: "low", summary: "auto" })
   })
 
   it("Anthropic 线：打到 /messages，带 x-api-key 与 anthropic-version；anthropic-beta 只在声明 betas 时带；模型级 headers 最后盖", async () => {

@@ -23,6 +23,8 @@ import { encodeChatRequest } from "./chat/to-request.js"
 import { DEFAULT_TIMEOUT_MS, postJson, requestSignals } from "./http.js"
 import { eventsToIr } from "./ir.js"
 import { endpointOf, type FetchApi, type FetchModel, resolveModel } from "./models.js"
+import { consumeResponsesStream } from "./responses/from-stream.js"
+import { encodeResponsesRequest } from "./responses/to-request.js"
 import { parseSse } from "./sse.js"
 
 /** Anthropic Messages 的协议版本头，当前唯一稳定值 */
@@ -97,6 +99,10 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
         const { body, landings } = encodeAnthropicRequest(encodeInput)
         return { model: input.model, capabilities, landings, payload: { api: model.api, body } }
       }
+      case "openai-responses": {
+        const { body, landings } = encodeResponsesRequest(encodeInput)
+        return { model: input.model, capabilities, landings, payload: { api: model.api, body } }
+      }
       default:
         throw new LoweringError("unsupported_api", `不支持的线协议 ${model.api}`, { api: model.api })
     }
@@ -136,6 +142,8 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
         return yield* consumeChatStream(streamInput, ctx)
       case "anthropic-messages":
         return yield* consumeAnthropicStream(streamInput, ctx)
+      case "openai-responses":
+        return yield* consumeResponsesStream(streamInput, ctx)
       default:
         throw new LoweringError("unsupported_api", `不支持的线协议 ${req.payload.api}`, {
           api: req.payload.api,

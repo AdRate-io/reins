@@ -1,7 +1,8 @@
 /**
  * 一行拿到"模型 + 降级层"：`deepseek("deepseek-flash", { apiKey })`、`openaiChat("gpt-4o-mini", { apiKey })`、
- * `anthropic("claude-opus-5", { apiKey })`；任何 OpenAI 兼容端点用 `chatCompletions("qwen-max", { provider: "qwen", baseUrl, apiKey })`，
- * 任何 Anthropic 协议端点（DeepSeek 兼容端口、CF 网关）用 `anthropicMessages(id, { provider, baseUrl, apiKey })`。
+ * `openai("gpt-5-mini", { apiKey })`（Responses）、`anthropic("claude-opus-5", { apiKey })`；任何 OpenAI 兼容端点用
+ * `chatCompletions("qwen-max", { provider: "qwen", baseUrl, apiKey })`，任何 Anthropic 协议端点（DeepSeek 兼容端口、CF 网关）用
+ * `anthropicMessages(id, { provider, baseUrl, apiKey })`，任何 Responses 协议端点用 `openaiResponses(id, { provider, baseUrl, apiKey })`。
  * 返回 BoundModel，直接给 `createAgent({ model })`；要多模型共享一个降级层就自己 new FetchLowering。
  *
  * 表内模型取内置定义再按选项覆盖；表外模型用保守缺省（128k 窗口、16k 输出、无推理、不收图），宿主按需覆盖。
@@ -15,6 +16,7 @@ import {
   type FetchApi,
   type FetchModel,
   findBuiltin,
+  type ResponsesDialect,
 } from "./models.js"
 import type { ModelCost } from "./usage.js"
 
@@ -33,6 +35,8 @@ export interface ModelOptions {
   chat?: ChatDialect
   /** Anthropic 线的 beta 头与缓存断点处置，见 models.ts AnthropicDialect */
   anthropic?: AnthropicDialect
+  /** Responses 线的说明角色与加密推理项开关，见 models.ts ResponsesDialect */
+  responses?: ResponsesDialect
   /** 凭证怎么带；网关自带凭证头时用 "none" 并把头放 headers */
   auth?: FetchModel["auth"]
   headers?: Record<string, string>
@@ -67,15 +71,17 @@ export function definitionOf(
   api: FetchApi,
   opts: Omit<ModelOptions, "apiKey" | "requestOptions" | "fetch" | "timeoutMs" | "trustMarkers">,
 ): FetchModel {
-  const builtin = findBuiltin(provider, id)
-  const base: FetchModel =
-    builtin && builtin.api === api ? builtin : { provider, id, api, baseUrl: opts.baseUrl ?? "", ...DEFAULTS }
+  // 同 id 可能两条协议各有一份内置定义（OpenAI），按工厂指定的协议精确取
+  const builtin = findBuiltin(provider, id, api)
+  const base: FetchModel = builtin ?? { provider, id, api, baseUrl: opts.baseUrl ?? "", ...DEFAULTS }
   if (!builtin && !opts.baseUrl) {
     throw new RangeError(`模型 ${provider}/${id} 不在内置表里，必须给 baseUrl`)
   }
   const chat = base.chat || opts.chat ? { ...base.chat, ...defined(opts.chat ?? {}) } : undefined
   const anthropic =
     base.anthropic || opts.anthropic ? { ...base.anthropic, ...defined(opts.anthropic ?? {}) } : undefined
+  const responses =
+    base.responses || opts.responses ? { ...base.responses, ...defined(opts.responses ?? {}) } : undefined
   return {
     ...base,
     ...defined({
@@ -91,6 +97,7 @@ export function definitionOf(
     }),
     ...(chat ? { chat } : {}),
     ...(anthropic ? { anthropic } : {}),
+    ...(responses ? { responses } : {}),
   }
 }
 
@@ -123,9 +130,32 @@ export function deepseek(id: string, opts: ModelOptions): BoundModel {
   })
 }
 
-/** OpenAI 官方 Chat Completions（Responses 线在 F3 另有 openai()） */
+/** OpenAI 官方 Chat Completions（推理系列请用 Responses 线的 openai()） */
 export function openaiChat(id: string, opts: ModelOptions): BoundModel {
   return chatCompletions(id, { provider: "openai", baseUrl: "https://api.openai.com/v1", ...opts })
+}
+
+/**
+ * 任何 OpenAI Responses 协议端点：Cloudflare AI Gateway 透传路径（`auth: "none"` + `cf-aig-authorization` 头）、
+ * 兼容网关。表外模型从保守缺省起（reasoning 假、不收图），宿主按需声明；不认 developer 角色或 include 参数的上游用 `responses` 方言关掉。
+ */
+export function openaiResponses(id: string, opts: ProviderModelOptions): BoundModel {
+  return bound(opts.provider, id, definitionOf(opts.provider, id, "openai-responses", opts), opts)
+}
+
+/**
+ * OpenAI 官方 Responses：缺省官方地址、Bearer 鉴权；表内模型带价目与能力位。`reasoning` 参数不缺省设置——
+ * gpt-5 缺省 medium、gpt-5.1 起缺省 none，开不开、开多深由宿主按型号在 requestOptions 里定（与 Anthropic 线的 thinking 同一原则）。
+ */
+export function openai(id: string, opts: ModelOptions): BoundModel {
+  // 表外的新型号按"推理、收图"起（OpenAI 当前一代皆如此）；表内的 gpt-4.1 等非推理型号以内置定义为准，不被这两个缺省盖掉
+  const unknown = findBuiltin("openai", id, "openai-responses") === undefined
+  return openaiResponses(id, {
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    ...(unknown ? { reasoning: true, images: true } : {}),
+    ...opts,
+  })
 }
 
 /**

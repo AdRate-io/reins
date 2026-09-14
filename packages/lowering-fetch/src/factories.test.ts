@@ -5,7 +5,9 @@ import {
   chatCompletions,
   deepseek,
   definitionOf,
+  openai,
   openaiChat,
+  openaiResponses,
 } from "./factories.js"
 
 describe("工厂", () => {
@@ -39,6 +41,52 @@ describe("工厂", () => {
       images: false,
       thinkingReplay: false,
     })
+  })
+
+  it("openai()：Responses 线，表内 gpt-5-mini 带价目与推理（同 id 的 Chat 条目不串）；gpt-4.1 非推理以内置为准；表外新型号按推理 / 收图起", () => {
+    const mini = openai("gpt-5-mini", { apiKey: "k" })
+    expect(mini.model).toEqual({ provider: "openai", id: "gpt-5-mini" })
+    expect(mini.lowering.capabilities(mini.model)).toMatchObject({
+      api: "openai-responses",
+      thinkingReplay: true,
+      midConversationSystem: true,
+      images: true,
+      contextWindow: 400_000,
+    })
+    const chat = openaiChat("gpt-5-mini", { apiKey: "k" })
+    expect(chat.lowering.capabilities(chat.model)).toMatchObject({
+      api: "openai-chat",
+      thinkingReplay: false,
+    })
+    const gpt41 = openai("gpt-4.1", { apiKey: "k" })
+    expect(gpt41.lowering.capabilities(gpt41.model)).toMatchObject({
+      thinkingReplay: false,
+      contextWindow: 1_047_576,
+    })
+    const future = openai("gpt-6", { apiKey: "k" })
+    expect(future.lowering.capabilities(future.model)).toMatchObject({
+      thinkingReplay: true,
+      images: true,
+      contextWindow: 128_000,
+    })
+    // 方言：关掉加密项就没有可回放的推理
+    const plain = openai("gpt-5-mini", { apiKey: "k", responses: { encryptedReasoning: false } })
+    expect(plain.lowering.capabilities(plain.model).thinkingReplay).toBe(false)
+  })
+
+  it("openaiResponses()：任意 Responses 协议端点，表外必须给 baseUrl；definitionOf 按协议精确取内置条目", () => {
+    const gw = openaiResponses("gpt-5-mini", {
+      provider: "cf",
+      baseUrl: "https://gateway.ai.cloudflare.com/v1/acc/gw/openai/v1",
+      apiKey: "",
+      auth: "none",
+      reasoning: true,
+    })
+    expect(gw.model.provider).toBe("cf")
+    expect(() => openaiResponses("x", { provider: "nobody", apiKey: "k" })).toThrow(/baseUrl/)
+    expect(definitionOf("openai", "gpt-4o-mini", "openai-chat", {}).api).toBe("openai-chat")
+    expect(definitionOf("openai", "gpt-4o-mini", "openai-responses", {}).api).toBe("openai-responses")
+    expect(definitionOf("openai", "gpt-4o-mini", "openai-responses", {}).cost).toBeDefined()
   })
 
   it("chatCompletions()：任意兼容端点，表外必须给 baseUrl", () => {

@@ -59,7 +59,7 @@
                           │
                      @reinsjs/core ←── @reinsjs/brain（十个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）
-                          ├── @reinsjs/lowering-fetch（零依赖；Chat Completions 与 Anthropic Messages 已通，Responses 待 F3，未发布）
+                          ├── @reinsjs/lowering-fetch（零依赖；Chat Completions / Anthropic Messages / OpenAI Responses 三线已通，F4 收口后发布）
                           ├── @reinsjs/store-sqlite / store-pg
                           ├── @reinsjs/eval
                           ├── @reinsjs/adapter-tanstack-ai
@@ -144,6 +144,9 @@
 - **Anthropic 线的缓存断点是本包打的：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 不覆盖且占一格；`anthropic.midSystemCacheBreakpoint` 三档来自 B1 数据，别把断点留在 system 消息上（几乎零命中）。
 - **thinking 回放判据是签名不是正文** — Fable 5.1 缺省 display omitted：正文空、签名在，流侧仍出草稿、写侧照发；无签名（流中断）与别家的 dropped 声明而不是降成正文；`redacted_thinking` 的 data 存在 `replay.thinkingSignature` + `redacted: true`（与 pi 版同字段）。
 - **宿主 `requestOptions` 里的 `system` / `tools` 会被剥掉，`max_tokens` 没给取模型声明的 `maxOutputTokens`，`thinking` 不缺省设置** — Opus 5 起厂商缺省 adaptive，Fable 5.1 对 `type:"disabled"` 400、Haiku 4.5 仍要 `budget_tokens`，代次差异由宿主定；`anthropic-beta` 只在 `anthropic.betas` 声明时带（中途 system 不需要 beta）。
+- **Responses 线 reasoning 的回放判据是 reasoning 项里的 `encrypted_content`，推理模型缺省永远带 `include: ["reasoning.encrypted_content"]`，不像 pi 版只在请求 effort 时才带** — gpt-5 缺省就开推理，不带 include 会产出无法回放的 reasoning 项；`replay.thinkingSignature` 存整项 JSON（与 pi 版互换），写侧整项原样放回，没有加密项 / 别家的 dropped 不降正文。伪造加密项厂商 400（F0 R3b），回放的必须是原件。
+- **Responses 线 `store: false` 强制、`previous_response_id` 剥掉；工具调用的 `call_id` 是 toolCallId，`fc_` 项 id 存 `replay.itemId` 且只在同一模型回放时带回** — OpenAI 校验 fc 项与 rs 项的配对，换模型就不带（pi-ai 同一取向）；正文项 id 存 `replay.textSignature`，没有就补 `msg_reins_<n>`（厂商接受）。
+- **内置表同一 OpenAI id 两条协议各一份，`findBuiltin(provider, id, api?)` 带协议精确取；无协议解析（直接 `new FetchLowering` + `{ provider: "openai", id }`）缺省走 Responses** — F1 时只有 Chat 条目、当时缺省是 Chat；要走 Chat 用 `openaiChat()` 或自己在 `models` 里声明。测试目标模型要显式取条目，别靠无协议解析。
 
 ### MCP（tools-mcp）
 
@@ -199,6 +202,7 @@
 ### 上游行为（spikes 实测）
 
 - **官方 Anthropic / OpenAI 端点一律走 Cloudflare AI Gateway 的透传路径**（`gateway.ai.cloudflare.com/v1/<account>/<gateway>/<provider>/…`，头 `cf-aig-authorization`，厂商原模型名）— 后台显眼的 `api.cloudflare.com/…/ai/v1/*` REST 路径认的是另一种账户级 token，用网关令牌打它必 401；Anthropic 流式 `data` 里多一个 `"p"` 填充字段，解析器忽略未知字段。用法见 `spikes/README.md` 末节，私有值在信息文件末尾；**F0 体检 43/43 已过，可当官方靶子**（中途 system / cache_control / beta 头 / 签名校验 / 多轮密钥注入全部原样透传）。账户级限流 429 的正文是 CF 信封不是厂商错误体；模型名打错经网关是 401 不是 404。
+- **OpenAI Responses 的自动前缀缓存是尽力而为**（F3 spike：gpt-5.4 同一脚本第一遍第二请求 `cached_tokens` 0、重跑命中）— 探针里"第二请求起 cacheRead > 0"偶发 ✗ 先重跑再怀疑换算；换算正确性已由 gpt-5-mini 与 F0 R4 实证。`prompt_cache_key` 可提高命中，宿主按需经 `requestOptions` 传。
 - **暗号法探中途 system 会触发 Anthropic 的 `reasoning_extraction` 拒答（200 + `stop_reason: refusal`、`content: []`），`mid-conversation-output-config` beta 头抬高触发率** — 是厂商分类器不是网关；探针用感知式说明（问上下文用量）；200 + 空内容先看 `stop_reason` / `stop_details` 再怀疑中间层；降级层只带真用到的 beta 头。Opus 5 缺省带 adaptive thinking，`max_tokens` 太小会被 thinking 吃光；Haiku 4.5 最小可缓存 4096 token；OpenAI 强制 `tool_choice` 时 `finish_reason` 是 `stop`。
 - **aireiter 网关的 Claude 端点会改写请求** — 最后一条 user 之后的一切都丢，中途 system 在中段被换成 "Continue"、末尾换成 "OK"；只能测顶层 system 与历史中段。DeepSeek 直连七种落点全到。
 - **pi-ai 0.85.1 没有 system 角色** — 注入内容被当 user 发出，靠 `onPayload` 改写；pi-ai 的 `terminated` 是瞬断（E3 三次、输出 0 token）。

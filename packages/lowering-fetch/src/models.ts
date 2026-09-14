@@ -7,11 +7,15 @@
 import { LoweringError, type ModelRef } from "@reinsjs/core"
 import type { ModelCost } from "./usage.js"
 
-/** 本包实现的线协议；F2 / F3 追加 anthropic-messages / openai-responses */
+/** 本包实现的三条线协议（F1 Chat Completions、F2 Anthropic Messages、F3 OpenAI Responses） */
 export type FetchApi = "openai-chat" | "anthropic-messages" | "openai-responses"
 
-/** 当前已实现、可发请求的协议；toRequest / stream 遇到别的就抛 unsupported_api（openai-responses 随 F3 追加） */
-export const SUPPORTED_APIS: ReadonlySet<string> = new Set<FetchApi>(["openai-chat", "anthropic-messages"])
+/** 当前已实现、可发请求的协议；toRequest / stream 遇到别的就抛 unsupported_api */
+export const SUPPORTED_APIS: ReadonlySet<string> = new Set<FetchApi>([
+  "openai-chat",
+  "anthropic-messages",
+  "openai-responses",
+])
 
 /** 一个模型在本降级层眼里的全部描述。字段与 LoweringCapabilities 对齐，方言开关单独成组 */
 export interface FetchModel {
@@ -43,6 +47,22 @@ export interface FetchModel {
   chat?: ChatDialect
   /** Anthropic Messages 线的请求整形选项（beta 头、缓存断点处置） */
   anthropic?: AnthropicDialect
+  /** OpenAI Responses 线的请求整形选项（说明角色、加密推理项） */
+  responses?: ResponsesDialect
+}
+
+export interface ResponsesDialect {
+  /**
+   * 系统提示与 system_note 用哪个角色。缺省：推理模型 developer、其它 system（与 lowering-pi 同一选择，矩阵同格）。
+   * 第三方 Responses 兼容上游不认 developer 时改 "system"。
+   */
+  systemRole?: "developer" | "system"
+  /**
+   * 推理模型是否带 `include: ["reasoning.encrypted_content"]`（缺省 true）。`store: false` 下 OpenAI 不保存推理状态，
+   * 只有加密项能把上一轮推理带回下一轮（F0 R3 实测回放接受、伪造 400）；不带则 reasoning 项无法回放、一律 dropped。
+   * 第三方兼容上游不认 include 参数时可关。
+   */
+  encryptedReasoning?: boolean
 }
 
 export interface ChatDialect {
@@ -114,7 +134,30 @@ const DEEPSEEK_FLASH: FetchModel = {
   chat: { reasoningContent: true },
 }
 
-/** 内置最小表。OpenAI 这里只列 Chat 线常用型号，Responses 线（F3）另表；Anthropic 列当前一代 + 常用上一代 */
+/** OpenAI Responses 线的型号（价目 2026-09-15 查阅；gpt-5.4 / 5.5 超过 272k 输入有加价档，这里存基础价、成本是下限） */
+const responsesModel = (
+  id: string,
+  cost: ModelCost,
+  extra: Partial<FetchModel> & { reasoning: boolean; contextWindow: number; maxOutputTokens: number },
+): FetchModel => ({
+  provider: "openai",
+  id,
+  api: "openai-responses",
+  baseUrl: OPENAI_BASE,
+  images: true,
+  cost,
+  ...extra,
+})
+const GPT5 = { reasoning: true, contextWindow: 400_000, maxOutputTokens: 128_000 }
+const GPT5_LARGE = { reasoning: true, contextWindow: 272_000, maxOutputTokens: 128_000 }
+const O_SERIES = { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100_000 }
+
+/**
+ * 内置最小表。同一 provider + id 可能两条协议各一份（OpenAI 的 gpt-4o-mini 等既能走 Chat 也能走 Responses）：
+ * `findBuiltin` 带 api 时精确取（工厂函数总是带），不带时取先列的一份——OpenAI 官方 id 的 Responses 条目列在前，所以
+ * `resolveModel({ provider: "openai", id })` 缺省走 OpenAI 的主协议 Responses（F3 起；F1 时只有 Chat 条目），要走 Chat 用
+ * `openaiChat()` 或在 `models` 里自己声明。Anthropic 列当前一代 + 常用上一代。
+ */
 export const BUILTIN_MODELS: readonly FetchModel[] = [
   anthropicModel("claude-fable-5-1", { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 }),
   anthropicModel("claude-opus-5", { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
@@ -138,6 +181,33 @@ export const BUILTIN_MODELS: readonly FetchModel[] = [
     cost: { input: 1.32, output: 3.96, cacheRead: 0.044, cacheWrite: 0 },
     chat: { reasoningContent: true },
   },
+  // ---- OpenAI Responses 线：OpenAI 官方的主协议，同 id 无协议解析时先取它；Chat 条目在后面
+  responsesModel("gpt-5.5", { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 }, GPT5_LARGE),
+  responsesModel("gpt-5.4", { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 }, GPT5_LARGE),
+  responsesModel("gpt-5.4-mini", { input: 0.75, output: 4.5, cacheRead: 0.075, cacheWrite: 0 }, GPT5),
+  responsesModel("gpt-5.2", { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 }, GPT5),
+  responsesModel("gpt-5.1", { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 }, GPT5),
+  responsesModel("gpt-5", { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 }, GPT5),
+  responsesModel("gpt-5-mini", { input: 0.25, output: 2, cacheRead: 0.025, cacheWrite: 0 }, GPT5),
+  responsesModel("gpt-5-nano", { input: 0.05, output: 0.4, cacheRead: 0.005, cacheWrite: 0 }, GPT5),
+  responsesModel("o3", { input: 2, output: 8, cacheRead: 0.5, cacheWrite: 0 }, O_SERIES),
+  responsesModel("o4-mini", { input: 1.1, output: 4.4, cacheRead: 0.275, cacheWrite: 0 }, O_SERIES),
+  responsesModel(
+    "gpt-4.1",
+    { input: 2, output: 8, cacheRead: 0.5, cacheWrite: 0 },
+    { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 },
+  ),
+  responsesModel(
+    "gpt-4.1-mini",
+    { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0 },
+    { reasoning: false, contextWindow: 1_047_576, maxOutputTokens: 32_768 },
+  ),
+  responsesModel(
+    "gpt-4o-mini",
+    { input: 0.15, output: 0.6, cacheRead: 0.075, cacheWrite: 0 },
+    { reasoning: false, contextWindow: 128_000, maxOutputTokens: 16_384 },
+  ),
+  // ---- OpenAI Chat Completions 线的同款型号（openaiChat() 按协议精确取；无协议解析时上面的 Responses 条目优先）
   {
     provider: "openai",
     id: "gpt-4o-mini",
@@ -184,8 +254,11 @@ export const BUILTIN_MODELS: readonly FetchModel[] = [
   },
 ]
 
-export function findBuiltin(provider: string, id: string): FetchModel | undefined {
-  return BUILTIN_MODELS.find((m) => m.provider === provider && m.id === id)
+/** 带 api 精确取该协议的条目；不带取先列的一份 */
+export function findBuiltin(provider: string, id: string, api?: FetchApi): FetchModel | undefined {
+  return BUILTIN_MODELS.find(
+    (m) => m.provider === provider && m.id === id && (api === undefined || m.api === api),
+  )
 }
 
 /** 宿主声明的优先于内置表 */
