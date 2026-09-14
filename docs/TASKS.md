@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**当前主线：lowering-fetch**（下一步 F1；F0 等 Boss 建好 CF 网关）。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**当前主线：lowering-fetch**（下一步 F0 靶子体检，网关已就绪；随后 F1）。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
@@ -36,6 +36,6 @@
 
 ## 待 Boss 本人操作（不挡开发）
 
-- [ ] **Cloudflare AI Gateway 验证靶子**（挡 F0 / F2 / F3 的真模型验证，不挡 F1）：AI Gateway 新建网关 → 打开 Authenticated Gateway 并生成网关令牌 → 充值 Unified Billing（20 美元级别够用，Anthropic / OpenAI 两个 provider 保持"使用 Cloudflare 凭证"、不填自己的 key）→ 把 account id、gateway id、网关令牌写进根目录 `模型API测试信息.md`（已 gitignore）
+- [x] **Cloudflare AI Gateway 验证靶子**（2026-09-14 Boss 已建，网关 `reins-dev`；轻测 Anthropic Messages / OpenAI Responses / OpenAI Chat 三条透传端点非流式均原样回暗号、Anthropic 流式透传；配置与路径写法在 `模型API测试信息.md` 末尾。REST `/ai/v1/*` 路径不适用——它要账户级 API token，透传路径才是我们要的）
 
 - [ ] npm 组织 `reinsjs` 目前只有 `adrate-io` 一个 owner；若要让别的账号也能发版，在 npmjs.com/org/reinsjs 邀请
