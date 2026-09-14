@@ -1,6 +1,6 @@
 # @reinsjs/brain 模块盘点
 
-> 依据 2026-09-14 的 `packages/brain/src/` 源码写成（D1 lazy-tools 落地后更新）。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
+> 依据 2026-09-14 的 `packages/brain/src/` 源码写成（D1 lazy-tools、D3 approval `ttlMs` 落地后更新）。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
 
 ## 架构概览
 
@@ -79,9 +79,9 @@
 | `packages/brain/src/memory/rules.ts` | `memory` 工具名、工具说明与规则提示 `MEMORY_RULES` |
 | `packages/brain/src/memory/memory.test.ts` | memory 的全部用例（路径限定、入参解析、六个命令、命名空间、与 runLoop 集成） |
 | `packages/brain/src/approval/index.ts` | approval 子模块聚合导出 |
-| `packages/brain/src/approval/approval.ts` | `approval(opts): Socket`：`evaluatePolicy` 管线（未知 → deny → ask → allow → unmatched）与 beforeTool 的三种落点 |
-| `packages/brain/src/approval/rules.ts` | 规则提示 `APPROVAL_RULES`：要等人批不是出错、被拒别换写法再试 |
-| `packages/brain/src/approval/approval.test.ts` | approval 的全部用例（简写与摘要、管线、与 runLoop 集成、R1 的 validate 前移） |
+| `packages/brain/src/approval/approval.ts` | `approval(opts): Socket`：`evaluatePolicy` 管线（未知 → deny → ask → allow → unmatched）与 beforeTool 的三种落点；`findExpiredApproval` 纯函数（D3 批准有效期） |
+| `packages/brain/src/approval/rules.ts` | 规则提示 `APPROVAL_RULES`：要等人批不是出错、被拒别换写法再试；`APPROVAL_EXPIRY_RULE`：设了 ttl 时追加，过期可再调一次 |
+| `packages/brain/src/approval/approval.test.ts` | approval 的全部用例（简写与摘要、管线、与 runLoop 集成、R1 的 validate 前移、D3 有效期：期内执行 / 过期拒绝留痕 / 纯函数边界 / 文案与构造校验） |
 | `packages/brain/src/budget/index.ts` | budget 子模块聚合导出 |
 | `packages/brain/src/budget/budget.ts` | `budget({ limits, note? }): Socket`：五维上限定义、`checkBudget` 纯函数、onTurnEnd 触顶即 `pause(budget)` |
 | `packages/brain/src/budget/budget.test.ts` | budget 的全部用例（纯函数、五维各自触顶、收尾轮不拦、续跑再批一份） |
@@ -167,6 +167,7 @@
 3. 依次跑 deny 段 → ask 段 → 工具自己的 `needsApproval`（视作 ask 段最后一条，policyId 为 core 的 `tool.needsApproval`）→ allow 段，每段首匹配即定；任一规则或 `needsApproval` 抛错立刻按 deny 处理（fail-closed）并经 `warn` 告警。
 4. 三段都没命中按 `unmatched`（缺省 `byRisk`：`risk: "low"` 放行，medium / high / 未声明先问人）。
 5. 落点：**allow** 返回 `"proceed"` 且不留任何事件；**ask** 返回 `{ defer: { policyId, summary } }`，循环 append `approval_request` 并以 `paused(approval)` 返回；**deny** 先 `ctx.emit` 一条 `core.approval_decision(approved=false, by=策略 id, reason)`，再返回 `{ block: reason }`。
+6. **批准有效期**（D3，`ttlMs`）：ask 落点上，若 `findExpiredApproval(ctx.timeline, toolCallId, ttlMs)` 找到"最后一条 `approval_request` 之后最后一条 approved=true 的 `approval_decision`，两者 `at` 之差 > ttl"，就按 deny 落（by `approval.expired`、reason 写明可重新发起）而不是 defer——循环会略过已批准调用的 defer，但 block 不会被略过，所以拦得住。缺请求或缺批准不算过期。设了 ttl 且 `rules` 缺省时系统提示追加 `APPROVAL_EXPIRY_RULE`。
 
 ### budget
 
@@ -208,6 +209,8 @@
 **fetch_blob 用字符偏移，授权按"本会话时间线引用过"**（B4 / B9 附）— `BlobStore.slice` 按字节切会切坏 UTF-8 多字节字符，而模型说的偏移是字符。授权口径从"blob.meta.sessionId 等于当前会话"改成"本会话某条 `tool_result.spilled.blobId` 指向它"：fork 出的会话复制了 tool_result 却不复制字节，旧口径下看得见 id 取不回。边界：未被本会话引用的 id 一律当不存在（回执与"真不存在"同一句话）；handoff 不复制 tool_result，所以新会话仍读不到外溢结果。（`docs/技术方案.md` §9.4 仍写"只能读本会话的 blob"，以此处为准。）
 
 **审批管线建议放 sockets 末尾，且入参先过 validate**（B7 / R1）— 放首位会让后面的 `rewrite` 绕过按入参写的规则；放末尾则前面的钩子只可能收紧。审批人批的必须是将要执行的那份入参，`needsApproval(input)` 才不是谎话；校验不过不问人，以 `approval.invalid_args` 放行给循环以"入参不合法"拒掉。边界：宿主已批准的调用再遇到 `defer` 只是略过，deny 在任何顺序下都拦得住。
+
+**批准有效期只看时间线上两条事件的 `at`，判定挂在 ask 落点上**（D3）— 不读墙钟，同一条日志在哪台机器回放结论都一样；宿主的批准事件是循环在续跑时按 `cfg.now` 写的，它的 `at` 就是"批准到达的时刻"。挂在 ask 落点而不是 beforeTool 入口，是因为只有"管线本该问人、放行靠的是宿主批准"时过期才有意义——策略改成 allow 的调用本就不需要批准。用 deny + block 而不是重新 defer：block 不会被已有批准略过，重新 defer 会被循环略过直接执行。宿主那条 approved=true 照记不动（它确实批了），模块再追加一条拒绝，审计能看到"批了但太晚"。边界：还没批的 pending 请求不会因为老而过期，等多久都是 pending；模型可以再调一次拿新请求。
 
 **deny 留痕、allow 不留痕、任何异常按 deny**（B7）— deny 先 emit `approval_decision(by=规则 id)` 再 block，谁拒的、为什么有据可查；allow 每次记一条会让日志翻倍而信息量为零（tool_call → tool_result 已是完整记录）。fail-closed 覆盖规则与 `needsApproval` 函数两处。
 

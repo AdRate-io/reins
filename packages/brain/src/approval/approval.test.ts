@@ -19,12 +19,13 @@ import {
   approval,
   defaultSummary,
   evaluatePolicy,
+  findExpiredApproval,
   globToRegExp,
   normalizeRule,
   type PolicyCall,
   type PolicyRule,
 } from "./approval.js"
-import { APPROVAL_RULES } from "./rules.js"
+import { APPROVAL_EXPIRY_RULE, APPROVAL_RULES } from "./rules.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
 const SESSION = "s1"
@@ -619,5 +620,126 @@ describe("approval：validate 先于管线（R1）", () => {
   it("校验不过：不问人，以 approval.invalid_args 放行给循环拒掉", async () => {
     const out = await run({ toolCallId: "c1", name: "deploy", args: { env: 7 }, tool: strict })
     expect(out).toEqual({ verdict: "allow", policyId: "approval.invalid_args" })
+  })
+})
+
+// ---- D3 批准有效期 ----
+
+describe("approval：批准有效期 ttlMs", () => {
+  /** 与 deterministic() 同一起点，但第二次 run 的时钟从 offset 之后开始走：模拟"人隔了多久才批" */
+  function clockFrom(offsetMs: number) {
+    let t = 1_800_000_000_000 + offsetMs
+    let n = 100
+    return { now: () => ++t, newId: () => `id${++n}` }
+  }
+
+  async function pauseOnDeploy(ttlMs: number) {
+    executed.length = 0
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "deploy", { env: "prod" })] },
+      { drafts: [say("收到")] },
+    ])
+    const cfg = config(lowering, log, { sockets: [approval({ ttlMs })] })
+    const first = await drain(runLoop(cfg))
+    expect(first.result.status).toBe("paused")
+    if (first.result.status !== "paused") throw new Error("unreachable")
+    return { log, cfg, state: first.result.state }
+  }
+
+  it("有效期内批准：照常执行，只有宿主那一条 approval_decision", async () => {
+    const { log, cfg, state } = await pauseOnDeploy(60_000)
+    const second = await drain(
+      runLoop({
+        ...resumed(cfg),
+        ...clockFrom(1_000),
+        resume: state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(second.result.status).toBe("done")
+    expect(executed).toEqual(["deploy:prod"])
+    expect(decisionsOf(await all(log)).map((d) => [d.payload.by, d.payload.approved])).toEqual([
+      ["boss", true],
+    ])
+  })
+
+  it("过期批准：不执行，留 approval_decision(by=approval.expired) 排在错误结果之前，模型看到可重新发起的说明", async () => {
+    const { log, cfg, state } = await pauseOnDeploy(60_000)
+    const second = await drain(
+      runLoop({
+        ...resumed(cfg),
+        ...clockFrom(3_600_000),
+        resume: state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(second.result.status).toBe("done")
+    expect(executed).toEqual([])
+    const logged = await all(log)
+    // 宿主的批准照记（它确实批了），随后是模块的过期拒绝；没有第二条 approval_request
+    expect(decisionsOf(logged).map((d) => [d.actor, d.payload.by, d.payload.approved])).toEqual([
+      ["host", "boss", true],
+      ["system", APPROVAL_POLICY_IDS.expired, false],
+    ])
+    expect(logged.filter((e) => e.type === "core.approval_request")).toHaveLength(1)
+    const expired = decisionsOf(logged)[1]
+    const result = resultOf(logged, "c1")
+    expect(result.payload.isError).toBe(true)
+    expect(textOf(result)).toContain("审批已过期")
+    expect(textOf(result)).toContain("重新发起")
+    expect(expired?.payload.reason).toContain("超过有效期 60000 ms")
+    // 留痕在结果之前
+    expect(logged.indexOf(expired as CoreEvent)).toBeLessThan(logged.indexOf(result as CoreEvent))
+  })
+
+  it("findExpiredApproval：缺请求或缺批准都不算过期；只比最后一条请求之后的批准；恰好等于 ttl 不过期", () => {
+    const at = (seq: number, type: string, payload: unknown, atMs: number): Event =>
+      ({
+        id: `e${seq}`,
+        sessionId: SESSION,
+        seq,
+        at: atMs,
+        type,
+        schemaVersion: 1,
+        actor: "system",
+        trust: "system",
+        payload,
+      }) as Event
+    const req = (seq: number, atMs: number) =>
+      at(seq, "core.approval_request", { toolCallId: "c1", policyId: "p", summary: "s" }, atMs)
+    const ok = (seq: number, atMs: number) =>
+      at(seq, "core.approval_decision", { toolCallId: "c1", approved: true, by: "boss" }, atMs)
+    const no = (seq: number, atMs: number) =>
+      at(seq, "core.approval_decision", { toolCallId: "c1", approved: false, by: "boss" }, atMs)
+
+    expect(findExpiredApproval([ok(1, 5000)], "c1", 10)).toBeUndefined()
+    expect(findExpiredApproval([req(1, 0)], "c1", 10)).toBeUndefined()
+    expect(findExpiredApproval([req(1, 0), no(2, 5000)], "c1", 10)).toBeUndefined()
+    expect(findExpiredApproval([req(1, 0), ok(2, 10)], "c1", 10)).toBeUndefined()
+    expect(findExpiredApproval([req(1, 0), ok(2, 11)], "c1", 10)).toEqual({
+      requestedAt: 0,
+      decidedAt: 11,
+      ageMs: 11,
+    })
+    // 批准在请求之前（顺序反了）不算；别的 toolCallId 的批准不算
+    expect(findExpiredApproval([ok(1, 0), req(2, 5)], "c1", 1)).toBeUndefined()
+    expect(
+      findExpiredApproval(
+        [req(1, 0), at(2, "core.approval_decision", { toolCallId: "c2", approved: true, by: "boss" }, 999)],
+        "c1",
+        10,
+      ),
+    ).toBeUndefined()
+  })
+
+  it("规则文案：设了 ttlMs 缺省追加过期说明；宿主自定文案与 false 都不追加；ttlMs 非正数构造即抛", () => {
+    expect(approval().systemPrompt).toBe(APPROVAL_RULES)
+    expect(approval({ ttlMs: 1000 }).systemPrompt).toBe(`${APPROVAL_RULES}\n${APPROVAL_EXPIRY_RULE}`)
+    expect(approval({ ttlMs: 1000, rules: "自定" }).systemPrompt).toBe("自定")
+    expect(approval({ ttlMs: 1000, rules: false }).systemPrompt).toBeUndefined()
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => approval({ ttlMs: bad })).toThrow(RangeError)
+    }
   })
 })

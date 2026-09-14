@@ -15,12 +15,19 @@
  *
  * fail-closed：任何规则求值抛错、`needsApproval` 函数抛错，都按 deny 处理（by = 出错的规则 id），并经 `warn` 告警。
  *
+ * 批准有效期（D3，`ttlMs`）：宿主的批准到得太晚（批准事件的 `at` 减去 `approval_request` 的 `at` 超过 ttl）就不算数——
+ * 留一条 `approval_decision(approved=false, by="approval.expired")` 再 block，模型拿到带说明的错误结果，想做就再调一次、
+ * 重新发起审批。只对"管线本该问人、放行靠的是宿主批准"的调用生效：管线判 allow 的调用本来就不需要批准，过不过期无关。
+ * 时间全部取自时间线上的事件（循环时钟），不读墙钟——同一条日志在哪台机器上回放结论都一样。
+ *
  * 位置：管线跑在哪一步由 Socket 注册顺序决定。**建议放在 sockets 末尾**（至少放在会 rewrite 入参的钩子之后）：
  * 这样判定的是真正要执行的入参；前面的钩子只可能收紧（block / defer），不存在"钩子放行绕过策略"的路径。
  */
 import {
   type BeforeToolDecision,
   BUILTIN_APPROVAL_POLICY,
+  type CoreEventOf,
+  type Event,
   type MaybePromise,
   type Socket,
   type Tool,
@@ -28,7 +35,7 @@ import {
   type ToolContext,
   type TurnContext,
 } from "@reinsjs/core"
-import { APPROVAL_RULES } from "./rules.js"
+import { APPROVAL_EXPIRY_RULE, APPROVAL_RULES } from "./rules.js"
 
 /** 规则看到的一次调用 */
 export interface PolicyCall {
@@ -70,7 +77,13 @@ export interface ApprovalOptions {
   unmatched?: "byRisk" | "ask" | "deny"
   /** 审批摘要里入参 JSON 的最大字符数，超出截断并加省略号。缺省 200 */
   maxSummaryChars?: number
-  /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
+  /**
+   * 批准的有效期（毫秒）。宿主的批准到达时距 `approval_request` 超过它就视为过期：不执行，留一条
+   * `approval_decision(approved=false, by="approval.expired", reason)` 并给模型带说明的错误结果，模型可再调一次重新发起审批。
+   * 比对的是两条事件的 `at`（循环时钟），不读墙钟。缺省不限期。必须是正的有限数。
+   */
+  ttlMs?: number
+  /** 规则提示：缺省内置英文文案（设了 ttlMs 时追加一句过期说明）；传字符串替换（不追加）；false 则不碰系统提示 */
   rules?: string | false
   /** 策略求值异常（fail-closed 记 deny）的告警出口。缺省 console.warn */
   warn?: (message: string) => void
@@ -89,7 +102,47 @@ export const APPROVAL_POLICY_IDS = {
   risk: (level: Tool["risk"]) => `approval.risk.${level ?? "undeclared"}`,
   /** 入参没过工具自己的 validate：不问人、放行给循环以"入参不合法"拒掉（执行不会发生） */
   invalidArgs: "approval.invalid_args",
+  /** 宿主的批准到得太晚（超过 `ttlMs`），按拒绝处理 */
+  expired: "approval.expired",
 } as const
+
+/** 一次过期的批准：请求何时发出、批准何时到、隔了多久 */
+export interface ExpiredApproval {
+  requestedAt: number
+  decidedAt: number
+  ageMs: number
+}
+
+/**
+ * 在时间线里找这次调用的批准是否过期（纯函数）：取最后一条 `approval_request(toolCallId)`，再取它之后最后一条
+ * `approval_decision(toolCallId, approved=true)`，两者 `at` 之差超过 ttl 即过期。缺任何一条都不算过期——
+ * 没有请求就没有起点，没有批准则循环根本不会走到执行这一步。
+ */
+export function findExpiredApproval(
+  timeline: readonly Event[],
+  toolCallId: string,
+  ttlMs: number,
+): ExpiredApproval | undefined {
+  let request: CoreEventOf<"core.approval_request"> | undefined
+  let approvedAt: number | undefined
+  for (const raw of timeline) {
+    const e = raw as CoreEventOf<"core.approval_request"> | CoreEventOf<"core.approval_decision">
+    if (e.type === "core.approval_request" && e.payload.toolCallId === toolCallId) {
+      request = e
+      approvedAt = undefined
+    } else if (
+      e.type === "core.approval_decision" &&
+      e.payload.toolCallId === toolCallId &&
+      e.payload.approved &&
+      request !== undefined
+    ) {
+      approvedAt = e.at
+    }
+  }
+  if (request === undefined || approvedAt === undefined) return undefined
+  const ageMs = approvedAt - request.at
+  return ageMs > ttlMs ? { requestedAt: request.at, decidedAt: approvedAt, ageMs } : undefined
+}
 
 /** 入参过工具的 validate 后的调用；校验抛错返回 undefined。没有 validate 的工具原样返回 */
 function validatedCall(call: PolicyCall): PolicyCall | undefined {
@@ -259,7 +312,17 @@ export function approval(options: ApprovalOptions = {}): Socket {
   const unmatched = options.unmatched ?? "byRisk"
   const maxSummaryChars = options.maxSummaryChars ?? DEFAULT_MAX_SUMMARY_CHARS
   const warn = options.warn ?? ((message: string) => console.warn(message))
-  const rules = options.rules === undefined ? APPROVAL_RULES : options.rules
+  const ttlMs = options.ttlMs
+  if (ttlMs !== undefined && !(Number.isFinite(ttlMs) && ttlMs > 0)) {
+    throw new RangeError(`approval.ttlMs 必须是正的有限数：${String(ttlMs)}`)
+  }
+  // 设了有效期就让模型知道"过期的批准会被拒、可以再调一次"；宿主自定的规则文案不动
+  const rules =
+    options.rules === undefined
+      ? ttlMs === undefined
+        ? APPROVAL_RULES
+        : `${APPROVAL_RULES}\n${APPROVAL_EXPIRY_RULE}`
+      : options.rules
 
   return {
     name: APPROVAL_SOCKET_NAME,
@@ -279,19 +342,33 @@ export function approval(options: ApprovalOptions = {}): Socket {
             `[reins/approval] 策略 ${rule} 求值异常，已按拒绝处理（${name}）：${err instanceof Error ? err.message : String(err)}`,
           ),
       })
+      const deny = (policyId: string, reason: string): BeforeToolDecision => {
+        ctx.emit({
+          type: "core.approval_decision",
+          actor: "system",
+          parentId: call.id,
+          payload: { toolCallId, approved: false, by: policyId, reason },
+        })
+        return { block: reason }
+      }
       switch (outcome.verdict) {
         case "allow":
           return "proceed"
-        case "ask":
+        case "ask": {
+          // 管线要问人，而宿主已经批过（循环会略过这个 defer 直接执行）：批准到得太晚就不算数（D3）。
+          // block 不会被已有批准略过，所以这里拦得住
+          const expired =
+            ttlMs === undefined ? undefined : findExpiredApproval(ctx.timeline, toolCallId, ttlMs)
+          if (expired !== undefined) {
+            return deny(
+              APPROVAL_POLICY_IDS.expired,
+              `审批已过期：请求发出后 ${expired.ageMs} ms 才收到批准，超过有效期 ${ttlMs} ms，未执行。如仍需要，请重新发起这次调用以获取新的审批`,
+            )
+          }
           return { defer: { policyId: outcome.policyId, summary: outcome.summary } }
+        }
         case "deny":
-          ctx.emit({
-            type: "core.approval_decision",
-            actor: "system",
-            parentId: call.id,
-            payload: { toolCallId, approved: false, by: outcome.policyId, reason: outcome.reason },
-          })
-          return { block: outcome.reason }
+          return deny(outcome.policyId, outcome.reason)
       }
     },
   }

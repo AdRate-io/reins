@@ -7,3 +7,6 @@
 export const APPROVAL_RULES = `Tool permissions:
 - Some tool calls require human approval before they run. When that happens the run pauses until a person decides; this is normal, not an error. Do not repeat the call while it is waiting.
 - A call may be denied by policy. A denied call returns an error naming the policy; do not retry it with the same or a disguised input. Explain what you were trying to do and ask the user how to proceed.`
+
+/** 设了 `ttlMs` 时追加：过期的批准会被拒，模型可以再调一次重新发起审批（与"被拒别重试"区分开） */
+export const APPROVAL_EXPIRY_RULE = `- An approval can expire if it arrives too late. The call is then not run and the error says so; unlike a policy denial, you may make the same call again to request a fresh approval.`

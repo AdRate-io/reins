@@ -13,7 +13,7 @@
 - **09-13** Boss 按变更程序把 Skill 支持追加进 0.1：brain 第九个模块 `skills`（菜单进系统提示、`skill_read` 翻书、载体 = 任何 MemoryStore 的只读子集）、brain 首个 `/node` 入口；AdRate 示例从"两份 Skill 全文塞系统提示"改成菜单 + 翻书，两族真模型都先读技能再动手。
 - **09-14** 0.1.0 发布：账户定在 Boss 的投放工具公司名下（GitHub `AdRate-io/reins`、npm 组织 `reinsjs`、版权 NewRate Limited，许可证保持 MIT）；npm 拒绝裸名 `reins` 后总包改名 `@reinsjs/agent`；按值扫全历史发现真实广告主 id 散落十个文件，用 filter-repo 一次换成别名再推送；docs/ 随仓库公开，加了一条公开性规则。11 个包全部在官方源，真实安装冒烟通过。
 
-11 个包、约 3.3 万行 TypeScript、784 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.3 万行 TypeScript、788 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -110,6 +110,7 @@
 - **`fetch_blob` 按"本会话时间线引用过"授权，不按 blob 归属** — fork 会话能读父会话的 blob；未引用的 id 回"不存在"，与真不存在同一句话。
 - **spill 缺 BlobStore 时是"外溢关闭、大结果原样进上下文"，不是截断** — 只告警一次；`resultPolicy.overflow="truncate"` 才截断且向模型明说不可恢复。
 - **approval 放 sockets 末尾，入参先 `validate` 再判定** — 放首位会被后面的 `rewrite` 绕过按入参写的规则；校验不过的调用不问人。allow **不留任何事件**，审计放行只能看 tool_call / tool_result。
+- **`approval({ ttlMs })` 比的是 `approval_request.at` 与宿主批准事件 `at` 之差（循环时钟），不读墙钟；判定挂在 ask 落点、以 deny + block 落地** — 重新 defer 会被"已有批准"略过直接执行，只有 block 拦得住；管线判 allow 的调用不看 ttl；还没批的 pending 不会因为老而过期。
 - **memory / handoff 不默认开，compact 2026-09-10 起推荐默认** — 都是 eval 跑数结论，不是拍脑袋；改缺省先跑 `examples/eval`。
 - **模型看到"已整理过一次"会认定旧细节已丢而拒答，即使原件就在上文** — E3 召回低 3～6 点的机理；解法是让它能取回（清单 + recall），不是删说明。
 - **skills 的载体是 `SkillSource = Pick<MemoryStore, "list" | "read">`，布局 `${root}/<name>/SKILL.md`，缺 source 或无一份合规技能都不注册** — 菜单进 configHash，技能表变了只影响下一 run；`name` 须与目录名一致且匹配 `^[a-z0-9][a-z0-9-]{0,63}$`，不合规的单份跳过、告警一次，不拖垮菜单。
