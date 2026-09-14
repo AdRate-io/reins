@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-**0.1.0 已发布（2026-09-14）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。760 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。下一步从「0.1 之后」取。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。760 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。下一步从「0.1 之后」取。
 
 ## 0.1 之后（纯新增或有外部依赖）
 
@@ -19,5 +19,4 @@
 
 ## 待 Boss 本人操作（不挡开发）
 
-- [ ] GitHub 仓库描述与 topics：`choodie-chen` 只有推送权限，请用 `AdRate-io` 账号在仓库 Settings 里填（描述可用根 package.json 的 description；topics 建议 agent、llm、typescript、event-sourcing、ag-ui、mcp）
 - [ ] npm 组织 `reinsjs` 目前只有 `adrate-io` 一个 owner；若要让别的账号也能发版，在 npmjs.com/org/reinsjs 邀请
