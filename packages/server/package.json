@@ -11,6 +11,14 @@
     "cloudflare-workers"
   ],
   "license": "MIT",
+  "author": "NewRate Limited (https://www.adrate.io)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdRate-io/reins.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/AdRate-io/reins/tree/main/packages/server#readme",
+  "bugs": "https://github.com/AdRate-io/reins/issues",
   "type": "module",
   "sideEffects": false,
   "exports": {

@@ -49,4 +49,4 @@ const stream = chat({
 
 `docs/模块盘点/adapter-tanstack-ai.md` and `docs/技术方案.md` §2 / §11 — in Chinese, at the repository root.
 
-MIT.
+MIT © 2026 NewRate Limited.

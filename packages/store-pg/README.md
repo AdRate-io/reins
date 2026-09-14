@@ -36,4 +36,4 @@ Passes the conformance suite in `@reins/core/testing` (run against PGlite in CI)
 
 `docs/模块盘点/store.md` and `docs/技术方案.md` §5 — in Chinese, at the repository root.
 
-MIT.
+MIT © 2026 NewRate Limited.

@@ -42,4 +42,4 @@ Cloudflare Workers are not a target of this package; Durable Objects SQLite woul
 
 `docs/模块盘点/store.md` and `docs/技术方案.md` §5 — in Chinese, at the repository root.
 
-MIT.
+MIT © 2026 NewRate Limited.

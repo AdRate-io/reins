@@ -10,6 +10,14 @@
     "middleware"
   ],
   "license": "MIT",
+  "author": "NewRate Limited (https://www.adrate.io)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdRate-io/reins.git",
+    "directory": "packages/adapter-tanstack-ai"
+  },
+  "homepage": "https://github.com/AdRate-io/reins/tree/main/packages/adapter-tanstack-ai#readme",
+  "bugs": "https://github.com/AdRate-io/reins/issues",
   "type": "module",
   "sideEffects": false,
   "exports": {

@@ -10,6 +10,14 @@
     "pglite"
   ],
   "license": "MIT",
+  "author": "NewRate Limited (https://www.adrate.io)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdRate-io/reins.git",
+    "directory": "packages/store-pg"
+  },
+  "homepage": "https://github.com/AdRate-io/reins/tree/main/packages/store-pg#readme",
+  "bugs": "https://github.com/AdRate-io/reins/issues",
   "type": "module",
   "sideEffects": false,
   "exports": {

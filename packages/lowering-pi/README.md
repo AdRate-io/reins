@@ -44,4 +44,4 @@ pi-ai declares ten dependencies (≈65 MB installed, about 29 MB of which reins 
 
 `docs/技术方案.md` §11 (loss matrix and landings), `docs/模块盘点/lowering-pi.md`, `spikes/` (upstream behaviour probes) — in Chinese, at the repository root.
 
-MIT.
+MIT © 2026 NewRate Limited.

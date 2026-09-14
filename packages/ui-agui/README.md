@@ -35,4 +35,4 @@ Interrupts carry what a UI needs to answer them: an `approval` has `toolCallId`,
 
 `docs/模块盘点/ui-agui.md` — in Chinese, at the repository root.
 
-MIT.
+MIT © 2026 NewRate Limited.

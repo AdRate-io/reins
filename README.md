@@ -150,4 +150,4 @@ not a constraint on what you may name things. uuid, nanoid, hex and composite id
 
 ## License
 
-MIT
+MIT © 2026 NewRate Limited

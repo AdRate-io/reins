@@ -128,3 +128,7 @@ one-time warning; the original name is used on the wire.
 
 Not in 0.1: sampling, elicitation, resources, prompts, MCP Apps, OAuth flows (bring your own `fetch` or
 `headers`).
+
+## License
+
+MIT © 2026 NewRate Limited.

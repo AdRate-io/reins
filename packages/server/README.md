@@ -62,4 +62,4 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 
 `docs/技术方案.md` §12, `docs/模块盘点/server.md`, `README.md` at the repository root ("Security notes") — in Chinese unless noted.
 
-MIT.
+MIT © 2026 NewRate Limited.

@@ -67,4 +67,4 @@ Whether to call an expert, what to ask, and whether to trust the answer are the 
 
 The design documents are in Chinese under `docs/` at the repository root: `docs/系统全景图.md` (overview), `docs/技术方案.md` (spec), `docs/DECISIONS.md` (why). Package READMEs are in English.
 
-MIT.
+MIT © 2026 NewRate Limited.

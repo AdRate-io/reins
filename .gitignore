@@ -24,3 +24,6 @@ TanStack项目启动资产/
 spikes/mcp-removed-tool-history/out/
 examples/mcp/data/
 examples/team/data/team.pgdata/
+
+# 其他
+AGENTS.md

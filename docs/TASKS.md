@@ -20,7 +20,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 - [x] **R8** pg 用例标题 —— 2026-09-10 改为"json 列往返不改内容，本包刻意不用 jsonb"
 - [x] **`asTool(agent, opts)` 助手** —— 2026-09-10 落地（`reins` 包）：`Interruption` 加 `kind: "subagent"`、`ApprovalDecisionInput.sessionId?`、`ToolContext.decisions? / spend?`、core `subagentPause` 标记；审批冒泡跨进程续跑与预算合算各有用例（core +3、reins +4，695 全绿）；`examples/team` 改用 asTool，手写版留 `subagent-tool.handwritten.ts` 对照。设计见 DECISIONS "asTool" 行、技术方案 §6 补充与 §10.1 落地段。未做：真模型复跑 examples/team（专家全只读，冒泡路径真模型下无从触发）
 - [x] **S1 Skill 支持（Agent Skills 的加载与渐进式披露）** —— 2026-09-13 落地：core `SkillSource` + `Tool.resultTrust`；brain `skills({ source, root?, maxReadChars?, rules? })`（菜单 + `skill_read`，缺 source / 空菜单不注册）、`inlineSkills`、`@reins/brain/node` 的 `fsSkillSource`；memory 的路径规范化与 view 抽成 `shared/` 共用；`examples/adrate` 改成菜单 + 翻书，DeepSeek / Claude 两族真跑都先 `skill_read` 再动手（trust=system），据实测把 `maxReadChars` 缺省定为 40k；+49 用例（751 全绿），`check:dist` 16 入口过。细节：`模块盘点/brain.md` skills 节与决策、技术方案 §9.9"实现"、DECISIONS 2026-09-13 三行、踩坑记录同日两条
-- [ ] **E4** 0.1 发布 —— S1 已落地（2026-09-13），同日两个只读审查子代理（安全 / 正确性、接口 / 文档 / 发布就绪）做完发前审查：无阻断项，5 条应修 + 若干建议逐条核实后全部处置（DECISIONS "S1 发前双审查处置"行，+9 用例，760 全绿，`check:dist` 16 入口过）。2026-09-10 发前准备已做完：11 个包英文 README、changeset → 0.1.0 + CHANGELOG 首条、每包 LICENSE、`pnpm check:dist` 产物自检（15 个入口全过）、根 README 改 0.1.0（DECISIONS "E4" 行）。2026-09-10 下午两份外部审查（cursor / Grok，报告在 `归档/`）逐条核实：修 handler 子代理审批预校验、MCP 连接 close 竞态、`@tanstack/ai` 改 peer、版本常量 0.0.0 → 0.1.0（check:dist 核对）、eval README 假示例、运行时支持措辞、server README 白名单描述等，+7 用例（702 全绿）；lowering-pi 进阶 API 暴露 pi-ai 类型书面豁免（DECISIONS）。**剩下只等 Boss**：GitHub / npm 组织建好后补 package.json 的 `repository` / `homepage`，`git remote add` + push，`pnpm changeset publish`
+- [ ] **E4** 0.1 发布 —— S1 已落地（2026-09-13），同日两个只读审查子代理（安全 / 正确性、接口 / 文档 / 发布就绪）做完发前审查：无阻断项，5 条应修 + 若干建议逐条核实后全部处置（DECISIONS "S1 发前双审查处置"行，+9 用例，760 全绿，`check:dist` 16 入口过）。2026-09-10 发前准备已做完：11 个包英文 README、changeset → 0.1.0 + CHANGELOG 首条、每包 LICENSE、`pnpm check:dist` 产物自检（15 个入口全过）、根 README 改 0.1.0（DECISIONS "E4" 行）。2026-09-10 下午两份外部审查（cursor / Grok，报告在 `归档/`）逐条核实：修 handler 子代理审批预校验、MCP 连接 close 竞态、`@tanstack/ai` 改 peer、版本常量 0.0.0 → 0.1.0（check:dist 核对）、eval README 假示例、运行时支持措辞、server README 白名单描述等，+7 用例（702 全绿）；lowering-pi 进阶 API 暴露 pi-ai 类型书面豁免（DECISIONS）。**剩下只等 Boss**：GitHub 仓库 / npm 组织建好后 `git remote add` + push，`pnpm changeset publish`（`repository` / `homepage` / `author` 2026-09-14 已填，版权归 NewRate Limited，许可证定为保持 MIT）
 
 ## 0.1 之后（纯新增或有外部依赖）
 
@@ -32,8 +32,8 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 
 ## 待 Boss 本人操作（不挡开发，挡发布）
 
-- [ ] 发布前：在 GitHub 创建组织 `reins` 并授权推送（或授权我用现有账号创建并转移）
-- [ ] 发布前：在 npm 创建组织 `reins`
+- [ ] 发布前：用 `AdRate-io` 账号在 GitHub 建公开仓库 `reins`（2026-09-14 定，见 DECISIONS），给我推送权限或本机 `gh auth login`；package.json 的 `repository` / `homepage` 已按 `AdRate-io/reins` 填好
+- [ ] 发布前：用 npm 账号 `adrate-io` 创建组织 `reins`（被占则告诉我，改 `@reinsjs` 一次换掉 11 个包名）；发布当天本机 `npm login`，publish 时输 2FA 验证码
 - [ ] 发布前：源录像 `examples/adrate/recordings/patrol-disable.jsonl` 仍含真实广告主 id / 人名且已在 git 历史里，须换成脱敏版（`examples/eval/fixtures/adrate-patrol/recording.jsonl` 已是脱敏版）或改写历史，定一个。2026-09-13 的 `s1-skills-*.jsonl` / `.html` 三份录像同类（含授权 id、计划名），暂只留本地未提交，同此决定
 
 ## 已完成（2026-09-10，待里程碑收口时迁归档）

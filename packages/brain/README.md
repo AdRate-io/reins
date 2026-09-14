@@ -63,4 +63,4 @@ Any `MemoryStore` (in-memory, `@reins/store-sqlite`, `@reins/store-pg`) is also 
 
 `docs/技术方案.md` §9 (module specs and measurements), `docs/模块盘点/brain.md` (file map), `docs/踩坑记录.md` (pitfalls) — in Chinese, at the repository root.
 
-MIT.
+MIT © 2026 NewRate Limited.
