@@ -32,6 +32,8 @@ Replay a recorded session without a key — the timeline is the only source of t
 node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl --html /tmp/replay.html
 ```
 
+Observing a run needs no hook in-process: `agent.run()` is an async generator that yields every event as it is appended, so `for await (const event of agent.run({ input }))` is the observer. Over HTTP the handler consumes that generator for you and exposes the same stream as `onEvent(event, { sessionId, principal, request })` — see `@reinsjs/server`'s README, "Observability".
+
 ## Packages
 
 | package | what |

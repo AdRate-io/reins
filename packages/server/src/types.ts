@@ -118,6 +118,19 @@ export interface SessionAuthzInput {
   isNew: boolean
 }
 
+/** 传给 `HandlerOptions.onEvent` 的上下文：这条事件属于哪条会话、由谁发起的 run、来自哪个请求。 */
+export interface EventObserverInput {
+  /** 事件所属会话（= run 的会话；子代理会话的事件不经这里，见 `onEvent` 说明） */
+  sessionId: string
+  /** `principal` 钩子的解析结果；没设那个钩子或返回 undefined 时为 undefined（匿名） */
+  principal: Principal | undefined
+  /**
+   * 发起这个 run 的 POST 请求，**只用来读 header**（traceId、request-id、cookie 之类）。
+   * body 早已被 handler 读完，在这里读只会得到空流。
+   */
+  request: Request
+}
+
 export type AgentHandler = (request: Request, ctx?: HandlerContext) => Promise<Response>
 
 export interface HandlerOptions {
@@ -167,4 +180,21 @@ export interface HandlerOptions {
    * GET 重连撞上正在跑的 run 时，补发之后继续实时推。多个 handler 共用同一个进程时可传同一个实例。
    */
   runs?: RunRegistry
+  /**
+   * 旁路观测：经这个 handler 起的 run 每 append 一条事件，就以 seq 顺序调一次。**只观测不改事件**——
+   * 时间线已经写下了，这里拿到的是同一个对象的引用，改它改不了日志，只会让 SSE 订阅者看到与日志不一致的东西。
+   *
+   * 用途是把 HTTP 路径的 run 接到宿主自己的日志 / 追踪：`input.request` 读 traceId、`input.principal` 读 userId。
+   * 进程内直接 `agent.run()` 的不需要它——`runLoop` 本就是逐条 yield 事件的生成器，`for await` 就是观测。
+   *
+   * 边界：
+   * - **只有 live 事件**：补发（POST 带 `lastSeq`、GET 重连）从日志重读的事件不再调，否则同一条事件会被观测两次。
+   * - 只有本会话的事件：`asTool` 子代理跑在自己的会话里，不经 handler，这里看不到它们的内部事件（父会话里的 tool_call / tool_result 看得到）。
+   * - **不挡 run**：先把事件推给 SSE 订阅者再调钩子；返回 promise 的话按事件顺序串成一条链，但 run 不等它就拉下一条事件。
+   *   run 收尾时（result 帧之前、`ActiveRun.done` resolve 之前）等整条链结束，所以 Workers 的 `waitUntil(run.done)` 覆盖到最后一次观测。
+   * - **出错不上抛**：钩子 throw 或 reject 一律不影响 run，经 `warn` 报出，一次 run 只报一次。观测者挂了不该让模型的工作跟着挂。
+   */
+  onEvent?(event: Event, input: EventObserverInput): MaybePromise<void>
+  /** 告警出口（目前只有 `onEvent` 出错这一种）；缺省 console.warn */
+  warn?: (message: string) => void
 }

@@ -1,6 +1,6 @@
 # 模块盘点：`@reinsjs/server`
 
-> 依据 `packages/server/src/` 的实际代码（2026-09-10，`main` @ 9e0b99e）。与 `docs/技术方案.md` §12、根 `README.md` 的 Security notes 相互核对，冲突以代码为准。
+> 依据 `packages/server/src/` 的实际代码（2026-09-14，D2 `onEvent` 落地后）。与 `docs/技术方案.md` §12、根 `README.md` 的 Security notes 相互核对，冲突以代码为准。
 
 ## 1 架构概览
 
@@ -48,14 +48,14 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 | `packages/server/tsconfig.json` | 加了 `types: ["node"]`（供 tsup 为 `./node` 子路径出声明），引用 `../core` |
 | `packages/server/tsup.config.ts` | 两个入口打 ESM + `.d.ts`；打声明时清空 `paths`，否则 core 的类型会被内联而不是保留 import |
 | `packages/server/src/index.ts` | 公开面：`createAgentHandler` / `DEFAULT_HEARTBEAT_MS` / `SESSION_HEADER`、runs 三件套、sse 四件套、`export type * from "./types.js"` |
-| `packages/server/src/types.ts` | 全部公开类型：`AgentDefinition`（= `LoopConfig` 去掉七个按请求填的字段）、`AgentRequestBody`、`StreamItem` / `SseFrame` / `StreamEncoder(Factory)`、`HandlerContext`、`SessionAuthzInput`、`HandlerOptions` |
-| `packages/server/src/handler.ts` | 主体（513 行）：`createAgentHandler` 以及 `SESSION_ID_RE`、`parseBody`、`checkInput`、`lastSeqOf`、`openStream`、`denyBySessionAuthz`、`handleGet`、`handlePost` |
+| `packages/server/src/types.ts` | 全部公开类型：`AgentDefinition`（= `LoopConfig` 去掉七个按请求填的字段）、`AgentRequestBody`、`StreamItem` / `SseFrame` / `StreamEncoder(Factory)`、`HandlerContext`、`SessionAuthzInput`、`EventObserverInput`、`HandlerOptions` |
+| `packages/server/src/handler.ts` | 主体（572 行）：`createAgentHandler` 以及 `SESSION_ID_RE`、`parseBody`、`checkInput`、`lastSeqOf`、`observed`（D2 旁路观测的生成器包装）、`openStream`、`denyBySessionAuthz`、`handleGet`、`handlePost` |
 | `packages/server/src/sse.ts` | `encodeSseFrame`（WHATWG SSE 帧格式，data 一律 `JSON.stringify` 故只需一行）、`SSE_HEARTBEAT`（`": ping"` 注释行）、`SSE_HEADERS`（含 `x-accel-buffering: no` 让 nginx 不缓冲）、`rawEncoder` |
 | `packages/server/src/runs.ts` | 进程内 run 登记：`Channel<T>`（单生产者多消费者、可 `drain()`）、`ActiveRun`（`subscribe` / `broadcast` / `drive` / `abandon` / `done`）、`RunRegistry`（`create` 占名额、结束时只删自己）、`RunConflictError`（code `run_in_progress`） |
 | `packages/server/src/node.ts` | `./node` 子路径：`nodeListener(handler, ctx?)` 把 `IncomingMessage/ServerResponse` 翻成 `Request`/写回响应流；唯一允许出现 `node:*` 的位置（只是 `import type`），`res.on("close")` 时 `reader.cancel()` 让 handler 感知客户端断开 |
 | `packages/server/src/test-utils.ts` | 测试辅助（只被 `*.test.ts` 引用）：`parseFrames`、逐帧读的 `FrameReader`、可控闸门 `gate()`、`postRequest` / `getRequest` / `openReader` 与断言小工具 |
 | `packages/server/src/workers.fixture.ts` | Workers 测试用的 Worker 脚本，也是"在 Workers 上怎么用"的最小示例：模块级 `log` 跨请求存活，`fetch(request, env, ctx)` 直接转交 handler 并统计 `waitUntil` 次数 |
-| `packages/server/src/handler.test.ts`、`src/workers.test.ts` | 测试。覆盖：POST 首轮流式推与 `id` = seq、续聊补发不重复、lastSeq 越界钳位、`deltas:false` 与自定义编码器、GET 重连（`Last-Event-ID` 优先于 query、撞上正在跑的 run 继续推）、同会话第二个 POST 409、发起者断开的 continue / abort 两种行为、审批暂停与跨请求恢复（含带静态贡献 Socket 时 configHash 一致、篡改 state / 指错 decision / 换密钥一律 409 且一条日志不写）、请求校验与 `principal` 钩子、input 草稿白名单（伪造 approval_decision 400、user_message 只取 content、tool_result 只能回填 pending 的客户端工具）、R6 `authorizeSession`（不设钩子不检查、404 且日志一次没读、isNew、抛 Response、POST 时 body 已被读完、fail-closed）、sessionId 字符集 400、真实 node:http 经 TCP 验证"确实在流式推"、miniflare/workerd 上 POST + GET + waitUntil |
+| `packages/server/src/handler.test.ts`、`src/workers.test.ts` | 测试。覆盖：POST 首轮流式推与 `id` = seq、续聊补发不重复、lastSeq 越界钳位、`deltas:false` 与自定义编码器、GET 重连（`Last-Event-ID` 优先于 query、撞上正在跑的 run 继续推）、同会话第二个 POST 409、发起者断开的 continue / abort 两种行为、审批暂停与跨请求恢复（含带静态贡献 Socket 时 configHash 一致、篡改 state / 指错 decision / 换密钥一律 409 且一条日志不写）、请求校验与 `principal` 钩子、input 草稿白名单（伪造 approval_decision 400、user_message 只取 content、tool_result 只能回填 pending 的客户端工具）、R6 `authorizeSession`（不设钩子不检查、404 且日志一次没读、isNew、抛 Response、POST 时 body 已被读完、fail-closed）、sessionId 字符集 400、真实 node:http 经 TCP 验证"确实在流式推"、miniflare/workerd 上 POST + GET + waitUntil、D2 `onEvent`（逐条按 seq 且与日志同引用、带 principal / request、补发与 GET 重连不调、同步抛 / 异步拒都只告警一次且 run 照常、异步钩子不挡 SSE 但 result 帧与名额释放等观测链） |
 
 ## 3 核心流程
 
@@ -96,6 +96,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 6. 有 run：`begun = true`、`plan.begin?.()` 起跑 —— 补发期间客户端就算走了也照跑。先 `sub.drain()` 把攒下的信号推出（`seq <= maxSeq` 的事件跳过，delta 全部丢弃），再 `for await` 实时转发；收到 `result` 或 `error` 即收尾关闭。
 7. `pump()` 抛错（补发读日志失败等）→ `error` 帧 + 关闭；若本连接是发起者且 run 还没开跑，`run.abandon(code, message)` 把名额还回去，否则这条会话会永久 409。
 8. `cancel()`（客户端断开）：清心跳、退订；发起者 + `onDisconnect === "abort"` 时 `run.controller.abort()`（还没开跑也没关系，`runLoop` 拿到的是已中止的 signal → `paused(host)`）。缺省 `"continue"`，run 跑完为止。
+9. **旁路观测**（D2，`observed`）：设了 `options.onEvent` 时，`begin()` 把 `runLoop` 的生成器包一层再交给 `run.drive`。每条事件先 yield（由 `drive` 广播给 SSE 订阅者）再调钩子，钩子的返回值按事件顺序 `then` 成一条链但不 await 就拉下一条；生成器 `finally` 里 `await chain`，所以 `drive` 的 `finish`（result 帧、`run.done`）排在最后一次观测之后。钩子 throw / reject 进同一个 catch → `options.warn`（缺省 console.warn），一次 run 只报一次。补发走 `readEvents`，不经这层。
 
 **帧与响应头**
 
@@ -128,4 +129,5 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 - **上线前审查：input 草稿两道白名单，server 层更严** — 网络端点原样接受任何草稿是实测过的洞（伪造 `approval_decision(approved=true)` 让 pending 调用免审批执行，伪造 `system_note` 带 system 信任，伪造 `compaction` 能藏历史）。审批结论只能走 `decisions`（走 T10 校验）。分两层是因为循环在进程内也可能被宿主拿不可信输入直接调用。
 - **`encode` 是按流的工厂而不是编码器本身** — AG-UI 编码器要把流式增量与随后的完整事件接成同一条消息，是有状态的；多条流会并发交错，状态必须按流隔离。
 - **补发与预校验读日志都经注册表升级（P9）** — `readEvents` / `readTimeline` 都传 `agent.registry ?? createCoreRegistry()`，让流里的事件形状与循环看到的一致；宿主有 `ext.*` 事件时在 definition 里给自己的注册表。
+- **D2 `onEvent` 是消费者侧的旁路，不进 `runLoop`** — `runLoop` 是可整个复制的普通生成器，"观测"本就是消费者拿到每条 yield 这件事；进程内 `agent.run()` 的宿主 `for await` 就是观测，只有 HTTP 路径的消费者是 handler 自己，才需要一个口子。三条边界都是为"旁路"二字：只 live 不 replay（否则同一事件观测两次）、先广播再调钩子且不等它（观测者慢不拖模型）、出错只告警不上抛（观测者挂了不该让模型的工作跟着挂）。唯一等它的地方是 run 收尾——不等的话 Workers 的 `waitUntil(run.done)` 覆盖不到观测者最后一次写入。钩子拿到的是日志里同一个对象的引用，改它改不了日志，只会让 SSE 与日志不一致，文档明说"只观测不改"。
 - **`./node` 子路径是唯一允许 `node:*` 的位置** — 主入口保持纯 Web 标准（工程硬约束）。Hono / TanStack Start / Fastify 自带同类适配，这十几行只给"只想 `node server.ts` 跑起来"的人。

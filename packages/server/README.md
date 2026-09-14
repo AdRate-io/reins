@@ -57,6 +57,29 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 | `onDisconnect` | `"continue"` | or `"abort"` the run when the client goes away |
 | `principal(req)` | — | who is asking; passed to the loop and tools |
 | `authorizeSession(input)` | — | whether they may touch this session (see above) |
+| `onEvent(event, input)` | — | side-channel observer: called once per event a run appends (see below) |
+| `warn(message)` | `console.warn` | where an `onEvent` failure is reported |
+| `runs` | new registry | in-process run registry; share one instance between handlers |
+| `newSessionId()` | uuidv7 | id factory for new sessions |
+
+## Observability
+
+A run is an async generator. In-process, iterating `agent.run()` *is* observing it — every event is yielded the moment it is appended, so there is nothing to hook:
+
+```ts
+for await (const event of agent.run({ input })) log.info({ seq: event.seq, type: event.type })
+```
+
+Over HTTP the consumer of that generator is the handler itself, so it exposes the same stream as a side channel. `onEvent` is called once per event the run appends, in `seq` order, with the session id, the resolved `principal` and the originating `Request` — enough to attach a trace id or a user id to your own logs:
+
+```ts
+createAgentHandler(agent, {
+  onEvent: (event, { sessionId, principal, request }) =>
+    logger.info({ trace: request.headers.get("x-trace-id"), user: principal?.id, sessionId, seq: event.seq, type: event.type }),
+})
+```
+
+It observes, it does not edit: the event is already in the log. Only *live* events are reported — replays (`lastSeq`, `GET` reconnects) are read back from the log and not observed again — and only this session's: a sub-agent started with `asTool` runs in its own session and does not pass through the handler. The hook never slows or breaks the run: the event is pushed to SSE subscribers first, async return values are chained in event order without blocking the loop, and a throw or rejection is reported once per run through `warn`. The run's `result` frame (and `ActiveRun.done`, hence a Worker's `waitUntil`) waits for the chain to settle, so the last observation is flushed before the run is declared finished.
 
 ## Documentation
 

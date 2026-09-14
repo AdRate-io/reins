@@ -15,6 +15,7 @@ import { createAgentHandler, SESSION_HEADER } from "./handler.js"
 import { nodeListener } from "./node.js"
 import { RunRegistry } from "./runs.js"
 import {
+  eventFrames,
   eventsOf,
   type Frame,
   FrameReader,
@@ -937,5 +938,149 @@ describe("流开了之后的失败：200 + error 帧，未开跑的名额归还"
     const again = await handler(postRequest({ sessionId: "s1", input: "再来" }))
     expect(again.status).toBe(200)
     expect(resultOf(parseFrames(await again.text()))?.status).toBe("done")
+  })
+})
+
+describe("D2 旁路观测：onEvent", () => {
+  /** 带凭证与 traceId 的 POST：观测钩子要能从 request 头里读到追踪信息 */
+  function tracedPost(body: unknown, trace: string): Request {
+    return new Request("http://test/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer boss", "x-trace-id": trace },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it("run 追加的每条事件按 seq 顺序调一次，带 sessionId / principal / request；补发与 GET 重连不调", async () => {
+    const seen: { seq: number; type: string; sessionId: string; principal: unknown; trace: string | null }[] =
+      []
+    // 函数剧本：第一轮调工具，第二轮回答，之后每个 run 只说一句
+    const script = (_input: unknown, turn: number): ScriptedTurn =>
+      turn === 0 ? { drafts: [callTool("c1", "add", { a: 2, b: 3 })] } : { drafts: [say(`第 ${turn} 轮`)] }
+    const { handler, log } = setup(
+      script,
+      [addTool],
+      {},
+      {
+        principal: (req) => (req.headers.get("authorization") === "Bearer boss" ? { id: "boss" } : undefined),
+        onEvent: (event, input) => {
+          seen.push({
+            seq: event.seq,
+            type: event.type,
+            sessionId: input.sessionId,
+            principal: input.principal,
+            trace: input.request.headers.get("x-trace-id"),
+          })
+        },
+      },
+    )
+
+    const first = parseFrames(await (await handler(tracedPost({ input: "2+3" }, "t-1"))).text())
+    expect(resultOf(first)?.status).toBe("done")
+    const afterFirst = await logged(log, "fresh")
+    // 与日志逐条对得上：同一批 seq、同一顺序、一次不多一次不少
+    expect(seen.map((s) => s.seq)).toEqual(afterFirst.map((e) => e.seq))
+    expect(seen.map((s) => s.type)).toEqual(afterFirst.map((e) => e.type))
+    expect(seen.every((s) => s.sessionId === "fresh" && s.trace === "t-1")).toBe(true)
+    expect(seen.every((s) => (s.principal as { id: string }).id === "boss")).toBe(true)
+    // 拿到的是日志里那条事件本身（引用同一），钩子不该拿到一份拷贝再"修改成功"
+    expect(eventsOf(first).map((e) => e.seq)).toEqual(seen.map((s) => s.seq))
+
+    // GET 重连从日志补发整条时间线：一条都不再观测
+    const before = seen.length
+    await (await handler(getRequest({ sessionId: "fresh" }))).text()
+    expect(seen.length).toBe(before)
+
+    // 续聊带 lastSeq=0 → 先全量补发再起新 run：只观测新 run 追加的那几条，且 traceId 是第二个请求的
+    const second = parseFrames(
+      await (await handler(tracedPost({ sessionId: "fresh", input: "再来", lastSeq: 0 }, "t-2"))).text(),
+    )
+    expect(resultOf(second)?.status).toBe("done")
+    const all = await logged(log, "fresh")
+    const fresh = seen.slice(before)
+    expect(fresh.map((s) => s.seq)).toEqual(all.slice(afterFirst.length).map((e) => e.seq))
+    expect(fresh.every((s) => s.trace === "t-2")).toBe(true)
+    // 第二条流里补发的那部分（replay）没有进观测
+    expect(eventFrames(second).length).toBeGreaterThan(fresh.length)
+  })
+
+  it("钩子同步抛错或异步拒绝：run 照常跑完、日志完整、result done；只经 warn 报一次", async () => {
+    const warnings: string[] = []
+    let calls = 0
+    const { handler, log } = setup(
+      TWO_TURNS,
+      [addTool],
+      {},
+      {
+        warn: (m) => warnings.push(m),
+        onEvent: (event) => {
+          calls++
+          // 第一条同步抛，其余异步拒绝：两种失败都得进同一个 catch
+          if (event.seq === 1) throw new Error("同步炸")
+          return Promise.reject(new Error("异步炸"))
+        },
+      },
+    )
+    const frames = parseFrames(await (await handler(postRequest({ input: "2+3" }))).text())
+    expect(resultOf(frames)?.status).toBe("done")
+    const all = await logged(log, "fresh")
+    expect(all.map((e) => e.type)).toEqual([
+      "core.tools_bound",
+      "core.user_message",
+      "core.tool_call",
+      "core.tool_result",
+      "core.budget_usage",
+      "core.model_text",
+      "core.budget_usage",
+    ])
+    // 每条事件都调到了（失败不会让后面的事件被跳过），但只告警一次，且点明是第一条
+    expect(calls).toBe(all.length)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain("onEvent")
+    expect(warnings[0]).toContain("#1 core.tools_bound")
+    expect(warnings[0]).toContain("同步炸")
+    // 没有任何一帧是 error：观测者的失败不是 run 的失败
+    expect(frames.some((f) => f.event === "error")).toBe(false)
+  })
+
+  it("异步钩子不挡 run：SSE 事件在钩子完成前就到；但 result 帧等观测链结束、按事件顺序完成", async () => {
+    const g = gate()
+    const completed: number[] = []
+    const { handler, runs } = setup(
+      TWO_TURNS,
+      [addTool],
+      {},
+      {
+        onEvent: async (event) => {
+          // 第一条卡在闸门上；后面的每条都排在它后面（串成链），闸门不开谁都完成不了
+          if (event.seq === 1) await g.wait()
+          completed.push(event.seq)
+        },
+      },
+    )
+    const reader = await openReader(handler(postRequest({ input: "2+3" })))
+    // 闸门没开，run 已经把最后一条模型正文推出来了：观测没有挡住循环
+    const got = await reader.until(
+      (f) => f.event === undefined && (f.data as CoreEvent).type === "core.model_text",
+    )
+    expect(got.length).toBeGreaterThan(0)
+    expect(completed).toEqual([])
+    // 收尾要等链：闸门开之前 result 帧不到、run 名额也还在
+    let resultArrived = false
+    const restPromise = reader.rest().then((rest) => {
+      resultArrived = rest.some((f) => f.event === "result")
+      return rest
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(resultArrived).toBe(false)
+    expect(runs.get("fresh")).toBeDefined()
+    g.open()
+    const rest = await restPromise
+    expect(resultOf(rest)?.status).toBe("done")
+    // 全部事件按 seq 顺序完成观测，一条不少
+    expect(completed).toEqual([1, 2, 3, 4, 5, 6, 7])
+    // run.done 在观测链之后才 resolve，名额随之释放
+    await new Promise((r) => setTimeout(r, 0))
+    expect(runs.get("fresh")).toBeUndefined()
   })
 })

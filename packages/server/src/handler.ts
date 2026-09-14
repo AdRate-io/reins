@@ -13,11 +13,13 @@ import {
   type ContentPart,
   computeConfigHash,
   createCoreRegistry,
+  type Event,
   type EventDraft,
   type EventLog,
   type LoopConfig,
   type Principal,
   pendingToolCalls,
+  type RunResult,
   RunStateError,
   readEvents,
   readTimeline,
@@ -34,6 +36,7 @@ import type {
   AgentDefinition,
   AgentHandler,
   AgentRequestBody,
+  EventObserverInput,
   HandlerContext,
   HandlerOptions,
   SessionAuthzInput,
@@ -220,6 +223,48 @@ function lastSeqOf(request: Request, url: URL): number | string {
   return isNonNegativeInt(n) ? n : "lastSeq 必须是非负整数"
 }
 
+/**
+ * 旁路观测（`HandlerOptions.onEvent`）：把 run 追加的每条事件依次交给钩子，不改事件、不挡 run。
+ *
+ * - **先 yield 再调钩子**：yield 出去的事件由 `ActiveRun.drive` 广播给 SSE 订阅者，钩子在那之后才跑，SSE 时延不受观测者影响。
+ * - **异步返回值按事件顺序串成一条链**，但拉下一条事件不等它——观测是旁路，宿主的日志服务慢不该拖慢模型。
+ *   `finally` 里等整条链结束：生成器返回之后 `drive` 才 `finish`，所以 result 帧与 `run.done` 都排在最后一次观测之后，
+ *   Workers 的 `waitUntil(run.done)` 就能覆盖到观测者的收尾写入。
+ * - **钩子出错一律不上抛**：throw（同步）与 reject（异步）都进同一个 catch，经 `warn` 报出，一次 run 只报一次
+ *   （观测者若每条事件都失败，刷屏没有信息量）。run 本身照常跑到底。
+ *
+ * 为什么包在生成器外面而不是塞进 `runLoop`：runLoop 是可整个复制的普通生成器，观测本就是"消费者拿到每条 yield"这件事；
+ * 进程内 `agent.run()` 的宿主 `for await` 就是观测，只有 HTTP 路径的消费者是 handler 自己，才需要这个口子。
+ */
+async function* observed(
+  gen: AsyncGenerator<Event, RunResult>,
+  hook: NonNullable<HandlerOptions["onEvent"]>,
+  input: EventObserverInput,
+  warn: (message: string) => void,
+): AsyncGenerator<Event, RunResult> {
+  let chain: Promise<void> = Promise.resolve()
+  let warned = false
+  const report = (event: Event, err: unknown) => {
+    if (warned) return
+    warned = true
+    const reason = err instanceof Error ? err.message : String(err)
+    warn(
+      `[reins/server] onEvent 钩子出错（会话 ${input.sessionId}，事件 #${event.seq} ${event.type}）：${reason}。run 不受影响；本次 run 后续出错不再告警`,
+    )
+  }
+  try {
+    while (true) {
+      const step = await gen.next()
+      if (step.done) return step.value
+      const event = step.value
+      yield event
+      chain = chain.then(() => hook(event, input)).catch((err: unknown) => report(event, err))
+    }
+  } finally {
+    await chain
+  }
+}
+
 interface StreamPlan {
   sessionId: string
   fromSeq: number
@@ -239,6 +284,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
   const newSessionId = options.newSessionId ?? (() => uuidv7())
   const runs = options.runs ?? new RunRegistry()
+  const warn = options.warn ?? ((message: string) => console.warn(message))
   const { log } = agent
   // 补发与预校验读日志都经注册表升级（P9），与循环看到的形状一致；宿主有 ext.* 事件时在 definition 里给自己的注册表
   const registry = agent.registry ?? createCoreRegistry()
@@ -501,7 +547,11 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
         ...(principal !== undefined ? { principal } : {}),
         ...(deltas ? { onDelta: (delta) => run.broadcast({ kind: "delta", delta }) } : {}),
       })
-      void run.drive(gen)
+      // 旁路观测只包 live 的 run，补发走 readEvents 不经这里
+      const onEvent = options.onEvent
+      void run.drive(
+        onEvent !== undefined ? observed(gen, onEvent, { sessionId, principal, request }, warn) : gen,
+      )
     }
     return openStream({ sessionId, fromSeq, log, run, begin, starter: true })
   }

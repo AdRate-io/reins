@@ -13,7 +13,7 @@
 - **09-13** Boss 按变更程序把 Skill 支持追加进 0.1：brain 第九个模块 `skills`（菜单进系统提示、`skill_read` 翻书、载体 = 任何 MemoryStore 的只读子集）、brain 首个 `/node` 入口；AdRate 示例从"两份 Skill 全文塞系统提示"改成菜单 + 翻书，两族真模型都先读技能再动手。
 - **09-14** 0.1.0 发布：账户定在 Boss 的投放工具公司名下（GitHub `AdRate-io/reins`、npm 组织 `reinsjs`、版权 NewRate Limited，许可证保持 MIT）；npm 拒绝裸名 `reins` 后总包改名 `@reinsjs/agent`；按值扫全历史发现真实广告主 id 散落十个文件，用 filter-repo 一次换成别名再推送；docs/ 随仓库公开，加了一条公开性规则。11 个包全部在官方源，真实安装冒烟通过。
 
-11 个包、约 3.3 万行 TypeScript、780 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
+11 个包、约 3.3 万行 TypeScript、784 个用例。**我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
 ## 两条宪法（一切设计的依据，不可动）
 
@@ -145,6 +145,7 @@
 - **POST 不读 `Last-Event-ID`，只认 `body.lastSeq`；409 `run_in_progress` 是唯一带 `X-Reins-Session` 的错误响应** — 客户端别统一从错误头取会话 id。
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
 - **handler 对 `decisions` 的预校验必须与 runLoop 同一口径：只有本会话的结论对照本会话 pending，带子会话 id 的原样下传** — 两处一分叉，asTool 的 HTTP 续跑必 409（2026-09-10 双审查抓到）；同一个判定写两处就要有一条跨包用例锁住。
+- **`onEvent` 只观测 live 事件（补发不调），先广播再调、不等它拉下一条；但 run 的 result 帧与 `run.done` 等整条观测链结束** — 异步钩子挂住不返回，run 就永不结束、会话永久 409，与工具 execute 挂住同一后果；钩子抛错只经 `warn` 报一次，不进日志、不影响 run。
 - **续跑带新 `input` 时，`input` 只接受白名单事件草稿** — 伪造 `approval_decision` 曾可绕过审批（2026-09-09 审查修），循环层与 server 层两道白名单都不能删。
 
 ### 存储

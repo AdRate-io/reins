@@ -68,6 +68,27 @@ describe("createAgent", () => {
     expect(text).toContain('"type":"core.tool_call"')
   })
 
+  it("handler.onEvent 经 createAgent 透传：HTTP 路径的每条事件都能旁路观测", async () => {
+    const seen: string[] = []
+    const agent = createAgent({
+      model: scripted(),
+      tools: [add],
+      store: memoryStore(),
+      handler: { heartbeatMs: 0, onEvent: (e, input) => void seen.push(`${input.sessionId}:${e.type}`) },
+    })
+    const res = await agent.handler(
+      new Request("http://t/agent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "s1", input: "2+3" }),
+      }),
+    )
+    await res.text()
+    expect(seen[0]).toBe("s1:core.tools_bound")
+    expect(seen).toContain("s1:core.tool_result")
+    expect(seen.at(-1)).toBe("s1:core.budget_usage")
+  })
+
   it("run()：不经 HTTP 直接跑，缺省新建会话，事件都落在 store.log 里", async () => {
     const store = memoryStore()
     const agent = createAgent({ model: scripted(), tools: [add], store })
