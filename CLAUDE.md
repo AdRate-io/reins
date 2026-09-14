@@ -54,7 +54,7 @@
 ## 包全景
 
 ```
-reins（createAgent）─ @reinsjs/server ─ @reinsjs/ui-agui
+@reinsjs/agent（createAgent，总包）─ @reinsjs/server ─ @reinsjs/ui-agui
                           │
                      @reinsjs/core ←── @reinsjs/brain（九个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）

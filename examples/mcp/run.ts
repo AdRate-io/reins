@@ -10,7 +10,7 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { createInterface } from "node:readline/promises"
-import type { ApprovalDecisionInput, Event, RunResult } from "reins"
+import type { ApprovalDecisionInput, Event, RunResult } from "@reinsjs/agent"
 import { buildAgent, closeMcp, readMcpConfig } from "./agent.ts"
 import { startInventoryServer } from "./server.ts"
 

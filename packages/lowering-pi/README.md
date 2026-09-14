@@ -8,7 +8,7 @@ pnpm add @reinsjs/lowering-pi
 
 ```ts
 import { anthropic, openai } from "@reinsjs/lowering-pi"
-import { createAgent } from "reins"
+import { createAgent } from "@reinsjs/agent"
 
 const claude = anthropic("claude-opus-5", { apiKey: process.env.ANTHROPIC_API_KEY! })
 const gpt = openai("gpt-5.5", { apiKey: process.env.OPENAI_API_KEY!, baseUrl: "https://gateway.example/v1" })

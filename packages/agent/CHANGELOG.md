@@ -1,4 +1,4 @@
-# reins
+# @reinsjs/agent
 
 ## 0.1.0
 

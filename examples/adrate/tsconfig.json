@@ -14,7 +14,7 @@
   ],
   "references": [
     {
-      "path": "../../packages/reins"
+      "path": "../../packages/agent"
     },
     {
       "path": "../../packages/brain"

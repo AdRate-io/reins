@@ -68,7 +68,7 @@
 ### 5.1 五分钟体验
 
 ```ts
-import { createAgent, memoryStore } from "reins"
+import { createAgent, memoryStore } from "@reinsjs/agent"
 import { anthropic } from "@reinsjs/lowering-pi"
 
 const agent = createAgent({

@@ -18,7 +18,7 @@ import { PGlite } from "@electric-sql/pglite"
 import { approval, budget, compact, memory, perception, pins } from "@reinsjs/brain"
 import { anthropic } from "@reinsjs/lowering-pi"
 import { pgStores } from "@reinsjs/store-pg"
-import { type Agent, createAgent, defineTool, type ToolContext } from "reins"
+import { type Agent, createAgent, defineTool, type ToolContext } from "@reinsjs/agent"
 import { expertTool } from "./subagent-tool.ts"
 
 const here = (p: string) => new URL(p, import.meta.url)

@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process"
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { createInterface } from "node:readline/promises"
-import type { ApprovalDecisionInput, Event, RunResult } from "reins"
+import type { ApprovalDecisionInput, Event, RunResult } from "@reinsjs/agent"
 import { agent } from "./agent.ts"
 
 const args = process.argv.slice(2)

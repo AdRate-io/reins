@@ -7,7 +7,7 @@ them exactly like in-process tools. The server never learns that reins exists.
 ```ts
 import { httpTransport, mcpTools } from "@reinsjs/tools-mcp"
 import { approval, spill } from "@reinsjs/brain"
-import { createAgent } from "reins"
+import { createAgent } from "@reinsjs/agent"
 
 const github = mcpTools({
   transport: httpTransport({

@@ -9,7 +9,7 @@
 | `agents.ts` | 三个 `createAgent`：`analyst`（两个只读数据工具）、`writer`（品牌语气指南）、`lead`（编排者，工具表上只有 `ask_analyst` / `ask_writer`）。同一套 `pgStores`，记忆按 `namespace` 前缀分角色再分用户 |
 | `run.ts` | 跑一条真实任务 → 审批逐条问（`--approve-all` 全批；专家冒泡上来的审批带子会话 id 答回去）→ 父会话与顺着结果找到的每个子会话各写一份 JSONL |
 | `replay.ts` | **验收**：只凭父 JSONL 找到并校验每个子 JSONL，不要 key、不碰库 |
-| `subagent-tool.handwritten.test.ts` | 手写版五件事的机制用例（脚本化降级层，确定性）；asTool 的用例在 `packages/reins/src/as-tool.test.ts` |
+| `subagent-tool.handwritten.test.ts` | 手写版五件事的机制用例（脚本化降级层，确定性）；asTool 的用例在 `packages/agent/src/as-tool.test.ts` |
 | `data/catalog.json` | 8 个 SKU 的库存与六周销量 |
 
 ```bash

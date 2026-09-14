@@ -18,7 +18,7 @@
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { aliasTable, jsonValuesAt, matchStrings, parseEventsJsonl, type Replacement, scrubEvents, toEventsJsonl, unspillRecording } from "@reinsjs/eval"
-import type { Event } from "reins"
+import type { Event } from "@reinsjs/agent"
 
 const here = (p: string) => new URL(p, import.meta.url)
 const RAW = (name: string) => here(`./recordings/raw/${name}.jsonl`)

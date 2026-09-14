@@ -9,7 +9,7 @@ pnpm add @reinsjs/brain
 ```ts
 import { approval, budget, compact, memory, perception, pins, skills, spill } from "@reinsjs/brain"
 import { fsSkillSource } from "@reinsjs/brain/node"
-import { createAgent } from "reins"
+import { createAgent } from "@reinsjs/agent"
 
 const agent = createAgent({
   model,

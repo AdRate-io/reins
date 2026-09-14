@@ -19,7 +19,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { defineTool, type Tool, type ToolContext } from "reins"
+import { defineTool, type Tool, type ToolContext } from "@reinsjs/agent"
 
 const run = promisify(execFile)
 

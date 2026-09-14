@@ -18,7 +18,7 @@ import {
   type ReplayedTurn,
   replayTurns,
   toolSpecOf,
-} from "reins"
+} from "@reinsjs/agent"
 import { pathToFileURL } from "node:url"
 
 const [, , input, ...rest] = process.argv

@@ -17,7 +17,7 @@ import { approval, budget, compact, handoff, inlineSkills, memory, perception, p
 import { anthropic } from "@reinsjs/lowering-pi"
 import { sqliteStores } from "@reinsjs/store-sqlite"
 import { openSqlite } from "@reinsjs/store-sqlite/node"
-import { createAgent } from "reins"
+import { createAgent } from "@reinsjs/agent"
 import { advertiserId } from "./local.ts"
 import { adrateTools } from "./tools.ts"
 

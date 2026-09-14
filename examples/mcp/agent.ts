@@ -12,7 +12,7 @@ import { anthropic } from "@reinsjs/lowering-pi"
 import { sqliteStores } from "@reinsjs/store-sqlite"
 import { openSqlite } from "@reinsjs/store-sqlite/node"
 import { httpTransport, type McpToolsSocket, mcpTools } from "@reinsjs/tools-mcp"
-import { type Agent, createAgent, defineTool } from "reins"
+import { type Agent, createAgent, defineTool } from "@reinsjs/agent"
 
 const here = (p: string) => new URL(p, import.meta.url)
 

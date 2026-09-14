@@ -8,7 +8,7 @@
  */
 import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { createCoreRegistry, type Event, InMemoryEventLog } from "reins"
+import { createCoreRegistry, type Event, InMemoryEventLog } from "@reinsjs/agent"
 import { childSessionsOf, type ExpertOutcome } from "./subagent-tool.ts"
 
 const file = process.argv[2]

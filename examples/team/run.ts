@@ -8,7 +8,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises"
 import { createInterface } from "node:readline/promises"
-import type { ApprovalDecisionInput, Event, Interruption, RunResult } from "reins"
+import type { ApprovalDecisionInput, Event, Interruption, RunResult } from "@reinsjs/agent"
 import { closeStore, EXPERT_TOOL_NAMES, lead, store } from "./agents.ts"
 import { childSessionsOf } from "./subagent-tool.ts"
 

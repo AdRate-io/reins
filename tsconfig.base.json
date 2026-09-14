@@ -28,7 +28,7 @@
       "@reinsjs/store-sqlite/node": ["./packages/store-sqlite/src/node.ts"],
       "@reinsjs/store-pg": ["./packages/store-pg/src/index.ts"],
       "@reinsjs/adapter-tanstack-ai": ["./packages/adapter-tanstack-ai/src/index.ts"],
-      "reins": ["./packages/reins/src/index.ts"],
+      "@reinsjs/agent": ["./packages/agent/src/index.ts"],
       "@reinsjs/tools-mcp": ["./packages/tools-mcp/src/index.ts"],
       "@reinsjs/tools-mcp/node": ["./packages/tools-mcp/src/node.ts"],
       "@reinsjs/ui-agui": ["./packages/ui-agui/src/index.ts"]

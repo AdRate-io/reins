@@ -1,5 +1,5 @@
 {
-  "name": "reins",
+  "name": "@reinsjs/agent",
   "version": "0.1.0",
   "description": "reins — hand the reins to the model. createAgent() + re-exports of @reinsjs/core, @reinsjs/server and @reinsjs/ui-agui",
   "keywords": [
@@ -18,9 +18,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AdRate-io/reins.git",
-    "directory": "packages/reins"
+    "directory": "packages/agent"
   },
-  "homepage": "https://github.com/AdRate-io/reins/tree/main/packages/reins#readme",
+  "homepage": "https://github.com/AdRate-io/reins/tree/main/packages/agent#readme",
   "bugs": "https://github.com/AdRate-io/reins/issues",
   "type": "module",
   "sideEffects": false,

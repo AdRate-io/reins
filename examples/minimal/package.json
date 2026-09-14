@@ -13,7 +13,7 @@
     "@reinsjs/lowering-pi": "workspace:*",
     "@reinsjs/server": "workspace:*",
     "@reinsjs/ui-agui": "workspace:*",
-    "reins": "workspace:*"
+    "@reinsjs/agent": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

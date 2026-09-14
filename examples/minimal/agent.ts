@@ -5,7 +5,7 @@
  * 上多用户的生产路由前，按根 README「Security notes」补 `handler: { principal, authorizeSession }` 并换真密钥。
  */
 import { anthropic } from "@reinsjs/lowering-pi"
-import { createAgent, defineTool, memoryStore } from "reins"
+import { createAgent, defineTool, memoryStore } from "@reinsjs/agent"
 
 const getWeather = defineTool<{ city: string }>({
   name: "get_weather",

@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { anthropic } from "@reinsjs/lowering-pi"
-import { toolSpecOf } from "reins"
+import { toolSpecOf } from "@reinsjs/agent"
 import { adrateTools } from "./tools.ts"
 
 const withTools = process.argv.includes("tools")

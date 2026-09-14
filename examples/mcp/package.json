@@ -13,7 +13,7 @@
     "@reinsjs/lowering-pi": "workspace:*",
     "@reinsjs/store-sqlite": "workspace:*",
     "@reinsjs/tools-mcp": "workspace:*",
-    "reins": "workspace:*"
+    "@reinsjs/agent": "workspace:*"
   },
   "devDependencies": {
     "@modelcontextprotocol/server": "2.0.0",

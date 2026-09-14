@@ -20,7 +20,7 @@ export default defineConfig({
       { find: "@reinsjs/adapter-tanstack-ai", replacement: src("adapter-tanstack-ai/src/index.ts") },
       { find: "@reinsjs/tools-mcp/node", replacement: src("tools-mcp/src/node.ts") },
       { find: "@reinsjs/tools-mcp", replacement: src("tools-mcp/src/index.ts") },
-      { find: "reins", replacement: src("reins/src/index.ts") },
+      { find: "@reinsjs/agent", replacement: src("agent/src/index.ts") },
       { find: "@reinsjs/ui-agui", replacement: src("ui-agui/src/index.ts") },
     ],
   },

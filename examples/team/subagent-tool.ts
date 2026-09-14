@@ -6,7 +6,7 @@
  * - 子 run 暂停等审批时，父 run 整体 paused 把审批带给宿主（手写版只能把 paused 当 isError 交给父模型）；
  * - 子 run 的 token 计入父 run 的预算，父的 budget 模块按总账拦（手写版只把用量写进结果给模型看）。
  */
-import { type Agent, asTool, type SubagentOutcome, subagentOutcomesOf, type Tool } from "reins"
+import { type Agent, asTool, type SubagentOutcome, subagentOutcomesOf, type Tool } from "@reinsjs/agent"
 
 export interface ExpertToolOptions {
   /** 模型看到的工具名，如 ask_analyst */

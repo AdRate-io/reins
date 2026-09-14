@@ -9,7 +9,7 @@
   },
   "include": ["*.ts"],
   "references": [
-    { "path": "../../packages/reins" },
+    { "path": "../../packages/agent" },
     { "path": "../../packages/lowering-pi" },
     { "path": "../../packages/server" },
     { "path": "../../packages/ui-agui" }

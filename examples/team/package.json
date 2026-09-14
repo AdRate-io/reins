@@ -13,7 +13,7 @@
     "@reinsjs/brain": "workspace:*",
     "@reinsjs/lowering-pi": "workspace:*",
     "@reinsjs/store-pg": "workspace:*",
-    "reins": "workspace:*"
+    "@reinsjs/agent": "workspace:*"
   },
   "devDependencies": {
     "@reinsjs/core": "workspace:*",

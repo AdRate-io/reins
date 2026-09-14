@@ -8,7 +8,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
-import type { Event, RunResult } from "reins"
+import type { Event, RunResult } from "@reinsjs/agent"
 import { agent } from "./agent.ts"
 
 if (!process.env.ANTHROPIC_API_KEY) {

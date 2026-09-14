@@ -1,7 +1,7 @@
 /**
  * reins —— 总包。装上、配自己的模型，就得到一辆有驾驭经验的车（PRD §5.1）：
  *
- *   import { createAgent, memoryStore } from "reins"
+ *   import { createAgent, memoryStore } from "@reinsjs/agent"
  *   import { anthropic } from "@reinsjs/lowering-pi"
  *   const agent = createAgent({ model: anthropic("claude-opus-5", { apiKey }), tools, store: memoryStore() })
  *   export const POST = agent.handler

@@ -18,7 +18,7 @@
  * 深度守卫：ctx 带不到调用深度，用工具表约束 —— 专家 agent 的工具表里不放 expertTool 类工具（见 agents.ts）。
  * 每次调用一个全新的子会话；要跟同一个专家多轮对话，把 childSessionId 回传成 sessionId 即可（本示例不做）。
  */
-import { type Agent, type BudgetUsagePayload, defineTool, type RunResult, type Tool, type ToolResult } from "reins"
+import { type Agent, type BudgetUsagePayload, defineTool, type RunResult, type Tool, type ToolResult } from "@reinsjs/agent"
 
 export interface ExpertToolOptions {
   /** 模型看到的工具名，如 ask_analyst */

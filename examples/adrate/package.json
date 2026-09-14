@@ -14,7 +14,7 @@
     "@reinsjs/brain": "workspace:*",
     "@reinsjs/lowering-pi": "workspace:*",
     "@reinsjs/store-sqlite": "workspace:*",
-    "reins": "workspace:*"
+    "@reinsjs/agent": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -1,6 +1,6 @@
-# 模块盘点：`reins`（总包）
+# 模块盘点：`@reinsjs/agent`（总包，目录 `packages/agent`，2026-09-14 前叫 `reins`）
 
-> 依据 `packages/reins/src/` 的实际代码（2026-09-10，`main` @ 9e0b99e）。与 `docs/技术方案.md` §12 的 T14 条目核对，冲突以代码为准。
+> 依据 `packages/agent/src/` 的实际代码（2026-09-10，`main` @ 9e0b99e）。与 `docs/技术方案.md` §12 的 T14 条目核对，冲突以代码为准。
 
 ## 1 架构概览
 
@@ -28,13 +28,13 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 
 | 路径 | 职责 |
 | --- | --- |
-| `packages/reins/package.json` | 包元数据：包名就是 `reins`，单个 exports，依赖 `@reinsjs/core` + `@reinsjs/server` + `@reinsjs/ui-agui`（无 lowering-pi） |
-| `packages/reins/tsconfig.json` / `tsup.config.ts` | 单入口打 ESM + `.d.ts`；打声明时清空 `paths`，否则依赖包的类型会被内联而不是保留 import |
-| `packages/reins/src/index.ts` | 门面：`export * from` core / server / ui-agui 三包，加上 `createAgent`（`Agent` / `CreateAgentOptions` / `RunOptions`）与 `asTool`（`AsToolOptions` / `SubagentOutcome` / `SubagentUsage` / `SubagentTask` / `subagentOutcomesOf` / `usageOf` / `defaultChildSessionId` / `SUBAGENT_TASK_SCHEMA`） |
-| `packages/reins/src/as-tool.ts` | `asTool(agent, opts)`：把 `Agent` 包成 `Tool`；子 run 暂停 → 返回 core `subagentPause`（审批冒泡），子 `budget_usage` → `ctx.spend`（预算合算），principal / signal（`abort`）下传，结果 JSON `SubagentOutcome` 带 childSessionId；`usageOf` 从子时间线算用量，`subagentOutcomesOf` 从父时间线找子会话 |
-| `packages/reins/src/as-tool.test.ts` | 4 个用例：子等审批 → 父 paused(kind=subagent) 且父日志无 tool_result → 新实例同一存储、结论带子 sessionId 续跑，子先续跑父再拿结果；拒绝；`spend` 合算（onTurnEnd 看到父 + 子总账，父 budget_usage 不掺）；自定义 childSessionId 的多轮 |
-| `packages/reins/src/create-agent.ts` | 全部实现：`CreateAgentOptions`、`RunOptions`、`Agent` 三个接口，`createAgent` 与内部的 `stripUndefined` |
-| `packages/reins/src/create-agent.test.ts` | 测试。覆盖：handler 缺省 AG-UI 编码（POST 一次拿到 `RUN_STARTED … RUN_FINISHED`）、`handler` 选项可覆盖编码改推原始事件、`run()` 不经 HTTP 直接跑且缺省新建会话、事件都落进 `store.log` |
+| `packages/agent/package.json` | 包元数据：包名就是 `reins`，单个 exports，依赖 `@reinsjs/core` + `@reinsjs/server` + `@reinsjs/ui-agui`（无 lowering-pi） |
+| `packages/agent/tsconfig.json` / `tsup.config.ts` | 单入口打 ESM + `.d.ts`；打声明时清空 `paths`，否则依赖包的类型会被内联而不是保留 import |
+| `packages/agent/src/index.ts` | 门面：`export * from` core / server / ui-agui 三包，加上 `createAgent`（`Agent` / `CreateAgentOptions` / `RunOptions`）与 `asTool`（`AsToolOptions` / `SubagentOutcome` / `SubagentUsage` / `SubagentTask` / `subagentOutcomesOf` / `usageOf` / `defaultChildSessionId` / `SUBAGENT_TASK_SCHEMA`） |
+| `packages/agent/src/as-tool.ts` | `asTool(agent, opts)`：把 `Agent` 包成 `Tool`；子 run 暂停 → 返回 core `subagentPause`（审批冒泡），子 `budget_usage` → `ctx.spend`（预算合算），principal / signal（`abort`）下传，结果 JSON `SubagentOutcome` 带 childSessionId；`usageOf` 从子时间线算用量，`subagentOutcomesOf` 从父时间线找子会话 |
+| `packages/agent/src/as-tool.test.ts` | 4 个用例：子等审批 → 父 paused(kind=subagent) 且父日志无 tool_result → 新实例同一存储、结论带子 sessionId 续跑，子先续跑父再拿结果；拒绝；`spend` 合算（onTurnEnd 看到父 + 子总账，父 budget_usage 不掺）；自定义 childSessionId 的多轮 |
+| `packages/agent/src/create-agent.ts` | 全部实现：`CreateAgentOptions`、`RunOptions`、`Agent` 三个接口，`createAgent` 与内部的 `stripUndefined` |
+| `packages/agent/src/create-agent.test.ts` | 测试。覆盖：handler 缺省 AG-UI 编码（POST 一次拿到 `RUN_STARTED … RUN_FINISHED`）、`handler` 选项可覆盖编码改推原始事件、`run()` 不经 HTTP 直接跑且缺省新建会话、事件都落进 `store.log` |
 
 ## 3 核心流程
 

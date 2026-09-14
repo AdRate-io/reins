@@ -1,5 +1,5 @@
 /** 不经模型直接调用生成的工具，核对子进程与信封解析：node examples/adrate/smoke.ts */
-import { InMemoryEventLog } from "reins"
+import { InMemoryEventLog } from "@reinsjs/agent"
 import { advertiserId, smokeCampaignId } from "./local.ts"
 import { adrateTools } from "./tools.ts"
 

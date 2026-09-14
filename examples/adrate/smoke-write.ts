@@ -1,5 +1,5 @@
 /** 写路径冒烟（只对测试广告主）：对一条已经 DISABLE 的计划再发一次 DISABLE，核对 --set 小写映射与幂等键透传。node examples/adrate/smoke-write.ts */
-import { InMemoryEventLog } from "reins"
+import { InMemoryEventLog } from "@reinsjs/agent"
 import { advertiserId, smokeCampaignId } from "./local.ts"
 import { adrateTools } from "./tools.ts"
 

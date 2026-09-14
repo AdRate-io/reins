@@ -32,7 +32,7 @@ const EXPECTED = {
   "@reinsjs/adapter-tanstack-ai": ["reinsMiddleware", "reinsApprovalInterrupt"],
   "@reinsjs/tools-mcp": ["mcpTools", "httpTransport"],
   "@reinsjs/tools-mcp/node": ["stdioTransport"],
-  reins: ["createAgent", "asTool", "runLoop"],
+  "@reinsjs/agent": ["createAgent", "asTool", "runLoop"],
 }
 
 /** 允许出现 `node:` 的入口：只有 /node 子路径 */
