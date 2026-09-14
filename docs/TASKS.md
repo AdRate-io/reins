@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。760 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。下一步从「0.1 之后」取。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。760 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。下一步从「0.2 候选」D1 起（Boss 定：不等 AdRate 对 0.1 的实测；0.1.x 补丁并行）。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
