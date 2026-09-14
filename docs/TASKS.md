@@ -32,7 +32,7 @@ M0、M1、M2 主体已完成（2026-09-08 ～ 09-10）：11 个包、约 3.2 万
 
 ## 待 Boss 本人操作（不挡开发，挡发布）
 
-- [x] GitHub 公开仓库 `AdRate-io/reins` 已建（2026-09-14，带一条初始化提交，推送时以本地 main 覆盖）。**仍需**：本机 `gh auth login` 或 `git` 凭证能推该仓库
+- [x] GitHub：`AdRate-io/reins` 已推送（2026-09-14，77 提交，作者为 Boss 个人账号 `choodie-chen` 的 noreply 邮箱；本机 `gh` 已登录该账号，仓库描述与 topics 已设）
 - [x] npm 组织已建：`reins` 不可用，建了 `reinsjs`（2026-09-14），11 个包已改名 `@reinsjs/*`、总包仍 `reins`。**仍需**：发布当天本机 `npm login`（账号 `adrate-io`），publish 时输 2FA 验证码
 - [x] 录像脱敏 —— 2026-09-14 Boss 批准方案 A：全历史 `filter-repo --replace-text` 换掉 236 个真实值（零残留、72 提交不变），S1 三份录像脱敏入库，原件只在本地 `recordings/raw/`，备份 bundle 在仓库外。细节：DECISIONS 同日「录像脱敏处置」行、踩坑记录同日、`examples/adrate/README.md`「录像与脱敏」
 
