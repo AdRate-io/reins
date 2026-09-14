@@ -5,13 +5,28 @@
     "outDir": ".tsc",
     "composite": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["*.ts"],
+  "include": [
+    "*.ts"
+  ],
   "references": [
-    { "path": "../../packages/reins" },
-    { "path": "../../packages/brain" },
-    { "path": "../../packages/lowering-pi" },
-    { "path": "../../packages/store-sqlite" }
+    {
+      "path": "../../packages/reins"
+    },
+    {
+      "path": "../../packages/brain"
+    },
+    {
+      "path": "../../packages/lowering-pi"
+    },
+    {
+      "path": "../../packages/store-sqlite"
+    },
+    {
+      "path": "../../packages/eval"
+    }
   ]
 }

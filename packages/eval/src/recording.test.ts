@@ -41,12 +41,12 @@ function recording(opts: { gap?: boolean } = {}): Event[] {
     ev({
       type: "core.user_message",
       actor: "user",
-      payload: { content: [{ type: "text", text: "go 7000000000000000001" }] },
+      payload: { content: [{ type: "text", text: "go 7123456789012345678" }] },
     }),
     ev({
       type: "core.tool_call",
       actor: "model",
-      payload: { toolCallId: "c1", name: "list", args: { advId: "7000000000000000001" } },
+      payload: { toolCallId: "c1", name: "list", args: { advId: "7123456789012345678" } },
     }),
     ev({
       type: "core.tool_result",
@@ -102,7 +102,7 @@ function recording(opts: { gap?: boolean } = {}): Event[] {
     ev({
       type: "core.model_text",
       actor: "model",
-      payload: { text: "广告主 7000000000000000001 的 name_01 团队" },
+      payload: { text: "广告主 7123456789012345678 的 Acme 团队" },
     }),
   ]
 }
@@ -152,14 +152,14 @@ describe("scrubEvents：JSON 文本层逐字替换", () => {
   it("入参、结果、正文一起换；长串优先；命中数按规则顺序返回", () => {
     const events = unspillRecording(recording()).events
     const { events: out, hits } = scrubEvents(events, [
-      ["7000000000000000001", "7000000000000000001"],
-      ["name_01", "user_1"],
-      ["name_01 团队", "Team 1"], // 更长，先换，所以上一条在正文里不命中
+      ["7123456789012345678", "7000000000000000001"],
+      ["Acme", "user_1"],
+      ["Acme 团队", "Team 1"], // 更长，先换，所以上一条在正文里不命中
       ["nothing-here", "x"],
     ])
     const text = JSON.stringify(out)
-    expect(text).not.toContain("7000000000000000001")
-    expect(text).not.toContain("name_01")
+    expect(text).not.toContain("7123456789012345678")
+    expect(text).not.toContain("Acme")
     // id 在 user_message、tool_call 入参、model_text 各出现一次
     expect(hits).toEqual([3, 0, 1, 0])
     const call = out[1] as CoreEventOf<"core.tool_call">
@@ -184,7 +184,7 @@ describe("收集待脱敏的值", () => {
       ["b", "v2"],
     ])
     const events = recording()
-    expect(matchStrings(events, /\b7\d{18}\b/)).toEqual(["7000000000000000001"])
+    expect(matchStrings(events, /\b7\d{18}\b/)).toEqual(["7123456789012345678"])
     seq = 0
     const withJson = [
       ev({
@@ -197,13 +197,13 @@ describe("收集待脱敏的值", () => {
           content: [
             {
               type: "text",
-              text: '{"ok":true,"data":{"subject":{"nickname":"name_01"},"team":{"teamName":"AdRate 团队"}}}',
+              text: '{"ok":true,"data":{"subject":{"nickname":"Acme"},"team":{"teamName":"AdRate 团队"}}}',
             },
           ],
         },
       }),
       ev({ type: "core.model_text", actor: "model", payload: { text: "not json {nickname: nope}" } }),
     ]
-    expect(jsonValuesAt(withJson, ["nickname", "teamName"])).toEqual(["name_01", "AdRate 团队"])
+    expect(jsonValuesAt(withJson, ["nickname", "teamName"])).toEqual(["Acme", "AdRate 团队"])
   })
 })

@@ -18,6 +18,7 @@ import { anthropic } from "@reinsjs/lowering-pi"
 import { sqliteStores } from "@reinsjs/store-sqlite"
 import { openSqlite } from "@reinsjs/store-sqlite/node"
 import { createAgent } from "reins"
+import { advertiserId } from "./local.ts"
 import { adrateTools } from "./tools.ts"
 
 const here = (p: string) => new URL(p, import.meta.url)
@@ -71,7 +72,7 @@ function adrateSkills() {
   return inlineSkills(Object.fromEntries(entries))
 }
 
-export const ADVERTISER_ID = "7000000000000000001"
+export const ADVERTISER_ID = advertiserId()
 
 const ROLE = `你是 AdRate（TikTok 广告投放工具）的运营助手，替 Owner 完成需要很多步的广告账户操作。
 工作方式：

@@ -7,7 +7,8 @@
   "scripts": {
     "sync": "node sync.ts",
     "tools": "node tools.ts",
-    "run": "node run.ts"
+    "run": "node run.ts",
+    "scrub": "node scrub.ts"
   },
   "dependencies": {
     "@reinsjs/brain": "workspace:*",
@@ -16,6 +17,7 @@
     "reins": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "@reinsjs/eval": "workspace:*"
   }
 }

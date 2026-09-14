@@ -12,7 +12,7 @@ import {
   type ToRequestInput,
 } from "@reinsjs/core"
 import { callTool, type Script, ScriptedLowering, say } from "@reinsjs/core/testing"
-import { noneArm, runEval } from "@reinsjs/eval"
+import { noneArm, runEval, jsonValuesAt } from "@reinsjs/eval"
 import { describe, expect, it } from "vitest"
 import { adratePatrolFixtures, auditCompletion, disableCompletion, loadRecording, reportTextOf, seedOf, worldOf } from "./fixture.ts"
 
@@ -75,9 +75,11 @@ describe("世界：从脱敏录像里长出来", () => {
     expect(ADV).toMatch(/^7\d{18}$/)
     // 14 个被拒的停投 + 1 个重试也被拒 + 1 个按键对账查不到 = 16 对
     expect(world.recording.length - world.replayable.length).toBe(2 * 16)
-    // 录像里不再有真实 id / 人名
+    // 录像里不再有真实 id / 人名：广告主 id 与身份类字段只剩 E2 的别名形态（真实值不能写进仓库，只能按形态断言）
     const text = JSON.stringify(world.recording)
-    expect(text).not.toMatch(/7000000000000000001|name_01|dailihu/)
+    for (const id of new Set(text.match(/\b7\d{18}\b/g))) expect(id).toMatch(/^7000000000000000\d{3}$/)
+    for (const name of jsonValuesAt(world.recording, ["nickname", "teamName", "advertiserName", "displayName"]))
+      expect(name).toMatch(/^name_\d{2}$/)
     expect(suite.tools.stats.spilled).toBe(0)
     expect(suite.tools.stats.unanswered).toBe(0)
     expect(suite.tools.all.map((t) => t.name)).toEqual([

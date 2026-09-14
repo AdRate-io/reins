@@ -39,6 +39,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/reins
     devDependencies:
+      '@reinsjs/eval':
+        specifier: workspace:*
+        version: link:../../packages/eval
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1

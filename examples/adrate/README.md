@@ -21,6 +21,8 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
   模型缺省经 aireiter 网关的 claude-opus-5，`REINS_PROVIDER=deepseek` 走 DeepSeek 直连（多轮请求在网关上会被掐断，dogfood 用 DeepSeek）。
 - `run.ts`：跑一条任务，审批逐条问 y/n（`--approve-all` 全批），结束写 JSONL 并用 `examples/minimal/replay.ts --agent` 生成回放页面。
 - `probe.ts`：排障用，单独打一次模型请求。
+- `local.ts`：测试广告主 id 等本地专用值的唯一读取处（环境变量或 gitignore 的密钥文件）。
+- `scrub.ts`：把 `recordings/raw/` 的真实录像脱敏成公开版并重生成回放页面。
 
 ## 技能改造后的真跑：只读巡检（2026-09-13，S1，`recordings/s1-skills-{deepseek,claude}.jsonl` / `.html`）
 
@@ -33,7 +35,15 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
 | DeepSeek，缺省改为 40k | 同上 | `adrate-ads` 一次读到 355 行，未外溢 | 29 条事件，按 `adrate-ads` 技能"定不了授权就列候选问 Owner 一次，绝不猜"停下来问 Owner |
 
 两族都在动手前先翻书，验收过；两族都不按截断提示续读"先读再动手"的说明书，所以 `skill_read` 的缺省上限从 16k 改成 40k（DECISIONS 2026-09-13、踩坑记录同日）。
-录像 `s1-skills-*.jsonl` / `.html` 只在本地（含真实授权 id 与计划名），与 `patrol-disable.jsonl` 一样等 Boss 的脱敏决定后再入库。
+录像 `s1-skills-*.jsonl` / `.html` 是脱敏版（见下文「录像与脱敏」）。
+
+## 录像与脱敏
+
+`recordings/*.jsonl` / `.html` 都是脱敏版，由 `scrub.ts` 从 `recordings/raw/`（已 gitignore，只在本地）生成：广告主 id、计划 id、请求 id、
+Command / 凭证 id、人名 / 团队名 / 广告主名 / 授权账号名换成等长别名（口径 DECISIONS 2026-09-09 E2），同一个值在所有录像与
+`examples/eval/fixtures/adrate-patrol` 里是同一个别名。测试广告主 id、冒烟用计划 id
+等本地专用值只在根目录 `模型API测试信息.md`（gitignore）或环境变量里，由 `local.ts` 读取，源码与文档里出现的都是别名。
+重新脱敏：`node examples/adrate/scrub.ts`（需要 raw/ 与 AdRate CLI，回放页面用 `examples/minimal/replay.ts` 重生成）。
 
 ## 第一条真实长任务：巡检降本（2026-09-08，`recordings/patrol-disable.jsonl` / `.html`）
 

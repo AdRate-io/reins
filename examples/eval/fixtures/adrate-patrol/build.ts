@@ -1,5 +1,5 @@
 /**
- * 把 examples/adrate 的真实录像 `patrol-disable.jsonl`（B11 巡检降本，2026-09-08）整理成可公开的 fixture 素材：
+ * 把 examples/adrate 的真实录像 `recordings/raw/patrol-disable.jsonl`（B11 巡检降本，2026-09-08；raw/ 只在本地）整理成可公开的 fixture 素材：
  *
  *   node examples/eval/fixtures/adrate-patrol/build.ts
  *
@@ -28,7 +28,8 @@ import {
 import { adrateTools } from "../../../adrate/tools.ts"
 
 const here = (p: string) => new URL(p, import.meta.url)
-const SOURCE = here("../../../adrate/recordings/patrol-disable.jsonl")
+// 真实录像只在本地 raw/（gitignore，2026-09-14 起），仓库里的 recordings/patrol-disable.jsonl 已是脱敏版；重建 fixture 需先从备份取回 raw
+const SOURCE = here("../../../adrate/recordings/raw/patrol-disable.jsonl")
 
 /** 录像里出现过、要给模型的工具（fetch_blob 是脑子的，不在其列；wait_seconds 在 fixture 里合成） */
 export const TOOL_NAMES = [
