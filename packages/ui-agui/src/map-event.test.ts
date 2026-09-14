@@ -171,3 +171,12 @@ describe("字段细节", () => {
     expect(out[0]).toMatchObject({ type: "CUSTOM", name: "core.approval_request", value: e })
   })
 })
+
+describe("工具定义引用段（L1）", () => {
+  it("partsToText 把引用段展开成文本，不算 dropped", () => {
+    const out = partsToText([
+      { type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } },
+    ])
+    expect(out).toEqual({ text: '### g\ndg\nInput schema: {"type":"object"}', dropped: [] })
+  })
+})

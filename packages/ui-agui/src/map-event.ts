@@ -12,7 +12,13 @@
  *
  * 内容片段只有文本能进 AG-UI 的消息正文；图片以占位文本代替并在 metadata.reins.dropped 里声明（P7：有损必声明）。
  */
-import type { ContentPart, CoreEventPayloads, CoreEventType, Event } from "@reinsjs/core"
+import {
+  type ContentPart,
+  type CoreEventPayloads,
+  type CoreEventType,
+  type Event,
+  renderToolReference,
+} from "@reinsjs/core"
 import type { AguiEvent, AguiEventType, ReinsMetadata } from "./types.js"
 
 /** 每种事件会翻成哪些 AG-UI 事件类型（按顺序）；测试据此逐条核对 */
@@ -53,6 +59,7 @@ export function partsToText(parts: readonly ContentPart[]): { text: string; drop
   const text = parts
     .map((p) => {
       if (p.type === "text") return p.text
+      if (p.type === "tool_reference") return renderToolReference(p)
       dropped.push(`image:${p.mime}`)
       return `[图片 ${p.mime}]`
     })

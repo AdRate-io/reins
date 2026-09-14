@@ -54,7 +54,10 @@ export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     ),
   ],
   "core.tool_result": [
-    exact("function_call_output", "按 call_id 对应；文本 output 字符串，带图片时 output 为内容块数组"),
+    exact(
+      "function_call_output",
+      "按 call_id 对应；文本 output 字符串，带图片时 output 为内容块数组；工具引用段展开成文本（Responses 无延迟加载落点）",
+    ),
     lossy(
       "function_call_output",
       "isError 以 [tool error] 前缀表达（协议没有错误位），或不可信内容转义，或模型不接受图片而换成占位文本",

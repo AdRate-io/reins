@@ -56,9 +56,9 @@ export type Event<T extends string = string, P = unknown> = EventBase & {
 
 /**
  * 内容片段。用户消息、工具结果都由它组成；投影/降级时再翻译成各家 API 的 content block。
- * 第一版只有文本与图片；大结果不塞进片段，走 tool_result.spilled 外溢到 BlobStore。
+ * 文本、图片，以及"工具定义引用"（L1）；大结果不塞进片段，走 tool_result.spilled 外溢到 BlobStore。
  */
-export type ContentPart = TextPart | ImagePart
+export type ContentPart = TextPart | ImagePart | ToolReferencePart
 
 export interface TextPart {
   type: "text"
@@ -70,6 +70,25 @@ export interface ImagePart {
   mime: string
   /** base64 编码的图片字节 */
   data: string
+}
+
+/**
+ * 工具定义引用（L1，2026-09-15）：`tool_find` 这类"取回工具"的结果用它表达"这几件工具从现在起可用"。
+ * 带完整定义快照，日志自足（宪法二：模型可见的一切都在日志里）；翻译时按能力分两路——
+ * 支持原生延迟加载的线（Anthropic `defer_loading`）只发 `tool_reference` 块、由厂商就地展开、工具表整段不变；
+ * 其余线用 `renderToolReference` 展开成文本，信息等价。宿主经 HTTP 送来的用户消息不接受这种段（server 白名单）。
+ */
+export interface ToolReferencePart {
+  type: "tool_reference"
+  name: string
+  description: string
+  /** JSON Schema 对象，与 Tool.inputSchema 同形 */
+  inputSchema: Record<string, unknown>
+}
+
+/** 引用段展开成文本的唯一写法：非原生线的降级层、UI、投影估算都调它，别各自拼 */
+export function renderToolReference(part: ToolReferencePart): string {
+  return `### ${part.name}\n${part.description.trim()}\nInput schema: ${JSON.stringify(part.inputSchema)}`
 }
 
 /** 各 actor 的默认信任等级；工厂函数在未显式给出 trust 时使用。 */

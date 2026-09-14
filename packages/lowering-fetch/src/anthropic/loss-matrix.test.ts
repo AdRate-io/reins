@@ -2,7 +2,13 @@
  * 有损声明测试（与 Chat 线、lowering-pi 的 T8 同形）：每种事件的每个变体在 Anthropic 线上的实际落点必须是矩阵声明过的，
  * 且矩阵里每个声明落点至少被一个变体命中（没有死条目）。变体覆盖 S1 摆放的每种情形与 thinking 的四种来源。
  */
-import { type CoreEventType, createCoreEvent, createCoreRegistry, type Event } from "@reinsjs/core"
+import {
+  type CoreEventType,
+  createCoreEvent,
+  createCoreRegistry,
+  type Event,
+  type ToolSpec,
+} from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { declaredLandings, LOSS_MATRIX } from "../index.js"
 import { FetchLowering } from "../lowering.js"
@@ -27,6 +33,8 @@ const lowering = new FetchLowering({ apiKey: () => "k", models: [COMPAT] })
 interface Variant {
   label: string
   events: Event[]
+  /** 本次请求的工具表（L1 引用变体需要：引用只能指向表里的工具） */
+  tools?: ToolSpec[]
 }
 
 function variants(api: string, model: { provider: string; id: string }): Variant[] {
@@ -65,6 +73,12 @@ function variants(api: string, model: { provider: string; id: string }): Variant
   const result = (id: string, content: unknown[] = [{ type: "text", text: "r" }], isError = false) =>
     mk("core.tool_result", { toolCallId: id, name: "f", content, isError })
   const note = (t = "n") => mk("core.system_note", { kind: "perception", text: t })
+  const sysResult = (content: unknown[]) =>
+    mk(
+      "core.tool_result",
+      { toolCallId: "c1", name: "tool_find", content, isError: false },
+      { trust: "system" },
+    )
   return [
     { label: "user_message", events: [user()] },
     {
@@ -165,8 +179,31 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       events: [user(), mk("core.error", { category: "provider", message: "m", retryable: false })],
     },
     { label: "ext 事件", events: [user(), mk("ext.host_ping", { n: 1 })] },
+    // L1：工具定义引用（有原生能力的模型：exact tool-reference / lossy tool-reference / lossy tool_result；无能力或 untrusted：exact tool_result）
+    {
+      label: "tool_result 只有工具引用（已绑定、system 信任）",
+      events: [user(), call("c1"), sysResult([refG])],
+      tools: specs,
+    },
+    {
+      label: "tool_result 工具引用 + 文本（system 信任）",
+      events: [user(), call("c1"), sysResult([{ type: "text", text: "Loaded" }, refG])],
+      tools: specs,
+    },
+    { label: "tool_result 工具引用未绑定（system 信任）", events: [user(), call("c1"), sysResult([refG])] },
+    {
+      label: "tool_result 工具引用但结果 untrusted",
+      events: [user(), call("c1"), result("c1", [refG])],
+      tools: specs,
+    },
   ]
 }
+
+const refG = { type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } }
+const specs: ToolSpec[] = [
+  { name: "f", description: "d", inputSchema: { type: "object" } },
+  { name: "g", description: "dg", inputSchema: { type: "object" }, deferLoading: true },
+]
 
 const TARGETS = [
   {
@@ -191,7 +228,11 @@ describe("Anthropic 有损矩阵 — 实际落点必须是声明过的", () => {
     describe(target.label, () => {
       for (const v of variants(target.api, target.model)) {
         it(v.label, () => {
-          const req = lowering.toRequest({ events: v.events, model: target.model })
+          const req = lowering.toRequest({
+            events: v.events,
+            model: target.model,
+            ...(v.tools ? { tools: v.tools } : {}),
+          })
           expect(req.landings).toHaveLength(v.events.length)
           expect(req.landings.map((l) => l.eventId)).toEqual(v.events.map((e) => e.id))
           for (const landing of req.landings) {
@@ -208,7 +249,11 @@ describe("Anthropic 有损矩阵 — 实际落点必须是声明过的", () => {
     const seen = new Set<string>()
     for (const target of TARGETS) {
       for (const v of variants(target.api, target.model)) {
-        for (const l of lowering.toRequest({ events: v.events, model: target.model }).landings) {
+        for (const l of lowering.toRequest({
+          events: v.events,
+          model: target.model,
+          ...(v.tools ? { tools: v.tools } : {}),
+        }).landings) {
           const key = l.type.startsWith("ext.") ? "ext.*" : l.type
           seen.add(`${key}|${l.kind}|${l.landing}`)
         }

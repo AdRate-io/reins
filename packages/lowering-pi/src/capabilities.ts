@@ -43,6 +43,8 @@ function inferCapabilities(model: PiModel, requestOptions: Record<string, unknow
     api: model.api,
     thinkingReplay: model.reasoning,
     parallelTools: true,
+    // pi-ai 的请求整形改不了，defer_loading / tool_reference 没有落点（L1）：引用段展开成文本、deferLoading 的工具不发
+    deferredTools: false,
     images: model.input.includes("image"),
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxTokens,

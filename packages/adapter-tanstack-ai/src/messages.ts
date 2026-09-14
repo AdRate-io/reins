@@ -24,6 +24,7 @@ import {
   markUntrustedText,
   needsUntrustedMark,
   type ContentPart as ReinsPart,
+  renderToolReference,
   type ToolCallPayload,
   untrustedSourceOf,
 } from "@reinsjs/core"
@@ -274,7 +275,11 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
 }
 
 function textOf(parts: readonly ReinsPart[]): string {
-  return parts.map((p) => (p.type === "text" ? p.text : `[image ${p.mime}]`)).join("\n")
+  return parts
+    .map((p) =>
+      p.type === "text" ? p.text : p.type === "tool_reference" ? renderToolReference(p) : `[image ${p.mime}]`,
+    )
+    .join("\n")
 }
 
 // ---- 入口：客户端历史 → 事件草稿 ----

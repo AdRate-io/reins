@@ -631,6 +631,17 @@ describe("input 草稿的服务端白名单（上线前审查修复）", () => {
       postRequest({ sessionId: "s2", input: { type: "core.user_message", payload: { content: "hi" } } }),
     )
     expect(bad.status).toBe(400)
+    // 工具定义引用段只属于工具结果（L1），客户端送来的用户消息不收 → 400
+    const ref = await handler(
+      postRequest({
+        sessionId: "s3",
+        input: {
+          type: "core.user_message",
+          payload: { content: [{ type: "tool_reference", name: "g", description: "d", inputSchema: {} }] },
+        },
+      }),
+    )
+    expect(ref.status).toBe(400)
   })
 
   it("tool_result 草稿：只能回填 pending 的客户端工具；服务端工具 400、非 pending 409", async () => {

@@ -56,7 +56,10 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
   ],
   "core.tool_call": [exact("tool_calls", "arguments 为 JSON 字符串")],
   "core.tool_result": [
-    exact("tool", "role:tool 消息，紧跟带 tool_calls 的 assistant"),
+    exact(
+      "tool",
+      "role:tool 消息，紧跟带 tool_calls 的 assistant；工具引用段展开成文本（Chat 无延迟加载落点）",
+    ),
     lossy("tool", "isError 以 [tool error] 前缀表达（tool 消息没有错误位），或不可信内容转义"),
     lossy("tool-text-only", "tool 消息只收文本，图片换成占位文本", "结果里有图片"),
   ],

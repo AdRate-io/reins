@@ -53,7 +53,7 @@
 | `src/models.ts` | `ModelRef` → pi-ai `Model`：内置只挂 `anthropic.models` / `openai.models` 两张静态表，宿主模型经 `ModelDefinition` → `definitionToModel` 补齐；不支持的 provider / api 在这里抛 `LoweringError` |
 | `src/capabilities.ts` | 按模型 id 正则与 requestOptions 推断 `LoweringCapabilities`（`midConversationSystem` / `taskBudget` / `thinkingReplay` …），宿主声明的 `CapabilityOverrides` 覆盖推断结果 |
 | `src/factories.ts` | 一行拿到"模型 + 降级层"的 `anthropic(id, opts)` / `openai(id, opts)`，返回 core 的 `BoundModel`；带 `baseUrl` 即按 `ModelDefinition` 登记走代理/网关 |
-| `src/to-request.ts` | 核心翻译：`eventsToContext` 把事件流分组成三角色消息，同时逐条记 `LandingRecord`；后移队列（`deferred` / `awaiting`）在这里 |
+| `src/to-request.ts` | 核心翻译：`eventsToContext` 把事件流分组成三角色消息，同时逐条记 `LandingRecord`；后移队列（`deferred` / `awaiting`）在这里；L1：`tool_reference` 段展开成文本（pi-ai 请求整形改不了，无 `defer_loading` 落点）、`deferLoading` 的工具不发，能力位 `deferredTools` 恒假 |
 | `src/system-note.ts` | system_note 的第二跳：内部标记常量与包裹函数、Anthropic 请求体改写与归位算法（含缓存断点三种处置）、OpenAI Responses 改写 |
 | `src/from-stream.ts` | 回程：`draftsOf` 把 pi-ai `AssistantMessage` 的内容块变成事件草稿，`consumeStream` 消费事件流、分发增量、收尾产出 `LoweringOutcome` |
 | `src/loss-matrix.ts` | `LOSS_MATRIX`（api → 事件 type → 可能落点）与 `declaredLandings` 查询；这是"禁止静默丢弃"的合同文本 |

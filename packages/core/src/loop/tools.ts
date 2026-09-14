@@ -23,16 +23,39 @@ export function defineTool<TInput>(tool: Tool<TInput>): Tool {
   return tool as Tool
 }
 
-/** 工具声明的模型可见部分 */
+/** 工具声明的模型可见部分（刻意单参：常被 `tools.map(toolSpecOf)` 调用，多一个参数就会吃进下标） */
 export function toolSpecOf(tool: Tool): ToolSpec {
   return { name: tool.name, description: tool.description, inputSchema: tool.inputSchema }
 }
 
-function isContentPart(x: unknown): x is ContentPart {
+/** 带"声明但不载入"标记的规格（L1）：runLoop 按 BeforeModelPatch.deferredTools 对本轮工具表逐件调 */
+export function deferredToolSpecOf(tool: Tool, deferred: boolean): ToolSpec {
+  return deferred ? { ...toolSpecOf(tool), deferLoading: true } : toolSpecOf(tool)
+}
+
+/** 工具返回值里能认出的内容段：文本、图片、工具定义引用（L1）。宿主经 HTTP 送来的用户消息另有白名单（server），不含引用段 */
+export function isContentPart(x: unknown): x is ContentPart {
   if (typeof x !== "object" || x === null) return false
-  const p = x as { type?: unknown; text?: unknown; mime?: unknown; data?: unknown }
+  const p = x as {
+    type?: unknown
+    text?: unknown
+    mime?: unknown
+    data?: unknown
+    name?: unknown
+    description?: unknown
+    inputSchema?: unknown
+  }
   if (p.type === "text") return typeof p.text === "string"
   if (p.type === "image") return typeof p.mime === "string" && typeof p.data === "string"
+  if (p.type === "tool_reference") {
+    return (
+      typeof p.name === "string" &&
+      typeof p.description === "string" &&
+      typeof p.inputSchema === "object" &&
+      p.inputSchema !== null &&
+      !Array.isArray(p.inputSchema)
+    )
+  }
   return false
 }
 

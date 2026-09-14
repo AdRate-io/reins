@@ -10,7 +10,14 @@
  * - assistant 的 content 是单个字符串（DeepSeek 只接受 string | null）——同一轮多段正文合并，lossy(merged-text)；
  * - tool 消息没有错误位——isError 以文本前缀表达，lossy；tool 消息只收文本——图片换成占位文本，lossy。
  */
-import type { ContentPart, Event, LandingRecord, LoweringCapabilities, ToolSpec } from "@reinsjs/core"
+import {
+  type ContentPart,
+  type Event,
+  type LandingRecord,
+  type LoweringCapabilities,
+  renderToolReference,
+  type ToolSpec,
+} from "@reinsjs/core"
 import {
   DEFERRED_NOTE,
   ESCAPED_NOTE,
@@ -89,6 +96,7 @@ function userContent(
   let imagesDropped = false
   const out: ChatContentPart[] = parts.map((p) => {
     if (p.type === "text") return { type: "text", text: p.text }
+    if (p.type === "tool_reference") return { type: "text", text: renderToolReference(p) }
     if (!images) {
       imagesDropped = true
       return { type: "text", text: IMAGE_OMITTED }
@@ -105,6 +113,7 @@ function toolContent(parts: readonly ContentPart[]): { text: string; imagesDropp
   const text = parts
     .map((p) => {
       if (p.type === "text") return p.text
+      if (p.type === "tool_reference") return renderToolReference(p)
       imagesDropped = true
       return TOOL_IMAGE_OMITTED
     })
@@ -215,13 +224,15 @@ export function encodeChatRequest(input: ChatEncodeInput): {
 
   // 宿主选项里的 tools 不透传：工具表只由 input.tools 决定，没有时也不能让宿主塞一份进来
   const { tools: _tools, ...passthrough } = input.requestOptions ?? {}
+  // Chat 没有"声明但不载入"的落点：deferLoading 的工具不发（模型看不见也调不了，与过滤同义；L1）
+  const shownTools = (input.tools ?? []).filter((t) => t.deferLoading !== true)
   const body: ChatRequestBody = {
     ...passthrough,
     model: model.id,
     messages,
-    ...(input.tools && input.tools.length > 0
+    ...(shownTools.length > 0
       ? {
-          tools: input.tools.map(
+          tools: shownTools.map(
             (t): ChatTool => ({
               type: "function",
               function: { name: t.name, description: t.description, parameters: t.inputSchema },

@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**lowering-fetch F0～F4 全部完成（2026-09-15）**：三条线真模型各臂全通、最严档 workerd 实测 15/15、changeset 已备，随下次 `changeset version` 与 0.2 一起发；新宿主推荐 fetch 版，pi 版并存。下一步是「0.1 之后」的 lazy-tools provider 原生路径（在 fetch 版里做）。1185 个用例全绿。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 等 AdRate 升 Node 22 后跑第一轮真实接入、把问题一起打进去再发（0.1.x 补丁并行）。**lowering-fetch F0～F4 全部完成（2026-09-15）**：三条线真模型各臂全通、最严档 workerd 实测 15/15、changeset 已备，随下次 `changeset version` 与 0.2 一起发；新宿主推荐 fetch 版，pi 版并存。**L1 lazy-tools 原生路径完成（2026-09-15）**：fetch 版 Anthropic 线取回工具不再打掉缓存前缀（spike 取回后第 2 请求 cache_read Haiku 8497 / Opus 4062，老路子 0），core / brain / lowering-fetch / lowering-pi / adapter / ui-agui 各有 changeset 待 `changeset version`。1218 个用例全绿。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
@@ -21,9 +21,9 @@
 ## 0.1 之后（纯新增或有外部依赖）
 
 - [ ] 四环境验证：Bun / Deno / Vercel Edge 未实测（edge-runtime-check 只测了 Cloudflare workerd）——验证不改接口
-- [ ] tools-mcp 后续：官方 Anthropic 直连对"历史含已移除工具"的接受度未测（无 key；DeepSeek Anthropic 协议与 OpenAI Responses 已实测接受）；OAuth 流程、sampling / elicitation / resources / prompts 待真需求
+- [ ] tools-mcp 后续：OAuth 流程、sampling / elicitation / resources / prompts 待真需求（"历史含已移除工具"官方 Anthropic 已于 2026-09-15 经 CF 网关补测接受，见 `spikes/l1-deferred-tools/` P8）
 - [ ] memory 挂载表（共享只读 + 私有可写，技术方案 §9.6）——等团队场景真出现"同时挂两块"再做
-- [ ] lazy-tools 的 provider 原生路径（**排在 lowering-fetch F4 之后**，在 fetch 版里做，pi 版请求整形改不了）：Anthropic tool search / `defer_loading` 把取回的工具定义注入 messages 而不改 tools 块，避开取回后的缓存整段重写（D1 spike 实测 Claude 上频繁换任务贵 1.7 倍）——降级层优化，`lazyTools()` 接口不变；MCP 工具也想懒发现须先给 `SocketSetup` 加"此前已并入的工具"
+- [x] **L1 lazy-tools 的 provider 原生路径**（2026-09-15）：core `ContentPart` 加 `tool_reference` 段（带定义快照）、`ToolSpec.deferLoading` / `LoweringCapabilities.deferredTools` / `BeforeModelPatch.deferredTools`；lazy-tools 按能力位分原生 / 过滤两路；fetch 版 Anthropic 线 `defer_loading` + `tool_reference` 块（GA 无 beta 头，Haiku 4.5 起），厂商规矩落进 encoder；其余线与 pi 版展开成文本、不发 deferLoading 的工具。spike：取回后第 2 请求 cache_read Haiku 8497 / Opus 4062，老路子归零；端到端 Haiku / Opus 各 9/9。`lazyTools()` 接口不变。+33 用例，1218 全绿；MCP 工具懒发现仍待 `SocketSetup` 加"此前已并入的工具"
 - [ ] 运行时告警与构造期错误文案英文化（全包十几处字符串，含 memory / spill / budget / skills）——审查指出英文 README + 中文告警对非中文用户是死路；0.1 保持中文（DECISIONS 2026-09-13）
 
 ## 待 Boss 本人操作（不挡开发）

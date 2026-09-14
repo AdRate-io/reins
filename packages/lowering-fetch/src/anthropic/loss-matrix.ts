@@ -46,8 +46,24 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     lossy("wrapped-args", "非对象入参包成 { value }", "tool_call.args 不是对象"),
   ],
   "core.tool_result": [
-    exact("tool_result", "紧跟 tool_use 所在 assistant 的下一条 user；is_error 原样"),
-    lossy("tool_result", "不可信内容转义，或模型不接受图片而换成占位文本"),
+    exact(
+      "tool_result",
+      "紧跟 tool_use 所在 assistant 的下一条 user；is_error 原样；工具引用段在无原生能力、或结果不是 system 信任时展开成文本",
+    ),
+    lossy(
+      "tool_result",
+      "不可信内容转义，或模型不接受图片而换成占位文本，或引用的工具不在本次请求工具表里而展开成文本",
+    ),
+    exact(
+      "tool-reference",
+      "结果只有工具引用段：tool_result 里放 tool_reference 块，厂商就地展开成完整定义（工具表整段不变）",
+      "模型支持 defer_loading、结果是 system 信任、引用的工具都在本次工具表里",
+    ),
+    lossy(
+      "tool-reference",
+      "引用块进 tool_result，结果里的文本段改放同条 user 里紧随的 text 块（tool_result 内引用不能与文本混放）",
+      "结果同时有引用段与文本段（说明文字、untrusted 标记）",
+    ),
   ],
   "core.system_note": [
     exact(

@@ -124,6 +124,12 @@ export interface BeforeModelPatch {
   events?: Event[]
   tools?: Tool[]
   systemPrompt?: string
+  /**
+   * 本轮工具表里哪些只"向厂商声明、不载入上下文"（按名字；L1）。循环把它翻成 `ToolSpec.deferLoading`，
+   * 名字不在最终工具表里的忽略。只在 `ctx.capabilities.deferredTools` 为真时有意义——没有原生落点的降级层会直接不发这些工具。
+   * 后一个 Socket 给了就整体替换前一个的；没给就沿用
+   */
+  deferredTools?: readonly string[]
 }
 
 /** 审批请求的规格；toolCallId 由循环填 */

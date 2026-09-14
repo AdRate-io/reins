@@ -129,6 +129,32 @@ describe("工厂", () => {
     expect(forced.lowering.capabilities(forced.model).midConversationSystem).toBe(true)
   })
 
+  it("deferredTools（L1）：Anthropic 官方模型缺省真（Haiku 4.5 也支持）；第三方 Anthropic 协议上游缺省假、宿主可声明；其余线一律假", () => {
+    expect(
+      anthropic("claude-haiku-4-5-20251001", { apiKey: "k" }).lowering.capabilities({
+        provider: "anthropic",
+        id: "claude-haiku-4-5-20251001",
+      }).deferredTools,
+    ).toBe(true)
+    const ds = anthropicMessages("deepseek-v4-flash", {
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com/anthropic",
+      apiKey: "k",
+    })
+    expect(ds.lowering.capabilities(ds.model).deferredTools).toBe(false)
+    const forced = anthropicMessages("deepseek-v4-flash", {
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com/anthropic",
+      apiKey: "k",
+      anthropic: { deferredTools: true },
+    })
+    expect(forced.lowering.capabilities(forced.model).deferredTools).toBe(true)
+    const gpt = openai("gpt-5-mini", { apiKey: "k" })
+    expect(gpt.lowering.capabilities(gpt.model).deferredTools).toBe(false)
+    const dsChat = deepseek("deepseek-v4-flash", { apiKey: "k" })
+    expect(dsChat.lowering.capabilities(dsChat.model).deferredTools).toBe(false)
+  })
+
   it("anthropicMessages()：任意 Anthropic 协议端点，表外必须给 baseUrl，缺省不推断中途 system、不收图", () => {
     const ds = anthropicMessages("deepseek-v4-flash", {
       provider: "deepseek",

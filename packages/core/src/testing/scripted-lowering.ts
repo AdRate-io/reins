@@ -36,6 +36,7 @@ export const SCRIPTED_CAPABILITIES: LoweringCapabilities = {
   thinkingReplay: true,
   parallelTools: true,
   taskBudget: false,
+  deferredTools: false,
   images: true,
   contextWindow: 200_000,
   maxOutputTokens: 8192,

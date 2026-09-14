@@ -5,7 +5,7 @@
  * 多媒体片段统一是 `{ source: { type: "data" | "url", value, mimeType } }`。能一一对应的逐字翻译，
  * 对不上的（音频、视频、文档、URL 图片）以占位文本代替并在返回值里声明丢了什么（P7：有损必声明）。
  */
-import type { ContentPart as ReinsPart } from "@reinsjs/core"
+import { type ContentPart as ReinsPart, renderToolReference } from "@reinsjs/core"
 import type { ContentPart as TanstackPart } from "@tanstack/ai"
 
 export interface ImportedContent {
@@ -18,6 +18,8 @@ export interface ImportedContent {
 export function toTanstackParts(parts: readonly ReinsPart[]): TanstackPart[] {
   return parts.map((p): TanstackPart => {
     if (p.type === "text") return { type: "text", content: p.text }
+    // 工具定义引用（L1）：TanStack 没有对应片段，展开成文本
+    if (p.type === "tool_reference") return { type: "text", content: renderToolReference(p) }
     return { type: "image", source: { type: "data", value: p.data, mimeType: p.mime } }
   })
 }
@@ -27,8 +29,10 @@ export function toTanstackParts(parts: readonly ReinsPart[]): TanstackPart[] {
  * 含图片时给片段数组。
  */
 export function toTanstackContent(parts: readonly ReinsPart[]): string | TanstackPart[] {
-  if (parts.every((p) => p.type === "text"))
-    return parts.map((p) => (p.type === "text" ? p.text : "")).join("\n\n")
+  if (parts.every((p) => p.type !== "image"))
+    return parts
+      .map((p) => (p.type === "text" ? p.text : p.type === "tool_reference" ? renderToolReference(p) : ""))
+      .join("\n\n")
   return toTanstackParts(parts)
 }
 

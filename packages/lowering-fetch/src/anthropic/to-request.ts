@@ -12,9 +12,21 @@
  * - **缓存断点**：最多 4 个。我们打三处——system 末块、tools 末项、最后一条 user 末块（厂商按前缀向前找命中，20 块回看窗口）；
  *   说明殿后（末条是 system）时按 `midSystemCacheBreakpoint` 处置，缺省顶层 `cache_control`（B1 实测与不注入持平）；
  * - `max_tokens` 必填：宿主 requestOptions 没给就用模型声明的 maxOutputTokens；`thinking` 不缺省设置——Opus 5 起厂商缺省
- *   就是 adaptive，是否开、开多深由宿主按模型代次决定（Fable 5.1 对 `type:"disabled"` 400）。
+ *   就是 adaptive，是否开、开多深由宿主按模型代次决定（Fable 5.1 对 `type:"disabled"` 400）；
+ * - **延迟加载**（L1，spikes/l1-deferred-tools 实测）：`ToolSpec.deferLoading` → `defer_loading: true`，工具留在 tools 块里、
+ *   表整段不变；结果里的 `tool_reference` 段 → `tool_reference` 块由厂商就地展开。厂商规矩：tool_result 内引用不能与文本混放
+ *   （文本段改放同条 user 里紧随的 text 块，记 lossy）；引用指向 tools 里没有的名字 400（整段历史都校验，所以未绑定的引用一律
+ *   展开成文本）；全部工具 defer_loading 400（此时不延迟）；defer_loading 工具不能带 cache_control（断点打在最后一个非延迟工具上）。
+ *   能力位关着（第三方上游）时 deferLoading 的工具不发、引用段展开成文本。
  */
-import type { ContentPart, Event, LandingRecord, LoweringCapabilities, ToolSpec } from "@reinsjs/core"
+import {
+  type ContentPart,
+  type Event,
+  type LandingRecord,
+  type LoweringCapabilities,
+  renderToolReference,
+  type ToolSpec,
+} from "@reinsjs/core"
 import {
   DEFERRED_NOTE,
   ESCAPED_NOTE,
@@ -47,9 +59,15 @@ export type AnthropicUserBlock =
       cache_control?: AnthropicCacheControl
     }
 
-export type AnthropicToolResultBlock =
+/** 文本与图片块：user 消息与 tool_result 内容共用的形状 */
+export type AnthropicContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+
+export type AnthropicToolResultBlock =
+  | AnthropicContentBlock
+  /** 工具定义引用：厂商就地展开成完整定义，不能与其他块混放（L1） */
+  | { type: "tool_reference"; tool_name: string }
 
 export type AnthropicAssistantBlock =
   | { type: "text"; text: string }
@@ -66,6 +84,8 @@ export interface AnthropicTool {
   name: string
   description: string
   input_schema: Record<string, unknown>
+  /** 声明但不载入上下文，历史里出现 tool_reference 后才可见；不能与 cache_control 同在（L1） */
+  defer_loading?: true
   cache_control?: AnthropicCacheControl
 }
 
@@ -96,6 +116,12 @@ export const MAX_ANTHROPIC_BREAKPOINTS = 4
 const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
 const EMPTY_NOTE = "内容为空，Anthropic 不接受空文本块，整条不下发"
 const MOVED_NOTE = "归位到下一条 user 之后（system 须紧跟 user、后接 assistant 或收尾）"
+const REF_TEXT_ASIDE_NOTE =
+  "结果里的文本段改放同条 user 里、这批 tool_result 之后的 text 块（tool_result 内引用不能与文本混放，且同条 user 里 tool_result 必须排在最前）"
+const REF_UNTRUSTED_NOTE =
+  "untrusted 结果里的工具引用不走原生落点（不可信内容不能替模型点亮工具），展开成文本"
+const REF_UNBOUND_NOTE =
+  "引用的工具不在本次请求的工具表里（厂商对整段历史校验引用，缺一个就 400），定义展开成文本"
 
 function land(
   out: LandingRecord[],
@@ -116,16 +142,18 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v)
 }
 
-/** 内容段 → Anthropic 块；空文本段跳过（厂商不接受空文本块），图片按模型能力处置 */
+/** 内容段 → Anthropic 块；空文本段跳过（厂商不接受空文本块），图片按模型能力处置，工具引用展开成文本（原生落点在 tool_result 分支另行处理） */
 function blocksOf(
   parts: readonly ContentPart[],
   images: boolean,
-): { blocks: AnthropicToolResultBlock[]; imagesDropped: boolean } {
+): { blocks: AnthropicContentBlock[]; imagesDropped: boolean } {
   let imagesDropped = false
-  const blocks: AnthropicToolResultBlock[] = []
+  const blocks: AnthropicContentBlock[] = []
   for (const p of parts) {
     if (p.type === "text") {
       if (p.text.length > 0) blocks.push({ type: "text", text: p.text })
+    } else if (p.type === "tool_reference") {
+      blocks.push({ type: "text", text: renderToolReference(p) })
     } else if (images) {
       blocks.push({ type: "image", source: { type: "base64", media_type: p.mime, data: p.data } })
     } else {
@@ -149,10 +177,14 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
   const { model, capabilities } = input
   const target: ModelOrigin = { provider: model.provider, api: model.api, model: model.id }
   const dialect = model.anthropic ?? {}
+  /** 本次请求工具表里的名字（含 deferLoading 的）：tool_reference 只能指向它们，否则厂商 400 */
+  const boundNames = new Set((input.tools ?? []).map((t) => t.name))
   const messages: AnthropicMessage[] = []
   const landings: LandingRecord[] = []
   /** 正在攒的 user 消息（tool_result、用户消息、摘要并进同一条） */
   let userRun: AnthropicUserBlock[] | null = null
+  /** 引用结果里的文本段：厂商要求同条 user 里 tool_result 排在最前，所以攒到这批 tool_result 之后再放（L1 spike 形态 D 实测） */
+  let asides: AnthropicUserBlock[] = []
   const pendingNotes: PendingNote[] = []
 
   const openUser = (): AnthropicUserBlock[] => {
@@ -162,6 +194,11 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
     return userRun
   }
   const closeUser = () => {
+    if (userRun && asides.length > 0) {
+      const lastResult = userRun.map((b) => b.type).lastIndexOf("tool_result")
+      userRun.splice(lastResult + 1, 0, ...asides)
+      asides = []
+    }
     if (userRun && userRun.length > 0) messages.push({ role: "user", content: userRun })
     userRun = null
   }
@@ -229,17 +266,52 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
         break
       }
       case "tool_result": {
-        const c = blocksOf(item.parts, capabilities.images)
+        const refs = item.parts.filter(
+          (p): p is Extract<ContentPart, { type: "tool_reference" }> => p.type === "tool_reference",
+        )
         const block: AnthropicUserBlock = { type: "tool_result", tool_use_id: item.toolCallId }
-        if (c.blocks.length > 0) block.content = c.blocks
         if (item.isError) block.is_error = true
+        // 原生落点只给 system 信任的结果（tool_find / skill_read 这类宿主配置的内容）：untrusted 工具输出不能替模型点亮工具
+        const trusted = item.event.trust === "system"
+        if (
+          refs.length > 0 &&
+          capabilities.deferredTools &&
+          trusted &&
+          refs.every((r) => boundNames.has(r.name))
+        ) {
+          // 原生落点：tool_result 里只放引用块，厂商就地展开；其余段（说明文字、untrusted 标记）放同条 user 里紧随其后
+          block.content = refs.map((r) => ({ type: "tool_reference", tool_name: r.name }))
+          const rest = blocksOf(
+            item.parts.filter((p) => p.type !== "tool_reference"),
+            capabilities.images,
+          )
+          openUser().push(block)
+          asides.push(...rest.blocks)
+          const aside = rest.blocks.length > 0
+          land(
+            landings,
+            item.event,
+            aside || item.escaped || rest.imagesDropped ? "lossy" : "exact",
+            "tool-reference",
+            aside ? REF_TEXT_ASIDE_NOTE : undefined,
+            rest.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
+            item.escaped ? ESCAPED_NOTE : undefined,
+          )
+          break
+        }
+        const c = blocksOf(item.parts, capabilities.images)
+        if (c.blocks.length > 0) block.content = c.blocks
         openUser().push(block)
-        const lossy = item.escaped || c.imagesDropped
+        const unbound = refs.length > 0 && capabilities.deferredTools && trusted
+        const untrustedRefs = refs.length > 0 && capabilities.deferredTools && !trusted
+        const lossy = item.escaped || c.imagesDropped || unbound
         land(
           landings,
           item.event,
           lossy ? "lossy" : "exact",
           "tool_result",
+          unbound ? REF_UNBOUND_NOTE : undefined,
+          untrustedRefs ? REF_UNTRUSTED_NOTE : undefined,
           c.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
@@ -302,9 +374,8 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
   }
   if (input.systemPrompt) body.system = [{ type: "text", text: input.systemPrompt }]
   if (input.tools && input.tools.length > 0) {
-    body.tools = input.tools.map(
-      (t): AnthropicTool => ({ name: t.name, description: t.description, input_schema: t.inputSchema }),
-    )
+    const tools = encodeTools(input.tools, capabilities.deferredTools)
+    if (tools.length > 0) body.tools = tools
   }
   if (dialect.cacheBreakpoints !== false) placeCacheBreakpoints(body, dialect)
   return { body, landings: orderLandings(input.events, landings) }
@@ -393,6 +464,20 @@ function assistantBlocks(
   return out
 }
 
+/**
+ * 工具表 → tools 块（L1）。有原生能力：deferLoading → `defer_loading: true`，但全表都延迟时厂商 400，退成都不延迟；
+ * 无原生能力：deferLoading 的工具直接不发（模型看不见也调不了，与过滤同义）。
+ */
+export function encodeTools(specs: readonly ToolSpec[], deferredTools: boolean): AnthropicTool[] {
+  const shown = deferredTools ? specs : specs.filter((t) => t.deferLoading !== true)
+  const allDeferred = deferredTools && shown.length > 0 && shown.every((t) => t.deferLoading === true)
+  return shown.map((t): AnthropicTool => {
+    const tool: AnthropicTool = { name: t.name, description: t.description, input_schema: t.inputSchema }
+    if (deferredTools && t.deferLoading === true && !allDeferred) tool.defer_loading = true
+    return tool
+  })
+}
+
 /** 数请求里块级 cache_control 的个数：system 数组、tools 数组、messages 的内容块 */
 export function countBlockBreakpoints(body: AnthropicRequestBody): number {
   const has = (b: unknown) => typeof b === "object" && b !== null && "cache_control" in b
@@ -415,7 +500,8 @@ function placeCacheBreakpoints(body: AnthropicRequestBody, dialect: NonNullable<
 
   const lastSystem = body.system?.[body.system.length - 1]
   if (lastSystem && budget() > 0) lastSystem.cache_control = cc
-  const lastTool = body.tools?.[body.tools.length - 1]
+  // defer_loading 的工具不能带 cache_control（厂商 400），断点打在最后一个非延迟工具上
+  const lastTool = [...(body.tools ?? [])].reverse().find((t) => t.defer_loading !== true)
   if (lastTool && budget() > 0) lastTool.cache_control = cc
 
   const last = body.messages[body.messages.length - 1]

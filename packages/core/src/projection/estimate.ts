@@ -5,7 +5,7 @@
  * 规则：ASCII 字符约 4 个一个 token；非 ASCII（中日韩等）按一字一 token 保守计；
  * 图片按 Anthropic 单图上限附近取常量；每条事件再加角色与分隔的固定开销。
  */
-import type { ContentPart, Event } from "../events/base.js"
+import { type ContentPart, type Event, renderToolReference } from "../events/base.js"
 import type { CoreEvent } from "../events/core.js"
 
 const PER_EVENT_OVERHEAD = 4
@@ -23,7 +23,11 @@ export function estimateTextTokens(text: string): number {
 
 function partsTokens(parts: readonly ContentPart[]): number {
   let n = 0
-  for (const p of parts) n += p.type === "text" ? estimateTextTokens(p.text) : IMAGE_TOKENS
+  for (const p of parts) {
+    if (p.type === "text") n += estimateTextTokens(p.text)
+    else if (p.type === "tool_reference") n += estimateTextTokens(renderToolReference(p))
+    else n += IMAGE_TOKENS
+  }
   return n
 }
 

@@ -5,7 +5,7 @@
  * `tool_find` 取回——取哪几件、什么时候取是模型的判断（宪法一），规则只给经验：动手前先取、一次取全、只取任务要的。
  * 作为 Socket 的静态 systemPrompt 片段追加在宿主提示之后，整个 run 逐字不变（§9.1 约束 3）。英文：进的是模型上下文。
  */
-import type { Tool } from "@reinsjs/core"
+import { type ContentPart, renderToolReference, type Tool, type ToolReferencePart } from "@reinsjs/core"
 
 export const TOOL_FIND_TOOL_NAME = "tool_find"
 
@@ -48,32 +48,46 @@ export const TOOL_FIND_INPUT_SCHEMA = {
   additionalProperties: false,
 } as const
 
-/** 取回结果里一件工具的条目：完整说明 + inputSchema 原样（单行 JSON，模型下一轮在工具表里看到的就是这份） */
+/** 一件工具的定义引用段（L1）：取回结果里每件工具一段，带完整定义快照（日志自足），降级层按能力位翻成原生块或文本 */
+export function toolReferenceOf(tool: Tool): ToolReferencePart {
+  return {
+    type: "tool_reference",
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  }
+}
+
+/** 一件工具展开成文本的样子（无原生落点的线上模型看到的、也是估算上界用的）：core `renderToolReference` 的同一份写法 */
 export function renderLoadedTool(tool: Tool): string {
-  return `### ${tool.name}\n${tool.description.trim()}\nInput schema: ${JSON.stringify(tool.inputSchema)}`
+  return renderToolReference(toolReferenceOf(tool))
 }
 
 /**
- * 取回结果全文。`loaded` 是这次取回的菜单工具；`notListed` 是模型点了名但不在菜单上的——点名而不是静默忽略，
+ * 取回结果的内容段。`loaded` 是这次取回的菜单工具，每件一个引用段；`notListed` 是模型点了名但不在菜单上的——点名而不是静默忽略，
  * 模型才知道自己记错了名字（或者它本来就在工具表里，直接调即可；本模块看不到别的 Socket 的工具，不替它判断是哪种）。
+ * 文本段与引用段分开放：Anthropic 原生路径上引用块进 tool_result、文本段跟在这批结果之后（tool_result 内不能混放）；其余线全展开成文本。
  */
 export function renderToolFindResult(input: {
   loaded: readonly Tool[]
   notListed: readonly string[]
-}): string {
-  const parts: string[] = []
+}): ContentPart[] {
+  const parts: ContentPart[] = []
   if (input.loaded.length > 0) {
-    parts.push(
-      `Loaded ${input.loaded.length} tool${input.loaded.length === 1 ? "" : "s"}; callable from your next turn on.`,
-    )
-    parts.push(...input.loaded.map(renderLoadedTool))
+    const names = input.loaded.map((t) => t.name).join(", ")
+    parts.push({
+      type: "text",
+      text: `Loaded ${input.loaded.length} tool${input.loaded.length === 1 ? "" : "s"} (${names}); callable from your next turn on.`,
+    })
+    parts.push(...input.loaded.map(toolReferenceOf))
   } else {
-    parts.push("Nothing loaded.")
+    parts.push({ type: "text", text: "Nothing loaded." })
   }
   if (input.notListed.length > 0) {
-    parts.push(
-      `Not on the on-request list: ${input.notListed.join(", ")}. Check the spelling against the list; if a name is already in your tool list, call it directly.`,
-    )
+    parts.push({
+      type: "text",
+      text: `Not on the on-request list: ${input.notListed.join(", ")}. Check the spelling against the list; if a name is already in your tool list, call it directly.`,
+    })
   }
-  return parts.join("\n\n")
+  return parts
 }

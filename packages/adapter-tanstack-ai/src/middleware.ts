@@ -206,6 +206,7 @@ function defaultCapabilities(partial: ReinsMiddlewareOptions["capabilities"]): L
     thinkingReplay: true,
     parallelTools: true,
     taskBudget: false,
+    deferredTools: false,
     images: true,
     maxOutputTokens: 8192,
     ...partial,

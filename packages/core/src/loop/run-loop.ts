@@ -46,7 +46,7 @@ import {
 } from "./state.js"
 import { resolveSocketContributions } from "./static.js"
 import { isSubagentPause } from "./subagent.js"
-import { errorMessageOf, normalizeToolOutput, toolResultTrust, toolSpecOf } from "./tools.js"
+import { deferredToolSpecOf, errorMessageOf, normalizeToolOutput, toolResultTrust } from "./tools.js"
 import { toolsBoundDrafts } from "./tools-bound.js"
 import type {
   ApprovalDecisionInput,
@@ -336,12 +336,15 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     let visible = ctx.events
     let tools = baseTools
     let systemPrompt = baseSystemPrompt
+    /** 只向厂商声明、不载入上下文的工具名（L1）：后一个 Socket 给了就整体替换 */
+    let deferredTools: ReadonlySet<string> = new Set()
     for (const s of sockets) {
       const patch = await s.beforeModel?.(ctx)
       if (!patch) continue
       if (patch.events) visible = patch.events
       if (patch.tools) tools = patch.tools
       if (patch.systemPrompt !== undefined) systemPrompt = patch.systemPrompt
+      if (patch.deferredTools) deferredTools = new Set(patch.deferredTools)
       ctx.events = visible
       ctx.tools = tools
     }
@@ -363,7 +366,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       try {
         const request = lowering.toRequest({
           events: visible,
-          tools: tools.map(toolSpecOf),
+          tools: tools.map((t) => deferredToolSpecOf(t, deferredTools.has(t.name))),
           model,
           ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         })

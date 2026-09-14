@@ -95,6 +95,12 @@ export interface AnthropicDialect {
   cacheTtl?: "5m" | "1h"
   /** 说明殿后时的断点处置，缺省 "automatic" */
   midSystemCacheBreakpoint?: MidSystemCacheBreakpoint
+  /**
+   * 是否走 `defer_loading` + `tool_reference` 的原生延迟加载（L1，2026-09-15 经 CF 网关实测 Haiku 4.5 / Opus 5 均支持、GA 无 beta 头）。
+   * 缺省：provider 为 "anthropic" 时开，第三方 Anthropic 协议上游（DeepSeek 兼容端口等）关——它们对这两个字段的态度各异，
+   * 宿主实测接受后再显式打开。关着时 deferLoading 的工具不发、引用段展开成文本
+   */
+  deferredTools?: boolean
 }
 
 const DEEPSEEK_BASE = "https://api.deepseek.com"

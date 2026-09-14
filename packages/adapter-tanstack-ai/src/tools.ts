@@ -13,6 +13,7 @@ import {
   isSubagentPause,
   normalizeToolOutput,
   type Tool as ReinsTool,
+  renderToolReference,
   type ToolContext,
   type ToolResult,
 } from "@reinsjs/core"
@@ -113,5 +114,9 @@ export function toTanstackTool(tool: ReinsTool, bridge: ToolBridge): AnyTool {
 }
 
 function textOf(result: ToolResult): string {
-  return result.content.map((p) => (p.type === "text" ? p.text : `[image ${p.mime}]`)).join("\n")
+  return result.content
+    .map((p) =>
+      p.type === "text" ? p.text : p.type === "tool_reference" ? renderToolReference(p) : `[image ${p.mime}]`,
+    )
+    .join("\n")
 }

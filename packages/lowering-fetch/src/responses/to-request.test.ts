@@ -334,3 +334,35 @@ describe("encodeResponsesRequest", () => {
     expect(landingOf(r, empty)).toMatchObject({ kind: "dropped" })
   })
 })
+
+describe("延迟加载（L1）：Responses 没有原生落点", () => {
+  it("deferLoading 的工具不发；工具引用段展开成文本，落点仍是 exact function_call_output", () => {
+    const events = [
+      user("go"),
+      call("call_1"),
+      result("call_1", [
+        { type: "text", text: "Loaded 1 tool (g)." },
+        { type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } },
+      ]),
+    ]
+    const r = encodeResponsesRequest({
+      ir: eventsToIr({ events, target: { provider: mini.provider, api: mini.api, model: mini.id } }),
+      events,
+      model: mini,
+      capabilities: capabilitiesOf(mini),
+      tools: [
+        { name: "f", description: "d", inputSchema: { type: "object" } },
+        { name: "g", description: "dg", inputSchema: { type: "object" }, deferLoading: true },
+      ],
+    })
+    expect(r.body.tools?.map((t) => (t as { name: string }).name)).toEqual(["f"])
+    const out = r.body.input.find((i) => (i as { type?: string }).type === "function_call_output") as
+      | { output: string }
+      | undefined
+    expect(out?.output).toContain('### g\ndg\nInput schema: {"type":"object"}')
+    expect(r.landings.find((l) => l.eventId === events[2]?.id)).toMatchObject({
+      kind: "exact",
+      landing: "function_call_output",
+    })
+  })
+})

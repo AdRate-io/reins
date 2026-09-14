@@ -67,7 +67,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `events/index.ts` | 汇总导出 base / core / create / id / registry |
-| `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image）、各 actor 的默认信任 `DEFAULT_TRUST` |
+| `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image / **tool_reference**——工具定义引用，带 name / description / inputSchema 快照，L1）、`renderToolReference()`（引用段展开成文本的唯一写法）、各 actor 的默认信任 `DEFAULT_TRUST` |
 | `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite） |
 | `events/create.ts` | `EventDraft`（无 id/seq/at/sessionId 的草稿）与 `createEvent` / `createCoreEvent` 工厂：补齐壳字段、从注册表取 schemaVersion |
 | `events/id.ts` | 自实现 `uuidv7`（RFC 9562，只用 `crypto.getRandomValues`，不引依赖） |
@@ -105,7 +105,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `lowering/index.ts` | 汇总导出 errors / trust / types |
-| `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`、`LoweringCapabilities`、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
+| `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`（含 `deferLoading?`：向厂商声明但不载入上下文，L1）、`LoweringCapabilities`（含 `deferredTools`：有无 `defer_loading` / `tool_reference` 的原生落点）、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
 | `lowering/errors.ts` | `LoweringError` 与 4 种 code（unsupported_model / unsupported_api / missing_api_key / invalid_request） |
 | `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
 | 测试 | `trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reinsjs/lowering-pi` 的 T8 矩阵测试覆盖 |
@@ -121,7 +121,8 @@
 | `loop/static.ts` | `resolveSocketContributions`（P1 起 **async**，各 Socket 依次 await 而非并发）：宿主工具 + 各 Socket 静态工具（同名宿主优先）、系统提示按注册顺序拼接；循环起步与 server 预校验共用，configHash 才对得上 |
 | `loop/subagent.ts` | 子代理暂停标记（§10.1）：`subagentPause(detail)` / `isSubagentPause()`，`Symbol.for` 品牌；工具 `execute` 返回它，循环不落 tool_result、run 整体 paused(kind=subagent) |
 | `loop/tools-bound.ts` | P1 纯函数：`lastToolsBound`、`diffToolNames`、`renderToolChangeNote`（给模型的英文文案）、`toolsBoundDrafts`（起步要 append 的 `tools_bound` + 有增删时的 `system_note(kind=host, meta.toolsChanged)`）；runLoop 与 TanStack 适配器共用，两处文案与判定不分叉 |
-| `loop/tools.ts` | 工具纯函数：`defineTool`（擦类型以便放进 `Tool[]`）、`toolSpecOf`、`normalizeToolOutput`（string / ContentPart[] / {content,isError} / undefined / 其余 JSON）、`errorMessageOf` |
+| `loop/tools.ts` | 工具纯函数：`defineTool`（擦类型以便放进 `Tool[]`）、`toolSpecOf`（刻意单参，`map(toolSpecOf)` 多一参会吃下标）、`deferredToolSpecOf(tool, deferred)`（L1）、`isContentPart`（认 text / image / tool_reference）、`normalizeToolOutput`（string / ContentPart[] / {content,isError} / undefined / 其余 JSON）、`errorMessageOf` |
+| `loop/deferred-tools.test.ts` | L1 在 core 的用例：`renderToolReference` 写法、`normalizeToolOutput` 认引用段、估算按展开文本算、`BeforeModelPatch.deferredTools` → `ToolSpec.deferLoading` 的接线（不在表的名字忽略、后一个 Socket 整体替换、没给就沿用） |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |
 | 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 子代理冒泡 3 例（返回标记即暂停、结论按 sessionId 转发、spend 合算）/ 上线前审查修复 3 例 / R1·R2；`run-state.test.ts` 覆盖跨进程暂停恢复与 12 项 fail-closed 校验；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝 |

@@ -6,10 +6,12 @@ import {
   InMemoryEventLog,
   type LoopConfig,
   type RunResult,
+  renderToolReference,
   resolveSocketContributions,
   runLoop,
   type Socket,
   type Tool,
+  type ToolReferencePart,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
@@ -302,8 +304,15 @@ describe("lazyTools() 与 runLoop 集成", () => {
     const found = resultOf(events, "c1")
     expect(found.payload.isError).toBe(false)
     expect(found.trust).toBe("system")
-    expect(textOf(found)).toContain("Loaded 1 tool; callable from your next turn on.")
-    expect(textOf(found)).toContain(
+    expect(textOf(found)).toContain("Loaded 1 tool (ads_list); callable from your next turn on.")
+    // 定义以引用段表达（L1）：带完整快照，日志自足；降级层按能力位翻成 tool_reference 块或展开成文本
+    const ref = found.payload.content.find((p) => p.type === "tool_reference")
+    expect(ref).toMatchObject({
+      type: "tool_reference",
+      name: "ads_list",
+      description: "Tool ads_list.\nSecond line with details.",
+    })
+    expect(renderToolReference(ref as ToolReferencePart)).toContain(
       "### ads_list\nTool ads_list.\nSecond line with details.\nInput schema: {",
     )
     expect(textOf(found)).toContain("Not on the on-request list: nope.")
@@ -479,7 +488,8 @@ describe("lazyTools() 与 runLoop 集成", () => {
     )
     const r = resultOf(await all(log), "c1")
     expect(r.payload.spilled).toBeUndefined()
-    expect(textOf(r)).toContain("### big_19")
+    expect(r.payload.content.filter((p) => p.type === "tool_reference")).toHaveLength(20)
+    expect(r.payload.content.some((p) => p.type === "tool_reference" && p.name === "big_19")).toBe(true)
     expect(textOf(r)).not.toContain("fetch_blob")
     expect(r.trust).toBe("system")
     expect(names(lowering.requests[1]?.tools)).toEqual([
@@ -487,5 +497,95 @@ describe("lazyTools() 与 runLoop 集成", () => {
       TOOL_FIND_TOOL_NAME,
       "fetch_blob",
     ])
+  })
+})
+
+describe("lazyTools() 原生路径（capabilities.deferredTools，L1）", () => {
+  const deferredOf = (tools: readonly { name: string; deferLoading?: boolean }[] | undefined) =>
+    Object.fromEntries((tools ?? []).map((t) => [t.name, t.deferLoading === true]))
+
+  it("全表下发、菜单工具标 deferLoading；取回后仍延迟（厂商从历史里的引用块展开）；结果是引用段；未取回直调仍 block", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering(
+      [
+        { drafts: [callTool("c0", "ads_list", { x: "0" })] },
+        { drafts: [callTool("c1", TOOL_FIND_TOOL_NAME, { names: ["ads_list"] })] },
+        { drafts: [callTool("c2", "ads_list", { x: "1" })] },
+        { drafts: [say("done")] },
+      ],
+      { capabilities: { deferredTools: true } },
+    )
+    const cfg: LoopConfig = {
+      sessionId: SESSION,
+      log,
+      lowering,
+      model: MODEL,
+      tools: hostTools(),
+      sockets: [lazyTools({ warn: () => {} })],
+      input: "开始",
+      ...deterministic(),
+    }
+    const { result } = await drain(runLoop(cfg))
+    expect(result.status).toBe("done")
+    // 每个请求的工具表都是全表（表整段不变，缓存前缀不动）
+    for (const r of lowering.requests) {
+      expect(names(r.tools).sort()).toEqual(["ads_disable", "ads_list", "greet", TOOL_FIND_TOOL_NAME])
+    }
+    const before = deferredOf(lowering.requests[0]?.tools)
+    expect(before).toEqual({ greet: false, [TOOL_FIND_TOOL_NAME]: false, ads_disable: true, ads_list: true })
+    // 取回后 ads_list 仍 deferLoading：取回那轮就在视图里，厂商从引用块展开；ads_disable 没取回照样延迟
+    const after = deferredOf(lowering.requests[2]?.tools)
+    expect(after).toEqual(before)
+    const events = await all(log)
+    const blocked = resultOf(events, "c0")
+    expect(blocked.payload.isError).toBe(true)
+    expect(textOf(blocked)).toContain(TOOL_FIND_TOOL_NAME)
+    const found = resultOf(events, "c1")
+    expect(found.payload.content.map((p) => p.type)).toEqual(["text", "tool_reference"])
+    expect(resultOf(events, "c2").payload.isError).toBe(false)
+  })
+
+  it("取回那轮被折出本轮视图（如 compact）：该工具不再延迟，定义进 tools 块；其余菜单工具照样延迟", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering(
+      [
+        { drafts: [callTool("c1", TOOL_FIND_TOOL_NAME, { names: ["ads_list"] })] },
+        { drafts: [callTool("c2", "ads_list", { x: "1" })] },
+        { drafts: [say("done")] },
+      ],
+      { capabilities: { deferredTools: true } },
+    )
+    /** 排在 lazyTools 之前、把 tool_find 那轮从视图里摘掉——模拟 compact 折叠 */
+    const fold: Socket = {
+      name: "fold",
+      beforeModel: (ctx) => ({
+        events: ctx.events.filter((e) => {
+          if (e.type !== "core.tool_call" && e.type !== "core.tool_result") return true
+          return (e.payload as { name: string }).name !== TOOL_FIND_TOOL_NAME
+        }),
+      }),
+    }
+    const cfg: LoopConfig = {
+      sessionId: SESSION,
+      log,
+      lowering,
+      model: MODEL,
+      tools: hostTools(),
+      sockets: [fold, lazyTools({ warn: () => {} })],
+      input: "开始",
+      ...deterministic(),
+    }
+    const { result } = await drain(runLoop(cfg))
+    expect(result.status).toBe("done")
+    expect(deferredOf(lowering.requests[0]?.tools)).toMatchObject({ ads_disable: true, ads_list: true })
+    // 取回后：视图里没有取回那轮 → ads_list 不延迟（否则模型看不见它），ads_disable 仍延迟；表仍是全表
+    expect(deferredOf(lowering.requests[1]?.tools)).toMatchObject({ ads_disable: true, ads_list: false })
+    expect(names(lowering.requests[1]?.tools).sort()).toEqual([
+      "ads_disable",
+      "ads_list",
+      "greet",
+      TOOL_FIND_TOOL_NAME,
+    ])
+    expect(resultOf(await all(log), "c2").payload.isError).toBe(false)
   })
 })

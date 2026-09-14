@@ -186,6 +186,7 @@ function fakeCtx(over: {
       thinkingReplay: true,
       parallelTools: true,
       taskBudget: false,
+      deferredTools: false,
       images: true,
       contextWindow: 1000,
       maxOutputTokens: 100,

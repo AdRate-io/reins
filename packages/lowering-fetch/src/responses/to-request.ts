@@ -15,7 +15,14 @@
  * - `reasoning` / `max_output_tokens` 不缺省设置：gpt-5 缺省 medium、gpt-5.1 起缺省 none，开不开由宿主按型号在 requestOptions 里定
  *   （与 Anthropic 线的 thinking 同一原则）。
  */
-import type { ContentPart, Event, LandingRecord, LoweringCapabilities, ToolSpec } from "@reinsjs/core"
+import {
+  type ContentPart,
+  type Event,
+  type LandingRecord,
+  type LoweringCapabilities,
+  renderToolReference,
+  type ToolSpec,
+} from "@reinsjs/core"
 import {
   DEFERRED_NOTE,
   ESCAPED_NOTE,
@@ -108,6 +115,8 @@ function contentOf(
   for (const p of parts) {
     if (p.type === "text") {
       if (p.text.length > 0) content.push({ type: "input_text", text: p.text })
+    } else if (p.type === "tool_reference") {
+      content.push({ type: "input_text", text: renderToolReference(p) })
     } else if (images) {
       content.push({ type: "input_image", image_url: `data:${p.mime};base64,${p.data}`, detail: "auto" })
     } else {
@@ -291,8 +300,10 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
     stream: true,
     store: false,
   }
-  if (input.tools && input.tools.length > 0) {
-    body.tools = input.tools.map(
+  // Responses 没有"声明但不载入"的落点：deferLoading 的工具不发（L1）
+  const shownTools = (input.tools ?? []).filter((t) => t.deferLoading !== true)
+  if (shownTools.length > 0) {
+    body.tools = shownTools.map(
       (t): ResponsesTool => ({
         type: "function",
         name: t.name,

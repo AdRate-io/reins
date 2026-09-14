@@ -280,3 +280,43 @@ describe("encodeChatRequest", () => {
     expect(calls.map((c) => c.function.arguments)).toEqual(["{not json", '{"x":[1]}'])
   })
 })
+
+describe("延迟加载（L1）：Chat 没有原生落点", () => {
+  it("deferLoading 的工具不发（模型看不见也调不了）；工具引用段展开成文本，落点仍是 exact tool", () => {
+    const u = ev("core.user_message", "user", { content: [{ type: "text", text: "go" }] })
+    const c = ev(
+      "core.tool_call",
+      "model",
+      { toolCallId: "c1", name: "tool_find", args: { names: ["g"] } },
+      origin,
+    )
+    const r = createCoreEvent(registry, {
+      type: "core.tool_result",
+      actor: "tool",
+      trust: "system",
+      payload: {
+        toolCallId: "c1",
+        name: "tool_find",
+        content: [
+          { type: "text", text: "Loaded 1 tool (g)." },
+          { type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } },
+        ],
+        isError: false,
+      },
+      sessionId: "s",
+      seq: ++seq,
+      at: 1000 + seq,
+      id: `e${seq}`,
+    })
+    const { body, landings } = encode(deepseek, [u, c, r], {
+      tools: [
+        { name: "f", description: "d", inputSchema: { type: "object" } },
+        { name: "g", description: "dg", inputSchema: { type: "object" }, deferLoading: true },
+      ],
+    })
+    expect(body.tools?.map((t) => t.function.name)).toEqual(["f"])
+    const toolMsg = body.messages.find((m) => m.role === "tool") as { content: string } | undefined
+    expect(toolMsg?.content).toBe('Loaded 1 tool (g).\n### g\ndg\nInput schema: {"type":"object"}')
+    expect(landings.find((l) => l.eventId === r.id)).toMatchObject({ kind: "exact", landing: "tool" })
+  })
+})

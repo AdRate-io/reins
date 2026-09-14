@@ -356,3 +356,154 @@ describe("encodeAnthropicRequest — 缓存断点", () => {
     expect(host.body.tools?.[0]?.cache_control).toBeDefined()
   })
 })
+
+describe("延迟加载（L1，spikes/l1-deferred-tools 实测的厂商规矩）", () => {
+  const acme: FetchModel = { ...opus, provider: "acme", id: "compat", baseUrl: "https://acme/v1" }
+  const f = { name: "f", description: "d", inputSchema: { type: "object" } }
+  const g = { name: "g", description: "dg", inputSchema: { type: "object" }, deferLoading: true }
+  const refG = {
+    type: "tool_reference" as const,
+    name: "g",
+    description: "dg",
+    inputSchema: { type: "object" },
+  }
+  /** tool_find 这类结果是 system 信任（resultTrust），原生引用只给它们；缺省 untrusted 的结果走文本 */
+  const resultWith = (
+    id: string,
+    content: CoreEventPayloads["core.tool_result"]["content"],
+    name = "tool_find",
+    trust: Event["trust"] = "system",
+  ) => ev("core.tool_result", "tool", { toolCallId: id, name, content, isError: false }, { trust })
+  const encodeL1 = (
+    events: Event[],
+    tools: {
+      name: string
+      description: string
+      inputSchema: Record<string, unknown>
+      deferLoading?: boolean
+    }[],
+    model: FetchModel = opus,
+  ) =>
+    encodeAnthropicRequest({
+      ir: eventsToIr({ events, target: { provider: model.provider, api: model.api, model: model.id } }),
+      events,
+      model,
+      capabilities: capabilitiesOf(model),
+      tools,
+      systemPrompt: "sys",
+    })
+
+  it("deferLoading → defer_loading: true；断点落在最后一个非延迟工具上（延迟工具带 cache_control 厂商 400）", () => {
+    const { body } = encodeL1([user("hi")], [f, g])
+    expect(body.tools).toEqual([
+      { name: "f", description: "d", input_schema: { type: "object" }, cache_control: { type: "ephemeral" } },
+      { name: "g", description: "dg", input_schema: { type: "object" }, defer_loading: true },
+    ])
+  })
+
+  it("全表都延迟时不延迟（厂商 400 'All tools cannot be deferred'）", () => {
+    const { body } = encodeL1([user("hi")], [{ ...f, deferLoading: true }, g])
+    expect(body.tools?.every((t) => t.defer_loading === undefined)).toBe(true)
+  })
+
+  it("模型没有原生能力（第三方上游）：deferLoading 的工具不发，引用段展开成文本，落点 exact tool_result", () => {
+    expect(capabilitiesOf(acme).deferredTools).toBe(false)
+    const events = [user("hi"), call("c1"), resultWith("c1", [refG])]
+    const r = encodeL1(events, [f, g], acme)
+    expect(r.body.tools?.map((t) => t.name)).toEqual(["f"])
+    const u = r.body.messages[2]
+    expect(u?.role === "user" && u.content[0]).toMatchObject({
+      type: "tool_result",
+      content: [{ type: "text", text: '### g\ndg\nInput schema: {"type":"object"}' }],
+    })
+    expect(landingOf(r, events[2] as Event)).toMatchObject({ kind: "exact", landing: "tool_result" })
+  })
+
+  it("只有引用段且都在工具表里：tool_result 内放 tool_reference 块，落点 exact tool-reference", () => {
+    const events = [user("hi"), call("c1"), resultWith("c1", [refG])]
+    const r = encodeL1(events, [f, g])
+    const u = r.body.messages[2]
+    // 末条 user 的末块照常打断点：纯引用的 tool_result 带 cache_control 厂商接受（spike 形态 B）
+    expect(u?.role === "user" && u.content).toEqual([
+      {
+        type: "tool_result",
+        tool_use_id: "c1",
+        content: [{ type: "tool_reference", tool_name: "g" }],
+        cache_control: { type: "ephemeral" },
+      },
+    ])
+    expect(landingOf(r, events[2] as Event)).toEqual({
+      eventId: (events[2] as Event).id,
+      type: "core.tool_result",
+      kind: "exact",
+      landing: "tool-reference",
+    })
+  })
+
+  it("引用段 + 文本段：文本改放同条 user 里、这批 tool_result 之后（不能混放、tool_result 必须排最前），落点 lossy", () => {
+    const events = [
+      user("hi"),
+      call("c1"),
+      call("c2"),
+      resultWith("c1", [
+        { type: "text", text: "Loaded 1 tool (g)." },
+        refG,
+        { type: "text", text: "Not on list: x" },
+      ]),
+      resultWith("c2", [{ type: "text", text: "r2" }], "f"),
+    ]
+    const r = encodeL1(events, [f, g])
+    const u = r.body.messages[2]
+    expect(
+      u?.role === "user" &&
+        u.content.map((b) =>
+          b.type === "tool_result"
+            ? `tool_result:${b.tool_use_id}`
+            : b.type === "text"
+              ? `text:${b.text}`
+              : b.type,
+        ),
+    ).toEqual(["tool_result:c1", "tool_result:c2", "text:Loaded 1 tool (g).", "text:Not on list: x"])
+    expect(landingOf(r, events[3] as Event)).toMatchObject({ kind: "lossy", landing: "tool-reference" })
+    expect(landingOf(r, events[3] as Event)?.note).toContain("之后")
+    expect(landingOf(r, events[4] as Event)).toMatchObject({ kind: "exact", landing: "tool_result" })
+  })
+
+  it("引用指向本次工具表里没有的工具（上一次 run 取回的、这次已解绑）：整段展开成文本，落点 lossy tool_result", () => {
+    const events = [user("hi"), call("c1"), resultWith("c1", [{ type: "text", text: "Loaded" }, refG])]
+    const r = encodeL1(events, [f])
+    const u = r.body.messages[2]
+    expect(u?.role === "user" && u.content[0]).toMatchObject({
+      type: "tool_result",
+      content: [
+        { type: "text", text: "Loaded" },
+        { type: "text", text: '### g\ndg\nInput schema: {"type":"object"}' },
+      ],
+    })
+    expect(landingOf(r, events[2] as Event)).toMatchObject({ kind: "lossy", landing: "tool_result" })
+    expect(landingOf(r, events[2] as Event)?.note).toContain("不在本次请求的工具表里")
+  })
+
+  it("untrusted 结果里的引用不走原生落点：展开成文本并包 untrusted 标记，落点 exact tool_result 带备注", () => {
+    const events = [user("hi"), call("c1"), resultWith("c1", [refG], "f", "untrusted")]
+    const r = encodeL1(events, [f, g])
+    const u = r.body.messages[2]
+    const block = u?.role === "user" ? u.content[0] : undefined
+    expect(block?.type).toBe("tool_result")
+    expect(block?.type === "tool_result" && block.content?.every((b) => b.type === "text")).toBe(true)
+    expect(JSON.stringify(block)).toContain("<untrusted source=")
+    expect(JSON.stringify(block)).toContain("### g")
+    expect(landingOf(r, events[2] as Event)).toMatchObject({ kind: "exact", landing: "tool_result" })
+    expect(landingOf(r, events[2] as Event)?.note).toContain("untrusted")
+  })
+
+  it("用户消息里混进引用段：展开成文本，不崩", () => {
+    const e = ev("core.user_message", "user", { content: [refG] })
+    const r = encodeL1([e], [f, g])
+    const u = r.body.messages[0]
+    expect(u?.role === "user" && u.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("### g"),
+    })
+  })
+})

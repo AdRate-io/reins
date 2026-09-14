@@ -43,6 +43,7 @@ Both implement the same `Lowering` interface from `@reinsjs/core` and both decla
 | | `@reinsjs/lowering-fetch` | `@reinsjs/lowering-pi` |
 | --- | --- | --- |
 | Protocols | OpenAI Chat Completions, Anthropic Messages, OpenAI Responses | Anthropic Messages, OpenAI Responses |
+| Deferred tools (Anthropic `defer_loading` + `tool_reference`, used by `lazyTools()`) | Yes — `capabilities.deferredTools` on official Anthropic models | No (request shaping is pi-ai's; references are rendered as text) |
 | Dependencies | `@reinsjs/core` only (≈90 KB of ESM) | `pi-ai` and its ten dependencies (≈65 MB installed) |
 | Request body | `payload.body` is what is sent | pre-rewrite shape; the real body is produced in pi-ai's `onPayload` hook |
 | Mid-conversation `system` on Anthropic | placed by the encoder | placed by rewriting pi-ai's payload |
@@ -66,6 +67,7 @@ No `node:*`, no `process`, no `Buffer` — the same `dist/index.js` runs on Node
 | `chat.reasoningContent` | DeepSeek dialect: replay `reasoning_content` (on by default in `deepseek()`, see below) |
 | `anthropic.betas` | values for the `anthropic-beta` header; sent only when set (mid-conversation system needs none) |
 | `anthropic.cacheBreakpoints`, `anthropic.cacheTtl`, `anthropic.midSystemCacheBreakpoint` | explicit cache breakpoints on Anthropic (default on, 5 min); what to do when a note ends the request — `"automatic"` (default, top-level `cache_control`), `"previous-user"`, `"drop"` |
+| `anthropic.deferredTools` | whether `ToolSpec.deferLoading` becomes `defer_loading: true` and `tool_reference` content parts become native `tool_reference` blocks. Default: on for `provider: "anthropic"`, off for third-party Anthropic-protocol endpoints (DeepSeek's compatible endpoint ignores `defer_loading`, so every tool would be visible). When off, deferred tools are simply not sent and references are rendered as text |
 | `responses.systemRole` | role for the system prompt and notes on Responses: default `developer` for reasoning models, `system` otherwise; pin it for an upstream that rejects one of them |
 | `responses.encryptedReasoning` | default on for reasoning models: `include: ["reasoning.encrypted_content"]` is always sent so reasoning items can be replayed under `store: false`; off for upstreams that reject `include` (then `thinkingReplay` reports `false`) |
 | `requestOptions` | spread into the body (`max_tokens`, `temperature`, `thinking`, OpenAI's `parallel_tool_calls`, Responses' `reasoning` / `max_output_tokens` / `prompt_cache_key`…); `messages` / `input` / `tools` / `system` / `model` / `stream` / `store` / `previous_response_id` cannot be overridden. On Anthropic `max_tokens` defaults to the model's `maxOutputTokens` and `thinking` is left to you (Opus 5+ defaults to adaptive server-side; Haiku 4.5 still needs `budget_tokens`); on Responses `reasoning` is likewise yours (gpt-5 defaults to `medium`, gpt-5.1+ to `none`) |
@@ -92,6 +94,8 @@ Declared in `LOSS_MATRIX["anthropic-messages"]`, cell for cell comparable with `
 - **Thinking** is replayed only when the event carries a `signature` from the same provider and API (`thinking` / `redacted_thinking` blocks); unsigned thinking (an interrupted stream) or thinking from another provider is `dropped` and declared — it is not turned into visible text. Empty-text thinking blocks with a signature (`display: "omitted"`) are kept and replayed.
 - **Cache breakpoints**: one on the last system block, one on the last tool, one on the last block of the last `user` message. When a note is the last message, the conversation breakpoint becomes a top-level `cache_control` (measured on par with no injection). Never more than four in total.
 - Usage: `input_tokens` is already the uncached count; `cache_read_input_tokens` / `cache_creation_input_tokens` map to `cacheRead` / `cacheWrite`. `stop_reason: "refusal"` becomes a non-retryable `error` carrying `stop_details`.
+
+- Deferred tools (`ToolSpec.deferLoading`, set by `lazyTools()` when `capabilities.deferredTools` is true): `defer_loading: true` on the tool, the cache breakpoint moves to the last non-deferred tool (a deferred tool cannot carry `cache_control`), and if every tool would be deferred none is (the API rejects that). A `tool_result` whose content is only `tool_reference` parts, comes from a system-trusted result, and names tools present in this request's `tools` is sent as `tool_reference` blocks the API expands in place — the tool list never changes, so the cache prefix survives (`exact` / `tool-reference`); text parts in the same result are moved after the batch of `tool_result` blocks (`lossy` / `tool-reference`, they cannot be mixed). References to tools not in this request, or inside untrusted results, are rendered as text instead — the API validates every reference in the whole history and answers 400 for an unknown name.
 
 ## How events land on OpenAI Responses
 

@@ -23,6 +23,12 @@ export interface ToolSpec {
   description: string
   /** JSON Schema 对象；不绑任何校验库 */
   inputSchema: Record<string, unknown>
+  /**
+   * 向厂商声明但不载入模型上下文（L1）：Anthropic 的 `defer_loading: true`——工具留在 tools 块里（表整段不变、缓存前缀不动），
+   * 模型只有在历史里出现指向它的 `tool_reference` 后才看得见。没有等价表达的线**不发**这件工具（模型看不见也调不了，
+   * 与过滤掉同义）。只有 `LoweringCapabilities.deferredTools` 为真的降级层会收到带这个标记的规格（lazy-tools 据能力位决定）。
+   */
+  deferLoading?: boolean
 }
 
 /** 本模型在本 API 上支持什么。脑子模块据此选择等价表达 */
@@ -36,6 +42,11 @@ export interface LoweringCapabilities {
   parallelTools: boolean
   /** 服务端 task budget 倒计时（仅部分 Anthropic 模型） */
   taskBudget: boolean
+  /**
+   * 工具能否"声明但不载入"（L1）：真则 `ToolSpec.deferLoading` 与结果里的 `tool_reference` 段有原生落点
+   * （Anthropic `defer_loading` + `tool_reference` 块，官方模型 Haiku 4.5 起）；假则引用段展开成文本、deferLoading 的工具不发
+   */
+  deferredTools: boolean
   images: boolean
   contextWindow: number
   maxOutputTokens: number

@@ -1,6 +1,7 @@
 import { type CoreEvent, createCoreEvent, createCoreRegistry, type Event } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { BlockAssembler } from "./assembler.js"
+import { toTanstackParts } from "./content.js"
 import { TANSTACK_LOSS_MATRIX } from "./loss-matrix.js"
 import {
   COMPACTION_PREFIX,
@@ -454,5 +455,15 @@ describe("toModelMessages：用户消息后移", () => {
     expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user", "assistant"])
     const late = landings.find((l) => l.eventId === events[2]?.id)
     expect(late).toMatchObject({ kind: "lossy", landing: "user" })
+  })
+})
+
+describe("工具定义引用段（L1）", () => {
+  it("reins → TanStack：引用段展开成文本片段（TanStack 没有对应形状）", () => {
+    expect(
+      toTanstackParts([
+        { type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } },
+      ]),
+    ).toEqual([{ type: "text", content: '### g\ndg\nInput schema: {"type":"object"}' }])
   })
 })

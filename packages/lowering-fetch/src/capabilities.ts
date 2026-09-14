@@ -21,6 +21,8 @@ export function capabilitiesOf(model: FetchModel): LoweringCapabilities {
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
     taskBudget: false,
+    // 只有 Anthropic 线有 defer_loading / tool_reference 的原生落点（L1）；其余线引用段展开成文本、deferLoading 的工具不发
+    deferredTools: false,
   }
   switch (model.api) {
     case "openai-chat":
@@ -38,6 +40,8 @@ export function capabilitiesOf(model: FetchModel): LoweringCapabilities {
         // 带 signature 的 thinking 块可原样回放（F0 A7b 实测接受、伪造签名 400）
         thinkingReplay: model.reasoning,
         taskBudget: ANTHROPIC_TASK_BUDGET.test(model.id),
+        // 官方模型 Haiku 4.5 起都支持（L1 spike 实测 Haiku 4.5 / Opus 5）；第三方兼容上游由宿主声明
+        deferredTools: model.anthropic?.deferredTools ?? model.provider === "anthropic",
       }
     case "openai-responses":
       return {

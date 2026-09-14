@@ -212,3 +212,30 @@ describe("eventsToContext：trust 标注（§14）", () => {
     )
   })
 })
+
+describe("延迟加载（L1）：pi 版没有原生落点", () => {
+  it("deferLoading 的工具不发；工具引用段展开成文本", () => {
+    seq = 0
+    const events = [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "go" }] }),
+      ev("core.tool_call", "model", { toolCallId: "c1", name: "tool_find", args: { names: ["g"] } }),
+      ev("core.tool_result", "tool", {
+        toolCallId: "c1",
+        name: "tool_find",
+        content: [{ type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } }],
+        isError: false,
+      }),
+    ]
+    const { context } = eventsToContext({
+      events,
+      model,
+      capabilities: caps(true),
+      tools: [
+        { name: "f", description: "d", inputSchema: { type: "object" } },
+        { name: "g", description: "dg", inputSchema: { type: "object" }, deferLoading: true },
+      ],
+    })
+    expect(context.tools?.map((t) => t.name)).toEqual(["f"])
+    expect(JSON.stringify(context.messages)).toContain('### g\\ndg\\nInput schema: {\\"type\\":\\"object\\"}')
+  })
+})

@@ -95,8 +95,8 @@
 | `packages/brain/src/skills/skills.test.ts` | skills 的全部用例（头部解析、菜单加载、入参与穿越、静态贡献与告警、读 / 附件 / 截断续读、与 runLoop 及 spill 集成） |
 | `packages/brain/src/lazy-tools/index.ts` | lazy-tools 子模块聚合导出 |
 | `packages/brain/src/lazy-tools/lazy-tools.ts` | `lazyTools(opts): Socket`：`summarizeTool` 缺省摘要、`lazyMenuOf` 从宿主工具挑 `lazy: true` 做菜单（按名排序）、`parseToolFindInput` 校验入参、`revealedLazyTools(timeline, menuNames)` 从时间线重建已取回集合、`toolFindResultBound` 算 resultPolicy 上界；Socket 的 `tools` / `systemPrompt` 按 setup 缓存，`beforeModel` 过滤本轮工具表并记下被藏的（`WeakMap<TurnContext>`），`beforeTool` 对未取回的菜单工具回 block；菜单工具用 `WeakSet<Tool>` 按对象同一性记 |
-| `packages/brain/src/lazy-tools/rules.ts` | `tool_find` 工具名 / 说明 / 入参 schema、规则提示 `LAZY_TOOL_RULES`、菜单排版 `renderLazyToolMenu`、取回条目 `renderLoadedTool` 与结果全文 `renderToolFindResult` |
-| `packages/brain/src/lazy-tools/lazy-tools.test.ts` | lazy-tools 的全部用例（摘要 / 菜单 / 入参 / 重建 / 上界纯函数；静态贡献与告警；与 runLoop 集成：首轮隐藏、取回后可见、block 文案、跨 run 重建、被拦的取回不算、只藏宿主工具、× spill） |
+| `packages/brain/src/lazy-tools/rules.ts` | `tool_find` 工具名 / 说明 / 入参 schema、规则提示 `LAZY_TOOL_RULES`、菜单排版 `renderLazyToolMenu`、`toolReferenceOf`（工具 → 引用段）、`renderLoadedTool`（引用段展开文本，走 core `renderToolReference`）与结果内容段 `renderToolFindResult`（说明文字 + 引用段 + 未列出点名） |
+| `packages/brain/src/lazy-tools/lazy-tools.test.ts` | lazy-tools 的全部用例（摘要 / 菜单 / 入参 / 重建 / 上界纯函数；静态贡献与告警；与 runLoop 集成：首轮隐藏、取回后可见、block 文案、跨 run 重建、被拦的取回不算、只藏宿主工具、× spill；原生路径：全表 + deferLoading、取回后仍延迟、未取回直调仍 block、取回那轮被折出视图则不延迟） |
 
 ## 核心流程
 
@@ -157,9 +157,9 @@
 
 1. run 起步：`tools` 与 `systemPrompt` 共用按 `SocketSetup` 缓存的解析——宿主工具表里已有 `tool_find` 或没有一件 `lazy: true` 的工具就都返回 undefined（不注册）并告警一次；否则 `lazyMenuOf(setup.hostTools)` 挑出 lazy 工具按 name 排序，把这些 Tool 对象记进 `WeakSet`（"菜单工具"），并按这次菜单造一个 `tool_find`（名字 / 说明 / schema 逐字固定，闭包里只有菜单不同；`resultPolicy.maxTokens = toolFindResultBound`）。
 2. 系统提示片段 = `LAZY_TOOL_RULES`（先取回再动手、一次取全、只取任务要的、取过的不重取、别按摘要猜参数）+ `Available on request:` 每项一行 `- name: 摘要`；进 configHash，run 内不变。
-3. `beforeModel`：菜单名 = `ctx.tools` 里 `lazy === true` 且在 WeakSet 里的；`revealedLazyTools(ctx.timeline, 菜单名)` 把所有 `tool_find` 的 tool_call 与其 `isError === false` 的 tool_result 按 toolCallId 配对，取 `args.names ∩ 菜单名`；本轮工具表 = 去掉"在菜单里且未取回"的，被藏的记进 `WeakMap<TurnContext, Map<name, Tool>>`；有藏的才返回 `{ tools }` 补丁。
-4. 模型调 `tool_find({ names })`：`validate` 只校形状（非空字符串、去重去空白、≤ maxPerCall），`execute` 按名在菜单里找——找到的输出 `renderLoadedTool`（完整 description + inputSchema 单行 JSON），没找到的在尾部点名"Not on the on-request list"；一件都没找到才 isError。结果 trust=system（`Tool.resultTrust`）。下一轮 beforeModel 重建时这几件就可见了。
-5. `beforeTool`：循环没在本轮工具表里找到工具（`tool === undefined`）且名字在本轮被藏的表里 → `{ block }`，文案指向 `tool_find`；真正未知的名字不管，循环照旧回"未知工具"。续跑补齐 pending 时没有 beforeModel、`ctx.tools` 是全表，隐藏工具照常执行。
+3. `beforeModel`：菜单名 = `ctx.tools` 里 `lazy === true` 且在 WeakSet 里的；`revealedLazyTools(ctx.timeline, 菜单名)` 把所有 `tool_find` 的 tool_call 与其 `isError === false` 的 tool_result 按 toolCallId 配对，取 `args.names ∩ 菜单名`；被藏的（在菜单里且未取回）记进 `WeakMap<TurnContext, Map<name, Tool>>`。然后按 `ctx.capabilities.deferredTools` 分两路（L1）：**原生路径**——工具表不动（全表下发），返回 `{ deferredTools }`：没取回的延迟，取回了且取回那轮还在 `ctx.events`（本轮视图）里的也延迟（厂商从历史里的 `tool_reference` 展开），取回了但那轮已被折出视图的不延迟（定义进 tools 块）；**过滤路径**——本轮工具表 = 去掉被藏的，返回 `{ tools }`。
+4. 模型调 `tool_find({ names })`：`validate` 只校形状（非空字符串、去重去空白、≤ maxPerCall），`execute` 按名在菜单里找——结果是内容段数组：一段 "Loaded N tools (names); callable from your next turn on."、每件找到的工具一个 `tool_reference` 段（`toolReferenceOf`，带完整定义快照）、没找到的在尾部一段"Not on the on-request list"；一件都没找到才 isError。结果 trust=system（`Tool.resultTrust`）。降级层按能力位翻成 `tool_reference` 块（Anthropic 原生）或 `renderToolReference` 文本（其余线）。下一轮 beforeModel 重建时这几件就可见了。
+5. `beforeTool`：只看本轮被藏的名单——名字在里面 → `{ block }`，文案指向 `tool_find`（过滤路径下它不在表里、原生路径下它在全表里但模型不该看见，两种情形同一判据）；真正未知的名字不管，循环照旧回"未知工具"。续跑补齐 pending 时没有 beforeModel、`ctx.tools` 是全表，隐藏工具照常执行。
 
 ### approval
 
@@ -253,7 +253,9 @@
 
 **预算按每次 run 计，且只拦模型还要继续的轮**（B8）— 收尾作答的轮循环本来就要停，把一次正常结束改成 `paused` 只会让宿主续跑一个没事可做的会话。per-run 让"暂停 = 找宿主要更多预算"最直白；会话级配额由宿主聚合 `budget_usage` 自己做（要"整个会话不超过 X"就把 X 减去已用量再传进来）。
 
-**工具菜单进系统提示、schema 走 `tool_find` 结果、已取回集合从时间线重建**（D1）— 加载哪几件工具是模型的判断（宪法一）：菜单只给 name + 一行摘要，取不取、取哪几件由模型定；"哪些已取回"不加事件、不留内存状态，从 `tool_find` 的 tool_call / tool_result 配对重建（宪法二），审批暂停后换进程续跑、同一会话下一次 run、compact 折叠掉那段历史都对得上；handoff 到新会话即重置。绑定表 `tools_bound` 与 configHash 仍含全部工具（§9.1 约束 3 约束的是绑定表），变的只是每轮请求暴露的子集。边界：Anthropic 工具表一变 tools / system / messages 三段缓存全失效，取回后第一个请求整段重写一次，规则文案因此要求一次取全（实测见 `spikes/d1-lazy-tools-cache/`）。
+**工具菜单进系统提示、schema 走 `tool_find` 结果、已取回集合从时间线重建**（D1）— 加载哪几件工具是模型的判断（宪法一）：菜单只给 name + 一行摘要，取不取、取哪几件由模型定；"哪些已取回"不加事件、不留内存状态，从 `tool_find` 的 tool_call / tool_result 配对重建（宪法二），审批暂停后换进程续跑、同一会话下一次 run、compact 折叠掉那段历史都对得上；handoff 到新会话即重置。绑定表 `tools_bound` 与 configHash 仍含全部工具（§9.1 约束 3 约束的是绑定表），变的只是每轮请求暴露的子集。边界：过滤路径下 Anthropic 工具表一变 tools / system / messages 三段缓存全失效，取回后第一个请求整段重写一次，规则文案因此要求一次取全（实测见 `spikes/d1-lazy-tools-cache/`）。
+
+**降级层有原生延迟加载就走原生路径，取回不再打掉缓存**（L1，2026-09-15）— `ctx.capabilities.deferredTools` 为真（fetch 版 Anthropic 线对官方模型缺省真）时工具表全表下发、菜单工具经 `BeforeModelPatch.deferredTools` 标成 `defer_loading`，`tool_find` 结果里的 `tool_reference` 段由厂商就地展开成定义，工具表整段不变：spike 取回后第 2 请求 cache_read Haiku 8497 / Opus 4062，老路子归零；端到端 Haiku / Opus 各 9/9（`spikes/l1-deferred-tools/`）。例外：取回那轮被 compact 折出本轮视图 → 该工具不延迟、定义进 tools 块——厂商只从历史里的引用块展开，历史没了就展不开；折叠本就重写了前缀，这一下不多花钱。结果内容改成引用段（带定义快照，日志自足）是让"翻译"留在降级层：Anthropic 发块、其余线展开成同一份文本。DeepSeek 兼容端口忽略 `defer_loading`（模型看见全部工具），所以能力位对第三方缺省关。
 
 **只对宿主工具生效，Socket 贡献的 lazy 工具不藏**（D1）— 静态贡献阶段各 Socket 互不可见（`SocketSetup.hostTools` 只有宿主的），菜单列不到别的 Socket 的工具；藏一件菜单上没有的工具等于让它消失。用 `WeakSet<Tool>` 按对象同一性记菜单工具而不是按名字或 `lazy` 字段，同一个 Socket 实例给多个 agent 定义共用也不会串。要让 MCP 工具也懒发现须先给 `SocketSetup` 加"此前已并入的工具"，另立任务。
 

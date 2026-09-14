@@ -92,6 +92,7 @@
 
 ### 循环与时间线（core）
 
+- **`toolSpecOf` 刻意单参，别加第二个参数** — examples 里两处 `tools.map(toolSpecOf)`，多一参就把数组下标当参数吃进去；要带标记用 `deferredToolSpecOf(tool, deferred)`。
 - **`runLoop` 里的 `append` 是全包唯一分配 seq 的地方** — 任何在循环外自己 `log.append` 的代码（投影 emitted、handoff 开场）必须同步 `lastSeq`，漏一处后续整轮 `seq_conflict`。
 - **`resolveSocketContributions` 必须被 runLoop 起步与 server 恢复预校验共用** — configHash 按它算，两处一分叉，装了任何带静态贡献的脑子模块后合法续跑一律误判漂移（B6 修过一次）。
 - **它是 async，各 Socket 依次 await 不并发** — 同名去重以先到者为准，并发会让顺序不定、configHash 抖动；MCP 的 `tools/list` 就在这里发生（P1）。
@@ -120,7 +121,7 @@
 - **`skills({ root })` 拒绝与 `/memories` 相同或互为前缀；宿主工具表已有同名 `skill_read` 时整个不注册** — 否则模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能；菜单指向宿主另一个同名工具则语义与 trust 都对不上。
 - **AdRate `skills install` 落盘的 SKILL.md 是"请运行 adrate skills read"的存根，正文只在 CLI 里** — 对它用 `fsSkillSource` 会让模型读到一句它做不到的指令；示例用 `inlineSkills` 从 CLI 的 `--json` 拼。接任何技能目录前先看一眼正文，别只看文件存在。
 - **lazy-tools 的"已取回"集合从时间线重建（`tool_find` 的 tool_call 与非 isError 的 tool_result 配对 ∩ 当前菜单），不留内存状态；菜单只收宿主工具，按 Tool 对象同一性记** — 暂停续跑 / 下次 run / 换进程都对得上；Socket 贡献的 lazy 工具不进菜单也不藏（藏了没菜单等于消失）。没取回就直接调菜单工具会被 `beforeTool` block 并指向 `tool_find`，不是"未知工具"。
-- **取回工具后的第一个请求在 Anthropic 官方 API 上缓存整段重写（tools 一变三段全失效），DeepSeek 保住系统提示那段其余重算** — D1 spike 实测：一次取回约要 7 个后续请求才回本，长任务开头取一次赢、一个会话里频繁换任务亏；规则文案要求一次取全。要彻底避开得走 provider 原生 deferred tools（降级层优化，未做）。
+- **lazy-tools 按 `ctx.capabilities.deferredTools` 分两路：原生路径全表下发、菜单工具经 `BeforeModelPatch.deferredTools` 标 `defer_loading`，取回不打掉缓存；过滤路径取回后第一个请求缓存整段重写**（L1 / D1 spike）— 过滤路径下一次取回约要 7 个后续请求才回本，规则文案要求一次取全。原生路径两条反直觉：`beforeTool` 只看本轮被藏名单、不能以"表里找到工具"放行（全表下发时工具就在表里）；取回那轮被 compact 折出本轮视图的工具**不延迟**、定义进 tools 块（厂商只从历史里的 `tool_reference` 展开，历史没了就展不开）。`tool_find` 结果是 `tool_reference` 内容段（带定义快照），文本展开只有 core `renderToolReference` 一份。
 
 ### 降级层（lowering-pi）
 
@@ -147,6 +148,7 @@
 - **Responses 线 reasoning 的回放判据是 reasoning 项里的 `encrypted_content`，推理模型缺省永远带 `include: ["reasoning.encrypted_content"]`，不像 pi 版只在请求 effort 时才带** — gpt-5 缺省就开推理，不带 include 会产出无法回放的 reasoning 项；`replay.thinkingSignature` 存整项 JSON（与 pi 版互换），写侧整项原样放回，没有加密项 / 别家的 dropped 不降正文。伪造加密项厂商 400（F0 R3b），回放的必须是原件。
 - **Responses 线 `store: false` 强制、`previous_response_id` 剥掉；工具调用的 `call_id` 是 toolCallId，`fc_` 项 id 存 `replay.itemId` 且只在同一模型回放时带回** — OpenAI 校验 fc 项与 rs 项的配对，换模型就不带（pi-ai 同一取向）；正文项 id 存 `replay.textSignature`，没有就补 `msg_reins_<n>`（厂商接受）。
 - **内置表同一 OpenAI id 两条协议各一份，`findBuiltin(provider, id, api?)` 带协议精确取；无协议解析（直接 `new FetchLowering` + `{ provider: "openai", id }`）缺省走 Responses** — F1 时只有 Chat 条目、当时缺省是 Chat；要走 Chat 用 `openaiChat()` 或自己在 `models` 里声明。测试目标模型要显式取条目，别靠无协议解析。
+- **Anthropic 线的延迟加载（L1）四条厂商规矩都在 encoder 里，且 `tool_reference` 块只给 system 信任的结果**：`tool_result` 内引用不能与文本混放（文本段攒到这批 tool_result 之后，记 lossy `tool-reference`）；同条 user 里所有 tool_result 必须排最前；引用指向本次 tools 里没有的名字 400 且**整段历史都校验**（上次 run 取回、这次解绑的工具会让整条请求失败，所以未绑定的引用一律展开成文本）；`defer_loading` 工具不能带 `cache_control`（断点落在最后一个非延迟工具）；全表延迟 400（此时不延迟）。untrusted 结果里的引用展开成文本——不可信工具输出不能替模型点亮工具。能力位 `deferredTools` 只对 `provider: "anthropic"` 缺省开：DeepSeek 兼容端口实测忽略 `defer_loading`（模型看见全部工具）；Chat / Responses / pi 版把 `deferLoading` 的工具直接不发。
 
 ### MCP（tools-mcp）
 
@@ -209,5 +211,6 @@
 - **Workers 新 compat date 缺省带部分 Node 兼容** — 只跑新 date 会高估 edge 结论，判据取 2023 date 无 flag。
 - **"HTTP 200 假通过"抓过两回** — 真打上游时必须逐项核对产出内容，不能只看状态码。
 - **MCP client 2.0.0 主入口零 `node:*`，靠 `_shims` 条件导出选校验器（workerd → cf-worker，node → Ajv）；`./stdio` 才带 node:process / cross-spawn** — 最严档 workerd 实测 list + call 通过。
-- **aireiter 的 Claude 端点对含历史工具调用的请求回 "stream ended without a stop reason"** — 网关改写截断，不是协议拒绝；协议接受度看 DeepSeek 直连与 OpenAI Responses（历史含已移除工具的两个变体都接受）。
+- **aireiter 的 Claude 端点对含历史工具调用的请求回 "stream ended without a stop reason"** — 网关改写截断，不是协议拒绝；协议接受度看 DeepSeek 直连与 OpenAI Responses（历史含已移除工具的两个变体都接受）；**官方 Anthropic 经 CF 网关 2026-09-15 补测两变体也接受**（`spikes/l1-deferred-tools` P8）。
+- **量缓存的探针必须给系统提示加一次性盐值** — Anthropic 缓存 5 分钟 TTL 且命中续期，同一脚本 10 分钟内重跑，对照臂"应归零"的请求会读到上一遍写的前缀（L1 P3 假阴性一次）；"cache_read > 0" 的正向断言同样可能是上一遍的功劳。
 

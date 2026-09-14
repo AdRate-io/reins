@@ -10,16 +10,21 @@
  * 取 `args.names ∩ 当前菜单`。不加新事件类型、不留内存状态——审批暂停后换进程续跑、同一会话下一次 run、compact 折叠掉那段历史，
  * 已取回集合都不变；handoff 到新会话即重置（新时间线，新菜单）。
  *
- * 绑定表不变：`tools_bound` 与 configHash 仍含全部工具、run 内固定（§9.1 约束 3 约束的是绑定表）；本模块只在 `beforeModel`
- * 把每轮请求暴露的子集过滤成"非 lazy + 已取回的 lazy"。代价是取回之后的第一个请求缓存前缀重算一次（Anthropic 文档：工具表变动使
- * tools / system / messages 三段缓存全部失效），所以规则文案要求一次把要用的都取回；实测数字见 `spikes/d1-lazy-tools-cache/`。
+ * 绑定表不变：`tools_bound` 与 configHash 仍含全部工具、run 内固定（§9.1 约束 3 约束的是绑定表）。每轮请求暴露什么按降级层能力分两路（L1）：
+ * - **原生路径**（`ctx.capabilities.deferredTools`，Anthropic 官方 `defer_loading`）：工具表全表下发，菜单工具标 `deferredTools`——
+ *   厂商知道它们、模型看不见，`tool_find` 结果里的 `tool_reference` 段由厂商就地展开成定义。工具表整段不变，取回不再打掉缓存前缀
+ *   （spikes/l1-deferred-tools：取回后第 2 请求 cacheRead 8488 vs 老路子 0）。已取回、但取回那轮已被 compact 折出本轮视图的工具
+ *   例外——历史里没有引用块可展开，就不再延迟、让定义进 tools 块（折叠本就重写了前缀，这一下不多花钱）。
+ * - **过滤路径**（其余降级层）：本轮工具表 = 非 lazy + 已取回的 lazy；取回后的第一个请求缓存前缀重算一次（Anthropic 文档：工具表
+ *   变动使三段缓存全失效），所以规则文案要求一次把要用的都取回；实测数字见 `spikes/d1-lazy-tools-cache/`。
  *
  * 作用范围只有**宿主工具**（`SocketSetup.hostTools`）：静态贡献阶段各 Socket 互不可见，Socket 贡献的工具（如 MCP 经 `override`
  * 标了 lazy）不进菜单——菜单上没有的工具若被藏起来就等于消失，所以也不藏。模块用对象同一性（WeakSet）记住"哪些工具是菜单工具"，
  * 同一个 Socket 实例给多个 agent 定义共用也不会串。
  *
  * 模型没取回就直接调菜单里的工具：`beforeTool` 回 `block` 并指向 `tool_find`——不拦的话循环回"未知工具"，模型会以为工具不存在；
- * 也不放行，因为请求里没给 schema 的调用入参多半不对。续跑补齐 pending 时没有 beforeModel、表是全表，隐藏工具照常执行。
+ * 也不放行，因为请求里没给 schema 的调用入参多半不对（原生路径同样拦：厂商知道这件工具、模型只凭菜单摘要就能报出名字）。
+ * 续跑补齐 pending 时没有 beforeModel、表是全表，隐藏工具照常执行。
  *
  * trust：工具说明与 schema 是宿主配置，视同系统提示可信，`tool_find` 声明 `resultTrust: "system"`（与 `skill_read` 同一条理由）。
  * `resultPolicy.maxTokens` 按"最大的 maxPerCall 件条目估算之和 + 256"在 setup 时算出：spill 永不把 schema 换成 untrusted 预览。
@@ -237,16 +242,20 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
       if (menuNames.size === 0) return undefined
       const revealed = revealedLazyTools(ctx.timeline, menuNames)
       const hidden = new Map<string, Tool>()
-      const visible = ctx.tools.filter((t) => {
-        if (!menuNames.has(t.name) || revealed.has(t.name)) return true
-        hidden.set(t.name, t)
-        return false
-      })
+      for (const t of ctx.tools) if (menuNames.has(t.name) && !revealed.has(t.name)) hidden.set(t.name, t)
       hiddenByTurn.set(ctx, hidden)
+      if (ctx.capabilities.deferredTools) {
+        // 原生路径：全表下发。没取回的延迟（模型看不见）；取回了且取回那轮还在本轮视图里的也延迟（厂商从历史里的引用块展开）；
+        // 取回了但那轮已被折出视图的不延迟——历史里没有引用块，定义只能进 tools 块
+        const inView = revealedLazyTools(ctx.events, menuNames)
+        const deferred = [...menuNames].filter((n) => !revealed.has(n) || inView.has(n))
+        return deferred.length > 0 ? { deferredTools: deferred } : undefined
+      }
+      const visible = ctx.tools.filter((t) => !hidden.has(t.name))
       return hidden.size > 0 ? { tools: visible } : undefined
     },
-    beforeTool(ctx, call, tool) {
-      if (tool) return undefined
+    beforeTool(ctx, call) {
+      // 只看本轮记下的"被藏的菜单工具"：过滤路径下它不在表里（循环给的 tool 是 undefined），原生路径下它在全表里但模型不该看见
       const name = call.payload.name
       if (!hiddenByTurn.get(ctx)?.has(name)) return undefined
       return {
@@ -283,8 +292,7 @@ function makeToolFind(menu: LazyToolMenu, maxPerCall: number): Tool {
         if (t) loaded.push(t)
         else notListed.push(name)
       }
-      const text = renderToolFindResult({ loaded, notListed })
-      return { content: [{ type: "text", text }], isError: loaded.length === 0 }
+      return { content: renderToolFindResult({ loaded, notListed }), isError: loaded.length === 0 }
     },
   }
   return tool as Tool

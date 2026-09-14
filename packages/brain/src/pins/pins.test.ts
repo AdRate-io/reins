@@ -434,6 +434,7 @@ describe("pins：构造与纯函数", () => {
         thinkingReplay: true,
         parallelTools: true,
         taskBudget: false,
+        deferredTools: false,
         images: true,
         contextWindow: 1000,
         maxOutputTokens: 100,

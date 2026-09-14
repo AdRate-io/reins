@@ -23,6 +23,7 @@ import {
   markUntrusted,
   markUntrustedText,
   needsUntrustedMark,
+  renderToolReference,
   type ToolSpec,
   untrustedSourceOf,
 } from "@reinsjs/core"
@@ -60,9 +61,12 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
 function toPiContent(
   parts: readonly ContentPart[],
 ): (TextContent | { type: "image"; data: string; mimeType: string })[] {
-  return parts.map((p) =>
-    p.type === "text" ? { type: "text", text: p.text } : { type: "image", data: p.data, mimeType: p.mime },
-  )
+  return parts.map((p) => {
+    if (p.type === "text") return { type: "text", text: p.text }
+    // 工具引用段（L1）：pi-ai 的请求整形改不了，没有 defer_loading 落点，展开成文本
+    if (p.type === "tool_reference") return { type: "text", text: renderToolReference(p) }
+    return { type: "image", data: p.data, mimeType: p.mime }
+  })
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -353,9 +357,11 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
 
   const context: Context = { messages }
   if (input.systemPrompt) context.systemPrompt = input.systemPrompt
-  if (input.tools && input.tools.length > 0) {
+  // deferLoading 的工具不发（没有"声明但不载入"的落点；L1）
+  const shownTools = (input.tools ?? []).filter((t) => t.deferLoading !== true)
+  if (shownTools.length > 0) {
     // pi-ai 的 parameters 是 typebox TSchema，运行时就是 JSON Schema 对象，直接透传
-    context.tools = input.tools.map(
+    context.tools = shownTools.map(
       (t): Tool => ({
         name: t.name,
         description: t.description,
