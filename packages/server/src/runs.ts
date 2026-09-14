@@ -5,7 +5,8 @@
  * 中途带 lastSeq 重连的 GET 连接、以及零个（客户端全走了，run 仍在后台跑完）。
  * 订阅者各自有一个小队列，谁慢谁自己攒；run 结束时最终信号（result 或 error）推给所有人并关闭队列。
  *
- * 只管本进程。跨进程的"同一会话同时两个 run"由 EventLog 的 seq 连续性校验兜底（append 报 seq_conflict）。
+ * `RunRegistry` 是登记表的接口：`InMemoryRunRegistry` 只管本进程；多实例部署用 `leasedRunRegistry`（./leased-runs.ts）
+ * 在它外面套一层跨进程租约。无论哪种，EventLog 的 seq 连续性校验（append 报 seq_conflict）都是最后一道闸。
  */
 import type { Event, LoweringDelta, RunResult } from "@reinsjs/core"
 
@@ -71,7 +72,11 @@ export class ActiveRun {
   private readonly subscribers = new Set<Channel<RunSignal>>()
   private final: RunSignal | undefined
   private resolveDone!: () => void
-  /** run 结束（result 或 error）即 resolve；Workers 用它做 waitUntil */
+  private readonly finalizers: (() => void | Promise<void>)[] = []
+  /**
+   * run 结束（result 或 error）**且收尾钩子都跑完**才 resolve；Workers 用它做 waitUntil。
+   * 收尾钩子里有租约释放这类要写存储的动作，不等它们 `waitUntil` 就覆盖不到。
+   */
   readonly done: Promise<void>
 
   constructor(
@@ -110,6 +115,19 @@ export class ActiveRun {
   }
 
   /**
+   * 登记一个收尾钩子：run 结束时（最终信号已推给订阅者之后）按登记顺序**同步启动**，`done` 等它们全部落定。
+   * 登记表用它删自己的表项、释放租约。钩子抛错 / reject 不影响别的钩子，也不让 `done` 变成 reject——
+   * 各钩子自己负责告警。run 已结束时登记的钩子立刻执行。
+   */
+  onFinish(fn: () => void | Promise<void>): void {
+    if (this.final !== undefined) {
+      runFinalizer(fn)
+      return
+    }
+    this.finalizers.push(fn)
+  }
+
+  /**
    * 消费生成器直到返回。生成器抛出（恢复校验不过、存储冲突、宿主 bug）算 error 信号 ——
    * 这时日志里未必有 core.error（runLoop 只把降级层失败记进日志），所以要单独告诉客户端。
    */
@@ -141,28 +159,60 @@ export class ActiveRun {
       ch.close()
     }
     this.subscribers.clear()
-    this.resolveDone()
+    // 钩子**同步**启动：登记表的删项必须在这一刻生效，同会话的下一个 POST 才不会撞到已结束的 run；
+    // 异步部分（租约释放）接到 done 上，Workers 的 waitUntil 才覆盖得到
+    const pending: Promise<void>[] = []
+    for (const fn of this.finalizers) {
+      const p = runFinalizer(fn)
+      if (p !== undefined) pending.push(p)
+    }
+    this.finalizers.length = 0
+    if (pending.length === 0) this.resolveDone()
+    else void Promise.all(pending).then(() => this.resolveDone())
   }
 }
 
-export class RunRegistry {
+/** 同步调一个收尾钩子；同步抛与异步 reject 都吞掉（钩子自己负责告警），返回要等的那部分 */
+function runFinalizer(fn: () => void | Promise<void>): Promise<void> | undefined {
+  try {
+    const r = fn()
+    return r instanceof Promise ? r.catch(() => {}) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * run 登记表：同一会话同时只允许一个 run。
+ *
+ * - `get` **只认本进程**：返回的是本进程正在驾驭的 run，GET 重连靠它接上实时流。跨实例的 GET 补发完即止（`live: false`）——
+ *   别的实例的事件流只在那个进程的内存里，转发要引入消息通道，不值；补发本就从日志读、零状态。
+ * - `create` 占名额，占不到抛 `RunConflictError`（handler 翻成 409 `run_in_progress`）。异步是为了跨进程实现要问一次存储。
+ */
+export interface RunRegistry {
+  get(sessionId: string): ActiveRun | undefined
+  /**
+   * 为会话占一个 run 名额。占到即登记，但还没开始跑 ——
+   * 调用方先把补发做完再 `drive`，这样发起者收到的实时事件一定在补发之后、不会重复。
+   */
+  create(sessionId: string, controller?: AbortController): Promise<ActiveRun>
+}
+
+/** 进程内登记表：一张 Map。单实例部署的缺省；多实例部署见 `leasedRunRegistry` */
+export class InMemoryRunRegistry implements RunRegistry {
   private readonly runs = new Map<string, ActiveRun>()
 
   get(sessionId: string): ActiveRun | undefined {
     return this.runs.get(sessionId)
   }
 
-  /**
-   * 为会话占一个 run 名额（同会话同时只能有一个）。占到即登记，但还没开始跑 ——
-   * 调用方先把补发做完再 `drive`，这样发起者收到的实时事件一定在补发之后、不会重复。
-   */
-  create(sessionId: string, controller = new AbortController()): ActiveRun {
+  async create(sessionId: string, controller = new AbortController()): Promise<ActiveRun> {
     if (this.runs.has(sessionId)) {
       throw new RunConflictError(sessionId)
     }
     const run = new ActiveRun(sessionId, controller)
     this.runs.set(sessionId, run)
-    run.done.then(() => {
+    run.onFinish(() => {
       // 只删自己，防止结束回调晚于同会话下一个 run 的登记
       if (this.runs.get(sessionId) === run) this.runs.delete(sessionId)
     })
@@ -172,8 +222,16 @@ export class RunRegistry {
 
 export class RunConflictError extends Error {
   readonly code = "run_in_progress"
-  constructor(readonly sessionId: string) {
-    super(`[run_in_progress] 会话 ${sessionId} 已有一个 run 在跑`)
+  constructor(
+    readonly sessionId: string,
+    /** 名额被谁占着：本进程的 run，还是（租约登记表）别的实例 */
+    readonly heldBy: "process" | "lease" = "process",
+  ) {
+    super(
+      heldBy === "lease"
+        ? `[run_in_progress] 会话 ${sessionId} 已有一个 run 在别的实例上跑（租约未过期）`
+        : `[run_in_progress] 会话 ${sessionId} 已有一个 run 在跑`,
+    )
     this.name = "RunConflictError"
   }
 }

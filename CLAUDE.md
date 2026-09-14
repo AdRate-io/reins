@@ -147,6 +147,7 @@
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
 - **handler 对 `decisions` 的预校验必须与 runLoop 同一口径：只有本会话的结论对照本会话 pending，带子会话 id 的原样下传** — 两处一分叉，asTool 的 HTTP 续跑必 409（2026-09-10 双审查抓到）；同一个判定写两处就要有一条跨包用例锁住。
 - **`onEvent` 只观测 live 事件（补发不调），先广播再调、不等它拉下一条；但 run 的 result 帧与 `run.done` 等整条观测链结束** — 异步钩子挂住不返回，run 就永不结束、会话永久 409，与工具 execute 挂住同一后果；钩子抛错只经 `warn` 报一次，不进日志、不影响 run。
+- **`RunRegistry.create` 是异步的、`ActiveRun.done` 在收尾钩子（登记表删项、租约释放）之后才 resolve，但删项在结束那一刻同步生效**（D4）— Workers 的 `waitUntil(run.done)` 靠此覆盖 release；任何"run 结束后立刻再 POST"的断言别等 `done`，等 result 帧即可。多实例部署必须让各实例共用 `store.runLease`（pg 有，`createAgent` 自动装），否则两实例同时起 run、第二个浪费一次模型调用后撞 `seq_conflict`；跨实例 GET 只补发不接实时。
 - **续跑带新 `input` 时，`input` 只接受白名单事件草稿** — 伪造 `approval_decision` 曾可绕过审批（2026-09-09 审查修），循环层与 server 层两道白名单都不能删。
 
 ### 存储
@@ -154,7 +155,7 @@
 - **pg 的 `data` 列必须是 `json` 不能是 `jsonb`** — jsonb 重排键序，`pendingDigest` / `configHash` 按 `JSON.stringify` 算，一续跑就误报篡改。
 - **store-sqlite 与 brain 的 tsup 必须 `removeNodeProtocol: false`** — tsup 8 缺省把 `node:sqlite` / `node:fs/promises` 剥成裸模块名，源码与 vitest 全绿，只有跑 dist 才炸。含 `node:*` 的包验收必须跑一次 dist（`pnpm check:dist` 的 `NODE_ALLOWED` 表要登记新的 `/node` 入口）。
 - **`memoryTable` / `table` 是字面拼进 SQL 的，`assertTableName` 白名单是唯一防注入闸，两包各一份同一正则** — 标识符绑不了参数；只有记忆表可换名，事件表与 blob 表按 session_id 隔离刻意不可配。
-- **pg 侧刻意不开事务，每个写是单条语句** — 传连接池就是对的；任何"先查后写"两步逻辑都破坏这个前提。
+- **pg 侧刻意不开事务，每个写是单条语句** — 传连接池就是对的；任何"先查后写"两步逻辑都破坏这个前提。run 租约（`reins_runs`）也是三条单语句，过期只比数据库 `now()`、`acquire` 对同一 owner 幂等；用不了 advisory lock（会话级锁绑连接，池里解不了）。
 
 ### TanStack 适配器
 

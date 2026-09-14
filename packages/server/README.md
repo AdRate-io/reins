@@ -36,7 +36,7 @@ The umbrella package `@reinsjs/agent` wraps this as `createAgent(...).handler` w
 | `POST` | `{ sessionId, resume, decisions }` | resume a paused run with approval decisions (`resume` is the `state` from the previous `result` frame; a decision for a sub-agent's call carries `sessionId: childSessionId`) |
 | `POST` / `GET` | `lastSeq` | replay `(lastSeq, tail]` first, then continue live. `GET` also honours the `Last-Event-ID` header (so a plain `EventSource` reconnects correctly); `POST` reads `body.lastSeq` only |
 
-Frames: `start`, one frame per event, `delta` (optional streaming increments), `result` (the `RunResult`, including a signed `state` when paused), `error`. One run per session at a time: a second `POST` while a run is active answers `409 run_in_progress`.
+Frames: `start`, one frame per event, `delta` (optional streaming increments), `result` (the `RunResult`, including a signed `state` when paused), `error`. One run per session at a time: a second `POST` while a run is active answers `409 run_in_progress` (see "Multiple instances" for what "active" means across processes).
 
 ## Security defaults
 
@@ -59,8 +59,25 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 | `authorizeSession(input)` | — | whether they may touch this session (see above) |
 | `onEvent(event, input)` | — | side-channel observer: called once per event a run appends (see below) |
 | `warn(message)` | `console.warn` | where an `onEvent` failure is reported |
-| `runs` | new registry | in-process run registry; share one instance between handlers |
+| `runs` | `new InMemoryRunRegistry()` | run registry — one run per session at a time. The default only knows this process; multi-instance deployments pass `leasedRunRegistry(store.runLease)` (below) |
 | `newSessionId()` | uuidv7 | id factory for new sessions |
+
+## Multiple instances
+
+The run registry is what turns a second `POST` on a busy session into `409`. The default `InMemoryRunRegistry` is a `Map` in this process, so **two instances behind a load balancer can both start a run on the same session**: the second one spends a model call and then fails with `seq_conflict` when it tries to append (the log stays correct — the seq check in the store is the last gate — but the call was wasted and the client sees an `error` frame instead of a clean `409`).
+
+To make the guard span processes, share a `RunLease` through the store. `@reinsjs/store-pg` provides one (`pgStores()` includes it; the `reins_runs` table, expiry decided by the database clock, not by each instance's own), and `createAgent({ store })` installs it automatically when `store.runLease` is present. Using this package directly:
+
+```ts
+import { createAgentHandler, leasedRunRegistry } from "@reinsjs/server"
+
+const runs = leasedRunRegistry(store.runLease, { ttlMs: 30_000 })   // one per process
+createAgentHandler(agent, { runs })
+```
+
+How it behaves: `POST` acquires the lease before the run starts (held elsewhere → `409 run_in_progress`); the run renews it every `ttlMs / 3`; if a renewal comes back negative — this process was frozen for longer than `ttlMs` and another instance took over — the run is aborted and returns `paused(host)` so it can be resumed; when the run ends the lease is released (a failed release only warns; the lease expires on its own). A crashed process therefore locks its sessions for at most `ttlMs` (default 30 s).
+
+What it does not do: `GET` only joins runs in *this* process. A reconnect that lands on another instance replays from the log up to the current tail and ends (`start.live === false`); use sticky sessions if you need the live tail after a reconnect. Any `RunLease` implementation that passes `runLeaseConformance` from `@reinsjs/core/testing` works — the semantics (heartbeat, abort on loss, release) live in `leasedRunRegistry`, not in the store.
 
 ## Observability
 

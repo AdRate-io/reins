@@ -1,10 +1,10 @@
 # 模块盘点：@reinsjs/store-sqlite / @reinsjs/store-pg
 
-> 对应技术方案 §5、任务 B9（S3 为 SQLite 驱动选型 spike）。以代码为准，写于 2026-09-10。
+> 对应技术方案 §5、任务 B9（S3 为 SQLite 驱动选型 spike）、D4（pg run 租约）。以代码为准，写于 2026-09-10，2026-09-14 D4 更新。
 
 ## 1 架构概览
 
-两个**可选**存储包，各自把 `@reinsjs/core` 的三个接口（`EventLog` / `BlobStore` / `MemoryStore`，定义在 `packages/core/src/store/types.ts`）落到一种数据库上，合起来由 `sqliteStores(db, opts)` / `pgStores(client, opts)` 打包成 `Stores`，直接交给 `createAgent({ store })`。
+两个**可选**存储包，各自把 `@reinsjs/core` 的存储接口（`EventLog` / `BlobStore` / `MemoryStore`，pg 另有 `RunLease`，定义在 `packages/core/src/store/types.ts`）落到一种数据库上，合起来由 `sqliteStores(db, opts)` / `pgStores(client, opts)` 打包成 `Stores`，直接交给 `createAgent({ store })`。
 
 依赖方向是单向的：
 
@@ -39,10 +39,12 @@
 | `packages/store-pg/src/event-log.ts` | `PgEventLog`：append / fork 各是一条语句，read 分页，tail 倒排 |
 | `packages/store-pg/src/blob-store.ts` | `PgBlobStore`：`bytea` 列，`slice` 用 `substring(... FROM ... FOR ...)` |
 | `packages/store-pg/src/memory-store.ts` | `PgMemoryStore(client, { table?, now? })`：`left()` 前缀匹配，`ORDER BY path COLLATE "C"`，表名构造期过白名单 |
-| `packages/store-pg/src/stores.ts` | `pgStores(client, { migrate?, memoryTable?, now? })` 组装 `Stores`（异步，因为建表要 await） |
-| `sqlite.test.ts` / `pg.test.ts` | 各自挂三份一致性套件，再加特有行为：持久化与 WAL、`migrate:false`、与内存实现 deepEqual、千级事件分页、并发写 `seq_conflict`、前缀含 `%` `_` 的字面匹配、`memoryTable` 两表隔离 + 非法表名在建表前拒绝且不发语句；pg 缺省跑 PGlite，设 `REINS_PG_URL` 再对真库跑一遍 |
+| `packages/store-pg/src/run-lease.ts` | D4 `PgRunLease(client)`：`reins_runs` 上三条单语句（acquire = `INSERT … ON CONFLICT DO UPDATE … WHERE 已过期 OR owner 相同 RETURNING`、renew = 条件 UPDATE、release = 按 owner DELETE），过期比的是 `(extract(epoch from now()) * 1000)::bigint` 库时钟 |
+| `packages/store-pg/src/stores.ts` | `pgStores(client, { migrate?, memoryTable?, now? })` 组装 `Stores`（异步，因为建表要 await），含 `runLease` |
+| `packages/store-pg/src/run-lease.cross.test.ts` | 跨包用例：两个 `@reinsjs/server` handler 各一个 `leasedRunRegistry`，共用 PGlite 里的租约与日志——第二个 POST 409、第一个跑完 `reins_runs` 清空、第二个再起成功、两个 run 的 seq 连续 |
+| `sqlite.test.ts` / `pg.test.ts` | 各自挂一致性套件（pg 多一份 `runLeaseConformance`），再加特有行为：持久化与 WAL、`migrate:false`、与内存实现 deepEqual、千级事件分页、并发写 `seq_conflict`、前缀含 `%` `_` 的字面匹配、`memoryTable` 两表隔离 + 非法表名在建表前拒绝且不发语句、pg 租约（两实例同时 acquire 恰一个成功、过期后接手行被改写、`pgStores` 带 `runLease`）；pg 缺省跑 PGlite，设 `REINS_PG_URL` 再对真库跑一遍 |
 
-**三张表与索引。** 两边列名一致，只有类型不同：`reins_events`（`session_id` / `seq` / `id` / `type` / `at` / `data`，主键 `(session_id, seq)`），`reins_blobs`（`id` 主键 / `session_id` / `mime` / `size` / `created_at` / `bytes`），`reins_memory`（`path` 主键 / `content` / `updated_at`）。SQLite 侧 `data` 是 `TEXT`、`bytes` 是 `BLOB`、时间是 `INTEGER`，且**故意不加 `STRICT`**（兼容更老的 SQLite，类型由写入端保证）；Postgres 侧 `data` 是 `json`、`bytes` 是 `bytea`、时间是 `bigint`（Unix 毫秒），`seq` 是 `integer`。**除主键外没有任何 `CREATE INDEX`**：事件查询全部走 `(session_id, seq)` 前缀，blob 与 memory 都按主键点查，`reins_blobs.session_id` 上没有索引（不存在按会话扫 blob 的查询）。事件整条以 JSON 存 `data`，读出来直接反序列化，壳字段只是给主键和排序用——所以 schema 演进由 core 的事件注册表 upcast 负责，表结构不用动。
+**三张表与索引（pg 四张）。** 两边列名一致，只有类型不同：`reins_events`（`session_id` / `seq` / `id` / `type` / `at` / `data`，主键 `(session_id, seq)`），`reins_blobs`（`id` 主键 / `session_id` / `mime` / `size` / `created_at` / `bytes`），`reins_memory`（`path` 主键 / `content` / `updated_at`）；pg 另有 `reins_runs`（`session_id` 主键 / `owner` / `expires_at` bigint，D4 run 租约，`expires_at` 是**库时钟**的 Unix 毫秒）。SQLite 侧 `data` 是 `TEXT`、`bytes` 是 `BLOB`、时间是 `INTEGER`，且**故意不加 `STRICT`**（兼容更老的 SQLite，类型由写入端保证）；Postgres 侧 `data` 是 `json`、`bytes` 是 `bytea`、时间是 `bigint`（Unix 毫秒），`seq` 是 `integer`。**除主键外没有任何 `CREATE INDEX`**：事件查询全部走 `(session_id, seq)` 前缀，blob 与 memory 都按主键点查，`reins_blobs.session_id` 上没有索引（不存在按会话扫 blob 的查询）。事件整条以 JSON 存 `data`，读出来直接反序列化，壳字段只是给主键和排序用——所以 schema 演进由 core 的事件注册表 upcast 负责，表结构不用动。
 
 ## 3 核心流程
 
@@ -71,6 +73,8 @@
 
 **memory list 前缀查询。** 两边都**不用 `LIKE`**，免得给 `%` 和 `_` 转义：SQLite `WHERE substr(path, 1, ?) = ?`（参数是 `prefix.length` 与 `prefix`），Postgres `WHERE left(path, $2) = $1`。排序上 SQLite 默认就是字节序，Postgres 显式 `ORDER BY path COLLATE "C"`，两边与内存实现的字典序一致。`write` 是 upsert（`ON CONFLICT(path) DO UPDATE`），`delete` 天然幂等。
 
+**run 租约（pg，D4）。** `PgRunLease` 三个方法各一条语句，过期判定全在 SQL 里比 `now()`：acquire 是 `INSERT … ON CONFLICT (session_id) DO UPDATE SET owner, expires_at WHERE reins_runs.expires_at < 库时间 OR reins_runs.owner = EXCLUDED.owner RETURNING owner`——插到 1 行即占到（含"自己再占"的幂等续期），0 行即别人持有且未过期；两个实例同时对空会话 acquire 时 Postgres 的 ON CONFLICT 让后到者看到先到者已提交的行再判 WHERE，恰一个成功（PGlite 实测）。renew 是 `UPDATE … WHERE session_id AND owner AND expires_at >= 库时间 RETURNING`，0 行即丢了租约；release 是 `DELETE … WHERE session_id AND owner`，非持有者删不掉。不用 advisory lock 的原因：会话级锁绑连接而 `PgClient` 经连接池每条语句可能走不同连接，事务级锁又要 BEGIN/COMMIT。
+
 **装配与选项。** `sqliteStores(db, opts)` 同步返回 `Stores`，`pgStores(client, opts)` 返回 `Promise<Stores>`（建表要 await）。两者的 opts 一样有三项：`migrate`（缺省 `true`，起步幂等建表；自己管迁移的宿主传 `false`）、`memoryTable`（记忆表名，缺省 `reins_memory`，同时喂给建表语句与 MemoryStore；`SqliteMemoryStore` / `PgMemoryStore` 单独构造时对应 `table` 选项）和 `now`（缺省 `() => Date.now()`，注入给 BlobStore 与 MemoryStore 的时间戳；EventLog 不用它，事件的 `at` 由调用方带来）。`openSqlite(path, opts)` 另有 `wal`（文件库缺省开）与 `busyTimeoutMs`（缺省 5000），`:memory:` 不适用这两项，`PRAGMA foreign_keys = ON` 无条件开。
 
 **表名：只有记忆表可配**（P2，2026-09-10）。`reins_events` / `reins_blobs` 是字面量，不可配——它们的隔离单位是 `session_id`，多个 agent 共用一份日志本就是设计；`reins_memory` 通过 `memoryTable` / `table` 换名，用于"多个角色共用一个库、各自一张记忆表"（技术方案 §9.6 隔离第一层）。表名字面拼进 SQL（参数绑定绑不了标识符），所以 `assertTableName` 白名单 `^[A-Za-z_][A-Za-z0-9_]{0,62}$` 是唯一一道防注入闸，两包各一份同一正则，不合规抛 `StoreError("invalid_argument")` 且不碰数据库；不加引号，Postgres 未加引号标识符统一折小写，DDL 与查询同一规则。
@@ -85,4 +89,5 @@
 - **一致性套件不绑测试框架（T4/T5）** — `@reinsjs/core/testing` 只接收 `{ describe, it }`，断言自带（`ConformanceError`）。为什么：Bun、node:test 都能跑同一套件，第三方后端可自证合规。边界：套件里不能用 `expect`，特有行为测试才用 vitest。
 - **测试缺省 PGlite，真库按需（B9）** — pg 包缺省用进程内 WASM Postgres 跑全套，设 `REINS_PG_URL` 才对真库再跑一遍。为什么：真 Postgres 引擎但不需要服务器，CI 免依赖。边界：dogfood 前必须在真库上绿过。
 - **只让记忆表换名，事件表与 blob 表不可配（P2）** — `memoryTable` 只作用于 `reins_memory`。为什么：隔离需求只出现在记忆（按角色各一套），事件与 blob 按 `session_id` 隔离已足够，多开选项只会让"一个库多套 reins"这种未出现的场景提前定型；构造器从 `(db, now)` 改成 `(db, { table, now })` 选项对象，再加项不破坏签名。边界：真要整套隔离，用不同数据库 / schema（Postgres `search_path`）而不是表名前缀。
+- **run 租约用库时间、单条语句、同 owner 幂等（D4）** — 判定时钟必须唯一才能让各实例对"谁持有"达成一致，本机时钟偏几秒就会同时两个持有者；单条语句是本包的既有约束；同 owner 幂等让 server 侧"同进程并发 create"不必先查后占。边界：SQLite 未做（单文件库典型是单进程），需要时按同一契约加一张表跑 `runLeaseConformance` 即可。
 - **`removeNodeProtocol: false`（B11 附）** — store-sqlite 的 tsup 配置必须关掉这个缺省项。为什么：tsup 8 会把 `node:sqlite` 剥成裸的 `sqlite`（一个不存在的 npm 包），运行时 `ERR_MODULE_NOT_FOUND`；源码与 vitest 路径全绿完全掩盖了它，只有真跑 dist 才暴露。边界：所有含 `node:*` 子路径的包，验收都要加一条"跑一次 dist 产物"。

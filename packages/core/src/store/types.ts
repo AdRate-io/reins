@@ -1,8 +1,9 @@
 /**
- * 存储接口（技术方案 §5）。三者相互独立，允许部分实现：
+ * 存储接口（技术方案 §5）。四者相互独立，允许部分实现：
  * - 只有 EventLog 就能跑
  * - 缺 BlobStore → spill 模块自动关闭并告警
  * - 缺 MemoryStore → memory 工具不注册
+ * - 缺 RunLease → run 登记只在进程内（多实例部署要它，见 D4）
  *
  * 每个接口的行为契约由 ../testing 下的一致性套件定义，第三方后端跑同一套件即可自证合规。
  */
@@ -75,9 +76,36 @@ export interface MemoryStore {
  */
 export type SkillSource = Pick<MemoryStore, "list" | "read">
 
-/** 一套存储：只有 log 是必需的（§5 允许部分实现），`createAgent({ store })` 接收的就是它 */
+/**
+ * run 租约（D4，2026-09-14）：多实例部署下"同一会话同时只允许一个 run"的跨进程登记表。
+ *
+ * 语义是**带过期时间的独占锁**：`acquire` 在无人持有、持有者已过期、或持有者就是自己时成功；
+ * 持有者每隔一段时间 `renew` 续期，进程崩了不续期，到期后别的实例就能接手；`release` 只删自己持有的。
+ * 过期判定用**存储层自己的时钟**（数据库时间），不用各实例本机时钟——租约的意义是各实例对"谁持有"达成一致，
+ * 判定时钟必须唯一。三个方法都不抛"冲突"类错误，用返回值说话；存储不可用时照常抛。
+ *
+ * 心跳、丢租约中止、失败告警这些行为放在 `@reinsjs/server` 的 `leasedRunRegistry` 一份，store 只做三条语句。
+ * 单进程部署不需要它（进程内登记表已够），`memoryStore()` 刻意不带；`InMemoryRunLease` 是参考实现与测试用。
+ */
+export interface RunLease {
+  /**
+   * 为会话占租约 ttlMs 毫秒。无人持有、持有者已过期、或持有者就是 owner（幂等，等于续期）→ true；
+   * 别人仍持有且未过期 → false。
+   */
+  acquire(sessionId: string, owner: string, ttlMs: number): Promise<boolean>
+  /** 续期：owner 仍持有且未过期 → true 并延长到 now + ttlMs；已过期、被别人接手、或从未持有 → false */
+  renew(sessionId: string, owner: string, ttlMs: number): Promise<boolean>
+  /** 释放：只删 owner 自己持有的那条；不是自己的、或不存在，静默返回 */
+  release(sessionId: string, owner: string): Promise<void>
+}
+
+/**
+ * 一套存储：只有 log 是必需的（§5 允许部分实现），`createAgent({ store })` 接收的就是它。
+ * 带 `runLease` 时 `createAgent` 自动把 handler 的 run 登记表换成跨进程的租约登记（D4）。
+ */
 export interface Stores {
   log: EventLog
   blobs?: BlobStore
   memory?: MemoryStore
+  runLease?: RunLease
 }

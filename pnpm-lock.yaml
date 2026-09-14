@@ -221,6 +221,9 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.8
         version: 0.5.8
+      '@reinsjs/server':
+        specifier: workspace:*
+        version: link:../server
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1

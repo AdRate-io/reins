@@ -8,6 +8,7 @@
  *
  * 事件的 SSE `id:` 就是 seq，所以"重连补发"不需要任何额外状态：客户端记住最后一个 id，服务端从日志读。
  * 同一会话同时只允许一个 run（409）；发起者断开缺省不中止 run，日志照常写，重连即接上。
+ * 登记表缺省只在进程内（`InMemoryRunRegistry`）；多实例部署传 `runs: leasedRunRegistry(store.runLease)`。
  */
 import {
   type ContentPart,
@@ -30,7 +31,14 @@ import {
   uuidv7,
   validateResume,
 } from "@reinsjs/core"
-import { type ActiveRun, type Channel, RunConflictError, RunRegistry, type RunSignal } from "./runs.js"
+import {
+  type ActiveRun,
+  type Channel,
+  InMemoryRunRegistry,
+  RunConflictError,
+  type RunRegistry,
+  type RunSignal,
+} from "./runs.js"
 import { encodeSseFrame, rawEncoder, SSE_HEADERS, SSE_HEARTBEAT } from "./sse.js"
 import type {
   AgentDefinition,
@@ -283,7 +291,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
   const onDisconnect = options.onDisconnect ?? "continue"
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
   const newSessionId = options.newSessionId ?? (() => uuidv7())
-  const runs = options.runs ?? new RunRegistry()
+  const runs: RunRegistry = options.runs ?? new InMemoryRunRegistry()
   const warn = options.warn ?? ((message: string) => console.warn(message))
   const { log } = agent
   // 补发与预校验读日志都经注册表升级（P9），与循环看到的形状一致；宿主有 ext.* 事件时在 definition 里给自己的注册表
@@ -526,7 +534,8 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
 
     let run: ActiveRun
     try {
-      run = runs.create(sessionId)
+      // 租约登记表在这里问一次存储；acquire 时存储不可用照常抛（不知道能不能跑就不跑）
+      run = await runs.create(sessionId)
     } catch (err) {
       if (err instanceof RunConflictError) {
         return json(409, { error: err.code, message: err.message }, { [SESSION_HEADER]: sessionId })

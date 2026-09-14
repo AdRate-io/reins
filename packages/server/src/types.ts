@@ -176,8 +176,12 @@ export interface HandlerOptions {
   /** 新会话 id 工厂；缺省 uuidv7 */
   newSessionId?(): string
   /**
-   * 进程内正在跑的 run 的登记处。同一会话同时只允许一个 run（第二个 POST 得 409）；
-   * GET 重连撞上正在跑的 run 时，补发之后继续实时推。多个 handler 共用同一个进程时可传同一个实例。
+   * 正在跑的 run 的登记表。同一会话同时只允许一个 run（第二个 POST 得 409）；
+   * GET 重连撞上本进程正在跑的 run 时，补发之后继续实时推。多个 handler 共用同一个进程时可传同一个实例。
+   *
+   * 缺省 `new InMemoryRunRegistry()`，**只认本进程**——多实例部署下两台机器可以同时对一条会话起 run，
+   * 第二个浪费一次模型调用后撞 `seq_conflict`。多实例必须传 `leasedRunRegistry(store.runLease)`（D4），
+   * `createAgent({ store })` 见 `store.runLease` 会自动装。
    */
   runs?: RunRegistry
   /**

@@ -13,7 +13,7 @@ import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/cor
 import { afterEach, describe, expect, it } from "vitest"
 import { createAgentHandler, SESSION_HEADER } from "./handler.js"
 import { nodeListener } from "./node.js"
-import { RunRegistry } from "./runs.js"
+import { InMemoryRunRegistry } from "./runs.js"
 import {
   eventFrames,
   eventsOf,
@@ -52,7 +52,7 @@ function setup(
   const log = new InMemoryEventLog()
   const lowering = new ScriptedLowering(script as ScriptedTurn[])
   const agent: AgentDefinition = { log, lowering, model: MODEL, tools, ...agentExtra }
-  const runs = options.runs ?? new RunRegistry()
+  const runs = options.runs ?? new InMemoryRunRegistry()
   const handler = createAgentHandler(agent, { heartbeatMs: 0, newSessionId: () => "fresh", ...options, runs })
   return { log, lowering, agent, handler, runs }
 }

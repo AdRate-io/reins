@@ -1,5 +1,5 @@
 /**
- * 三个接口的内存实现：零依赖、进程内、无持久化。用途：
+ * 四个接口的内存实现：零依赖、进程内、无持久化。用途：
  * - 单测与示例
  * - 一致性套件的参考实现（其他后端的行为以此为准）
  * - 短生命周期的宿主（如一次性脚本）
@@ -9,7 +9,7 @@
 import type { Event } from "../events/base.js"
 import { uuidv7 } from "../events/id.js"
 import { StoreError } from "./errors.js"
-import type { BlobMeta, BlobStore, EventLog, MemoryStore, ReadOptions, Stores } from "./types.js"
+import type { BlobMeta, BlobStore, EventLog, MemoryStore, ReadOptions, RunLease, Stores } from "./types.js"
 
 export class InMemoryEventLog implements EventLog {
   private readonly sessions = new Map<string, Event[]>()
@@ -128,7 +128,45 @@ export class InMemoryMemoryStore implements MemoryStore {
   }
 }
 
-/** 一套全内存的存储，五分钟体验与测试用；进程结束即清空 */
+/**
+ * RunLease 的内存参考实现（D4）。进程内的锁跨不了进程，所以它在生产里没有用处——`memoryStore()` 刻意不带它；
+ * 价值在于：一致性套件的基准、server 租约登记表的单测（`now` 可注入，能不等真时间就让租约过期）。
+ */
+export class InMemoryRunLease implements RunLease {
+  private readonly leases = new Map<string, { owner: string; expiresAt: number }>()
+  private readonly now: () => number
+
+  constructor(opts: { now?: () => number } = {}) {
+    this.now = opts.now ?? (() => Date.now())
+  }
+
+  async acquire(sessionId: string, owner: string, ttlMs: number): Promise<boolean> {
+    const now = this.now()
+    const held = this.leases.get(sessionId)
+    if (held !== undefined && held.expiresAt >= now && held.owner !== owner) return false
+    this.leases.set(sessionId, { owner, expiresAt: now + ttlMs })
+    return true
+  }
+
+  async renew(sessionId: string, owner: string, ttlMs: number): Promise<boolean> {
+    const now = this.now()
+    const held = this.leases.get(sessionId)
+    if (held === undefined || held.owner !== owner || held.expiresAt < now) return false
+    held.expiresAt = now + ttlMs
+    return true
+  }
+
+  async release(sessionId: string, owner: string): Promise<void> {
+    if (this.leases.get(sessionId)?.owner === owner) this.leases.delete(sessionId)
+  }
+
+  /** 测试观察用：当前持有者（不看是否过期） */
+  holderOf(sessionId: string): string | undefined {
+    return this.leases.get(sessionId)?.owner
+  }
+}
+
+/** 一套全内存的存储，五分钟体验与测试用；进程结束即清空。不带 `runLease`：单进程用不上，装了只多一份心跳 */
 export function memoryStore(): Stores {
   return { log: new InMemoryEventLog(), blobs: new InMemoryBlobStore(), memory: new InMemoryMemoryStore() }
 }

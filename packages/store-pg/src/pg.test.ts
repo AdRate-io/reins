@@ -6,6 +6,7 @@ import {
   eventLogConformance,
   makeEvents,
   memoryStoreConformance,
+  runLeaseConformance,
 } from "@reinsjs/core/testing"
 import pg from "pg"
 import { afterAll, describe, expect, it } from "vitest"
@@ -16,6 +17,7 @@ import {
   type PgClient,
   PgEventLog,
   PgMemoryStore,
+  PgRunLease,
   pgStores,
 } from "./index.js"
 
@@ -41,7 +43,7 @@ for (const backend of backends) {
   /** 每个用例一套干净的表：建表幂等，之后清空 */
   const fresh = async (): Promise<Stores> => {
     const stores = await pgStores(backend.client)
-    await backend.client.query("TRUNCATE reins_events, reins_blobs, reins_memory")
+    await backend.client.query("TRUNCATE reins_events, reins_blobs, reins_memory, reins_runs")
     return stores
   }
 
@@ -52,6 +54,55 @@ for (const backend of backends) {
       { describe, it },
       async () => (await fresh()).memory as NonNullable<Stores["memory"]>,
     )
+    runLeaseConformance(
+      { describe, it },
+      async () => (await fresh()).runLease as NonNullable<Stores["runLease"]>,
+    )
+
+    describe("run 租约（D4）：单条语句 + 数据库时钟", () => {
+      it("两个实例同时对空会话 acquire：恰好一个成功；失败方 renew 为 false；成功方 release 后失败方可占", async () => {
+        await fresh()
+        const a = new PgRunLease(backend.client)
+        const b = new PgRunLease(backend.client)
+        const got = await Promise.all([a.acquire("s1", "A", 60_000), b.acquire("s1", "B", 60_000)])
+        expect(got.filter(Boolean)).toHaveLength(1)
+        const winner = got[0] ? "A" : "B"
+        const loser = winner === "A" ? "B" : "A"
+        const rows = await backend.client.query("SELECT owner FROM reins_runs WHERE session_id = $1", ["s1"])
+        expect(rows.rows).toEqual([{ owner: winner }])
+        expect(await a.renew("s1", loser, 60_000)).toBe(false)
+        expect(await a.renew("s1", winner, 60_000)).toBe(true)
+        await a.release("s1", loser) // 非持有者删不掉
+        expect((await backend.client.query("SELECT count(*)::int AS n FROM reins_runs")).rows[0]).toEqual({
+          n: 1,
+        })
+        await a.release("s1", winner)
+        expect(await b.acquire("s1", loser, 60_000)).toBe(true)
+      })
+
+      it("过期判定用库时间：过期后接手者 acquire 成功且行被改写为新 owner，原持有者 renew 为 false", async () => {
+        await fresh()
+        const lease = new PgRunLease(backend.client)
+        expect(await lease.acquire("s1", "A", 1)).toBe(true)
+        await new Promise((r) => setTimeout(r, 30))
+        expect(await lease.acquire("s1", "B", 60_000)).toBe(true)
+        const rows = await backend.client.query(
+          "SELECT owner, expires_at FROM reins_runs WHERE session_id = $1",
+          ["s1"],
+        )
+        expect(rows.rows[0]?.owner).toBe("B")
+        // expires_at 是库时钟的 Unix 毫秒，与本机时钟同量级（差在秒级以内即可，不比精确值）
+        expect(Math.abs(Number(rows.rows[0]?.expires_at) - (Date.now() + 60_000))).toBeLessThan(5_000)
+        expect(await lease.renew("s1", "A", 60_000)).toBe(false)
+        expect(await lease.renew("s1", "B", 60_000)).toBe(true)
+      })
+
+      it("pgStores 带 runLease；建表语句含 reins_runs", async () => {
+        const stores = await fresh()
+        expect(stores.runLease).toBeInstanceOf(PgRunLease)
+        expect(PG_SCHEMA_SQL).toContain("reins_runs")
+      })
+    })
 
     describe("Postgres 特有行为", () => {
       it("append 是单条语句：两个日志实例共用同一库，后写的一方拿到 seq_conflict，日志不留半批", async () => {

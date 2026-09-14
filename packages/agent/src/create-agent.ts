@@ -3,7 +3,7 @@
  * `handler`（Web 标准 (Request) => Response，缺省 AG-UI 编码）和 `run()`（不经 HTTP 直接跑，脚本 / 队列 / 测试用）。
  *
  * 它不引入新概念：AgentDefinition 就是 runLoop 的跨请求配置，handler 就是 createAgentHandler。
- * 这里只负责把 BoundModel 拆成 model + lowering、把 Stores 拆成 log / blobs / memory。
+ * 这里只负责把 BoundModel 拆成 model + lowering、把 Stores 拆成 log / blobs / memory（runLease 则换成 handler 的登记表）。
  */
 import {
   type ApprovalDecisionInput,
@@ -24,6 +24,7 @@ import {
   type AgentHandler,
   createAgentHandler,
   type HandlerOptions,
+  leasedRunRegistry,
 } from "@reinsjs/server"
 import { aguiEncoding } from "@reinsjs/ui-agui"
 
@@ -31,7 +32,10 @@ export interface CreateAgentOptions
   extends Omit<AgentDefinition, "model" | "lowering" | "log" | "blobs" | "memory"> {
   /** `anthropic("claude-opus-5", { apiKey })` 之类工厂的返回值，或自己组的 { model, lowering } */
   model: BoundModel
-  /** `memoryStore()`、`sqliteStores(db)`、`await pgStores(client)`（B9）或自己实现的一套接口；只有 log 必需 */
+  /**
+   * `memoryStore()`、`sqliteStores(db)`、`await pgStores(client)`（B9）或自己实现的一套接口；只有 log 必需。
+   * 带 `runLease` 时 handler 自动用跨进程的租约登记表（D4）——多实例部署同一条会话同时只跑一个 run
+   */
   store: Stores
   /** 传输层选项；缺省 AG-UI 编码（`encode: aguiEncoding()`），想推原始事件就传 `encode: () => rawEncoder` */
   handler?: HandlerOptions
@@ -68,7 +72,16 @@ export function createAgent(options: CreateAgentOptions): Agent {
     ...(store.blobs ? { blobs: store.blobs } : {}),
     ...(store.memory ? { memory: store.memory } : {}),
   }
-  const handler = createAgentHandler(definition, { encode: aguiEncoding(), ...handlerOptions })
+  // store 带 runLease（如 pgStores）就自动装跨进程的租约登记表（D4），宿主不用记这一步；自己传 handler.runs 则以宿主为准
+  const runs =
+    store.runLease !== undefined
+      ? {
+          runs: leasedRunRegistry(store.runLease, {
+            ...(handlerOptions?.warn !== undefined ? { warn: handlerOptions.warn } : {}),
+          }),
+        }
+      : {}
+  const handler = createAgentHandler(definition, { encode: aguiEncoding(), ...runs, ...handlerOptions })
   return {
     definition,
     handler,

@@ -7,20 +7,14 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D3 已完成（lazyTools、handler `onEvent`、approval `ttlMs`，未发布），下一步 D4（Boss 定：不等 AdRate 对 0.1 的实测；0.1.x 补丁并行）。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D4 已完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记，未发布），下一步 D5（Boss 定：不等 AdRate 对 0.1 的实测；0.1.x 补丁并行）。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
 - [x] **D1 工具懒发现**（2026-09-14）：brain 第十个模块 `lazyTools()`，菜单进系统提示、`tool_find` 取回、已取回集合从时间线重建、直接调隐藏工具即 block 指路；+16 用例，eval fixture `tool-discovery`（200 件）+4 用例，780 全绿。spike：Anthropic 上取回后首请求缓存整段重写，频繁换任务按价目加权贵 1.7 倍，一次取回约 7 请求回本——opt-in、README 写边界。eval 两族门禁通过（第二轮，完成度 100% 持平，总 token −59%～−62%）。第一轮 fixture authId 类型缺陷见踩坑记录
 - [x] **D2 handler 旁路观测钩子**（2026-09-14）：`HandlerOptions.onEvent(event, { sessionId, principal, request })` + `warn` 出口；只 live 不 replay、先广播再调不挡 run、出错只告警一次、run 收尾等观测链（Workers waitUntil 覆盖）；不进 core。+4 用例，784 全绿。server README 加 Observability 节、根 README 写明 `agent.run()` 本身可 `for await`
 - [x] **D3 审批过期**（2026-09-14）：`approval({ ttlMs })`，比 `approval_request.at` 与宿主批准事件 `at`（循环时钟，不读墙钟），过期在 ask 落点 deny + block、留 `approval_decision(by: "approval.expired")`，模型看到"可重新发起"；`by` 用策略 id 而非 `"reins"`（理由见 DECISIONS）。+4 用例，788 全绿
-- [ ] **D4 跨进程 run 登记**（设计已定，见 DECISIONS 2026-09-14「D4 设计定形」；需一个完整会话，按下面顺序做）：
-  1. core：`RunLease` 接口（acquire / renew / release）进 `store/`，`Stores.runLease?` 可选
-  2. server：`RunRegistry` 改接口、类改名 `InMemoryRunRegistry`、`create` 异步，handler POST 路径 await；新增 `leasedRunRegistry(lease, { ttlMs, owner })`：心跳 ttl/3、丢租约 abort、done 时 release、失败告警
-  3. store-pg：`reins_runs` 表进 schema，`pgRunLease(client)` 三条单语句、过期用库时间；PGlite 用例：抢占 / 冲突 / 过期接手 / 丢租约后 renew 为 false / release 后可再占
-  4. server 用例：假 RunLease 下两个 registry 共用一份租约，第二个 POST 409；renew false → paused(host)；done 释放。跨包用例：两个 handler + PGlite 租约
-  5. `createAgent` 见 `store.runLease` 自动装；README 红线（多实例必须共享登记表；跨实例 GET 只补发不接实时）；技术方案 §12 / 盘点 server + store-pg + core / 全景图；changeset core、server、store-pg 各 minor
-  今天双实例只浪费一次模型调用、不坏数据（seq_conflict 兜底）
+- [x] **D4 跨进程 run 登记**（2026-09-14）：core `RunLease` 接口 + `InMemoryRunLease` + `runLeaseConformance`；server `RunRegistry` 接口化（`InMemoryRunRegistry` 缺省、`create` 异步）、`leasedRunRegistry`（心跳 ttl/3、丢租约 abort → paused(host)、结束 release、失败只告警）、`ActiveRun.onFinish`；store-pg `reins_runs` + `PgRunLease` 三条单语句、过期用库时钟；`createAgent` 自动装。+25 用例（含 PGlite 跨包用例），813 全绿。实施时与设计的三处出入见 DECISIONS 同日「D4 实施定形」
 - [ ] **D5 脱敏配方入 README**（文档，不加接口）：工具结果在 `afterTool` 草稿上脱敏；其他事件包一层 `log.append`。若 AdRate 接入时包 store 太别扭，再考虑核心加极小的 `redactingLog(log, fn)` 助手
 - 不做（记 DECISIONS）：规范化 JSON 序列化算 digest 以放开 jsonb——改的是状态格式，等真有"全库禁 json"硬约束再随版本一起升
 

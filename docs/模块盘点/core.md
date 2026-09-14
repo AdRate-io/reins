@@ -11,12 +11,12 @@
 | 导出组 | 内容 |
 | --- | --- |
 | `events/` | 事件壳 `EventBase` / `Event`、16 种 `core.*` 载荷、`uuidv7`、schema 注册表与 upcast |
-| `store/` | `EventLog` / `BlobStore` / `MemoryStore` 三接口、内存实现、`readTimeline`（读时升级的唯一正确读法） |
+| `store/` | `EventLog` / `BlobStore` / `MemoryStore` / `RunLease` 四接口、内存实现、`readTimeline`（读时升级的唯一正确读法） |
 | `projection/` | 投影策略链（过滤 / 折叠 / 钉住 / 裁剪）、token 粗估、被折叠工具结果清单 |
 | `lowering/` | 降级层**接口与有损矩阵类型**，外加一份两条降级路线共用的 trust 标注纯函数（R9） |
 | `loop/` | `runLoop` 与它的插座（`Socket`、`Tool`）、run 状态签名与恢复校验、静态贡献解析、瞬断重试、fork |
 | `replay/` | 只凭日志重算每轮模型看到了什么 |
-| `testing/`（独立入口） | 三份存储一致性套件 + `ScriptedLowering` 脚本化降级层 |
+| `testing/`（独立入口） | 四份存储一致性套件 + `ScriptedLowering` 脚本化降级层 |
 
 依赖方向：`package.json` 里**零 dependencies**、零 `node:*`（P5），只用 Web 标准 API（`crypto.getRandomValues`、`crypto.subtle`、`structuredClone`、`TextEncoder`）。被 9 个包依赖：`@reinsjs/brain`、`@reinsjs/lowering-pi`、`@reinsjs/server`、`@reinsjs/ui-agui`、`@reinsjs/adapter-tanstack-ai`、`@reinsjs/store-sqlite`、`@reinsjs/store-pg`、`@reinsjs/eval`、`@reinsjs/reins`（聚合包）。core 不反向依赖其中任何一个。
 
@@ -79,11 +79,11 @@
 | 文件 | 职责 |
 | --- | --- |
 | `store/index.ts` | 汇总导出 errors / in-memory / read-timeline / types |
-| `store/types.ts` | `EventLog`（append / read / tail / fork）、`BlobStore`、`MemoryStore`、`Stores`（只有 log 必需）、`ReadOptions` 的接口与行为契约注释 |
+| `store/types.ts` | `EventLog`（append / read / tail / fork）、`BlobStore`、`MemoryStore`、`RunLease`（D4：acquire / renew / release，带过期的独占锁，过期用存储层时钟，同 owner 幂等）、`Stores`（只有 log 必需，`runLease?` 让 `createAgent` 自动装跨进程登记表）、`ReadOptions` 的接口与行为契约注释 |
 | `store/errors.ts` | `StoreError` 与 7 种 code（seq_conflict / session_mismatch / empty_batch / not_found / target_not_empty / out_of_range / invalid_argument） |
-| `store/in-memory.ts` | 三个接口的进程内实现 + `memoryStore()` 一次给齐；读写都 `structuredClone`，是一致性套件的参考实现 |
+| `store/in-memory.ts` | 四个接口的进程内实现（`InMemoryRunLease({ now })` 时钟可注入，供 server 单测）+ `memoryStore()` 一次给齐前三个（刻意不带 runLease：进程内的锁跨不了进程）；读写都 `structuredClone`，是一致性套件的参考实现 |
 | `store/read-timeline.ts` | `readEvents`（流式）/ `readTimeline`（整段）：从日志读出的每一条都先过 `registry.read` 升级，是循环、server、回放读日志的唯一正确姿势 |
-| 测试 | `in-memory.test.ts` 直接跑 `../testing` 的三份一致性套件并验 `memoryStore()` 每次新建；`read-timeline.test.ts` 覆盖读时升级、区间透传、未登记 ext.* 与未来版本拒绝 |
+| 测试 | `in-memory.test.ts` 直接跑 `../testing` 的四份一致性套件、验 `memoryStore()` 每次新建且不带 runLease、验 `InMemoryRunLease` 拨快时钟即过期；`read-timeline.test.ts` 覆盖读时升级、区间透传、未登记 ext.* 与未来版本拒绝 |
 
 ### `projection/` — 投影（T6，技术方案 §8）
 
@@ -143,6 +143,7 @@
 | `testing/event-log.ts` | `eventLogConformance`：16 条契约（seq 连续性与原子性、区间读、tail、会话隔离、副本语义、fork 四例）+ `makeEvents` 造数助手 |
 | `testing/blob-store.ts` | `blobStoreConformance`：字节/字符串往返、meta、id 唯一、not_found、副本语义、可选 slice |
 | `testing/memory-store.ts` | `memoryStoreConformance`：缺失返回 null、覆盖写、前缀 list 字典序、delete 幂等、空串与不存在有别 |
+| `testing/run-lease.ts` | `runLeaseConformance`（D4）：空会话可占、别人持有时占不到、同 owner 幂等、renew 三态、release 只删自己、过期后接手 / 原持有者 renew 为 false（ttl 1 ms + 真等 30 ms，因 pg 实现用库时钟，套件不能注入） |
 | `testing/scripted-lowering.ts` | `ScriptedLowering`：按剧本逐轮吐草稿、记录每轮 `toRequest` 输入、可注入异常与 capabilities；`say` / `think` / `callTool` 草稿速写 |
 | 测试 | 无（本目录本身是测试设施，由 `store/in-memory.test.ts` 与 `loop/*.test.ts` 反向验证） |
 

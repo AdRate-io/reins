@@ -131,6 +131,8 @@ would confirm that the session exists. Throwing a `Response` returns it verbatim
 `principal`. The hook is fail-closed on purpose: a forgotten `return` should lock you out
 loudly, not wave a stranger through quietly.
 
+**One instance is not many.** The "one run per session" guard (`409 run_in_progress`) is kept in an in-process registry by default. Behind a load balancer, two instances can both start a run on the same session; the second wastes a model call and then hits `seq_conflict` — the log stays correct, the call does not. Share a `RunLease` through the store to make the guard span processes: `pgStores()` provides one and `createAgent` installs it automatically; with `@reinsjs/server` directly, pass `runs: leasedRunRegistry(store.runLease)`. A `GET` reconnect that lands on another instance replays the log and ends — use sticky sessions for a live tail.
+
 **Memory is shared unless you namespace it.** `authorizeSession` isolates timelines, not the memory store: `memory()` writes to `/memories/...` for everyone by default. In a multi-tenant deployment pass `memory({ namespace: (ctx) => `/users/${ctx.principal?.id}` })` (or a per-role `memoryTable` on the store, see "Memory and how to isolate it" above) — otherwise one user's model can read what another user's model wrote.
 
 **Runtime footprint.** `@reinsjs/core` and `@reinsjs/brain` have zero external dependencies.

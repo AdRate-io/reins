@@ -1,6 +1,14 @@
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
-import { type BoundModel, createAgent, defineTool, memoryStore, rawEncoder } from "./index.js"
+import {
+  type BoundModel,
+  createAgent,
+  defineTool,
+  InMemoryRunLease,
+  InMemoryRunRegistry,
+  memoryStore,
+  rawEncoder,
+} from "./index.js"
 
 const add = defineTool<{ a: number; b: number }>({
   name: "add",
@@ -115,5 +123,46 @@ describe("createAgent", () => {
     // definition 就是 runLoop 的配置：blobs / memory 从 store 拆出来了
     expect(agent.definition.blobs).toBe(store.blobs)
     expect(agent.definition.memory).toBe(store.memory)
+  })
+
+  it("store 带 runLease 时自动装租约登记表：run 起步占租约、结束释放；宿主自传 handler.runs 则以宿主为准", async () => {
+    const runLease = new InMemoryRunLease()
+    const post = (sessionId: string) =>
+      new Request("http://t/agent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, input: "2+3" }),
+      })
+    const agent = createAgent({
+      model: scripted(),
+      tools: [add],
+      store: { ...memoryStore(), runLease },
+      handler: { heartbeatMs: 0, encode: () => rawEncoder },
+    })
+    // 先由"别的实例"占住租约：POST 必须 409
+    expect(await runLease.acquire("s1", "elsewhere", 60_000)).toBe(true)
+    const blocked = await agent.handler(post("s1"))
+    expect(blocked.status).toBe(409)
+    expect(await blocked.json()).toMatchObject({ error: "run_in_progress" })
+    await runLease.release("s1", "elsewhere")
+
+    const res = await agent.handler(post("s1"))
+    expect(res.status).toBe(200)
+    await res.text()
+    // 结束即释放（release 最多差一个微任务）
+    await new Promise((r) => setTimeout(r, 0))
+    expect(runLease.holderOf("s1")).toBeUndefined()
+
+    // 宿主自己传 runs：不碰租约
+    const custom = createAgent({
+      model: scripted(),
+      tools: [add],
+      store: { ...memoryStore(), runLease },
+      handler: { heartbeatMs: 0, encode: () => rawEncoder, runs: new InMemoryRunRegistry() },
+    })
+    await runLease.acquire("s2", "elsewhere", 60_000)
+    const ok = await custom.handler(post("s2"))
+    expect(ok.status).toBe(200)
+    await ok.text()
   })
 })

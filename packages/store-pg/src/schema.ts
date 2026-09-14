@@ -24,8 +24,10 @@ export interface PgSchemaOptions {
 }
 
 /**
- * 三张表。事件整条存 `json`（`data`），壳字段抽几列做主键与查询；主键 (session_id, seq) 的唯一约束是并发写入者的最后一道闸。
+ * 四张表。事件整条存 `json`（`data`），壳字段抽几列做主键与查询；主键 (session_id, seq) 的唯一约束是并发写入者的最后一道闸。
  * `at` / `created_at` / `updated_at` 是 Unix 毫秒（bigint），读事件时不用它们 —— 事件从 data 整条还原。
+ * `reins_runs` 是 run 租约表（D4）：每条会话最多一行，`expires_at` 是**数据库时钟**的 Unix 毫秒——过期判定在 SQL 里比 `now()`，
+ * 不用各实例本机时钟。
  *
  * **为什么是 json 不是 jsonb**：jsonb 会重排对象键序，读回来 `JSON.stringify` 就变了；而 T10 的 pendingDigest / configHash
  * 正是按 JSON.stringify 算的，存 Postgres 的会话一续跑就会误报"pending 被篡改"。json 按文本原样存取，各后端逐字节一致。
@@ -54,6 +56,11 @@ export function pgSchemaStatements(opts: PgSchemaOptions = {}): readonly string[
   path       text    PRIMARY KEY,
   content    text    NOT NULL,
   updated_at bigint  NOT NULL
+)`,
+    `CREATE TABLE IF NOT EXISTS reins_runs (
+  session_id text    PRIMARY KEY,
+  owner      text    NOT NULL,
+  expires_at bigint  NOT NULL
 )`,
   ]
 }

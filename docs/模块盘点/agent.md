@@ -6,7 +6,7 @@
 
 `@reinsjs/agent` 是"装一个包就能用"的门面，本身只有 `create-agent.ts`（86 行）与 `as-tool.ts`（219 行）两份实现。它做三件事：提供 `createAgent`、提供 `asTool`（子代理即工具，§10.1），以及原样再导出 `@reinsjs/core`、`@reinsjs/server`、`@reinsjs/ui-agui` 三个包的全部公开面。降级层（`@reinsjs/lowering-pi`，带 pi-ai 依赖）**不**在再导出之列，要单独 import。
 
-`createAgent` 不引入任何新概念，只做两次拆包 + 一个缺省值：把 `BoundModel` 拆成 `model` + `lowering`，把 `Stores` 拆成 `log` / `blobs` / `memory`，拼成 `AgentDefinition`；再用它建 handler，缺省编码换成 AG-UI。
+`createAgent` 不引入任何新概念，只做两次拆包 + 两个缺省值：把 `BoundModel` 拆成 `model` + `lowering`，把 `Stores` 拆成 `log` / `blobs` / `memory`，拼成 `AgentDefinition`；再用它建 handler，缺省编码换成 AG-UI，`store.runLease` 存在时缺省登记表换成 `leasedRunRegistry(store.runLease)`（D4，宿主自传 `handler.runs` 优先）。
 
 ```
 CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions, ...其余 AgentDefinition 字段 }
@@ -34,15 +34,15 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 | `packages/agent/src/as-tool.ts` | `asTool(agent, opts)`：把 `Agent` 包成 `Tool`；子 run 暂停 → 返回 core `subagentPause`（审批冒泡），子 `budget_usage` → `ctx.spend`（预算合算），principal / signal（`abort`）下传，结果 JSON `SubagentOutcome` 带 childSessionId；`usageOf` 从子时间线算用量，`subagentOutcomesOf` 从父时间线找子会话 |
 | `packages/agent/src/as-tool.test.ts` | 4 个用例：子等审批 → 父 paused(kind=subagent) 且父日志无 tool_result → 新实例同一存储、结论带子 sessionId 续跑，子先续跑父再拿结果；拒绝；`spend` 合算（onTurnEnd 看到父 + 子总账，父 budget_usage 不掺）；自定义 childSessionId 的多轮 |
 | `packages/agent/src/create-agent.ts` | 全部实现：`CreateAgentOptions`、`RunOptions`、`Agent` 三个接口，`createAgent` 与内部的 `stripUndefined` |
-| `packages/agent/src/create-agent.test.ts` | 测试。覆盖：handler 缺省 AG-UI 编码（POST 一次拿到 `RUN_STARTED … RUN_FINISHED`）、`handler` 选项可覆盖编码改推原始事件、`run()` 不经 HTTP 直接跑且缺省新建会话、事件都落进 `store.log` |
+| `packages/agent/src/create-agent.test.ts` | 测试。覆盖：handler 缺省 AG-UI 编码（POST 一次拿到 `RUN_STARTED … RUN_FINISHED`）、`handler` 选项可覆盖编码改推原始事件、`run()` 不经 HTTP 直接跑且缺省新建会话、事件都落进 `store.log`、`store.runLease` 自动装租约登记表（别处占着即 409、跑完释放）而宿主自传 `runs` 时不碰租约 |
 
 ## 3 核心流程
 
 **装配**（`createAgent`）
 
 1. 解构出 `model` / `store` / `handler`（选项名 `handler`，即 `HandlerOptions`），其余字段 `...rest` 原样进 definition。
-2. 拼 `definition: AgentDefinition` —— `model: model.model`、`lowering: model.lowering`、`log: store.log`；`store.blobs` / `store.memory` 存在才加键（`exactOptionalPropertyTypes` 下不能传 `undefined`）。
-3. `createAgentHandler(definition, { encode: aguiEncoding(), ...handlerOptions })` —— `encode` 写在前面，所以宿主传自己的 `encode`（例如 `() => rawEncoder`）会覆盖 AG-UI 缺省；`principal` / `authorizeSession` / `onDisconnect` 等其余 `HandlerOptions` 一并透传。
+2. 拼 `definition: AgentDefinition` —— `model: model.model`、`lowering: model.lowering`、`log: store.log`；`store.blobs` / `store.memory` 存在才加键（`exactOptionalPropertyTypes` 下不能传 `undefined`）。`store.runLease` 不进 definition：它是 handler 的事，见下一步。
+3. `createAgentHandler(definition, { encode: aguiEncoding(), ...runs, ...handlerOptions })` —— `runs` 是 `store.runLease` 存在时的 `{ runs: leasedRunRegistry(store.runLease, { warn }) }`（`warn` 沿用 `handlerOptions.warn`），否则空对象；两个缺省都写在前面，所以宿主传自己的 `encode`（例如 `() => rawEncoder`）或 `runs` 会覆盖；`principal` / `authorizeSession` / `onDisconnect` 等其余 `HandlerOptions` 一并透传。
 4. 返回 `{ definition, handler, run }`。`definition` 暴露出来，是为了让人能自己起 `runLoop` 或接别的传输层。
 
 **直接跑**（`Agent.run`）
