@@ -187,6 +187,12 @@ importers:
         specifier: workspace:*
         version: link:../brain
 
+  packages/lowering-fetch:
+    dependencies:
+      '@reinsjs/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/lowering-pi:
     dependencies:
       '@earendil-works/pi-ai':

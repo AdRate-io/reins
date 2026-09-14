@@ -22,6 +22,7 @@ const EXPECTED = {
   "@reinsjs/brain": ["perception", "compact", "pins", "spill", "handoff", "memory", "approval", "budget", "skills", "inlineSkills"],
   "@reinsjs/brain/node": ["fsSkillSource"],
   "@reinsjs/lowering-pi": ["anthropic", "openai", "PiAiLowering", "LOSS_MATRIX"],
+  "@reinsjs/lowering-fetch": ["deepseek", "openaiChat", "chatCompletions", "FetchLowering", "LOSS_MATRIX", "parseSse"],
   "@reinsjs/server": ["createAgentHandler", "rawEncoder"],
   "@reinsjs/server/node": ["nodeListener"],
   "@reinsjs/store-sqlite": ["sqliteStores"],

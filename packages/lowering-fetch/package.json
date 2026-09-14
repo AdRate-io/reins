@@ -1,0 +1,44 @@
+{
+  "name": "@reinsjs/lowering-fetch",
+  "version": "0.0.0",
+  "description": "reins — zero-dependency lowering layer on fetch: events ⇄ OpenAI Chat Completions (Anthropic Messages and OpenAI Responses to follow), hand-written SSE, no provider SDK",
+  "keywords": [
+    "agent",
+    "llm",
+    "openai",
+    "chat-completions",
+    "deepseek",
+    "fetch",
+    "provider-adapter"
+  ],
+  "license": "MIT",
+  "author": "NewRate Limited (https://www.adrate.io)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdRate-io/reins.git",
+    "directory": "packages/lowering-fetch"
+  },
+  "homepage": "https://github.com/AdRate-io/reins/tree/main/packages/lowering-fetch#readme",
+  "bugs": "https://github.com/AdRate-io/reins/issues",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@reinsjs/core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -12,6 +12,7 @@ export default defineConfig({
       { find: "@reinsjs/brain/node", replacement: src("brain/src/node.ts") },
       { find: "@reinsjs/brain", replacement: src("brain/src/index.ts") },
       { find: "@reinsjs/eval", replacement: src("eval/src/index.ts") },
+      { find: "@reinsjs/lowering-fetch", replacement: src("lowering-fetch/src/index.ts") },
       { find: "@reinsjs/server/node", replacement: src("server/src/node.ts") },
       { find: "@reinsjs/server", replacement: src("server/src/index.ts") },
       { find: "@reinsjs/store-sqlite/node", replacement: src("store-sqlite/src/node.ts") },

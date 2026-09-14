@@ -59,13 +59,14 @@
                           │
                      @reinsjs/core ←── @reinsjs/brain（十个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）
+                          ├── @reinsjs/lowering-fetch（零依赖；Chat Completions 已通，Anthropic / Responses 待 F2 / F3，未发布）
                           ├── @reinsjs/store-sqlite / store-pg
                           ├── @reinsjs/eval
                           ├── @reinsjs/adapter-tanstack-ai
                           └── @reinsjs/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。规划中：`@reinsjs/lowering-fetch`（0.1 后）。
+依赖方向只能指向 core。外部依赖仅四处：pi-ai（lowering-pi）、`@tanstack/ai`（adapter）、`@modelcontextprotocol/client`（tools-mcp，pin 2.0.0）、驱动由宿主传入（store-*）。
 
 ## 命令与仓库
 
@@ -129,6 +130,16 @@
 - **并行工具之间不能夹说明文本，DeepSeek 400** — `awaiting` / `deferred` 那段代码是唯一防线，改 `to-request.ts` 先跑其测试。
 - **Anthropic 块级 cache 断点满 4 个时静默放弃补顶层断点** — 为避 400；感知说明殿后的 `automatic` 断点处置只在网关与 DeepSeek 实测，直连官方未测。
 - **trust 标注是 core 一份纯函数，两条降级路线都调它，别在任一包里自己拼标记** — `<untrusted source="tool:<name>">…</untrusted>`，只包文本；内容里的 `</untrusted` 会被转义并把落点记 lossy；事件 payload 永远原文。`trustMarkers: false` 关掉是宿主自担风险。
+
+### 降级层 fetch 版（lowering-fetch）
+
+- **`payload.body` 就是发出去的请求体，没有第二跳** — 排查 400 直接看它；鉴权头与 URL 在 `stream` 时才拼，不进 payload。
+- **DeepSeek 带 `tools` 时每条历史 assistant 都必须带 `reasoning_content`，缺了 400、空串可过** — `chat.reasoningContent` 方言开着就"字段必在"（同家 thinking 拼入、没有给空串、别家的记 dropped）；`deepseek()` 缺省开，`openaiChat()` 不带。DeepSeek 缺省就是 thinking 模式，宿主不配 `thinking` 也会撞这条。
+- **共用层 `eventsToIr` 只记事实（分组 / deferred / escaped / 来源），exact 还是 lossy 由协议 encoder 判；落点记完要 `orderLandings` 排回输入顺序** — core 契约"landings 顺序与输入一致"，后移会打乱；矩阵测试断言 `landings[i].eventId === events[i].id`。运维事件 dropped 不打断 assistant 分组。
+- **`HttpError` 文案是 SDK 同款 `"<status> <body>"`、对象带 `status` / `headers`** — core 的瞬断判据原样适用，别在本包里再判重试；超时走 `AbortSignal.timeout`（TimeoutError 可重试），宿主中止 AbortError 不重试，两者都发生算宿主中止。
+- **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败（F0）。
+- **内置模型表是最小表，`definitionOf` 用内置打底、选项覆盖，表外必须给 `baseUrl`** — 价目是 2026-09-14 查阅值，DeepSeek 存峰值价、`costUsd` 是上限；表过期不阻塞使用。
+- **Chat 线四处有损都在矩阵里**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点（什么都不做）。
 
 ### MCP（tools-mcp）
 

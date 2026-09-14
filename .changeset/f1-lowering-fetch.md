@@ -1,0 +1,5 @@
+---
+"@reinsjs/lowering-fetch": minor
+---
+
+New package: a zero-dependency lowering layer on `fetch` with a hand-written SSE parser — no provider SDK, no `node:*`. First protocol: OpenAI Chat Completions, via `deepseek()`, `openaiChat()` and the generic `chatCompletions()` factories (any OpenAI-compatible endpoint; `auth: "none"` for gateways that carry their own credential header). The request body in `LoweredRequest.payload.body` is exactly what is sent. Landings are declared in `LOSS_MATRIX["openai-chat"]`: mid-conversation `system` for `system_note`, deferred user messages recorded `lossy(user)`, thinking `dropped` on the official API and replayed as `reasoning_content` under the DeepSeek dialect (the field is always sent there because DeepSeek requires it whenever `tools` is present). Non-2xx responses throw `HttpError` (`"<status> <body>"`) so `runLoop`'s retry rule applies unchanged; a `timeoutMs` deadline covers the whole stream. Anthropic Messages and OpenAI Responses are not implemented yet — keep `@reinsjs/lowering-pi` for those.

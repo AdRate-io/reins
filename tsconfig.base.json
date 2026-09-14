@@ -22,6 +22,7 @@
       "@reinsjs/brain/node": ["./packages/brain/src/node.ts"],
       "@reinsjs/eval": ["./packages/eval/src/index.ts"],
       "@reinsjs/lowering-pi": ["./packages/lowering-pi/src/index.ts"],
+      "@reinsjs/lowering-fetch": ["./packages/lowering-fetch/src/index.ts"],
       "@reinsjs/server": ["./packages/server/src/index.ts"],
       "@reinsjs/server/node": ["./packages/server/src/node.ts"],
       "@reinsjs/store-sqlite": ["./packages/store-sqlite/src/index.ts"],
