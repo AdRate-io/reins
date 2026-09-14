@@ -6,7 +6,7 @@
 ## 结论
 
 1. **直通官方 Anthropic Messages API，不改内容**。用量里有 `cache_creation.ephemeral_5m_input_tokens`、`service_tier`、`inference_geo` 等官方字段；
-   模型逐条列对话时没有多出任何前置消息（aireiter 会塞 非我们所写的身份提示与 Human/Assistant 对）。
+   模型逐条列对话时没有多出任何前置消息（aireiter 会塞入非我们所写的身份提示与 Human/Assistant 对）。
 2. **中途 `role:system` 的官方规则**（400 原文）："role 'system' must follow a 'user' message or an 'assistant' message ending in a server tool result"。
    即 system 可以出现在对话中段，但**前一条必须是 user**。reins 降级层的归位规则（system_note 挪到该 user 之后、下一条 assistant 之前）正好合规；
    探针里放在 assistant 之后的两个用例被拒是探针形状的问题。opus-5 在合规位置（末尾、紧跟 user）答出暗号。
