@@ -38,7 +38,7 @@ export const agent = createAgent({ model: claude, store, tools })
 
 ## Runtime footprint
 
-pi-ai declares ten dependencies (≈65 MB installed, about 29 MB of which reins never imports). Nothing Node-specific is on the paths used here; the layer is verified on Cloudflare workerd without `nodejs_compat`. A zero-dependency lowering layer is on the roadmap for hosts that care about install size more than provider coverage.
+pi-ai declares ten dependencies (≈65 MB installed, about 29 MB of which reins never imports). Nothing Node-specific is on the paths used here; the layer is verified on Cloudflare workerd without `nodejs_compat`. If install size matters more to you than getting the provider table through pi-ai, use [`@reinsjs/lowering-fetch`](../lowering-fetch/README.md) — the same `Lowering` interface with no dependency but `@reinsjs/core`, three wire protocols (it adds OpenAI Chat Completions), and a request body that is sent exactly as you inspect it. Its README has a side-by-side comparison; timelines written by one layer replay through the other.
 
 ## Documentation
 

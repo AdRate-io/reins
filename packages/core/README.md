@@ -20,7 +20,7 @@ Most applications import the umbrella package `@reinsjs/agent` instead; `@reinsj
 | `events/` | `Event`, `EventDraft`, `createCoreRegistry`, `createEvent`, `CoreEvent` types | Event shell + payloads, `schemaVersion` on every type, upcast-on-read (unknown types are rejected, not skipped) |
 | `store/` | `EventLog`, `BlobStore`, `MemoryStore`, `InMemory*`, `memoryStore()`, `readTimeline` | Storage contracts. `EventLog.append` is the only write; `seq` is assigned by the caller and must be contiguous (optimistic concurrency) |
 | `projection/` | `project`, `ProjectionStrategy`, `DEFAULT_MODEL_INVISIBLE_TYPES` | Pure function: timeline → what the model sees this turn (filter → fold → pin → trim to budget). Strategies may create events, but they go through the loop into the log first |
-| `lowering/` | `Lowering`, `LoweredRequest`, `LandingRecord`, `markUntrusted` | Interface to a provider wire protocol plus the loss matrix types; implementation in `@reinsjs/lowering-pi` |
+| `lowering/` | `Lowering`, `LoweredRequest`, `LandingRecord`, `markUntrusted` | Interface to a provider wire protocol plus the loss matrix types; implementations in `@reinsjs/lowering-fetch` (zero-dependency) and `@reinsjs/lowering-pi` (pi-ai) |
 | `loop/` | `runLoop`, `Socket`, `Tool`, `defineTool`, `RunResult`, `SerializedRunState`, `Interruption`, `subagentPause`, `retry` | The default loop and its seams |
 | `replay/` | `replayTurns` | Recompute what the model saw on every turn from the log alone (audit UIs, eval) |
 | `@reinsjs/core/testing` | `ScriptedLowering`, `callTool`, `say`, `think`, store conformance suites | Deterministic model scripts and a suite any `EventLog` / `BlobStore` / `MemoryStore` implementation should pass |

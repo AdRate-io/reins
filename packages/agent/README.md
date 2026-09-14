@@ -3,11 +3,11 @@
 **Hand the reins to the model.** `@reinsjs/agent` is the umbrella package: `createAgent()` plus everything from `@reinsjs/core`, `@reinsjs/server` and `@reinsjs/ui-agui` re-exported, so one install gives you an agent with a Web-standard handler and an AG-UI stream. Bring a lowering layer (`@reinsjs/lowering-pi`) and, optionally, the brain (`@reinsjs/brain`) and a store (`@reinsjs/store-sqlite`, `@reinsjs/store-pg`).
 
 ```bash
-pnpm add @reinsjs/agent @reinsjs/lowering-pi @reinsjs/brain
+pnpm add @reinsjs/agent @reinsjs/lowering-fetch @reinsjs/brain
 ```
 
 ```ts
-import { anthropic } from "@reinsjs/lowering-pi"
+import { anthropic } from "@reinsjs/lowering-fetch" // or "@reinsjs/lowering-pi" — same call, see its README
 import { approval, compact, perception } from "@reinsjs/brain"
 import { createAgent, defineTool, memoryStore } from "@reinsjs/agent"
 

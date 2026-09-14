@@ -1,4 +1,4 @@
-# spikes — 进代码前的核实脚本
+（`@reinsjs/tools-mcp` dist 在 workerd 里连本地假 MCP 服务器 `fake-mcp.mjs` 做 list + call，服务端用 `createMcpHandler` 按请求建实例）与 `--only-old`（只跑最严档）：最严档 load / mcp / fake 全过。**2026-09-15 F4 追加 `/fetch-*` 五条**（`@reinsjs/lowering-fetch` dist：三条线构造请求体、Anthropic 线打字节乱切的假端点、三条线各打一次真模型——DeepSeek 直连 / CF 网关 Haiku 4.5 / CF 网关 gpt-5-mini），编排器对 fetch 版产出做自动内容核对（tool_call 名与入参、stopReason、用量、Responses 加密 reasoning 项），三档 × 五格 15/15。详见目录内 README |# spikes — 进代码前的核实脚本
 
 > 这些脚本只是证据，不是产品代码；不在 pnpm workspace 内，不参与 `pnpm check`。
 > 结论已写入 `docs/DECISIONS.md`，脚本留下是为了将来上游升级时能一键复核。

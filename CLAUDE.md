@@ -59,7 +59,7 @@
                           │
                      @reinsjs/core ←── @reinsjs/brain（十个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）
-                          ├── @reinsjs/lowering-fetch（零依赖；Chat Completions / Anthropic Messages / OpenAI Responses 三线已通，F4 收口后发布）
+                          ├── @reinsjs/lowering-fetch（零依赖；Chat / Anthropic Messages / Responses 三线；最严档 workerd 实测；新宿主推荐，随下次 changeset version 发布）
                           ├── @reinsjs/store-sqlite / store-pg
                           ├── @reinsjs/eval
                           ├── @reinsjs/adapter-tanstack-ai

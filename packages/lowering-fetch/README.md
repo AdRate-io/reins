@@ -36,11 +36,25 @@ export const agent = createAgent({ model: ds, store, tools })
 
 Each factory returns a `BoundModel = { model, lowering }`. `apiKey` is required and never read from the environment. For several models on one lowering instance, construct `FetchLowering` yourself and pass `models`.
 
-## What you get that pi-ai cannot give
+## Choosing between `@reinsjs/lowering-fetch` and `@reinsjs/lowering-pi`
 
-- **The request body you inspect is the request body that is sent.** `LoweredRequest.payload.body` is POSTed as is — no second-pass rewrite, so a 400 is debugged by looking at the payload.
-- **Install size**: this package plus `@reinsjs/core`, nothing else.
-- **Request shaping is ours**, which is what the roadmap's provider-native lazy tools (tool search / deferred loading) need.
+Both implement the same `Lowering` interface from `@reinsjs/core` and both declare every landing in a `LOSS_MATRIX`; `createAgent` does not care which one you pass. They coexist on purpose — pick per host, not per project.
+
+| | `@reinsjs/lowering-fetch` | `@reinsjs/lowering-pi` |
+| --- | --- | --- |
+| Protocols | OpenAI Chat Completions, Anthropic Messages, OpenAI Responses | Anthropic Messages, OpenAI Responses |
+| Dependencies | `@reinsjs/core` only (≈90 KB of ESM) | `pi-ai` and its ten dependencies (≈65 MB installed) |
+| Request body | `payload.body` is what is sent | pre-rewrite shape; the real body is produced in pi-ai's `onPayload` hook |
+| Mid-conversation `system` on Anthropic | placed by the encoder | placed by rewriting pi-ai's payload |
+| Unsigned thinking | `dropped` (declared) | may fall back to visible text |
+| Model table | a minimal built-in table you override per model | pi-ai's table, maintained upstream |
+| Runtime | verified on Cloudflare workerd at the strictest tier (2023 compatibility date, no `nodejs_compat`), all three protocols against live providers | verified on workerd at the same tier, both protocols |
+
+**Start with `lowering-fetch`** for a new host: it covers everything `lowering-pi` covers plus the OpenAI-compatible ecosystem, ships nothing but this package, and the request you debug is the request that was sent. Stay on `lowering-pi` when you already run on it (there is nothing to migrate for), or when you want the provider table and new wire-protocol features to arrive through pi-ai rather than through this package. Events written by one layer replay through the other: `replay.thinkingSignature` uses the same shape on both, so switching does not invalidate a stored timeline.
+
+## Runtime
+
+No `node:*`, no `process`, no `Buffer` — the same `dist/index.js` runs on Node ≥ 22 and on Cloudflare Workers with a 2023 `compatibility_date` and no compatibility flags (`spikes/edge-runtime-check`, tier "最严档": module load, a byte-sliced SSE stream against a local fake endpoint, and one live request per protocol). Bun / Deno / Vercel Edge are expected to work for the same reason but have not been run. Bring your own `fetch` through `FetchLoweringOptions.fetch` when the host needs a proxy or a Workers service binding.
 
 ## Options
 
@@ -97,6 +111,6 @@ Non-2xx responses throw `HttpError` with `status`, `headers` and the raw body (`
 
 ## Documentation
 
-`docs/技术方案.md` §11, `docs/模块盘点/lowering-fetch.md`, `spikes/f1-chat-live/`, `spikes/f2-anthropic-live/` and `spikes/f3-responses-live/` (live verification against DeepSeek and, through the Cloudflare AI Gateway, OpenAI and Anthropic) — in Chinese, at the repository root.
+`docs/技术方案.md` §11, `docs/模块盘点/lowering-fetch.md`, `spikes/f1-chat-live/`, `spikes/f2-anthropic-live/`, `spikes/f3-responses-live/` (live verification against DeepSeek and, through the Cloudflare AI Gateway, OpenAI and Anthropic) and `spikes/edge-runtime-check/` (Cloudflare workerd) — in Chinese, at the repository root.
 
 MIT © 2026 NewRate Limited.

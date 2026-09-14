@@ -15,7 +15,7 @@ The loop is a few hundred lines you can read and copy. Nothing is hidden. Every 
 
 **0.1.0** — first public release. Eleven packages, ~32k lines of TypeScript, 760 tests, every default measured on real models (see `examples/eval`). Public types are frozen for the 0.1 line; breaking changes bump the minor version until 1.0.
 
-Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add @reinsjs/agent @reinsjs/lowering-pi @reinsjs/brain` — Node ≥ 22 or Cloudflare Workers (tested); Bun / Deno / Vercel Edge untested.
+Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add @reinsjs/agent @reinsjs/lowering-fetch @reinsjs/brain` (or `@reinsjs/lowering-pi` for the pi-ai-based lowering layer; see "Choosing between" in `@reinsjs/lowering-fetch`'s README) — Node ≥ 22 or Cloudflare Workers (tested); Bun / Deno / Vercel Edge untested.
 
 ## Try it
 
@@ -40,6 +40,7 @@ Observing a run needs no hook in-process: `agent.run()` is an async generator th
 | --- | --- |
 | `@reinsjs/core` | event timeline, store interfaces, projection, loop, run state, socket, replay |
 | `@reinsjs/brain` | perception, compact, pins, spill, handoff, memory, approval, budget, skills, lazy-tools (`./node` has `fsSkillSource`) |
+| `@reinsjs/lowering-fetch` | zero-dependency provider lowering on `fetch`: OpenAI Chat Completions, Anthropic Messages, OpenAI Responses |
 | `@reinsjs/lowering-pi` | provider lowering on top of pi-ai |
 | `@reinsjs/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
 | `@reinsjs/store-sqlite` | SQLite-backed stores; one SQL layer, driver from the runtime (`node:sqlite`, `bun:sqlite`) |
@@ -215,13 +216,12 @@ loudly, not wave a stranger through quietly.
 
 **Memory is shared unless you namespace it.** `authorizeSession` isolates timelines, not the memory store: `memory()` writes to `/memories/...` for everyone by default. In a multi-tenant deployment pass `memory({ namespace: (ctx) => `/users/${ctx.principal?.id}` })` (or a per-role `memoryTable` on the store, see "Memory and how to isolate it" above) — otherwise one user's model can read what another user's model wrote.
 
-**Runtime footprint.** `@reinsjs/core` and `@reinsjs/brain` have zero external dependencies.
-`@reinsjs/lowering-pi` pulls `pi-ai`, which declares ten dependencies of its own — installing it
-fetches roughly 65 MB, of which about 29 MB (`@google/genai`, the AWS Bedrock SDK) is outside
-the import graph reins actually reaches. Nothing Node-specific ends up on the paths we use:
-the lowering layer is verified on Cloudflare workerd with no `nodejs_compat` flag
-(see `spikes/edge-runtime-check`). If the install size matters more than provider coverage,
-a zero-dependency lowering layer is on the roadmap.
+**Runtime footprint.** `@reinsjs/core`, `@reinsjs/brain` and `@reinsjs/lowering-fetch` have zero
+external dependencies. `@reinsjs/lowering-pi` pulls `pi-ai`, which declares ten dependencies of its
+own — installing it fetches roughly 65 MB, of which about 29 MB (`@google/genai`, the AWS Bedrock SDK)
+is outside the import graph reins actually reaches. Nothing Node-specific ends up on the paths we use:
+both lowering layers are verified on Cloudflare workerd with no `nodejs_compat` flag and a 2023
+`compatibility_date`, each protocol against a live provider (see `spikes/edge-runtime-check`).
 
 **Session ids are validated.** A `sessionId` must be non-empty printable ASCII with no spaces;
 anything else is answered `400 bad_request` on both `GET` and `POST`. The handler echoes the id

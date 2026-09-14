@@ -8,6 +8,9 @@
  *
  * 密钥自动从《模型API测试信息.md》读（沿用 b2-compact-live 的做法），
  * 经 .dev.vars 交给 wrangler，**跑完立即删除**；该文件也已写进 .gitignore。
+ *
+ * F4（2026-09-15）追加 @reinsjs/lowering-fetch 的同形探测 /fetch-*（三条线：Chat → DeepSeek 直连，
+ * Anthropic / Responses → CF 网关打官方模型），并对 fetch 版产出做**自动内容核对**（判据不是状态码）。
  */
 import { spawn } from "node:child_process"
 import { readFile, rm, writeFile } from "node:fs/promises"
@@ -40,6 +43,16 @@ async function readGateway() {
   const key = info.match(/密钥（三种协议共用）：`(sk-[^`]+)`/)?.[1]
   if (!key) throw new Error("没在信息文件里找到网关密钥")
   return { key, base: "https://aireiter.com/api/v1", model: "gpt-5.5" }
+}
+
+/** CF AI Gateway 的透传基址与令牌（F0 体检过的官方靶子）；读法与 f1 / f2 / f3 spike 一致 */
+async function readCf() {
+  const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
+  const token = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
+  const account = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
+  const gateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
+  if (!token || !account) throw new Error("信息文件里缺 CF 令牌 / account id")
+  return { token, base: `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}` }
 }
 
 function sh(cmd, args, opts = {}) {
@@ -114,7 +127,20 @@ async function runArch(configFile, label, vars) {
       },
     },
   )
-  const result = { label, load: null, mcp: null, fake: null, live: null, liveOpenai: null, 启动失败: null }
+  const result = {
+    label,
+    load: null,
+    mcp: null,
+    fake: null,
+    live: null,
+    liveOpenai: null,
+    fetchLoad: null,
+    fetchFake: null,
+    fetchLiveChat: null,
+    fetchLiveAnthropic: null,
+    fetchLiveResponses: null,
+    启动失败: null,
+  }
   try {
     await waitReady(`http://127.0.0.1:${WORKER_PORT}/`, 180_000, w, `wrangler dev(${label})`)
     console.log("worker 就绪，开始探测")
@@ -133,6 +159,21 @@ async function runArch(configFile, label, vars) {
         console.log(`  /live-openai  → HTTP ${result.liveOpenai.status}`)
       }
     }
+    // F4：fetch 版三条线，与 pi 版探测互不依赖（pi 版失败也照跑，两份降级层各自给结论）
+    result.fetchLoad = await probe("/fetch-load")
+    console.log(`  /fetch-load  → HTTP ${result.fetchLoad.status}`)
+    if (result.fetchLoad.status === 200) {
+      result.fetchFake = await probe("/fetch-fake")
+      console.log(`  /fetch-fake  → HTTP ${result.fetchFake.status}`)
+      if (live && result.fetchFake.status === 200) {
+        result.fetchLiveChat = await probe("/fetch-live-chat")
+        console.log(`  /fetch-live-chat       → HTTP ${result.fetchLiveChat.status}`)
+        result.fetchLiveAnthropic = await probe("/fetch-live-anthropic")
+        console.log(`  /fetch-live-anthropic  → HTTP ${result.fetchLiveAnthropic.status}`)
+        result.fetchLiveResponses = await probe("/fetch-live-responses")
+        console.log(`  /fetch-live-responses  → HTTP ${result.fetchLiveResponses.status}`)
+      }
+    }
   } catch (e) {
     result.启动失败 = String(e.message)
     console.log(`  !! ${e.message.slice(0, 3000)}`)
@@ -148,9 +189,14 @@ async function runArch(configFile, label, vars) {
 // ---- 主流程 ----
 const ds = live ? await readDeepSeek() : null
 const gw = live ? await readGateway() : null
+const cf = live ? await readCf() : null
 if (live)
   console.log(
     `真 API 档位：Anthropic 协议 → DeepSeek ${ds.base}（${ds.model ?? "deepseek-v4-flash"}）；OpenAI Responses 协议 → ${gw.base}（${gw.model}）。两个 key 已读入，不回显`,
+  )
+if (live)
+  console.log(
+    `fetch 版真 API 档位：Chat → DeepSeek 直连；Anthropic / Responses → CF 网关 ${cf.base}（令牌不回显）`,
   )
 
 const waitFor = (proc, marker, label) =>
@@ -185,6 +231,9 @@ const vars = {
         OAI_KEY: gw.key,
         OAI_BASE: gw.base,
         OAI_MODEL: gw.model,
+        FETCH_DS_KEY: ds.key,
+        FETCH_CF_BASE: cf.base,
+        FETCH_CF_TOKEN: cf.token,
       }
     : {}),
 }
@@ -200,6 +249,62 @@ const compat = onlyOld ? null : await runArch("wrangler-compat.toml", "宽松档
 fake.p.kill("SIGTERM")
 mcp.p.kill("SIGTERM")
 
+// ---- fetch 版产出的自动内容核对（F4）：HTTP 200 从不等于探测通过，逐项对产出 ----
+/** 一条 tool_call 草稿是否是"调 get_weather 查上海"：入参里 city 含"上海"或 Shanghai（模型可能翻译城市名） */
+const weatherCall = (body) =>
+  (body?.草稿 ?? []).find(
+    (d) =>
+      d.type === "core.tool_call" &&
+      d.payload?.name === "get_weather" &&
+      /上海|shanghai/i.test(String(d.payload?.args?.city ?? "")),
+  )
+/** 返回 { 通过, 说明 }；x 为 null 表示这一格没跑（跳过），HTTP 非 200 直接判不过 */
+function checkFetch(kind, x) {
+  if (x === null) return { 通过: null, 说明: "跳过" }
+  if (x.status !== 200) return { 通过: false, 说明: `HTTP ${x.status}` }
+  const b = x.body ?? {}
+  const fails = []
+  if (kind === "load") {
+    const apis = b.有损矩阵覆盖的协议 ?? []
+    for (const api of ["openai-chat", "anthropic-messages", "openai-responses"]) {
+      if (!apis.includes(api)) fails.push(`矩阵缺 ${api}`)
+      const line = b.三条线?.[api]
+      if (line?.工具数 !== 1) fails.push(`${api} 工具数 ${line?.工具数}`)
+      if (line?.非exact落点?.length) fails.push(`${api} 有非 exact 落点`)
+    }
+  } else {
+    const call = weatherCall(b)
+    if (!call) fails.push("没有 get_weather(上海) 的 tool_call 草稿")
+    if (b.收尾?.stopReason !== "toolUse")
+      fails.push(`stopReason=${b.收尾?.stopReason}${b.收尾?.errorMessage ? ` (${b.收尾.errorMessage})` : ""}`)
+    if (!(b.收尾?.usage?.output > 0)) fails.push(`output 用量 ${b.收尾?.usage?.output}`)
+    if (kind === "fake") {
+      // 假端点给的定值：签名 base64 40 字符、usage 123 / 42、入参切成两段 input_json_delta 且含中文
+      const thinking = (b.草稿 ?? []).find((d) => d.type === "core.model_thinking")
+      if (thinking?.thinking签名长度 !== 40) fails.push(`thinking 签名长度 ${thinking?.thinking签名长度}`)
+      if (call && call.payload.args.city !== "上海")
+        fails.push(`入参 city=${JSON.stringify(call.payload.args.city)}（UTF-8 乱切重组失败）`)
+      if (b.收尾?.usage?.input !== 123 || b.收尾?.usage?.output !== 42)
+        fails.push(`usage ${JSON.stringify(b.收尾?.usage)}`)
+    }
+    if (kind === "live-responses") {
+      // 推理模型缺省带 include，reasoning 项应带 encrypted_content → 草稿里有带签名的 thinking
+      const thinking = (b.草稿 ?? []).find((d) => d.type === "core.model_thinking" && d.thinking签名长度 > 0)
+      if (!thinking) fails.push("没有带 encrypted_content 的 reasoning 草稿")
+    }
+  }
+  return fails.length ? { 通过: false, 说明: fails.join("；") } : { 通过: true, 说明: "通过" }
+}
+const FETCH_CELLS = [
+  ["load", "fetchLoad"],
+  ["fake", "fetchFake"],
+  ["live-chat", "fetchLiveChat"],
+  ["live-anthropic", "fetchLiveAnthropic"],
+  ["live-responses", "fetchLiveResponses"],
+]
+const fetchChecksOf = (r) =>
+  Object.fromEntries(FETCH_CELLS.map(([kind, key]) => [kind, checkFetch(kind, r[key])]))
+
 // ---- 结论 ----
 const verdict = (r) => {
   if (!r) return "未跑"
@@ -207,10 +312,30 @@ const verdict = (r) => {
   const s = (x) => (x === null ? "跳过" : x.status === 200 ? "通过" : `HTTP ${x.status}`)
   return `load=${s(r.load)} mcp=${s(r.mcp)} fake=${s(r.fake)} live-anthropic=${s(r.live)} live-openai=${s(r.liveOpenai)}`
 }
+/** fetch 版一行：每格是内容核对的结论，不是状态码 */
+const fetchVerdict = (r) => {
+  if (!r || r.启动失败) return null
+  const c = fetchChecksOf(r)
+  return FETCH_CELLS.map(
+    ([kind]) => `${kind}=${c[kind].通过 === null ? "跳过" : c[kind].通过 ? "通过" : "✗"}`,
+  ).join(" ")
+}
 console.log(`\n${"#".repeat(70)}\n# 结论\n${"#".repeat(70)}`)
 console.log(`最严档 2023，无 compat  : ${verdict(old)}`)
 console.log(`严格档 2026，无 compat  : ${verdict(strict)}`)
 console.log(`宽松档 nodejs_compat 开 : ${verdict(compat)}`)
+console.log("\n@reinsjs/lowering-fetch（内容核对）：")
+for (const [名, r] of [
+  ["最严档 2023，无 compat  ", old],
+  ["严格档 2026，无 compat  ", strict],
+  ["宽松档 nodejs_compat 开 ", compat],
+]) {
+  const v = fetchVerdict(r)
+  console.log(`  ${名}: ${v ?? (r ? "启动/等待失败" : "未跑")}`)
+  if (v)
+    for (const [kind, c] of Object.entries(fetchChecksOf(r)))
+      if (c.通过 === false) console.log(`      ✗ ${kind}: ${c.说明}`)
+}
 for (const [名, r] of [
   ["最严档", old],
   ["严格档", strict],
@@ -226,7 +351,18 @@ console.log(`\n完整结果落盘：out.json`)
 await writeFile(
   new URL("./out.json", HERE),
   JSON.stringify(
-    { 跑于: new Date().toISOString(), 打了真API: live, 最严档: old, 严格档: strict, 宽松档: compat },
+    {
+      跑于: new Date().toISOString(),
+      打了真API: live,
+      fetch版核对: {
+        最严档: old ? fetchChecksOf(old) : null,
+        严格档: strict ? fetchChecksOf(strict) : null,
+        宽松档: compat ? fetchChecksOf(compat) : null,
+      },
+      最严档: old,
+      严格档: strict,
+      宽松档: compat,
+    },
     null,
     2,
   ),
@@ -241,6 +377,11 @@ for (const r of [old, strict, compat]) {
     fake: r.fake,
     live: r.live,
     liveOpenai: r.liveOpenai,
+    fetchLoad: r.fetchLoad,
+    fetchFake: r.fetchFake,
+    fetchLiveChat: r.fetchLiveChat,
+    fetchLiveAnthropic: r.fetchLiveAnthropic,
+    fetchLiveResponses: r.fetchLiveResponses,
   })) {
     if (v && v.status !== 200)
       console.log(`\n【${r.label} ${k} 失败详情】\n${JSON.stringify(v.body, null, 2).slice(0, 2500)}`)

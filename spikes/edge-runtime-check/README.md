@@ -1,7 +1,14 @@
-# edge-runtime-check —— 降级层在 Cloudflare Workers（workerd）上的运行时兼容性核实
+| `/live-openai` | aireiter `api/v1` gpt-5.5 | OpenAI Responses 协议真往返（走 `openai` SDK，与上一条是**完全不同的代码路径**，必须单独验） |
+| `/fetch-load` | 不出网 | **fetch 版**：三条线各构造一次请求体，列有损矩阵覆盖的协议与非 exact 落点 |
+| `/fetch-fake` | 同一个本地假 Anthropic 端点 | **fetch 版** Anthropic 线：fetch → 自写 SSE 解析（`parseSse`）→ 事件草稿，同样吃字节乱切与两段 `input_json_delta` |
+| `/fetch-live-chat` | DeepSeek `api.deepseek.com` Chat Completions | **fetch 版** Chat 线真往返（`deepseek()`，`reasoning_content` 方言） |
+| `/fetch-live-anthropic` | CF AI Gateway → 官方 Haiku 4.5 | **fetch 版** Anthropic 线真往返（`auth: "none"` + `cf-aig-authorization` 头） |
+| `/fetch-live-responses` | CF AI Gateway → 官方 gpt-5-mini | **fetch 版** Responses 线真往返（缺省带 `include: ["reasoning.encrypted_content"]`） |# edge-runtime-check —— 降级层在 Cloudflare Workers（workerd）上的运行时兼容性核实
 
 **结论（2026-09-09，pi-ai 0.85.1）：`@reinsjs/lowering-pi` 的打包产物在 workerd 上跑得通，且不需要 `nodejs_compat`。**
 两条协议路径（Anthropic Messages / OpenAI Responses）各自真打了一次线上 API，均正常产出事件。
+
+**追加结论（2026-09-15，F4 收口）：`@reinsjs/lowering-fetch` 的打包产物在最严档 workerd（2023 compat date，无 `process` / `Buffer`，`node:*` 一律 import 失败）上三条线全部跑通。** 五条 `/fetch-*` 探测 × 三档 15/15，编排器对产出做自动内容核对（不看状态码）：三条线请求体构造无非 exact 落点；Anthropic 线打字节乱切的假端点后 thinking 签名 40 字符、入参拼回 `{"city":"上海"}`（UTF-8 重组对）、usage 123 / 42；真模型三格——DeepSeek 直连 Chat（`deepseek-flash`，thinking + tool_call，usage 带 `cacheRead`）、CF 网关 Haiku 4.5（`tool_call`，`toolu_` id）、CF 网关 gpt-5-mini（reasoning 项带 1.6～2k 字符的 `encrypted_content` + tool_call，`call_` id）——每格 `stopReason: toolUse`、`get_weather({ city: "上海" })`、`costUsd` 按价目算出。实现在 `fetch-probes.mjs`，与 pi 版探针共用同一组事件、工具、系统提示与假端点。
 
 ## 为什么要做这个
 
@@ -45,13 +52,21 @@ NO_PROXY=127.0.0.1,localhost node spikes/edge-runtime-check/run.mjs --live
 
 ## 实测结果
 
-三档 × 四层，**12 格全部通过**：
+三档 × 四层，**12 格全部通过**：（pi 版；2026-09-15 复跑仍 12/12）
 
 | 档 | /load | /fake | /live（Anthropic） | /live-openai |
 | --- | --- | --- | --- | --- |
 | 最严档 2023，无 compat | 通过 | 通过 | 通过 | 通过 |
 | 严格档 2026，无 compat | 通过 | 通过 | 通过 | 通过 |
 | 宽松档 nodejs_compat | 通过 | 通过 | 通过 | 通过 |
+
+**fetch 版三档 × 五格，15/15**（2026-09-15，每格是内容核对）：
+
+| 档 | /fetch-load | /fetch-fake | /fetch-live-chat | /fetch-live-anthropic | /fetch-live-responses |
+| --- | --- | --- | --- | --- | --- |
+| 最严档 2023，无 compat | 通过 | 通过 | 通过 | 通过 | 通过 |
+| 严格档 2026，无 compat | 通过 | 通过 | 通过 | 通过 | 通过 |
+| 宽松档 nodejs_compat | 通过 | 通过 | 通过 | 通过 | 通过 |
 
 **各档实际运行时面**（这是结论强度的关键，不能只看"跑通了"）：
 
@@ -80,12 +95,12 @@ flag 也能 `import("node:fs")`）。所以只跑新 date 会**高估**结论。
 - **只测了 workerd。** Deno、Bun 未测（本机未装）。Vercel Edge / Netlify Edge 等虽同属 Web 标准运行时，
   各自实现有差异，未验。
 - **只测了单轮首个请求。** 多轮回放 thinking 签名、中途 `system_note` 的落点等语义行为不在此列 ——
-  那些由 lowering-pi 单测与 `t7-live-roundtrip` 覆盖，与运行时无关。
+  那些由 lowering-pi 单测与 `t7-live-roundtrip`、lowering-fetch 单测与 `f1/f2/f3-*-live` 覆盖，与运行时无关。
 - **没测 `@reinsjs/server` / `store-*` 在 edge 上的表现。** store-sqlite 明确是 Node-only 可选包，
   store-pg 依赖驱动，本探针只管降级层。
-- **体积问题原样存在。** 跑得通不等于跑得轻：pi-ai 把 10 个依赖全列在 `dependencies`，
+- **pi 版的体积问题原样存在。** 跑得通不等于跑得轻：pi-ai 把 10 个依赖全列在 `dependencies`，
   安装时无条件下载约 65 M（其中 `@google/genai` 14 M + aws-sdk 全家桶 15 M 在我们的可达链之外，纯死重）。
-  这是打包体积与冷启动的隐患，与本探针结论互不抵消。
+  这是打包体积与冷启动的隐患，与本探针结论互不抵消——要轻就用 fetch 版（dist 约 90 KB，零依赖）。
 
 ## 探针自己踩过的两个坑（留给将来复核的人）
 

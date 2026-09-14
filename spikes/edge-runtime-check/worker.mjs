@@ -14,10 +14,14 @@
  *   /load —— 只加载模块 + 构造请求体，不出网。最可能爆的一层（模块解析、shim 探测、CJS 互操作）。
  *   /fake —— 打本地假 Anthropic 端点，真跑 fetch + SSE 流式解析 + 产出事件。零成本走完整链路。
  *   /live —— 打真 DeepSeek Anthropic 端口，确认 header / TLS / 真实流没有意外。
+ *
+ * F4（2026-09-15）追加 fetch 版降级层（@reinsjs/lowering-fetch）的同形探针，前缀 /fetch-*，实现在 fetch-probes.mjs：
+ *   /fetch-load、/fetch-fake、/fetch-live-chat、/fetch-live-anthropic、/fetch-live-responses。
  */
 import { createCoreEvent, createCoreRegistry } from "../../packages/core/dist/index.js"
 import { LOSS_MATRIX, PiAiLowering } from "../../packages/lowering-pi/dist/index.js"
 import { httpTransport, mcpTools } from "../../packages/tools-mcp/dist/index.js"
+import { fetchProbeLoad, fetchProbeStream, fetchTargetFor } from "./fetch-probes.mjs"
 
 const registry = createCoreRegistry()
 
@@ -38,6 +42,9 @@ function buildEvents(sessionId) {
   })
   return { events, push }
 }
+
+/** 与 pi 版探针同一句系统提示，两份降级层收到的输入完全一致 */
+const SYSTEM_PROMPT = "你是天气助手，必须先调用 get_weather 再回答。"
 
 const TOOLS = [
   {
@@ -198,7 +205,33 @@ export default {
           ),
         )
       }
-      return json({ ok: true, 路由: ["/load", "/mcp", "/fake", "/live", "/live-openai"] })
+      // ---- fetch 版降级层（F4）：同一组事件与工具，三条线各走一遍 ----
+      if (url.pathname === "/fetch-load") {
+        const { events } = buildEvents("fetch-load")
+        return json(fetchProbeLoad({ events, tools: TOOLS, systemPrompt: SYSTEM_PROMPT }))
+      }
+      const fetchRoute = url.pathname.match(/^\/fetch-(fake|live-chat|live-anthropic|live-responses)$/)?.[1]
+      if (fetchRoute) {
+        const bound = fetchTargetFor(fetchRoute, env)
+        if (!bound) return json({ ok: false, 原因: `未设 ${fetchRoute} 所需的环境变量` }, 400)
+        const { events } = buildEvents(`fetch-${fetchRoute}`)
+        return json(await fetchProbeStream(bound, { events, tools: TOOLS, systemPrompt: SYSTEM_PROMPT }))
+      }
+      return json({
+        ok: true,
+        路由: [
+          "/load",
+          "/mcp",
+          "/fake",
+          "/live",
+          "/live-openai",
+          "/fetch-load",
+          "/fetch-fake",
+          "/fetch-live-chat",
+          "/fetch-live-anthropic",
+          "/fetch-live-responses",
+        ],
+      })
     } catch (e) {
       // 兼容性问题基本都在这里现形：把 name / message / stack 全带回去，便于判断是哪一层炸的
       return json(

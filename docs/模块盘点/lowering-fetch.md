@@ -4,7 +4,9 @@
 
 ## 1 架构概览
 
-本包是 `@reinsjs/core` 的 `Lowering` 接口的**第二份实现**，只用 `fetch` 与自写的 SSE 解析，`dependencies` 只有 core、零 `node:*`。与 `@reinsjs/lowering-pi` 并存、不替换：宿主 import 谁用谁，总包不带降级层。
+本包是 `@reinsjs/core` 的 `Lowering` 接口的**第二份实现**，只用 `fetch` 与自写的 SSE 解析，`dependencies` 只有 core、零 `node:*`。与 `@reinsjs/lowering-pi` 并存、不替换：宿主 import 谁用谁，总包不带降级层；**新宿主推荐本包**（DECISIONS 2026-09-15「F4 收口」），选择指南在两份 README。
+
+**状态（F4 收口，2026-09-15）**：F1～F3 三条线各臂真模型全通；`pnpm check:dist` 登记全部工厂导出；`spikes/edge-runtime-check` 的 `/fetch-*` 五条探测在 workerd 三档 × 五格 15/15——最严档（2023 compat date，`process` / `Buffer` 不存在、`node:*` import 失败）上三条线各打一次真模型（DeepSeek 直连 / CF 网关 Haiku 4.5 / CF 网关 gpt-5-mini），判据是产出内容。dist 约 90 KB ESM。changeset（minor）已备，随下次 `changeset version` 发布。
 
 三条线协议按 F1 → F2 → F3 顺序实施，**OpenAI Chat Completions**、**Anthropic Messages**、**OpenAI Responses** 均已实现（`SUPPORTED_APIS`）；宿主声明了别的协议名在 `resolveModel` 就抛 `unsupported_api`。
 
@@ -148,3 +150,5 @@
 **有损如实进矩阵** — Chat 四处（thinking dropped、merged-text、tool-text-only / `[tool error]` 前缀、无断点）；Anthropic 与 pi 版逐格对照只差三格（无签名 thinking dropped 而非 text-or-drop、redacted 单列、tool_result 图片按能力处置）；Responses 与 pi 版只差三格（无加密项 dropped 而非 text-or-drop、非对象入参 exact 而非 wrapped-args——`arguments` 本就是 JSON 字符串、tool_result 多一格 lossy 表达 isError 前缀 / 图片）。宁可声明有损，不静默丢。
 
 **`auth: "none"`** — CF 网关这类自带凭证头的上游不该被 `missing_api_key` 挡住，也不该被塞 `Authorization: Bearer`（F0 实测带了会失败）。
+
+**与 pi 版并存、新宿主推荐本包、总包不带任何降级层**（DECISIONS 2026-09-15「F4 收口」）— 推荐的依据是数据：协议超集、矩阵更严（无签名 / 无加密项 dropped 而非降正文）、真模型三线全通、最严档 workerd 15/15、零依赖、`payload.body` 即线上体。不删 pi 版：已发布宿主在用、pi-ai 上游替我们跟模型表与新特性、两包 `replay` 同形随时可换。`examples/` 暂留 pi 版，等 AdRate 真实接入时切换并复跑 eval 门禁。
