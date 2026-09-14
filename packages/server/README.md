@@ -25,7 +25,7 @@ import { nodeListener } from "@reinsjs/server/node"
 createServer(nodeListener(handler)).listen(8787)
 ```
 
-The umbrella package `reins` wraps this as `createAgent(...).handler` with the AG-UI encoder as default; used directly, this package streams raw timeline events (`rawEncoder`).
+The umbrella package `@reinsjs/agent` wraps this as `createAgent(...).handler` with the AG-UI encoder as default; used directly, this package streams raw timeline events (`rawEncoder`).
 
 ## Protocol
 

@@ -4,7 +4,7 @@
 
 | 文件 | 管什么 |
 | --- | --- |
-| `subagent-tool.ts` | `expertTool()`：一层薄封装，调库里的 **`asTool`**（`reins`，§10.1）；`childSessionsOf` = `subagentOutcomesOf` 从父时间线找回子会话 id |
+| `subagent-tool.ts` | `expertTool()`：一层薄封装，调库里的 **`asTool`**（`@reinsjs/agent`，§10.1）；`childSessionsOf` = `subagentOutcomesOf` 从父时间线找回子会话 id |
 | `subagent-tool.handwritten.ts` | **手写对照版**（P3 时的范式）：不用 asTool 自己把 `Agent` 包成 `Tool`，逐条标号五件事（见下）；子 paused 只能当 isError 交给父模型 |
 | `agents.ts` | 三个 `createAgent`：`analyst`（两个只读数据工具）、`writer`（品牌语气指南）、`lead`（编排者，工具表上只有 `ask_analyst` / `ask_writer`）。同一套 `pgStores`，记忆按 `namespace` 前缀分角色再分用户 |
 | `run.ts` | 跑一条真实任务 → 审批逐条问（`--approve-all` 全批；专家冒泡上来的审批带子会话 id 答回去）→ 父会话与顺着结果找到的每个子会话各写一份 JSONL |

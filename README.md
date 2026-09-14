@@ -46,7 +46,7 @@ node examples/minimal/replay.ts examples/minimal/recordings/weather-deploy.jsonl
 | `@reinsjs/ui-agui` | timeline events → AG-UI protocol events; minimal demo page |
 | `@reinsjs/tools-mcp` | MCP servers as one socket: tools bound per run, annotations as defaults, `/node` stdio transport |
 | `@reinsjs/adapter-tanstack-ai` | the brain as a TanStack AI chat middleware, the log stays the single source of truth |
-| `reins` | `createAgent()` and `asTool()` plus re-exports of core / server / ui-agui |
+| `@reinsjs/agent` | `createAgent()` and `asTool()` plus re-exports of core / server / ui-agui |
 
 ## Memory and how to isolate it
 

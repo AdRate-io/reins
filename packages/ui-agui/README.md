@@ -14,7 +14,7 @@ import { createAgentHandler } from "@reinsjs/server"
 export const POST = createAgentHandler(agentDefinition, { encode: aguiEncoding() })
 ```
 
-The umbrella `reins` package already uses `aguiEncoding()` as the default for `createAgent(...).handler`.
+The umbrella `@reinsjs/agent` package already uses `aguiEncoding()` as the default for `createAgent(...).handler`.
 
 ## Mapping
 

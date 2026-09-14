@@ -11,7 +11,7 @@ Two principles shape every type in here:
 pnpm add @reinsjs/core
 ```
 
-Most applications import the umbrella package `reins` instead; `@reinsjs/core` is for people who bring their own loop, transport or lowering layer.
+Most applications import the umbrella package `@reinsjs/agent` instead; `@reinsjs/core` is for people who bring their own loop, transport or lowering layer.
 
 ## What is in the box
 
@@ -56,7 +56,7 @@ const deploy = defineTool<{ env: "staging" | "prod" }>({
 
 `validate` runs before the approval check so the approver sees exactly the input that will execute. Tools without `execute` (or with `side: "client"`) pause the run until the host appends the `tool_result`. Tool output is `untrusted` by default and is wrapped in `<untrusted source="tool:…">` when lowered to the model. A tool may declare `resultTrust: "system"` to opt its **successful** results out of that wrapper — reserve it for content the host itself authored (this is how `@reinsjs/brain`'s `skill_read` works); error results and thrown exceptions stay `untrusted` regardless, and the same rule applies to client-tool results the host appends.
 
-A tool can also *be* another agent: return `subagentPause(...)` from `execute` and the run pauses with `Interruption { kind: "subagent" }`, carrying the child session's own interruptions and state. `reins` ships `asTool(agent, opts)` on top of this.
+A tool can also *be* another agent: return `subagentPause(...)` from `execute` and the run pauses with `Interruption { kind: "subagent" }`, carrying the child session's own interruptions and state. `@reinsjs/agent` ships `asTool(agent, opts)` on top of this.
 
 ## Sockets
 
