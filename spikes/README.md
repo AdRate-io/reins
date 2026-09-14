@@ -39,3 +39,27 @@ system 字段： [{"type":"text","text":"你是代码评审员。","cache_contro
 ```
 
 S2~S4 是读上游源码与文档得出的结论，无需脚本，见 DECISIONS.md 对应行。
+
+## Cloudflare AI Gateway 作官方模型靶子（2026-09-14 轻测，F0 全量体检待做）
+
+我们没有 Anthropic / OpenAI 官方账号（Boss 定：有封号风险不申请）。Cloudflare AI Gateway 的 **Unified Billing** 用 Cloudflare 持有的厂商凭证转发原生接口、按厂商原价 + 5% 计费，所以官方端点的验证一律走它。私有值（account id、网关令牌）在根目录 `模型API测试信息.md` 末尾（gitignore），公开文档只写用法。
+
+**怎么调（三条协议都是 provider 透传路径，厂商自己的接口形状原样透传）**
+
+```
+POST https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>/anthropic/v1/messages        + anthropic-version: 2023-06-01
+POST https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>/openai/v1/responses
+POST https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>/openai/v1/chat/completions
+头：cf-aig-authorization: Bearer <网关令牌>      ← 不要带 x-api-key / Authorization: Bearer sk-…，带了会失败
+模型名用厂商原名（claude-haiku-4-5-20251001、gpt-4o-mini），不是 REST 路径那种 anthropic/… 前缀
+```
+
+**已实测**：三条端点非流式都原样回暗号，用量字段是厂商原生的（Anthropic 的 `cache_creation_input_tokens` / `cache_read_input_tokens` / `cache_creation.ephemeral_5m_input_tokens` 都在）；Anthropic `stream: true` 的 SSE 原样透传，**`data` JSON 里多一个 `"p"` 填充字段**（Anthropic 自己的防缓冲填充），解析器必须忽略未知字段。
+
+**别踩**：
+- `api.cloudflare.com/client/v4/accounts/<id>/ai/v1/...` 那条 **REST 路径不适用**——它要带 Workers AI Read 权限的账户级 API token（`Authorization: Bearer`），网关令牌（AI Gateway Run 权限）打它回 `code 10000 Authentication error`；且它的模型名要 `anthropic/…` 前缀，是另一套入口。我们用透传路径就够。
+- 网关令牌是**账户级**的：任一网关名都通（实测 `default` 也能收请求），网关之间隔不开额度；要隔离得另开账户。
+- 官方文档没明说 `cache_control`、extended thinking、`anthropic-beta` 是否原样透传；已知 GitHub issue cloudflare/ai#408 报 Anthropic SDK toolRunner 多轮时密钥注入偶发失效。**这些正是 F0 要逐项验的**，验过之前只能说"轻测通"，不能说"等价官方"。
+- 判据永远是产出内容（暗号法），不是状态码。
+
+**在 spike 脚本里读配置**：沿用各 spike 读 `模型API测试信息.md` 的写法，取 `cfut_` 开头的令牌、`account id：` 行、`gateway id：` 行；基址拼成 `https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>`。
