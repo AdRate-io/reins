@@ -45,6 +45,7 @@
 | `packages/brain/src/node.ts` | `@reinsjs/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸；ENAMETOOLONG / ELOOP / EACCES 等当"不存在"（不让宿主绝对路径进模型上下文） |
 | `packages/brain/src/no-node-builtins.test.ts` | 硬约束闸：除 `src/node.ts` 外源码不得出现 `node:` 导入（tsconfig 为 node.ts 开了 node 类型后编译期不再拦） |
 | `packages/brain/src/node.test.ts` | fsSkillSource 在真实临时目录上的用例（列 / 读 / 越界 / 隐藏 / 符号链接 / 接到 skills()） |
+| `packages/brain/src/redaction.recipe.test.ts` | D5 脱敏配方的可执行版本（与根 README "Redacting what reaches the log" 逐字一致）：afterTool 草稿脱敏 + `append` 包装，锁住"脱敏 Socket 须排在 spill 前否则 blob 漏原文""包装管日志与模型视图、管不到 yield 出去的对象""客户端回填结果只有包装拦得住" |
 | `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
 | `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读；`enforceLimit` 硬上限模式给 skills：带范围也截、超长单行切开）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
 | `packages/brain/src/perception/index.ts` | perception 子模块聚合导出 |

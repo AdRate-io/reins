@@ -7,7 +7,7 @@
 
 ## 状态一句话
 
-**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D4 已完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记，未发布），下一步 D5（Boss 定：不等 AdRate 对 0.1 的实测；0.1.x 补丁并行）。
+**0.1 已发布（2026-09-14，当前 0.1.1）**：11 个包在 npm 官方源 `@reinsjs/*`（总包 `@reinsjs/agent`；0.1.1 是只改文档的同号补丁，把 tarball 里的旧总包名改掉），源码在 GitHub `AdRate-io/reins`（Release v0.1.0），MIT，版权 NewRate Limited。788 个用例全绿。公开类型已冻结：改公开行为要走 changeset，破坏性变更升 minor。0.2 候选 D1～D5 全部完成（lazyTools、handler `onEvent`、approval `ttlMs`、跨进程 run 登记、脱敏配方，未发布），四个包各有 minor changeset 待 `changeset version`；0.2 发布时机待 Boss 定（不等 AdRate 对 0.1 的实测；0.1.x 补丁并行）。
 
 ## 0.2 候选（2026-09-14 AdRate 接入评估提出，按顺序；全是加法，不改已发布形状；细节见 DECISIONS 同日"AdRate 接入六条评估"）
 
@@ -15,7 +15,7 @@
 - [x] **D2 handler 旁路观测钩子**（2026-09-14）：`HandlerOptions.onEvent(event, { sessionId, principal, request })` + `warn` 出口；只 live 不 replay、先广播再调不挡 run、出错只告警一次、run 收尾等观测链（Workers waitUntil 覆盖）；不进 core。+4 用例，784 全绿。server README 加 Observability 节、根 README 写明 `agent.run()` 本身可 `for await`
 - [x] **D3 审批过期**（2026-09-14）：`approval({ ttlMs })`，比 `approval_request.at` 与宿主批准事件 `at`（循环时钟，不读墙钟），过期在 ask 落点 deny + block、留 `approval_decision(by: "approval.expired")`，模型看到"可重新发起"；`by` 用策略 id 而非 `"reins"`（理由见 DECISIONS）。+4 用例，788 全绿
 - [x] **D4 跨进程 run 登记**（2026-09-14）：core `RunLease` 接口 + `InMemoryRunLease` + `runLeaseConformance`；server `RunRegistry` 接口化（`InMemoryRunRegistry` 缺省、`create` 异步）、`leasedRunRegistry`（心跳 ttl/3、丢租约 abort → paused(host)、结束 release、失败只告警）、`ActiveRun.onFinish`；store-pg `reins_runs` + `PgRunLease` 三条单语句、过期用库时钟；`createAgent` 自动装。+25 用例（含 PGlite 跨包用例），813 全绿。实施时与设计的三处出入见 DECISIONS 同日「D4 实施定形」
-- [ ] **D5 脱敏配方入 README**（文档，不加接口）：工具结果在 `afterTool` 草稿上脱敏；其他事件包一层 `log.append`。若 AdRate 接入时包 store 太别扭，再考虑核心加极小的 `redactingLog(log, fn)` 助手
+- [x] **D5 脱敏配方入 README**（2026-09-14）：根 README 新节 "Redacting what reaches the log"——工具结果在 `afterTool` 草稿上脱敏（放 sockets 最前，spill 搬进 blob 的才是干净的），其余事件包一层 `append`；配方原文即 `packages/brain/src/redaction.recipe.test.ts`，+3 用例锁住两条边界（顺序放错 blob 漏原文；包装管日志与模型视图但管不到 yield 出去的对象，SSE / onEvent 仍见原文）。不加接口；`redactingLog` 助手仍等 AdRate 接入时再议
 - 不做（记 DECISIONS）：规范化 JSON 序列化算 digest 以放开 jsonb——改的是状态格式，等真有"全库禁 json"硬约束再随版本一起升
 
 ## 0.1 之后（纯新增或有外部依赖）

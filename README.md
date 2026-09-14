@@ -103,6 +103,86 @@ invalid name throws `invalid_argument` and touches nothing. Shared read-only kno
 `skills()` in `@reinsjs/brain` is for (the same store can serve `/skills` and `/memories`); mounting two
 *writable* memory namespaces into one agent is not supported yet, see `docs/技术方案.md` §9.6.
 
+## Redacting what reaches the log
+
+The event log is the only source of truth, so anything you do not want persisted has to be
+cleaned *before* it is appended. There is no redaction option in the library — a regex that is
+right for your data is wrong for the next person's — but there are exactly two places where
+content enters the log, and each has a hook already.
+
+**Tool results: the `afterTool` draft.** Every server-side tool result passes through the
+`afterTool` hook of each socket, in socket order, before it is appended. Return a new draft and
+that is what gets logged. Put this socket **first** in `sockets`, so `spill()`, `compact()` and
+`pins()` only ever see the cleaned text — `spill()` in particular copies oversized results into
+the `BlobStore` from this same draft:
+
+```ts
+import type { ContentPart, Socket } from "@reinsjs/core"
+
+const redact = (text: string) =>
+  text.replace(/\b\d{16}\b/g, "[card]").replace(/sk-[A-Za-z0-9]{8,}/g, "[token]")
+
+const redactParts = (parts: ContentPart[]): ContentPart[] =>
+  parts.map((p) => (p.type === "text" ? { ...p, text: redact(p.text) } : p))
+
+const redactingTool: Socket = {
+  name: "redact",
+  afterTool: (_ctx, _call, result) => ({
+    ...result,
+    payload: { ...result.payload, content: redactParts(result.payload.content) },
+  }),
+}
+
+createAgent({ model, store, sockets: [redactingTool, spill(), compact()] })
+```
+
+The model and the log see the same cleaned result: `afterTool` edits the one draft both of them
+get. This also covers the TanStack adapter, which runs the same hook.
+
+**Everything else: wrap `append`.** User messages, the model's own text, client-side tool results
+the host fills in over `POST`, and events emitted by brain modules do not pass through
+`afterTool`. They all pass through `EventLog.append`, so wrap the log you hand to the store.
+Only writes are intercepted; `read`, `tail` and `fork` pass straight through, and the store never
+holds the original:
+
+```ts
+import type { CoreEvent, Event, EventLog } from "@reinsjs/core"
+
+function redactingLog(log: EventLog): EventLog {
+  const clean = (e: Event): Event => {
+    const c = e as CoreEvent
+    switch (c.type) {
+      case "core.user_message":
+      case "core.tool_result":
+        return { ...c, payload: { ...c.payload, content: redactParts(c.payload.content) } } as Event
+      case "core.model_text":
+        return { ...c, payload: { ...c.payload, text: redact(c.payload.text) } } as Event
+      default:
+        return e
+    }
+  }
+  return {
+    append: (events) => log.append(events.map(clean)),
+    read: (sessionId, opts) => log.read(sessionId, opts),
+    tail: (sessionId, n) => log.tail(sessionId, n),
+    fork: (from, at, to) => log.fork(from, at, to),
+  }
+}
+
+const store = await pgStores(pool)
+createAgent({ model, store: { ...store, log: redactingLog(store.log) }, sockets: [redactingTool, …] })
+```
+
+Two boundaries to know. The wrapper cleans what is *stored*, and — because the loop re-reads the
+timeline from the log every turn — what the *model* sees from the next request on, in the same run.
+It does not clean the event objects the loop yields: `agent.run()` consumers, the SSE stream and
+`onEvent` receive the object the loop built before it reached the wrapper. If the stream must be
+clean too, redact the `input` before it enters the loop (or once more in your encoder / `onEvent`).
+And the two hooks are not interchangeable: a tool result redacted only in the wrapper is already
+in the `BlobStore` in full if `spill()` moved it there — the `afterTool` socket is what keeps blobs
+clean, the wrapper is what keeps everything else clean. Both recipes are exercised in
+`packages/brain/src/redaction.recipe.test.ts`, including the "wrong order leaks into the blob" case.
+
 ## Security notes
 
 Read these before putting `@reinsjs/server` on a public route.
