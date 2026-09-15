@@ -1,7 +1,7 @@
 # l1-deferred-tools — lazy-tools 的 provider 原生路径核实（2026-09-15）
 
 > 对应任务「lazy-tools 的 provider 原生路径」。D1 实测取回工具后 Anthropic 缓存整段重写（频繁换任务贵 1.7 倍）；官方有 `defer_loading` + `tool_reference`（GA、无 beta 头）能让工具表整段不变。进代码前先核实厂商规矩，判据全部是产出内容。
-> 运行：`node spikes/l1-deferred-tools/probe.mjs [haiku|opus|deepseek|all]`（裸 fetch，测厂商规矩）；`pnpm build` 后 `node spikes/l1-deferred-tools/live.mjs [haiku|opus]`（`runLoop + lazyTools() + @reinsjs/lowering-fetch` 端到端）。配置自动从《模型API测试信息.md》读；官方模型经 Cloudflare AI Gateway 透传路径（F0 体检 43/43）。原始请求 / 响应写 `out/`（gitignore）。
+> 运行：`node spikes/l1-deferred-tools/probe.mjs [haiku|opus|deepseek|all]`（裸 fetch，测厂商规矩）；`pnpm build` 后 `node spikes/l1-deferred-tools/live.mjs [haiku|opus]`（`runLoop + lazyTools() + @reinsjs/lowering-fetch` 端到端）；`node spikes/l1-deferred-tools/billing-deferred.mjs`（P9 计费三臂，Haiku 一次调用）。配置自动从《模型API测试信息.md》读；官方模型经 Cloudflare AI Gateway 透传路径（F0 体检 43/43）。原始请求 / 响应写 `out/`（gitignore）。
 
 ## 厂商规矩（probe.mjs，Haiku 4.5 与 Opus 5 各 14/14）
 
@@ -18,6 +18,7 @@
 | P8a/b 历史含已移除工具的 tool_use / tool_result（工具表只剩别的工具 / 不带 tools） | **官方 Anthropic 接受**，模型正确作答——补上 P1 ⑧ 当时"官方直连未测"的那格 |
 | P8c 历史里 `tool_reference` 指向已移除工具 | 400（与 P5 同源）：厂商对**整段历史**校验引用，上一次 run 取回、这次已解绑的工具会让整条请求失败 |
 | DeepSeek Anthropic 兼容端口 | **忽略 `defer_loading`**：模型列出全部四件工具、直接调用；能力位对第三方 Anthropic 协议上游缺省关是对的 |
+| P9 计费三臂（`billing-deferred.mjs`，2026-09-15 补） | 取回之前被延迟的定义**不计费**：同基座 Haiku 三臂（各配等长盐值），全表带标写 8505 / 全表去标写 8681 / 只留非延迟工具写 339+读 8166——带标臂与删件臂的"到 tool_find 断点"余量完全一致（339=339），去标臂多出的 176 正是三件被延迟定义（634 字符）的 token。取回后定义在历史段展开、按普通 input 计费（P2.4 的 +137 已示）。官方原文："Internally, the API excludes deferred tools from the system-prompt prefix"。CF 网关透传路径对 `count_tokens` 端点不转凭证（401 要 `x-api-key`），量化只能打真模型 |
 
 ## 端到端（live.mjs，Haiku 4.5 与 Opus 5 各 9/9）
 
