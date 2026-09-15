@@ -1,3 +1,12 @@
+> **实测证据存档**（2026-09-15）。Boss 在另一台装了 TikTok for Business 官方 MCP 的机器上，用 zcode agent
+> 按 reins 这边给的八条清单跑的一轮只读探测；下面是原文照录。
+>
+> 读它的时候要分辨两类行为：**服务器的**（L0/L1 两层工具、三件元工具、无 annotations、业务错误不置 isError、
+> `campaign_create` 描述被污染）与 **zcode 客户端的**（`mcp__tiktok-ads__` 名字前缀、57474 → 50000 字节硬截断、
+> 工具列表会话中途不刷新、看不到 `isError` 包装）。结论与取舍见 `docs/DECISIONS.md` 同日三条。
+
+---
+
 Boss，收到。全程只读，我现在开始逐条验证。先并行做三件事：查本地 MCP 配置确认服务器 URL（Q1）、调用 `tool_list` 元工具看注册表全貌（Q3/Q4/Q8 的基础）。
 
 `tool_list` 元工具实测成功——它返回了一个按对象分组的大注册表（ad、adgroup、audience、bc、catalog、smart_plus、gmv_max 等），输出很大，被客户端按 50000 字节预算截断了（原始 57474 字节），截断前我已数到 **330+ 个工具**。同时确认了一批我直接工具列表里**没有**的能力（如 `ad_get`、`adgroup_get`、`campaign_get`、`dmp_custom_audience_get`、`bc_asset_get`）。
