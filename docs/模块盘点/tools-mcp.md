@@ -30,11 +30,11 @@ transport.create() → MCP SDK Transport → Client.connect
 | `packages/tools-mcp/tsup.config.ts` | 两个入口，`removeNodeProtocol: false`，dts 清 paths |
 | `packages/tools-mcp/README.md` | 对外说明（英文）：用法、按 run 绑定、注解映射、连接生命周期、免重启原理与漂移三选一、上游实测 |
 | `packages/tools-mcp/src/index.ts` | 主入口门面：`mcpTools`、`httpTransport`、翻译纯函数、公开类型 |
-| `packages/tools-mcp/src/types.ts` | `McpToolInfo` / `McpToolAnnotations`（纯数据）、`McpTransport`（配方：`kind` / `label` / `create(): unknown`）、`McpToolsOptions`、`McpToolsSocket`（Socket + `close()`）、`McpToolsError` |
+| `packages/tools-mcp/src/types.ts` | `McpToolInfo` / `McpToolAnnotations`（纯数据）、`McpTransport`（配方：`kind` / `label` / `create(): unknown`）、`McpAuth`（`token()` / `onUnauthorized?()`，结构兼容 SDK 的 `AuthProvider` 但不引用其类型）、`McpToolsOptions`、`McpToolsSocket`（Socket + `close()`）、`McpToolsError` |
 | `packages/tools-mcp/src/mcp-tools.ts` | `mcpTools(options): McpToolsSocket`：`tools` 异步贡献（list → 翻译 → `override` → 去掉 `false`）；`optional` 决定 list 失败是抛还是空表 + 告警一次；`execute` = `callTool` + `toContentParts`，`isError` 直通 |
 | `packages/tools-mcp/src/connection.ts` | `McpConnection`：`ensure()` 懒建 / 并发合流 / `onclose` 清引用 / 下次需要时重建；`listTools`（`cacheMode: "bypass"`，绕过 SDK 列表缓存）；`callTool`（timeout + signal）；`close`（建连进行中调用会等建连有结果再关，不然连接会被挂回来漏掉——2026-09-10 审查修） |
 | `packages/tools-mcp/src/translate.ts` | 纯函数：`modelToolName`（前缀 + 非法字符改写 + 截 64）、`riskOf`（readOnly → low，destructive → high，其余 medium）、`toToolInfo`（声明 → 纯数据，形状不对抛错）、`toContentParts`（text / image 原样；audio、resource_link、二进制 resource → 说明文字；文本 resource 带 uri 头；空 content 用 structuredContent） |
-| `packages/tools-mcp/src/http.ts` | `httpTransport({ url, headers?, fetch?, requestInit? })`：标签只留 origin + pathname（查询串常带 token） |
+| `packages/tools-mcp/src/http.ts` | `httpTransport({ url, headers?, auth?, fetch?, requestInit? })`：标签只留 origin + pathname（查询串常带 token）；`auth` 包一层交给 SDK 的 `authProvider`（我们的签名收 `MaybePromise`），与 `headers.Authorization` 互斥、构造期即拒 |
 | `packages/tools-mcp/src/node.ts` | `stdioTransport({ command, args?, env?, cwd?, stderr? })`，`/node` 子路径 |
 | `packages/tools-mcp/src/test-utils.ts` | 测试夹具：四个工具（echo 只读 / drop_table 破坏性 / flaky 按需 isError / big 大结果）的内存 McpServer，`transport.create()` 每次造新 linked pair，可 `down` 模拟服务器死掉 |
 | `packages/tools-mcp/src/connection.test.ts` | `McpConnection.close` 边界：建连进行中 close 不漏连接、之后重建；建连失败时 close 不抛；空操作 |

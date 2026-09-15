@@ -2,7 +2,25 @@
  * @reinsjs/tools-mcp 的公开类型。MCP SDK 的类型一律不出本包（同降级层对 pi-ai 的约束）：
  * 对外只有 reins 自己的 `Tool` / `Socket`，加上这里几个纯数据形状。
  */
-import type { Socket, Tool } from "@reinsjs/core"
+import type { MaybePromise, Socket, Tool } from "@reinsjs/core"
+
+/**
+ * 每个请求的 bearer 凭证来源（HTTP 传输）。刻意只有两个方法、且不引用 MCP SDK 的类型：
+ * 形状与 SDK 的 `AuthProvider` 结构兼容，宿主不必 import SDK。
+ *
+ * **不收 SDK 的 `OAuthClientProvider`**：那套的核心是"开浏览器让人点授权"，在服务端 agent 里跑不通——
+ * 令牌该由宿主的 Web 应用先拿好、存起来，循环里只负责取用与刷新。完整 OAuth 流程仍不封装（0.1 立场不变），
+ * 宿主要用可以在 `token` / `onUnauthorized` 里自己调 SDK 的 `refreshAuthorization` 等函数。
+ */
+export interface McpAuth {
+  /** 每个请求发出前调用。返回 undefined 表示这次不带 Authorization 头 */
+  token(): MaybePromise<string | undefined>
+  /**
+   * 服务器回 401 时调用，之后传输层**自动重试该请求一次**；重试再 401（或没给这个方法）就抛错。
+   * 实现里该做的是刷新令牌——下一次 `token()` 要能返回可用的那个
+   */
+  onUnauthorized?(): MaybePromise<void>
+}
 
 /** MCP 工具注解（spec 里全部是"提示"，只用来给 risk / needsApproval 定缺省值，不当权限判定） */
 export interface McpToolAnnotations {

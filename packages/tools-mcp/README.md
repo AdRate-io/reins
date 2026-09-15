@@ -103,6 +103,84 @@ accept that the paused run is abandoned and start a new one, or pass `allowConfi
 that resume also emits the tool-change note. What the library will not do is silently resume with a different
 tool table than the one the approver saw.
 
+## Expiring credentials
+
+A fixed token can live in `headers`. A token that expires cannot: `headers` is fixed when the transport is built,
+while the connection is created lazily, reused across runs and rebuilt from the same recipe after a drop — so once
+the token expires, even the rebuild carries the stale one. Pass `auth` instead:
+
+```ts
+httpTransport({
+  url: "https://business-api.tiktok.com/open_mcp/tt-ads-mcp-layer",
+  auth: {
+    token: () => db.accessToken(userId),          // called before every request
+    onUnauthorized: () => db.refresh(userId),     // called on 401, then the request is retried once
+  },
+})
+```
+
+`auth` and an `Authorization` header are mutually exclusive — passing both throws at construction time rather than
+letting one silently win.
+
+`McpAuth` is deliberately these two methods and nothing more, and it does not reference any MCP SDK type. It is not
+the SDK's `OAuthClientProvider`: the valuable part of that interface is driving a browser authorization prompt,
+which a server-side agent cannot do. Obtain and store the tokens in your web application; the loop only reads and
+refreshes them. Full OAuth flows are still not wrapped — call the SDK's `refreshAuthorization` (or your own code)
+from inside `token` / `onUnauthorized`.
+
+## Gateway-style servers
+
+Some servers put hundreds of operations behind **one** dispatching tool. TikTok for Business is the current
+example: its layered endpoint registers 41 ordinary tools plus `tool_list` / `tool_get` / `tool_execute`, and the
+other ~330 operations live only in a server-side registry, reached through `tool_execute({ tool_name, params })`.
+
+This costs the loop nothing — the tool table is fixed for the whole run, so the prompt-cache prefix and config hash
+are unaffected. **But it silently defeats approval policies written against tool names.** Creating a campaign,
+changing a budget and deleting an asset group are all called `tool_execute`; what actually happens is in the
+arguments.
+
+```ts
+// WRONG — this never matches. Every operation is named tool_execute.
+approval({ deny: ["*_delete"], allow: ["*"] })
+
+// RIGHT — decide on the operation name inside the arguments.
+const operationOf = (args: unknown): string =>
+  typeof args === "object" && args !== null && "tool_name" in args
+    ? String((args as { tool_name?: unknown }).tool_name ?? "")
+    : ""
+
+approval({
+  ask: [{
+    id: "gateway.writes",
+    match: (call) =>
+      call.name === "tool_execute" && /_(create|update|delete|upload)$/.test(operationOf(call.args)),
+    summary: (call) => `TikTok ${operationOf(call.args)}`,   // the approver sees the real operation
+  }],
+  allow: [
+    { id: "gateway.reads", match: (call) =>
+        call.name === "tool_execute" && /_(get|list|search)$/.test(operationOf(call.args)) },
+    "tool_list",
+    "tool_get",
+  ],
+})
+```
+
+The executable version of this recipe is `packages/brain/src/gateway-tool.recipe.test.ts`, including the negative
+case that proves the name-based rule lets a delete through.
+
+With no rules configured the default is safe but blunt: such a server declares no annotations, so the translated
+tool carries no `risk`, and `unmatched: "byRisk"` sends **every** call — reads included — to a human. That is
+fail-closed by design; open up the read path with the recipe above rather than by allowing the dispatcher wholesale.
+
+Two more things worth knowing about servers of this shape:
+
+- **A registry listing can be large.** TikTok's `tool_list` returns ~57 KB. Under `spill` that becomes a preview
+  plus a `fetch_blob` handle — useless, because choosing a tool is exactly what the full listing is for. Raise the
+  budget for that one tool: `override: (tool, info) => info.name === "tool_list" ? { ...tool, resultPolicy: { maxTokens: 100_000, overflow: "spill" } } : tool`.
+- **Upstream business errors may not set `isError`.** TikTok returns `{"code": 40001, "message": "..."}` as a
+  *successful* MCP result; only MCP-level failures (unknown tool, transport error) are `isError`. Anything keying
+  off `isError` — retries, your own policies — will not see those. The model reads the code from the JSON.
+
 ## Verified upstream behaviour
 
 Requests whose history contains `tool_use` / `tool_result` for a tool that is no longer in the tool table were
@@ -116,7 +194,7 @@ than a protocol rejection. Script: `spikes/mcp-removed-tool-history`.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `transport` | — | `httpTransport({ url, headers?, fetch?, requestInit? })` or `stdioTransport({ command, args?, env?, cwd?, stderr? })` |
+| `transport` | — | `httpTransport({ url, headers?, auth?, fetch?, requestInit? })` or `stdioTransport({ command, args?, env?, cwd?, stderr? })` |
 | `prefix` | none | Prepended to tool names shown to the model; the server still sees the original name |
 | `callTimeoutMs` | 60 000 | Per `tools/call` timeout; expiry becomes an error result |
 | `optional` | `false` | On `tools/list` failure at run start: throw (default) or contribute no tools and warn once |
@@ -127,8 +205,8 @@ than a protocol rejection. Script: `spikes/mcp-removed-tool-history`.
 Tool names that the model APIs reject (`^[A-Za-z0-9_-]{1,64}$`) are rewritten (`files.read` → `files_read`) with a
 one-time warning; the original name is used on the wire.
 
-Not in 0.1: sampling, elicitation, resources, prompts, MCP Apps, OAuth flows (bring your own `fetch` or
-`headers`).
+Not supported: sampling, elicitation, resources, prompts, MCP Apps, and driving an OAuth authorization
+prompt (obtain tokens in your application and hand them over through `auth`).
 
 ## License
 
