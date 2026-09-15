@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/adapter-tanstack-ai",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "reins — the brain as a TanStack AI chat middleware: EventLog stays the source of truth, sockets drive onConfig / onChunk / tool hooks",
   "keywords": [
     "agent",

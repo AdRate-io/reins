@@ -1,5 +1,27 @@
 # @reinsjs/tools-mcp
 
+## 0.2.0
+
+### Minor Changes
+
+- 14345eb: Every user-facing runtime string is now English. This covers thrown error messages (construction-time validation, store and registry errors, HTTP 4xx bodies), `warn()` output from the brain modules and the server, the text the model sees in error tool results (`Unknown tool: …`, `Tool call blocked: …`, `Invalid arguments: …`, `Approval denied…`, `Approval expired…`), the `note` / `when` fields of every lowering loss matrix and landing, the placeholder text for content a wire protocol cannot carry, the conformance suites exported from `@reinsjs/core/testing`, and the `@reinsjs/eval` report and gate output. Previously these were Chinese while the READMEs and model-facing prompts were English, which left a non-Chinese-speaking host with unreadable diagnostics.
+
+  Nothing changes structurally: same errors, same codes, same warning points, same landing kinds. Hosts that match on the text of a message or a landing note (rather than on its error code or `landing` value) need to update those matches.
+
+- 41db9c1: `httpTransport({ auth })` for credentials that expire. `headers` is fixed when the transport is built, but the connection is created lazily, reused across runs and rebuilt from the same recipe after a drop — so an expiring token cannot live there. `auth.token()` is called before every request and `auth.onUnauthorized()` on a 401, after which the request is retried once. Passing both `auth` and an `Authorization` header throws at construction time instead of letting one silently win.
+
+  `McpAuth` is two methods and references no MCP SDK type. It is deliberately not the SDK's `OAuthClientProvider`: that interface's core value is driving a browser authorization prompt, which a server-side agent cannot do. Obtain the tokens in your application and hand them over; call the SDK's `refreshAuthorization` from inside `onUnauthorized` if you want it.
+
+  README additions: "Expiring credentials", and "Gateway-style servers" — a warning that servers routing hundreds of operations through a single dispatching tool (TikTok for Business's `tool_execute` is the current example) silently defeat approval policies written against tool names, with the recipe for deciding on the operation name inside the arguments instead. The executable version is `packages/brain/src/gateway-tool.recipe.test.ts`, whose first case proves a name-based `deny` rule lets a delete through.
+
+### Patch Changes
+
+- Updated dependencies [49d5dea]
+- Updated dependencies [c16e3ea]
+- Updated dependencies [14345eb]
+- Updated dependencies [a082a0c]
+  - @reinsjs/core@0.2.0
+
 ## 0.1.1
 
 ### Patch Changes

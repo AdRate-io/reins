@@ -1,5 +1,27 @@
 # @reinsjs/core
 
+## 0.2.0
+
+### Minor Changes
+
+- 49d5dea: New store interface `RunLease` (`acquire` / `renew` / `release`) and optional `Stores.runLease` — a lease table that lets the "one run per session at a time" guard span processes. Expiry is judged by the store's own clock, `acquire` is idempotent for the same owner, and none of the three methods throw on contention (they answer with a boolean). `InMemoryRunLease({ now })` is the reference implementation (not included in `memoryStore()`, which stays single-process), and `runLeaseConformance` joins the other suites in `@reinsjs/core/testing`.
+- 14345eb: Every user-facing runtime string is now English. This covers thrown error messages (construction-time validation, store and registry errors, HTTP 4xx bodies), `warn()` output from the brain modules and the server, the text the model sees in error tool results (`Unknown tool: …`, `Tool call blocked: …`, `Invalid arguments: …`, `Approval denied…`, `Approval expired…`), the `note` / `when` fields of every lowering loss matrix and landing, the placeholder text for content a wire protocol cannot carry, the conformance suites exported from `@reinsjs/core/testing`, and the `@reinsjs/eval` report and gate output. Previously these were Chinese while the READMEs and model-facing prompts were English, which left a non-Chinese-speaking host with unreadable diagnostics.
+
+  Nothing changes structurally: same errors, same codes, same warning points, same landing kinds. Hosts that match on the text of a message or a landing note (rather than on its error code or `landing` value) need to update those matches.
+
+- a082a0c: Deferred tool loading, the provider-native path for `lazyTools()`:
+
+  - `ContentPart` gains a `tool_reference` member — `{ type: "tool_reference", name, description, inputSchema }`, a tool definition carried as content (with a full snapshot, so the log stays self-contained). `renderToolReference(part)` is the one way to render it as text; `normalizeToolOutput` accepts it in tool results.
+  - `ToolSpec.deferLoading?: boolean` — a tool that is declared to the provider but not loaded into the model's context until a `tool_reference` to it appears in the history.
+  - `LoweringCapabilities.deferredTools: boolean` (required; every lowering must declare it) — whether the wire protocol has a native place for both of the above.
+  - `BeforeModelPatch.deferredTools?: string[]` — a socket names which tools of this turn's table are deferred; `runLoop` translates it through the new `deferredToolSpecOf(tool, deferred)`. `toolSpecOf` keeps its single parameter on purpose (it is commonly passed to `map`).
+
+  Projection estimates count a reference as its rendered text. Hosts implementing their own `Lowering` must add `deferredTools: false` to their capabilities.
+
+### Patch Changes
+
+- c16e3ea: README only: point to `@reinsjs/lowering-fetch` as the second lowering layer (the umbrella README's install line and import now show it; `@reinsjs/lowering-pi`'s README links to the side-by-side comparison; `@reinsjs/core`'s module table lists both implementations). No code changes.
+
 ## 0.1.1
 
 ### Patch Changes

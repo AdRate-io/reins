@@ -1,5 +1,0 @@
----
-"@reinsjs/lowering-fetch": minor
----
-
-Anthropic Messages line: native deferred tool loading. `ToolSpec.deferLoading` becomes `defer_loading: true` (the cache breakpoint moves to the last non-deferred tool; if every tool would be deferred none is), and a system-trusted `tool_result` made of `tool_reference` parts whose tools are in this request's `tools` is sent as `tool_reference` blocks the API expands in place — the tool list stays identical across the run, so the cache prefix survives a `tool_find` (measured on Haiku 4.5: the next request reads 8.5k cached tokens instead of rewriting them). Text parts of such a result are placed after the batch of `tool_result` blocks and recorded `lossy` / `tool-reference` in the loss matrix; references to tools absent from this request, or inside untrusted results, are rendered as text. New dialect flag `anthropic.deferredTools` and capability `deferredTools` (default on for `provider: "anthropic"`, off for third-party Anthropic-protocol endpoints — DeepSeek's ignores `defer_loading`). Chat Completions and Responses lines render `tool_reference` parts as text and do not send deferred tools.

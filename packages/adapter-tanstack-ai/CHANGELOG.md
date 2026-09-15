@@ -1,5 +1,25 @@
 # @reinsjs/adapter-tanstack-ai
 
+## 0.2.0
+
+### Minor Changes
+
+- 14345eb: Every user-facing runtime string is now English. This covers thrown error messages (construction-time validation, store and registry errors, HTTP 4xx bodies), `warn()` output from the brain modules and the server, the text the model sees in error tool results (`Unknown tool: …`, `Tool call blocked: …`, `Invalid arguments: …`, `Approval denied…`, `Approval expired…`), the `note` / `when` fields of every lowering loss matrix and landing, the placeholder text for content a wire protocol cannot carry, the conformance suites exported from `@reinsjs/core/testing`, and the `@reinsjs/eval` report and gate output. Previously these were Chinese while the READMEs and model-facing prompts were English, which left a non-Chinese-speaking host with unreadable diagnostics.
+
+  Nothing changes structurally: same errors, same codes, same warning points, same landing kinds. Hosts that match on the text of a message or a landing note (rather than on its error code or `landing` value) need to update those matches.
+
+### Patch Changes
+
+- a082a0c: `tool_reference` content parts (new in `@reinsjs/core`) are rendered as text when translating to TanStack messages and tool results; capabilities report `deferredTools: false`.
+
+  `capabilities.deferredTools` is forced to `false` on this path even when the host passes `true`: TanStack's adapter decides how tools reach the provider, so there is no place for `defer_loading` / `tool_reference` and `BeforeModelPatch.deferredTools` is not read; `lazyTools()` always takes its filtering path here. `approval({ ttlMs })` is verified to work on this path (the engine re-enters the `beforeTools` boundary after an interrupt is resolved), with a test locking the event sequence.
+
+- Updated dependencies [49d5dea]
+- Updated dependencies [c16e3ea]
+- Updated dependencies [14345eb]
+- Updated dependencies [a082a0c]
+  - @reinsjs/core@0.2.0
+
 ## 0.1.1
 
 ### Patch Changes

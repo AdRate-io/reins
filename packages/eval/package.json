@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/eval",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "reins — eval harness: fixtures from event logs, recorded-tool replay, metrics, arm-vs-arm runner and the P8 gate",
   "keywords": [
     "agent",

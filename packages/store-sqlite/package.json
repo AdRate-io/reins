@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/store-sqlite",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "reins — SQLite-backed EventLog / BlobStore / MemoryStore. One SQL layer, driver supplied by the runtime (node:sqlite, bun:sqlite)",
   "keywords": [
     "agent",
