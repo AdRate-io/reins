@@ -212,6 +212,6 @@
 - **"HTTP 200 假通过"抓过两回** — 真打上游时必须逐项核对产出内容，不能只看状态码。
 - **MCP client 2.0.0 主入口零 `node:*`，靠 `_shims` 条件导出选校验器（workerd → cf-worker，node → Ajv）；`./stdio` 才带 node:process / cross-spawn** — 最严档 workerd 实测 list + call 通过。
 - **aireiter 的 Claude 端点对含历史工具调用的请求回 "stream ended without a stop reason"** — 网关改写截断，不是协议拒绝；协议接受度看 DeepSeek 直连与 OpenAI Responses（历史含已移除工具的两个变体都接受）；**官方 Anthropic 经 CF 网关 2026-09-15 补测两变体也接受**（`spikes/l1-deferred-tools` P8）。
-- **量缓存的探针必须给系统提示加一次性盐值** — Anthropic 缓存 5 分钟 TTL 且命中续期，同一脚本 10 分钟内重跑，对照臂"应归零"的请求会读到上一遍写的前缀（L1 P3 假阴性一次）；"cache_read > 0" 的正向断言同样可能是上一遍的功劳。
-- **`defer_loading` 的定义取回之前不计费，取回后在历史段展开、按普通 input 计费**（L1 P9 三臂实测：全表带标写 8505 / 去标写 8681，差 176 = 三件被延迟定义；删掉被延迟工具后余量与带标臂完全一致 339=339）— 请求体仍全量下发（服务端留作展开与校验），但排除出计费前缀；官方原文 "excludes deferred tools from the system-prompt prefix"。CF 网关透传路径对 `count_tokens` 端点不转凭证（401 要 `x-api-key`），量化 token 只能打真模型对照臂。
+- **量缓存的探针必须给系统提示加一次性盐值** — Anthropic 缓存 5 分钟 TTL 且命中续期，同一脚本 10 分钟内重跑，对照臂"应归零"的请求会读到上一遍写的前缀（L1 P3 假阴性一次）；"cache_read > 0" 的正向断言同样可能是上一遍的功劳。**盐必须落在 `cache_control` 断点之内**（P9 首测追加成 system 新块、落在断点之后，等于没加）；要隔离的是跨运行，同组各臂应共用同一个盐——臂间能否互相命中本身就是判据。
+- **`defer_loading` 的定义取回之前不进缓存前缀、不计费，取回后在历史段展开、按普通 input 计费**（L1 P9 六臂 6/6，同组共用一次性 run 盐：带标臂写 8499，只留 tool_find 的删件臂**整段命中 8499**——两者计费前缀逐字相同；换掉三件的 description 仍整段命中，连定义内容都不进前缀；去标实发写 8675，差 **176** = 三件定义；反序复跑同样成立）— 请求体仍全量下发（服务端留作展开与校验），但排除出计费前缀；官方原文 "excludes deferred tools from the system-prompt prefix"。CF 网关透传路径对 `count_tokens` 端点不转凭证（401 要 `x-api-key`），量化 token 只能打真模型对照臂。
 

@@ -23,7 +23,7 @@
 - [ ] 四环境验证：Bun / Deno / Vercel Edge 未实测（edge-runtime-check 只测了 Cloudflare workerd）——验证不改接口
 - [ ] tools-mcp 后续：OAuth 流程、sampling / elicitation / resources / prompts 待真需求（"历史含已移除工具"官方 Anthropic 已于 2026-09-15 经 CF 网关补测接受，见 `spikes/l1-deferred-tools/` P8）
 - [ ] memory 挂载表（共享只读 + 私有可写，技术方案 §9.6）——等团队场景真出现"同时挂两块"再做
-- [x] **L1 lazy-tools 的 provider 原生路径**（2026-09-15）：core `ContentPart` 加 `tool_reference` 段（带定义快照）、`ToolSpec.deferLoading` / `LoweringCapabilities.deferredTools` / `BeforeModelPatch.deferredTools`；lazy-tools 按能力位分原生 / 过滤两路；fetch 版 Anthropic 线 `defer_loading` + `tool_reference` 块（GA 无 beta 头，Haiku 4.5 起），厂商规矩落进 encoder；其余线与 pi 版展开成文本、不发 deferLoading 的工具。spike：取回后第 2 请求 cache_read Haiku 8497 / Opus 4062，老路子归零；端到端 Haiku / Opus 各 9/9。`lazyTools()` 接口不变。+33 用例，1218 全绿；MCP 工具懒发现仍待 `SocketSetup` 加"此前已并入的工具"
+- [x] **L1 lazy-tools 的 provider 原生路径**（2026-09-15）：core `ContentPart` 加 `tool_reference` 段（带定义快照）、`ToolSpec.deferLoading` / `LoweringCapabilities.deferredTools` / `BeforeModelPatch.deferredTools`；lazy-tools 按能力位分原生 / 过滤两路；fetch 版 Anthropic 线 `defer_loading` + `tool_reference` 块（GA 无 beta 头，Haiku 4.5 起），厂商规矩落进 encoder；其余线与 pi 版展开成文本、不发 deferLoading 的工具。spike：取回后第 2 请求 cache_read Haiku 8497 / Opus 4062，老路子归零；端到端 Haiku / Opus 各 9/9；取回之前被延迟的定义不进计费前缀（P9 六臂 6/6，删件臂整段命中带标臂）。`lazyTools()` 接口不变。+33 用例，1218 全绿；MCP 工具懒发现仍待 `SocketSetup` 加"此前已并入的工具"
 - [ ] 运行时告警与构造期错误文案英文化（全包十几处字符串，含 memory / spill / budget / skills）——审查指出英文 README + 中文告警对非中文用户是死路；0.1 保持中文（DECISIONS 2026-09-13）
 
 ## 待 Boss 本人操作（不挡开发）
