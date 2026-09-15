@@ -146,7 +146,7 @@ describe("encodeResponsesRequest", () => {
     expect(kinds(r.body.input)).toEqual(["user"])
   })
 
-  it("reasoning 回放：整项原样放回（同家别的型号照发并备注）；无加密项 / 无签名 / 别家 dropped 且不降成正文", () => {
+  it("reasoning 回放：整项原样放回；同家别的型号 / 无加密项 / 无签名 / 别家 dropped 且不降成正文", () => {
     const own = thinking("想一下", { ...origin, thinkingSignature: JSON.stringify(reasoningItem) })
     const otherModel = thinking("想", {
       ...origin,
@@ -166,17 +166,17 @@ describe("encodeResponsesRequest", () => {
     })
     const reply = text("答")
     const r = encode([user("q"), own, otherModel, noEncrypted, unsigned, foreign, reply])
-    expect(kinds(r.body.input)).toEqual(["user", "reasoning", "reasoning", "message"])
+    expect(kinds(r.body.input)).toEqual(["user", "reasoning", "message"])
     expect(r.body.input[1]).toEqual(reasoningItem)
     expect(landingOf(r, own)).toMatchObject({ kind: "exact", landing: "reasoning-item" })
-    expect(landingOf(r, otherModel)).toMatchObject({ kind: "exact", landing: "reasoning-item" })
+    expect(landingOf(r, otherModel)).toMatchObject({ kind: "dropped", landing: "none" })
     expect(landingOf(r, otherModel)?.note).toContain("gpt-5")
     expect(landingOf(r, noEncrypted)).toMatchObject({ kind: "dropped", landing: "none" })
     expect(landingOf(r, noEncrypted)?.note).toContain("encrypted_content")
     expect(landingOf(r, unsigned)).toMatchObject({ kind: "dropped" })
     expect(landingOf(r, foreign)).toMatchObject({ kind: "dropped" })
     // 正文里没有任何 thinking 文本
-    const msg = r.body.input[3] as Extract<ResponsesInputItem, { type: "message" }>
+    const msg = r.body.input[2] as Extract<ResponsesInputItem, { type: "message" }>
     expect(msg.content.map((c) => c.text)).toEqual(["答"])
   })
 

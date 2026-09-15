@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@reinsjs/brain": "workspace:*",
-    "@reinsjs/lowering-pi": "workspace:*",
+    "@reinsjs/lowering-fetch": "workspace:*",
     "@reinsjs/store-sqlite": "workspace:*",
     "@reinsjs/agent": "workspace:*"
   },

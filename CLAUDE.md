@@ -59,7 +59,7 @@
                           │
                      @reinsjs/core ←── @reinsjs/brain（十个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）
-                          ├── @reinsjs/lowering-fetch（零依赖；Chat / Anthropic Messages / Responses 三线；最严档 workerd 实测；新宿主推荐，随下次 changeset version 发布）
+                          ├── @reinsjs/lowering-fetch（零依赖；Chat / Anthropic Messages / Responses 三线；最严档 workerd 实测；新宿主推荐，五个 examples 与 eval 0.2 起全部用它）
                           ├── @reinsjs/store-sqlite / store-pg
                           ├── @reinsjs/eval
                           ├── @reinsjs/adapter-tanstack-ai
@@ -144,7 +144,7 @@
 - **Chat 线四处有损都在矩阵里**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点（什么都不做）。
 - **Anthropic 线的中途 system 是"攒到下一条 assistant 之前或收尾"再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user、后接 assistant 或收尾（F0 A2d 跟在 assistant 后 400）；说明位置比时间线晚一条 user 仍算 exact 并备注。IR 后移到 tool_result 之后的说明也走这条路。
 - **Anthropic 线的缓存断点是本包打的：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 不覆盖且占一格；`anthropic.midSystemCacheBreakpoint` 三档来自 B1 数据，别把断点留在 system 消息上（几乎零命中）。
-- **thinking 回放判据是签名不是正文** — Fable 5.1 缺省 display omitted：正文空、签名在，流侧仍出草稿、写侧照发；无签名（流中断）与别家的 dropped 声明而不是降成正文；`redacted_thinking` 的 data 存在 `replay.thinkingSignature` + `redacted: true`（与 pi 版同字段）。
+- **thinking 回放判据是签名不是正文，且签名绑模型：provider + api + model 三者一致才回放** — Fable 5.1 缺省 display omitted：正文空、签名在，流侧仍出草稿、写侧照发；无签名（流中断）、别家的、同家别的型号的一律 dropped 声明而不是降成正文（eval resume fixture 的种子是 DeepSeek 录的，签名喂给 Sonnet 5 厂商 400，0.2 发前抓到）；Responses 线的加密推理项同一规则；`redacted_thinking` 的 data 存在 `replay.thinkingSignature` + `redacted: true`（与 pi 版同字段）。
 - **宿主 `requestOptions` 里的 `system` / `tools` 会被剥掉，`max_tokens` 没给取模型声明的 `maxOutputTokens`，`thinking` 不缺省设置** — Opus 5 起厂商缺省 adaptive，Fable 5.1 对 `type:"disabled"` 400、Haiku 4.5 仍要 `budget_tokens`，代次差异由宿主定；`anthropic-beta` 只在 `anthropic.betas` 声明时带（中途 system 不需要 beta）。
 - **Responses 线 reasoning 的回放判据是 reasoning 项里的 `encrypted_content`，推理模型缺省永远带 `include: ["reasoning.encrypted_content"]`，不像 pi 版只在请求 effort 时才带** — gpt-5 缺省就开推理，不带 include 会产出无法回放的 reasoning 项；`replay.thinkingSignature` 存整项 JSON（与 pi 版互换），写侧整项原样放回，没有加密项 / 别家的 dropped 不降正文。伪造加密项厂商 400（F0 R3b），回放的必须是原件。
 - **Responses 线 `store: false` 强制、`previous_response_id` 剥掉；工具调用的 `call_id` 是 toolCallId，`fc_` 项 id 存 `replay.itemId` 且只在同一模型回放时带回** — OpenAI 校验 fc 项与 rs 项的配对，换模型就不带（pi-ai 同一取向）；正文项 id 存 `replay.textSignature`，没有就补 `msg_reins_<n>`（厂商接受）。

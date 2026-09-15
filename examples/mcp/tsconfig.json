@@ -11,7 +11,7 @@
   "references": [
     { "path": "../../packages/agent" },
     { "path": "../../packages/brain" },
-    { "path": "../../packages/lowering-pi" },
+    { "path": "../../packages/lowering-fetch" },
     { "path": "../../packages/store-sqlite" },
     { "path": "../../packages/tools-mcp" }
   ]

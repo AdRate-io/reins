@@ -440,10 +440,17 @@ function assistantBlocks(
           )
           break
         }
-        const modelNote =
-          origin.model !== target.model
-            ? `the signature comes from ${origin.model}, but this request targets ${target.model}`
-            : undefined
+        // 签名绑定产出它的模型：换了型号照发厂商回 400（2026-09-15 eval resume fixture 实测，Sonnet 5 收到别的模型的签名）
+        if (origin.model !== target.model) {
+          land(
+            landings,
+            b.event,
+            "dropped",
+            "none",
+            `the signature comes from ${origin.model}, but this request targets ${target.model}; a signature is only valid for the model that produced it, so the block is not replayed`,
+          )
+          break
+        }
         if (b.replay.redacted === true) {
           out.push({ type: "redacted_thinking", data: signature })
           land(
@@ -452,11 +459,10 @@ function assistantBlocks(
             "exact",
             "redacted-thinking",
             "redacted_thinking is replayed verbatim through its data",
-            modelNote,
           )
         } else {
           out.push({ type: "thinking", thinking: b.text, signature })
-          land(landings, b.event, "exact", "thinking-block", modelNote)
+          land(landings, b.event, "exact", "thinking-block")
         }
         break
       }

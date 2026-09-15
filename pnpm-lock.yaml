@@ -32,9 +32,9 @@ importers:
       '@reinsjs/brain':
         specifier: workspace:*
         version: link:../../packages/brain
-      '@reinsjs/lowering-pi':
+      '@reinsjs/lowering-fetch':
         specifier: workspace:*
-        version: link:../../packages/lowering-pi
+        version: link:../../packages/lowering-fetch
       '@reinsjs/store-sqlite':
         specifier: workspace:*
         version: link:../../packages/store-sqlite
@@ -57,6 +57,9 @@ importers:
       '@reinsjs/eval':
         specifier: workspace:*
         version: link:../../packages/eval
+      '@reinsjs/lowering-fetch':
+        specifier: workspace:*
+        version: link:../../packages/lowering-fetch
       '@reinsjs/lowering-pi':
         specifier: workspace:*
         version: link:../../packages/lowering-pi
@@ -73,9 +76,9 @@ importers:
       '@reinsjs/brain':
         specifier: workspace:*
         version: link:../../packages/brain
-      '@reinsjs/lowering-pi':
+      '@reinsjs/lowering-fetch':
         specifier: workspace:*
-        version: link:../../packages/lowering-pi
+        version: link:../../packages/lowering-fetch
       '@reinsjs/store-sqlite':
         specifier: workspace:*
         version: link:../../packages/store-sqlite
@@ -98,9 +101,9 @@ importers:
       '@reinsjs/agent':
         specifier: workspace:*
         version: link:../../packages/agent
-      '@reinsjs/lowering-pi':
+      '@reinsjs/lowering-fetch':
         specifier: workspace:*
-        version: link:../../packages/lowering-pi
+        version: link:../../packages/lowering-fetch
       '@reinsjs/server':
         specifier: workspace:*
         version: link:../../packages/server
@@ -123,9 +126,9 @@ importers:
       '@reinsjs/brain':
         specifier: workspace:*
         version: link:../../packages/brain
-      '@reinsjs/lowering-pi':
+      '@reinsjs/lowering-fetch':
         specifier: workspace:*
-        version: link:../../packages/lowering-pi
+        version: link:../../packages/lowering-fetch
       '@reinsjs/store-pg':
         specifier: workspace:*
         version: link:../../packages/store-pg

@@ -47,7 +47,7 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     exact(
       "thinking-block",
       "replayed verbatim with its signature",
-      "the replay has a thinkingSignature and comes from the same source (provider + api)",
+      "the replay has a thinkingSignature and comes from the same source (provider + api + model)",
     ),
     exact(
       "redacted-thinking",
@@ -56,7 +56,7 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     ),
     dropped(
       "none",
-      "thinking with no signature (a broken stream) or from another family is rejected by the provider, so it is not replayed, and not downgraded to text either",
+      "thinking with no signature (a broken stream), from another family, or from another model of the same family (a signature is only valid for the model that produced it) is rejected by the provider, so it is not replayed, and not downgraded to text either",
     ),
   ],
   "core.tool_call": [

@@ -11,6 +11,7 @@
     "@reinsjs/brain": "workspace:*",
     "@reinsjs/core": "workspace:*",
     "@reinsjs/eval": "workspace:*",
+    "@reinsjs/lowering-fetch": "workspace:*",
     "@reinsjs/lowering-pi": "workspace:*"
   },
   "devDependencies": {

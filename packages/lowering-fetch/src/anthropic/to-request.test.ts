@@ -224,11 +224,24 @@ describe("encodeAnthropicRequest — thinking 回放", () => {
     expect(roles(r.body.messages)).toEqual(["user", "assistant", "user", "assistant"])
   })
 
-  it("同家不同型号的签名照发并备注（能否读由厂商定）", () => {
+  it("同家不同型号的签名 dropped 并点名两个型号：签名绑模型，照发厂商 400（eval resume fixture 实测）", () => {
     const t = thinking("p", { ...origin, model: "claude-opus-4-8", thinkingSignature: "s" })
-    const r = encode([user("go"), t, text("ok", { ...origin, model: "claude-opus-4-8" })])
-    expect(landingOf(r, t)).toMatchObject({ kind: "exact", landing: "thinking-block" })
+    const red = thinking("[Reasoning redacted]", {
+      ...origin,
+      model: "claude-opus-4-8",
+      thinkingSignature: "d",
+      redacted: true,
+    })
+    const r = encode([user("go"), t, red, text("ok", { ...origin, model: "claude-opus-4-8" })])
+    expect(landingOf(r, t)).toMatchObject({ kind: "dropped", landing: "none" })
     expect(landingOf(r, t)?.note).toContain("claude-opus-4-8")
+    expect(landingOf(r, t)?.note).toContain("claude-opus-5")
+    expect(landingOf(r, red)).toMatchObject({ kind: "dropped", landing: "none" })
+    // 请求体里没有任何 thinking / redacted_thinking 块
+    const types = r.body.messages.flatMap((m) =>
+      Array.isArray(m.content) ? m.content.map((b: { type: string }) => b.type) : [],
+    )
+    expect(types.some((t) => t === "thinking" || t === "redacted_thinking")).toBe(false)
   })
 })
 

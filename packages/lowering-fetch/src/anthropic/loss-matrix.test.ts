@@ -114,6 +114,17 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       events: [user(), mk("core.model_thinking", { text: "t" }, { replay: origin })],
     },
     {
+      label: "model_thinking 同家另一型号",
+      events: [
+        user(),
+        mk(
+          "core.model_thinking",
+          { text: "t" },
+          { replay: { ...origin, model: `${origin.model}-other`, thinkingSignature: "sig" } },
+        ),
+      ],
+    },
+    {
       label: "model_thinking 别家",
       events: [
         user(),

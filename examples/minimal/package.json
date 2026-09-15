@@ -10,7 +10,7 @@
     "replay": "node replay.ts"
   },
   "dependencies": {
-    "@reinsjs/lowering-pi": "workspace:*",
+    "@reinsjs/lowering-fetch": "workspace:*",
     "@reinsjs/server": "workspace:*",
     "@reinsjs/ui-agui": "workspace:*",
     "@reinsjs/agent": "workspace:*"

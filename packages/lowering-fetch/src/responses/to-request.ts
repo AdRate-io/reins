@@ -346,10 +346,6 @@ function assistantItems(
   const out: ResponsesInputItem[] = []
   const foreign = foreignOrigin(origin, target)
   const sameModel = !foreign && origin.model === target.model
-  const modelNote =
-    !foreign && origin.model !== target.model
-      ? `it comes from ${origin.model}, but this request targets ${target.model}`
-      : undefined
   for (const b of blocks) {
     switch (b.type) {
       case "text": {
@@ -387,6 +383,17 @@ function assistantItems(
           )
           break
         }
+        // 加密项绑定产出它的模型（与 fc_ 项 id 同一取向）：换了型号不放回，声明 dropped
+        if (!sameModel) {
+          land(
+            landings,
+            b.event,
+            "dropped",
+            "none",
+            `the reasoning item comes from ${origin.model}, but this request targets ${target.model}; encrypted reasoning is only valid for the model that produced it, so it is not replayed`,
+          )
+          break
+        }
         const item = reasoningItemOf(b.replay)
         if (!item) {
           land(
@@ -399,7 +406,7 @@ function assistantItems(
           break
         }
         out.push({ ...item, type: "reasoning" } as Extract<ResponsesInputItem, { type: "reasoning" }>)
-        land(landings, b.event, "exact", "reasoning-item", modelNote)
+        land(landings, b.event, "exact", "reasoning-item")
         break
       }
       case "tool_call": {

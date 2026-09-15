@@ -13,6 +13,7 @@
     { "path": "../../packages/core" },
     { "path": "../../packages/brain" },
     { "path": "../../packages/eval" },
+    { "path": "../../packages/lowering-fetch" },
     { "path": "../../packages/lowering-pi" },
     { "path": "../adrate" }
   ]

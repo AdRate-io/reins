@@ -18,7 +18,7 @@ node examples/team/run.ts "下周要做一次清库存促销。请先让分析�
 node examples/team/replay.ts examples/team/recordings/<父会话 id>.jsonl
 ```
 
-缺省模型 DeepSeek（`REINS_PROVIDER=aireiter` 换 Claude），密钥从仓库根《模型API测试信息.md》读；存储缺省 PGlite 文件库 `data/team.pgdata`，真 Postgres 把 `new pg.Pool(...)` 传给 `pgStores` 即可。
+缺省模型 DeepSeek（`@reinsjs/lowering-fetch` 的官方 Chat Completions 直连；`REINS_PROVIDER=aireiter` 换经网关的 Claude，Anthropic Messages 线），密钥从仓库根《模型API测试信息.md》读；存储缺省 PGlite 文件库 `data/team.pgdata`，真 Postgres 把 `new pg.Pool(...)` 传给 `pgStores` 即可。
 
 ## asTool 替你做对的两件事（2026-09-10 起示例用它）
 

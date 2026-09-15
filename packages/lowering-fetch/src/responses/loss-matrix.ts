@@ -44,11 +44,11 @@ export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     exact(
       "reasoning-item",
       "the whole reasoning item (including encrypted_content) is replayed verbatim",
-      "replay.thinkingSignature is a reasoning item with encrypted_content and comes from the same source (provider + api)",
+      "replay.thinkingSignature is a reasoning item with encrypted_content and comes from the same source (provider + api + model)",
     ),
     dropped(
       "none",
-      "reasoning with no encrypted_content (the encrypted item was not requested, or the stream broke) or from another source cannot be replayed, and is not downgraded to text",
+      "reasoning with no encrypted_content (the encrypted item was not requested, or the stream broke), from another source, or from another model of the same family (encrypted reasoning is only valid for the model that produced it) cannot be replayed, and is not downgraded to text",
     ),
   ],
   "core.tool_call": [

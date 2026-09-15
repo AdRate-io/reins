@@ -18,7 +18,8 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
 - `agent.ts`：全部脑子模块 + SQLite 存储（`data/`，已 gitignore）+ 系统提示 = 角色约定 + **技能菜单**（两份 Skill 只进 name / description，
   正文由模型 `skill_read` 按需翻，S1）。`adrate skills install` 落盘的 SKILL.md 只是"请运行 adrate skills read"的存根，所以载体不是
   `fsSkillSource` 读磁盘，而是启动时问 CLI `skills list --json` / `skills read --json` 一次，拼成 SKILL.md 喂 `inlineSkills`。
-  模型缺省经 aireiter 网关的 claude-opus-5，`REINS_PROVIDER=deepseek` 走 DeepSeek 直连（多轮请求在网关上会被掐断，dogfood 用 DeepSeek）。
+  降级层是 `@reinsjs/lowering-fetch`（0.2 起示例统一）：模型缺省经 aireiter 网关的 claude-opus-5（Anthropic Messages 线，网关丢中途 system 所以说明走 user 文本），
+  `REINS_PROVIDER=deepseek` 走 DeepSeek 官方 Chat Completions 直连（reasoning_content 方言回放思考；多轮请求在 aireiter 上会被掐断，dogfood 用 DeepSeek）。thinking 不手设，用厂商缺省。
 - `run.ts`：跑一条任务，审批逐条问 y/n（`--approve-all` 全批），结束写 JSONL 并用 `examples/minimal/replay.ts --agent` 生成回放页面。
 - `probe.ts`：排障用，单独打一次模型请求。
 - `local.ts`：测试广告主 id 等本地专用值的唯一读取处（环境变量或 gitignore 的密钥文件）。

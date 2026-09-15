@@ -4,7 +4,7 @@
  * 但这份配置只够本地体验：没有 `authorizeSession`（知道 sessionId 就能读走整条时间线、续别人的 run）、`secret` 有开发缺省值。
  * 上多用户的生产路由前，按根 README「Security notes」补 `handler: { principal, authorizeSession }` 并换真密钥。
  */
-import { anthropic } from "@reinsjs/lowering-pi"
+import { anthropic } from "@reinsjs/lowering-fetch"
 import { createAgent, defineTool, memoryStore } from "@reinsjs/agent"
 
 const getWeather = defineTool<{ city: string }>({
@@ -23,9 +23,11 @@ const deploy = defineTool<{ env: "staging" | "prod" }>({
 })
 
 export const agent = createAgent({
+  // thinking 不在这里设：Opus 5 起厂商缺省 adaptive；要手调就在 requestOptions 里按型号给 `thinking`
   model: anthropic(process.env.REINS_MODEL ?? "claude-opus-5", {
     apiKey: process.env.ANTHROPIC_API_KEY ?? "",
-    ...(process.env.REINS_GATEWAY_BASE ? { baseUrl: process.env.REINS_GATEWAY_BASE } : {}), // 走网关或代理时才需要
+    // 走网关或代理时才需要：给到协议根（其后接 /messages），如 https://host/api/v1；网关若丢中途 system，再加 midConversationSystem: false
+    ...(process.env.REINS_GATEWAY_BASE ? { baseUrl: process.env.REINS_GATEWAY_BASE } : {}),
   }),
   tools: [getWeather, deploy],
   store: memoryStore(), // 或 sqliteStores(openSqlite("./agent.db"))（@reinsjs/store-sqlite 及其 /node 入口），或自己实现 EventLog 接口

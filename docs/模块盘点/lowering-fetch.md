@@ -4,7 +4,7 @@
 
 ## 1 架构概览
 
-本包是 `@reinsjs/core` 的 `Lowering` 接口的**第二份实现**，只用 `fetch` 与自写的 SSE 解析，`dependencies` 只有 core、零 `node:*`。与 `@reinsjs/lowering-pi` 并存、不替换：宿主 import 谁用谁，总包不带降级层；**新宿主推荐本包**（DECISIONS 2026-09-15「F4 收口」），选择指南在两份 README。
+本包是 `@reinsjs/core` 的 `Lowering` 接口的**第二份实现**，只用 `fetch` 与自写的 SSE 解析，`dependencies` 只有 core、零 `node:*`。与 `@reinsjs/lowering-pi` 并存、不替换：宿主 import 谁用谁，总包不带降级层；**新宿主推荐本包**，五个 examples 与 eval 门禁 0.2 起全部用它（DECISIONS 2026-09-15「F4 收口」），选择指南在两份 README。
 
 **L1（2026-09-15）**：Anthropic 线加原生延迟加载——`ToolSpec.deferLoading` → `defer_loading: true`、system 信任结果里的 `tool_reference` 段 → `tool_reference` 块（厂商就地展开、工具表整段不变）；能力位 `deferredTools` 对 `provider: "anthropic"` 缺省真、第三方由 `anthropic.deferredTools` 声明；Chat / Responses 线把引用段展开成文本、不发 deferLoading 的工具。厂商规矩与数字见 `spikes/l1-deferred-tools/`。
 
@@ -127,7 +127,7 @@
 
 **Anthropic 的中途 system 在 encoder 里归位，退路是 user 文本而不是丢**（DECISIONS 2026-09-15 F2 定形 ①）— 厂商规则：不能首条、须紧跟 user、后接 assistant 或收尾；pi 版的 `placeOf` 是同一算法。位置比时间线晚一条 user 的仍算 exact 并备注，因为说明只换位置不改对话顺序（用户消息后移才记 lossy）。
 
-**Anthropic 的 thinking 只回放带签名的，无签名 dropped 而非降成正文**（F2 定形 ③）— 私下推理不该变成模型"说过的话"；Fable 5.1 缺省 display omitted 时正文为空、签名在，所以判据是签名不是正文（流侧空正文带签名也出草稿）。`redacted_thinking` 的 data 存 `replay.thinkingSignature` + `redacted: true`，与 pi 版同字段，两条路线的事件可互换。
+**Anthropic 的 thinking 只回放带签名、且 provider + api + model 三者一致的，无签名或换了型号都 dropped 而非降成正文**（F2 定形 ③；换型号 dropped 是 2026-09-15 0.2 发前 eval resume fixture 实测补的——种子历史是 DeepSeek 录的，签名喂给 Sonnet 5 厂商 400；Responses 线的加密推理项同一规则）— 私下推理不该变成模型"说过的话"；Fable 5.1 缺省 display omitted 时正文为空、签名在，所以判据是签名不是正文（流侧空正文带签名也出草稿）。`redacted_thinking` 的 data 存 `replay.thinkingSignature` + `redacted: true`，与 pi 版同字段，两条路线的事件可互换。
 
 **Anthropic 的缓存断点由本包打三处，说明殿后缺省顶层 `cache_control`**（F2 定形 ④）— B1 实测 `automatic` 与不注入持平、`previous-user` 低 3～6 点、留在 system 上几乎零命中；F2 spike 在官方上实证第二个请求起 cacheRead > 0。边界：块级 + 顶层封顶 4，宿主顶层 `cache_control` 不覆盖。
 

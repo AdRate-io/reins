@@ -11,7 +11,7 @@ import { nodeListener } from "@reinsjs/server/node"
 import { agent } from "./agent.ts"
 
 if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("请设置 ANTHROPIC_API_KEY（走网关再加 REINS_GATEWAY_BASE=https://host/api）")
+  console.error("请设置 ANTHROPIC_API_KEY（走网关再加 REINS_GATEWAY_BASE=https://host/api/v1，给到协议根）")
   process.exit(1)
 }
 

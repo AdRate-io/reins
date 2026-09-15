@@ -9,9 +9,11 @@ REINS_PROVIDER=deepseek node examples/eval/run.ts --suite tool-discovery --repea
 node examples/eval/report.ts examples/eval/out/<run> --candidate brain-lean --rescore                 # 汇总、门禁、按 fixture 分表
 ```
 
+`REINS_PROVIDER`：`deepseek`（官方 Chat Completions 直连，缺省）| `cloudflare`（Cloudflare AI Gateway 透传官方 Anthropic，缺省 claude-sonnet-5）| `relay`（Boss 的 Claude 中转）| `aireiter`（丢中途 system，只作参考）。降级层是 `@reinsjs/lowering-fetch`（0.2 起；0.1 的四轮结果是 pi 版跑的）。
+
 `run.ts` 一格一落盘（指标 JSON + 全链时间线 JSONL + 探针事件），可按臂拆进程并行、可用 `--repeat-start N` 只补跑失败的格；
 `report.ts --rescore` 用落盘的时间线按当前评分器重算完成度、按探针记录重判召回，改口径不必重跑模型。
-**结果**：`results/2026-09-09-deepseek-v4-flash/`（四轮 99 格的结论与各轮报告）；`results/2026-09-14-tool-discovery/`（D1 工具懒发现两族报告）。
+**结果**：`results/2026-09-09-deepseek-v4-flash/`（四轮 99 格的结论与各轮报告）；`results/2026-09-14-tool-discovery/`（D1 工具懒发现两族报告）；`results/2026-09-15-lowering-fetch/`（0.2 发前切 fetch 版后两族复跑：Sonnet 5 全过、DeepSeek token 项未过且实证是模型行为变化而非代码，含三组对照）。
 
 ## fixtures/tool-discovery：200 件工具里找靶（D1 工具懒发现的门禁）
 

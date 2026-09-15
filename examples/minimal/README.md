@@ -6,7 +6,7 @@
 ```bash
 pnpm install && pnpm build
 ANTHROPIC_API_KEY=… node examples/minimal/server.ts          # 直连官方
-ANTHROPIC_API_KEY=… REINS_GATEWAY_BASE=https://host/api node examples/minimal/server.ts   # 走网关
+ANTHROPIC_API_KEY=… REINS_GATEWAY_BASE=https://host/api/v1 node examples/minimal/server.ts   # 走网关：给到协议根，其后接 /messages
 ```
 
 打开 http://localhost:8787 ：问天气看它调工具；说"上线到 prod"看它暂停等你审批；点右侧"重连补发"看整个界面从时间线重建。

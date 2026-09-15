@@ -16,7 +16,7 @@
 import { mkdirSync, readFileSync } from "node:fs"
 import { PGlite } from "@electric-sql/pglite"
 import { approval, budget, compact, memory, perception, pins } from "@reinsjs/brain"
-import { anthropic } from "@reinsjs/lowering-pi"
+import { anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
 import { pgStores } from "@reinsjs/store-pg"
 import { type Agent, createAgent, defineTool, type ToolContext } from "@reinsjs/agent"
 import { expertTool } from "./subagent-tool.ts"
@@ -34,14 +34,25 @@ function readKey(section: "aireiter" | "deepseek"): string {
 
 const provider = (process.env.REINS_PROVIDER ?? "deepseek") as "aireiter" | "deepseek"
 const modelId = process.env.REINS_MODEL ?? (provider === "deepseek" ? "deepseek-v4-flash" : "claude-opus-5")
-const baseUrl = provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://aireiter.com/api"
 
-export const model = anthropic(modelId, {
-  apiKey: readKey(provider),
-  baseUrl,
-  requestOptions: { thinkingEnabled: true, thinkingBudgetTokens: 2048 },
-  ...(provider === "deepseek" ? { midConversationSystem: true } : {}),
-})
+/**
+ * 降级层用 fetch 版（0.2 起示例统一）。aireiter 走 Anthropic Messages 线：表外模型，baseUrl 给到协议根（其后接 /messages）、
+ * 能力位手动声明，网关会丢中途 system 所以留 user 文本落点；DeepSeek 走官方 Chat Completions 直连（内置表有 deepseek-v4-flash，
+ * reasoning_content 方言缺省开、中途 system 任意位置）。thinking 不在这里设：Opus 5 起厂商缺省 adaptive，DeepSeek 缺省就是 thinking 模式。
+ */
+export const model =
+  provider === "deepseek"
+    ? deepseek(modelId, { apiKey: readKey("deepseek") })
+    : anthropicMessages(modelId, {
+        provider: "aireiter",
+        baseUrl: "https://aireiter.com/api/v1",
+        apiKey: readKey("aireiter"),
+        reasoning: true,
+        images: true,
+        contextWindow: 200_000,
+        maxOutputTokens: 16_384,
+        midConversationSystem: false,
+      })
 
 // ---- 存储：一套，三个角色共用 ----
 mkdirSync(here("./data/").pathname, { recursive: true })

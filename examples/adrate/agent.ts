@@ -14,7 +14,7 @@
 import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync } from "node:fs"
 import { approval, budget, compact, handoff, inlineSkills, memory, perception, pins, skills, spill } from "@reinsjs/brain"
-import { anthropic } from "@reinsjs/lowering-pi"
+import { anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
 import { sqliteStores } from "@reinsjs/store-sqlite"
 import { openSqlite } from "@reinsjs/store-sqlite/node"
 import { createAgent } from "@reinsjs/agent"
@@ -34,7 +34,6 @@ function readKey(section: "aireiter" | "deepseek"): string {
 
 const provider = (process.env.REINS_PROVIDER ?? "aireiter") as "aireiter" | "deepseek"
 const modelId = process.env.REINS_MODEL ?? (provider === "deepseek" ? "deepseek-v4-flash" : "claude-opus-5")
-const baseUrl = provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://aireiter.com/api"
 
 /**
  * AdRate CLI 自带的 Agent Skills → 内联技能载体：`skills list --json` 给 name / description，`skills read --json` 给正文。
@@ -85,14 +84,27 @@ const ROLE = `你是 AdRate（TikTok 广告投放工具）的运营助手，替 
 - 用中文向 Owner 汇报，简短直接。
 - AdRate 官方给 Agent 的操作契约以技能（Skills）形式提供，动手前先读相关技能并全文遵守。`
 
+/**
+ * 降级层用 fetch 版（0.2 起示例统一）。aireiter 走 Anthropic Messages 线：表外模型，baseUrl 给到协议根（其后接 /messages）、
+ * 能力位手动声明，网关会丢中途 system 所以留 user 文本落点；DeepSeek 走官方 Chat Completions 直连（内置表有 deepseek-v4-flash，
+ * reasoning_content 方言缺省开、中途 system 任意位置）。thinking 不在这里设：Opus 5 起厂商缺省 adaptive，DeepSeek 缺省就是 thinking 模式。
+ */
+const model =
+  provider === "deepseek"
+    ? deepseek(modelId, { apiKey: readKey("deepseek") })
+    : anthropicMessages(modelId, {
+        provider: "aireiter",
+        baseUrl: "https://aireiter.com/api/v1",
+        apiKey: readKey("aireiter"),
+        reasoning: true,
+        images: true,
+        contextWindow: 200_000,
+        maxOutputTokens: 16_384,
+        midConversationSystem: false,
+      })
+
 export const agent = createAgent({
-  model: anthropic(modelId, {
-    apiKey: readKey(provider),
-    baseUrl,
-    requestOptions: { thinkingEnabled: true, thinkingBudgetTokens: 2048 },
-    // DeepSeek 的 Anthropic 端口实测接受中途 system（DECISIONS 2026-09-08 B1 附），感知 / pin 说明走 exact 落点
-    ...(provider === "deepseek" ? { midConversationSystem: true } : {}),
-  }),
+  model,
   store: (() => {
     mkdirSync(here("./data/").pathname, { recursive: true })
     return sqliteStores(openSqlite(here("./data/adrate.db").pathname))

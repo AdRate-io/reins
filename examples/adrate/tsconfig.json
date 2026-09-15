@@ -20,7 +20,7 @@
       "path": "../../packages/brain"
     },
     {
-      "path": "../../packages/lowering-pi"
+      "path": "../../packages/lowering-fetch"
     },
     {
       "path": "../../packages/store-sqlite"

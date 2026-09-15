@@ -11,7 +11,7 @@
   "dependencies": {
     "@electric-sql/pglite": "0.5.8",
     "@reinsjs/brain": "workspace:*",
-    "@reinsjs/lowering-pi": "workspace:*",
+    "@reinsjs/lowering-fetch": "workspace:*",
     "@reinsjs/store-pg": "workspace:*",
     "@reinsjs/agent": "workspace:*"
   },

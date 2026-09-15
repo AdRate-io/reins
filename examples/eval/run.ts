@@ -18,14 +18,16 @@
  * - brain-lean：精简版（感知、模型自决整理、pin、外溢 16k、预算、审批；无记忆 / 交接）
  *
  * 模型密钥从仓库根 `模型API测试信息.md` 读（已 gitignore），与 examples/adrate/agent.ts 同源；ANTHROPIC_API_KEY 可覆盖。
- * REINS_PROVIDER：deepseek（缺省，直连）| relay（Boss 的 Claude 中转，忠实直通官方 API，见 spikes/relay-check）| aireiter（会丢中途 system，只作参考）。
- * REINS_MODEL 覆盖模型 id（relay 缺省 claude-sonnet-5，可用 claude-opus-5）。
+ * REINS_PROVIDER：deepseek（缺省，官方 Chat Completions 直连）| deepseek-anthropic（DeepSeek 的 Anthropic 端口 + thinking 2048，0.1 门禁的配置，作对照）
+ *               | deepseek-pi（同上配置但用 pi 版降级层，把降级层实现从对照里剥出来）| cloudflare（Cloudflare AI Gateway 透传官方 Anthropic，F0 体检 43/43，见 spikes/README.md 末节）
+ *               | relay（Boss 的 Claude 中转，忠实直通官方 API，见 spikes/relay-check）| aireiter（会丢中途 system，只作参考）。
+ * REINS_MODEL 覆盖模型 id（cloudflare / relay 缺省 claude-sonnet-5，可用 claude-opus-5）。
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import type { Event } from "@reinsjs/core"
+import type { BoundModel, Event } from "@reinsjs/core"
 import { approval, budget, compact, handoff, lazyTools, memory, perception, pins, spill } from "@reinsjs/brain"
 import { type EvalArm, type EvalOutcome, noneArm, runEval, thresholdArm, toEventsJsonl } from "@reinsjs/eval"
-import { anthropic } from "@reinsjs/lowering-pi"
+import { anthropic, anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
 import { adratePatrolFixtures, type PatrolWorld } from "./fixtures/adrate-patrol/fixture.ts"
 import { toolDiscoveryFixtures } from "./fixtures/tool-discovery/fixture.ts"
 
@@ -44,9 +46,16 @@ const repeats = Number(flag("--repeats", "1"))
 /** 补跑用：重复编号从几开始（如只补第 3 次：--repeats 1 --repeat-start 3） */
 const repeatStart = Number(flag("--repeat-start", "1"))
 const contextWindow = Number(flag("--context-window", "64000"))
-type Provider = "aireiter" | "deepseek" | "relay"
+type Provider = "aireiter" | "deepseek" | "deepseek-anthropic" | "deepseek-pi" | "relay" | "cloudflare"
 const provider = (process.env.REINS_PROVIDER ?? "deepseek") as Provider
-const DEFAULT_MODEL: Record<Provider, string> = { deepseek: "deepseek-v4-flash", aireiter: "claude-opus-5", relay: "claude-sonnet-5" }
+const DEFAULT_MODEL: Record<Provider, string> = {
+  deepseek: "deepseek-v4-flash",
+  "deepseek-anthropic": "deepseek-v4-flash",
+  "deepseek-pi": "deepseek-v4-flash",
+  aireiter: "claude-opus-5",
+  relay: "claude-sonnet-5",
+  cloudflare: "claude-sonnet-5",
+}
 const modelId = process.env.REINS_MODEL ?? DEFAULT_MODEL[provider]
 const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")
 const out = flag("--out", new URL(`./out/${stamp}-${modelId}`, import.meta.url).pathname)
@@ -54,7 +63,7 @@ mkdirSync(`${out}/cells`, { recursive: true })
 
 // ---- 模型 ----
 const INFO = new URL("../../模型API测试信息.md", import.meta.url)
-function readKey(section: Provider): string {
+function readKey(section: Exclude<Provider, "cloudflare" | "deepseek-anthropic" | "deepseek-pi">): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
   const info = readFileSync(INFO, "utf8")
   if (section === "relay") {
@@ -69,25 +78,90 @@ function readKey(section: Provider): string {
   if (!key) throw new Error(`没在 模型API测试信息.md 里找到 ${section} 的密钥；或设 ANTHROPIC_API_KEY`)
   return key
 }
+/** Cloudflare AI Gateway 透传路径：凭证在 cf-aig-authorization 头（auth: "none"），与 spikes/l1-deferred-tools/live.mjs 同一套读法 */
+function cloudflareGateway(): { baseUrl: string; headers: Record<string, string> } {
+  const info = readFileSync(INFO, "utf8")
+  const token = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
+  const account = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
+  const gateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
+  if (!token || !account) throw new Error("没在 模型API测试信息.md 里找到 Cloudflare AI Gateway 的令牌 / account id")
+  return {
+    baseUrl: `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}/anthropic/v1`,
+    headers: { "cf-aig-authorization": `Bearer ${token}` },
+  }
+}
+/**
+ * Cloudflare AI Gateway 的账户级限流（429 `Wholesale Rate limited`，CF 信封不是厂商错误体）恢复要几十秒，循环缺省的瞬断重试
+ * （3 次、最长 8 s）等不到窗口；这里在 fetch 层多等一会再打，只对 429 生效、最多 6 次，等待 10 s × 次数。POST 无副作用，重发安全
+ */
+const patientFetch: typeof globalThis.fetch = async (input, init) => {
+  for (let attempt = 1; ; attempt++) {
+    const res = await globalThis.fetch(input, init)
+    if (res.status !== 429 || attempt >= 6 || init?.signal?.aborted) return res
+    await res.text().catch(() => "")
+    console.log(`    429 from the gateway, waiting ${10 * attempt}s before retrying (${attempt}/6)`)
+    await new Promise((r) => setTimeout(r, 10_000 * attempt))
+  }
+}
 function relayBase(): string {
   const block = readFileSync(INFO, "utf8").slice(readFileSync(INFO, "utf8").lastIndexOf("Claude中转"))
   const base = block.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
   if (!base) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 baseurl")
   return base
 }
-const BASE_URL: Record<Provider, string> = {
-  deepseek: "https://api.deepseek.com/anthropic",
-  aireiter: "https://aireiter.com/api",
-  relay: provider === "relay" ? relayBase() : "",
-}
-const bound = anthropic(modelId, {
-  apiKey: readKey(provider),
-  baseUrl: BASE_URL[provider],
-  requestOptions: { thinkingEnabled: true, thinkingBudgetTokens: 2048 },
-  // DeepSeek 端口与官方 API（经忠实中转）都接受紧跟 user 之后的中途 system（spikes/relay-check 实测），感知 / pin 说明走 exact 落点；
-  // aireiter 会丢中途 system（spikes/aireiter-gateway-check），留缺省的 user 文本落点
-  ...(provider !== "aireiter" ? { midConversationSystem: true } : {}),
-})
+/**
+ * 降级层用 fetch 版（0.2 起示例统一）。DeepSeek 走官方 Chat Completions 直连（内置表有 deepseek-v4-flash，reasoning_content 方言缺省开、
+ * 中途 system 任意位置）；relay / aireiter 走 Anthropic Messages 线：表外模型，baseUrl 给到协议根（其后接 /messages）、能力位手动声明。
+ * cloudflare 是官方 Anthropic 的透传（内置表有型号，价目与能力位齐；凭证在头里、auth: "none"）；relay 忠实直通官方 API、接受紧跟 user 之后的
+ * 中途 system（spikes/relay-check），感知 / pin 说明走 exact 落点；aireiter 会丢中途 system（spikes/aireiter-gateway-check），留 user 文本落点。
+ * thinking 不在这里设：Sonnet 5 / Opus 5 厂商缺省 adaptive，DeepSeek 缺省就是 thinking 模式。
+ */
+const bound = await (async (): Promise<BoundModel> => {
+  switch (provider) {
+    case "deepseek-pi": {
+      // 对照臂：0.1 门禁原样的降级层（pi 版）与配置，用来把"降级层实现"从 token 差里剥出来；只在要用时才加载 pi-ai
+      const { anthropic: piAnthropic } = await import("@reinsjs/lowering-pi")
+      return piAnthropic(modelId, {
+        apiKey: readKey("deepseek"),
+        baseUrl: "https://api.deepseek.com/anthropic",
+        requestOptions: { thinkingEnabled: true, thinkingBudgetTokens: 2048 },
+        midConversationSystem: true,
+      })
+    }
+    case "deepseek":
+      return deepseek(modelId, { apiKey: readKey("deepseek") })
+    case "deepseek-anthropic":
+      // 对照臂：与 0.1 门禁同一端口、同一 thinking 预算，只差降级层实现（fetch 版 Anthropic 线 vs pi 版）
+      return anthropicMessages(modelId, {
+        provider: "deepseek",
+        baseUrl: "https://api.deepseek.com/anthropic",
+        apiKey: readKey("deepseek"),
+        reasoning: true,
+        images: true,
+        contextWindow: 200_000,
+        maxOutputTokens: 16_384,
+        midConversationSystem: true,
+        requestOptions: { thinking: { type: "enabled", budget_tokens: 2048 } },
+      })
+    case "cloudflare": {
+      const cf = cloudflareGateway()
+      return anthropic(modelId, { apiKey: "", auth: "none", baseUrl: cf.baseUrl, headers: cf.headers, fetch: patientFetch })
+    }
+    default:
+      return anthropicMessages(modelId, {
+        provider,
+        baseUrl: provider === "relay" ? `${relayBase()}/v1` : "https://aireiter.com/api/v1",
+        apiKey: readKey(provider),
+        reasoning: true,
+        images: true,
+        contextWindow: 200_000,
+        maxOutputTokens: 16_384,
+        midConversationSystem: provider === "relay",
+        // relay 是多账号池子，某个号额度满时回 429，换号靠重试；aireiter 不需要
+        ...(provider === "relay" ? { fetch: patientFetch } : {}),
+      })
+  }
+})()
 
 // ---- 臂 ----
 /** dogfood（examples/adrate/agent.ts）同款配置；pin 的文本按脱敏后的广告主 id */
