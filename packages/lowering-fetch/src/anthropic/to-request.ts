@@ -7,7 +7,7 @@
  * - **中途 system 摆放**（S1）：不能是首条、必须紧跟 user（含只带 tool_result 的 user）、后接 assistant 或收尾。所以说明
  *   一律攒到"下一条 assistant 之前"或末尾再放出；此刻前一条不是 user（是 assistant 或什么都没有）就退成 `<system_note>`
  *   框住的 user 文本，记 lossy(user-role)。放出位置比时间线晚了一条 user 的，仍算 exact（说明只换位置，见 CLAUDE.md）；
- * - **thinking 回放**：replayed verbatim with its signature（F0 A7b 接受、伪造签名 400）；无签名（流中断）与来自别家的一律 dropped 声明——
+ * - **thinking 回放**：带 signature 原样回放（F0 A7b 接受、伪造签名 400）；无签名（流中断）与来自别家的一律 dropped 声明——
  *   不像 pi-ai 那样降成正文，模型的私下推理不该以它"说过的话"出现在历史里；`redacted_thinking` 用 data 原样回放；
  * - **缓存断点**：最多 4 个。我们打三处——system 末块、tools 末项、最后一条 user 末块（厂商按前缀向前找命中，20 块回看窗口）；
  *   说明殿后（末条是 system）时按 `midSystemCacheBreakpoint` 处置，缺省顶层 `cache_control`（B1 实测与不注入持平）；
@@ -132,7 +132,7 @@ function land(
   landing: string,
   ...notes: (string | undefined)[]
 ) {
-  const note = notes.filter((n): n is string => Boolean(n)).join("；")
+  const note = notes.filter((n): n is string => Boolean(n)).join("; ")
   out.push(
     note
       ? { eventId: e.id, type: e.type, kind, landing, note }

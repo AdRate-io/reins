@@ -1,6 +1,6 @@
 # @reinsjs/core
 
-The kernel of [reins](../../README.md): an append-only event timeline, the projection that decides what the model sees on each turn, a loop of a few hundred lines you can read and copy, a serializable run state for pause/resume across processes, and the `Socket` seam that everything else plugs into. Zero dependencies, zero `node:*` — Web standards only; verified on Node 22 and Cloudflare workerd, Bun / Deno / Vercel Edge not yet tested.
+The kernel of [reins](../../README.md): an append-only event timeline, the projection that decides what the model sees on each turn, a loop of a few hundred lines you can read and copy, a serializable run state for pause/resume across processes, and the `Socket` seam that everything else plugs into. Zero dependencies, zero `node:*` — Web standards only; verified on Node 22, Cloudflare workerd (strictest compat), Bun, Deno and Vercel's Edge Runtime (`spikes/runtime-matrix`).
 
 Two principles shape every type in here:
 

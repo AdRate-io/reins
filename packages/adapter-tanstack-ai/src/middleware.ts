@@ -206,10 +206,13 @@ function defaultCapabilities(partial: ReinsMiddlewareOptions["capabilities"]): L
     thinkingReplay: true,
     parallelTools: true,
     taskBudget: false,
-    deferredTools: false,
     images: true,
     maxOutputTokens: 8192,
     ...partial,
+    // 恒 false，宿主传 true 也压回：TanStack 路径由 TanStack 的 adapter 决定工具怎么下发，本中间件没有 defer_loading /
+    // tool_reference 的落点、也不读 `BeforeModelPatch.deferredTools`。放行 true 会让 lazyTools 走原生路径——
+    // 工具表不改、名单被忽略，模型看见全表却在直调时被指去 tool_find。原生路径 = runLoop + lowering-fetch 的 Anthropic 线
+    deferredTools: false,
   }
 }
 

@@ -175,6 +175,15 @@ describe("FetchLowering", () => {
     expect((err as HttpError).message).toContain("Wholesale Rate limited")
   })
 
+  it("2xx 但没有响应体：不抛，以 stopReason=error 收场并说明", async () => {
+    const { fetch } = fakeFetch([new Response(null, { status: 200 })])
+    const lowering = new FetchLowering({ apiKey: () => "k", fetch })
+    const req = lowering.toRequest({ events: [user("hi")], model: MODEL })
+    const { drafts, outcome } = await collect(lowering.stream(req))
+    expect(drafts).toEqual([])
+    expect(outcome).toMatchObject({ stopReason: "error", errorMessage: "the response has no body" })
+  })
+
   it("找不到的模型 / 未实现的协议在 toRequest 就抛", () => {
     const lowering = new FetchLowering({
       apiKey: () => "k",

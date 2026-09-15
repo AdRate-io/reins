@@ -96,7 +96,7 @@ createAgentHandler(agent, {
 })
 ```
 
-It observes, it does not edit: the event is already in the log. Only *live* events are reported — replays (`lastSeq`, `GET` reconnects) are read back from the log and not observed again — and only this session's: a sub-agent started with `asTool` runs in its own session and does not pass through the handler. The hook never slows or breaks the run: the event is pushed to SSE subscribers first, async return values are chained in event order without blocking the loop, and a throw or rejection is reported once per run through `warn`. The run's `result` frame (and `ActiveRun.done`, hence a Worker's `waitUntil`) waits for the chain to settle, so the last observation is flushed before the run is declared finished.
+It observes, it does not edit: the event is already in the log. Only *live* events are reported — replays (`lastSeq`, `GET` reconnects) are read back from the log and not observed again — and only this session's: a sub-agent started with `asTool` runs in its own session and does not pass through the handler. The hook never slows or breaks the run: the event is pushed to SSE subscribers first, async return values are chained in event order without blocking the loop, and a throw or rejection is reported once per run through `warn`. The run's `result` frame (and `ActiveRun.done`, hence a Worker's `waitUntil`) waits for the chain to settle, so the last observation is flushed before the run is declared finished. The flip side: a hook that never settles keeps the run open and the session `409` — wrap slow sinks in your own timeout.
 
 ## Documentation
 

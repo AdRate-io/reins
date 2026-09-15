@@ -5,7 +5,7 @@ import type { LoweringCapabilities } from "@reinsjs/core"
 import type { FetchModel } from "./models.js"
 
 /**
- * S1 / F0 核实：Anthropic a mid-conversation system message carrying the text支持 Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8；Sonnet 5、Haiku 4.5 及更早
+ * S1 / F0 核实：Anthropic 带正文的中途 system 消息支持 Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8；Sonnet 5、Haiku 4.5 及更早
  * 回厂商原文 400。按 id 前缀匹配，带日期后缀的 id 也能命中；第三方 Anthropic 协议上游（如 DeepSeek 兼容端口）由宿主声明。
  */
 const ANTHROPIC_MID_SYSTEM = /^claude-(fable-5|mythos-5|opus-5|opus-4-8)(-|$)/
@@ -48,7 +48,7 @@ export function capabilitiesOf(model: FetchModel): LoweringCapabilities {
         ...base,
         // input 项里 developer / system 消息可出现在任意位置（F0 R3 实测中途 developer 到达），无归位需求
         midConversationSystem: model.midConversationSystem ?? true,
-        // reasoning 项以 the encrypted_content is replayed verbatim（F0 R3 接受、伪造 400）；关掉 encryptedReasoning 就没有可回放的东西
+        // reasoning 项以 encrypted_content 原样回放（F0 R3 接受、伪造 400）；关掉 encryptedReasoning 就没有可回放的东西
         thinkingReplay: model.reasoning && model.responses?.encryptedReasoning !== false,
       }
     default:

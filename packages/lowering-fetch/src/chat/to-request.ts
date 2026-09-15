@@ -80,7 +80,7 @@ function land(
   landing: string,
   ...notes: (string | undefined)[]
 ) {
-  const note = notes.filter((n): n is string => Boolean(n)).join("；")
+  const note = notes.filter((n): n is string => Boolean(n)).join("; ")
   out.push(
     note
       ? { eventId: e.id, type: e.type, kind, landing, note }

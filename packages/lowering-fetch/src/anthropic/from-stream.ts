@@ -297,7 +297,7 @@ function outcomeOf(a: AnthropicAssembly, cost: ModelCost | undefined): LoweringO
       out.stopReason = "error"
       const category = str(a.stopDetails?.category)
       const explanation = str(a.stopDetails?.explanation)
-      out.errorMessage = `stop_reason=refusal${category ? ` (${category})` : ""}: the provider's classifier refused to answer${explanation ? `——${explanation}` : ""}`
+      out.errorMessage = `stop_reason=refusal${category ? ` (${category})` : ""}: the provider's classifier refused to answer${explanation ? `: ${explanation}` : ""}`
       break
     }
     case undefined:

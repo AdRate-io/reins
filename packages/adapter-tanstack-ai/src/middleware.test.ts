@@ -551,6 +551,24 @@ describe("reinsMiddleware：脑子模块", () => {
   })
 })
 
+describe("reinsMiddleware：能力位", () => {
+  it("deferredTools 恒 false：宿主传 true 也压回——本路径没有 defer_loading 的落点，lazyTools 只能走过滤路径", async () => {
+    let seen: boolean | undefined
+    const probe: Socket = {
+      name: "probe",
+      beforeModel: (ctx) => {
+        seen = ctx.capabilities.deferredTools
+        return undefined
+      },
+    }
+    const f = fixture([{ blocks: [say("好")] }], [probe], {
+      capabilities: { contextWindow: 100_000, deferredTools: true },
+    })
+    await f.run({ messages: [user("在吗")] })
+    expect(seen).toBe(false)
+  })
+})
+
 describe("reinsMiddleware：审批", () => {
   const deployTool = toolDefinition({
     name: "deploy",
@@ -664,6 +682,57 @@ describe("reinsMiddleware：审批", () => {
     expect(result.payload.isError).toBe(true)
     expect((result.payload.content[0] as { text: string }).text).toContain("Approval denied: 太晚了")
     expect(executed).toBe(0)
+  })
+
+  it("approval({ ttlMs })：过期批准在 TanStack 路径同样被拦——引擎恢复中断后重回 beforeTools 边界，beforeTool 管线重跑", async () => {
+    // 与 runLoop 的 D3 用例同一形状：第一次 run 暂停等审批，"人"隔一小时才批
+    const shared = { log: new InMemoryEventLog() }
+    const sockets = [approval({ ask: ["deploy"], ttlMs: 60_000 })]
+    let executed = 0
+    const counting = toolDefinition({
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object", properties: {} },
+    }).server(async () => {
+      executed++
+      return "deployed"
+    })
+    const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "prod" })] }], sockets, {}, shared)
+    const chunks = await f.run({ messages: [user("上线")], tools: [counting], runId: "run1" })
+    const { interrupt, runId } = interruptOf(chunks)
+    // 续跑的时钟从一小时后起走：批准事件的 at 减 approval_request 的 at 远超 60 s
+    let t = 1_800_000_000_000 + 3_600_000
+    const f2 = fixture([{ blocks: [say("那就不上了")] }], sockets, { now: () => ++t }, shared)
+    await f2.run({
+      messages: history(),
+      tools: [counting],
+      parentRunId: runId,
+      resume: [resumeItem(interrupt, { approved: true, by: "boss" })],
+    })
+    const events = await all(f.log)
+    expect(executed).toBe(0)
+    // 宿主的批准照记，随后是模块的过期拒绝，再是拦截结果；没有第二条 approval_request
+    expect(types(events).slice(6)).toEqual([
+      "tools_bound",
+      "approval_decision",
+      "run_resumed",
+      "approval_decision",
+      "tool_result",
+      "model_text",
+      "budget_usage",
+    ])
+    const decisions = events.filter(
+      (e) => e.type === "core.approval_decision",
+    ) as CoreEventOf<"core.approval_decision">[]
+    expect(decisions.map((d) => [d.actor, d.payload.by, d.payload.approved])).toEqual([
+      ["host", "boss", true],
+      ["system", "approval.expired", false],
+    ])
+    expect(events.filter((e) => e.type === "core.approval_request")).toHaveLength(1)
+    const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+    expect(result.payload.isError).toBe(true)
+    expect((result.payload.content[0] as { text: string }).text).toContain("Approval expired")
+    expect((result.payload.content[0] as { text: string }).text).toContain("make the call again")
   })
 
   it("TanStack 原生 needsApproval 工具：审批请求以 tanstack.needsApproval 入日志并暂停", async () => {

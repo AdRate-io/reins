@@ -119,7 +119,7 @@ describe("网关型工具的审批配方", () => {
   it("正面：按入参写的规则拦得住写操作，只读转发照常放行", async () => {
     const executed: string[] = []
     const tools = [gatewayTool(executed), toolList]
-    const sockets = [approval({ deny: [gatewayWrites], allow: [gatewayReads, "tool_list"] })]
+    const sockets = [approval({ deny: [gatewayWrites], allow: [gatewayReads, "tool_list", "tool_get"] })]
 
     // ① 删除：命中 deny 段，不执行，模型看到拒绝理由
     const del = await run(runLoop(config(sockets, tools, "bc_asset_group_delete")))
@@ -135,7 +135,7 @@ describe("网关型工具的审批配方", () => {
   it("要人批而不是一律拒：写操作走 ask 段，run 以 paused(approval) 收场，审批摘要带真实操作名", async () => {
     const executed: string[] = []
     const tools = [gatewayTool(executed), toolList]
-    const sockets = [approval({ ask: [gatewayWrites], allow: [gatewayReads, "tool_list"] })]
+    const sockets = [approval({ ask: [gatewayWrites], allow: [gatewayReads, "tool_list", "tool_get"] })]
     const { events, result } = await run(runLoop(config(sockets, tools, "campaign_create")))
 
     expect(result.status).toBe("paused")

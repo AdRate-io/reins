@@ -5,7 +5,7 @@ import type { LoweringCapabilities } from "@reinsjs/core"
 import type { PiModel } from "./models.js"
 
 /**
- * S1 核实：Anthropic a mid-conversation system message carrying the text支持 Fable 5.1/5、Mythos 5.1/5、Opus 5/4.8；Sonnet 5 及更早不支持。
+ * S1 核实：Anthropic 带正文的中途 system 消息支持 Fable 5.1/5、Mythos 5.1/5、Opus 5/4.8；Sonnet 5 及更早不支持。
  * 按 id 前缀匹配，带日期后缀的 id（如 claude-opus-5-20260301）也能命中。
  */
 const ANTHROPIC_MID_SYSTEM = /^claude-(fable-5|mythos-5|opus-5|opus-4-8)(-|$)/

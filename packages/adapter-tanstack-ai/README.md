@@ -45,6 +45,11 @@ const stream = chat({
 - **Sub-agent pause bubbling (`asTool`) is not available here.** A tool returning `subagentPause` is reported to the model as an error; the child session stays paused and can be resumed by the host.
 - `@tanstack/ai` is pinned to an exact version because the middleware relies on hook contracts read from its source.
 
+## Two more boundaries
+
+- `capabilities.deferredTools` is always `false` on this path, even if you pass `true`: TanStack's adapter decides how tools reach the provider, so there is no place for `defer_loading` / `tool_reference`, and `BeforeModelPatch.deferredTools` is not read. `lazyTools()` therefore always takes its filtering path here; the cache-preserving native path is `runLoop` + `@reinsjs/lowering-fetch` on Anthropic.
+- `approval({ ttlMs })` works here exactly as in the default loop: TanStack re-enters the `beforeTools` boundary after an interrupt is resolved, so the `beforeTool` pipeline runs again and an approval that arrived too late is denied with `approval_decision(by: "approval.expired")` before the tool runs (`middleware.test.ts`, "审批").
+
 ## Documentation
 
 `docs/模块盘点/adapter-tanstack-ai.md` and `docs/技术方案.md` §2 / §11 — in Chinese, at the repository root.

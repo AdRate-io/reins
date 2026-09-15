@@ -97,7 +97,7 @@ function land(
   landing: string,
   ...notes: (string | undefined)[]
 ) {
-  const note = notes.filter((n): n is string => Boolean(n)).join("；")
+  const note = notes.filter((n): n is string => Boolean(n)).join("; ")
   out.push(
     note
       ? { eventId: e.id, type: e.type, kind, landing, note }
@@ -133,12 +133,14 @@ function argumentsOf(args: unknown): string {
 }
 
 /**
- * 正文项的 id：本家事件的 `replay.textSignature` 是厂商给的 msg_ id（lowering-pi 存的是 `{"v":1,"id":…,"phase":…}` JSON，两种都认）；
+ * 正文项的 id：本家事件的 `replay.textSignature` 是厂商给的 msg_ id、`replay.phase` 是同一项的 phase
+ * （lowering-pi 把两者存成 `{"v":1,"id":…,"phase":…}` JSON 签名，两种都认）；
  * 没有就补一个——type:message 输入项要求带 id，pi-ai 也是这样补的（`msg_pi_<n>`），厂商接受。
  */
 function textItemId(replay: Record<string, unknown>): { id?: string; phase?: string } {
   const sig = replay.textSignature
   if (typeof sig !== "string" || sig.length === 0) return {}
+  const ownPhase = typeof replay.phase === "string" && replay.phase.length > 0 ? { phase: replay.phase } : {}
   if (sig.startsWith("{")) {
     try {
       const parsed = JSON.parse(sig) as { id?: unknown; phase?: unknown }
@@ -150,7 +152,7 @@ function textItemId(replay: Record<string, unknown>): { id?: string; phase?: str
     }
   }
   // OpenAI 要求 id 不超过 64 字符，超长的当没有
-  return sig.length > 64 ? {} : { id: sig }
+  return sig.length > 64 ? {} : { id: sig, ...ownPhase }
 }
 
 /** replay.thinkingSignature 里存的 reasoning 项：必须是带非空 encrypted_content 的对象才可回放 */

@@ -180,6 +180,15 @@ describe("encodeResponsesRequest", () => {
     expect(msg.content.map((c) => c.text)).toEqual(["答"])
   })
 
+  it("正文项 phase：本家读侧存的 replay.phase 回放时带回（裸 msg_ id + phase 两个字段，与 pi 版 JSON 签名等价）", () => {
+    const own = text("a", { ...origin, textSignature: "msg_own", phase: "final_answer" })
+    const r = encode([user("q"), own])
+    const msg = r.body.input.find((i) => "type" in i && i.type === "message" && i.role === "assistant") as
+      | Extract<ResponsesInputItem, { type: "message" }>
+      | undefined
+    expect(msg).toMatchObject({ id: "msg_own", phase: "final_answer" })
+  })
+
   it("正文项 id：本家 textSignature 原样、pi 版 JSON 签名解出 id 与 phase、没有就补 msg_reins_n、别家一律补；空正文 dropped", () => {
     const own = text("a", { ...origin, textSignature: "msg_abc" })
     const pi = text("b", { ...origin, textSignature: '{"v":1,"id":"msg_pi","phase":"final_answer"}' })

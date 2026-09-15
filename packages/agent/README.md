@@ -62,6 +62,7 @@ Whether to call an expert, what to ask, and whether to trust the answer are the 
 - A loop of a few hundred lines you can read and copy, with pause/resume as a return value.
 - Brain modules that let the model tidy its own context, keep constraints, spill big results, remember, ask before dangerous actions, and stop at a budget — each optional, each measured before it became a default.
 - Fail-closed defaults: unknown events are rejected, forged approval decisions cannot enter through the input, sessions are `404` to anyone not explicitly authorized.
+- One run per session across processes when the store provides a `RunLease` (`pgStores()` does): `createAgent` installs `leasedRunRegistry` with its defaults (30 s lease, random owner). To tune `ttlMs` / `owner`, build it yourself and pass `handler: { runs }` — see "Multiple instances" in `@reinsjs/server`.
 
 ## Documentation
 

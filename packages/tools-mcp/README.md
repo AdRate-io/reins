@@ -186,9 +186,10 @@ Two more things worth knowing about servers of this shape:
 Requests whose history contains `tool_use` / `tool_result` for a tool that is no longer in the tool table were
 accepted by DeepSeek's Anthropic-protocol endpoint and by the OpenAI Responses protocol (both with another tool
 present and with an empty tool table); the model answered and correctly listed only its current tools. So
-removing a tool does not require a new session on those upstreams. Anthropic's own endpoint was not tested
-directly (no key); an aggregator's Claude endpoint returned a truncated stream, a known quirk of that proxy rather
-than a protocol rejection. Script: `spikes/mcp-removed-tool-history`.
+removing a tool does not require a new session on those upstreams. Anthropic's own endpoint, reached through
+Cloudflare AI Gateway's passthrough path, accepted both variants as well (2026-09-15, `spikes/l1-deferred-tools` P8);
+an aggregator's Claude endpoint returned a truncated stream, a known quirk of that proxy rather than a protocol
+rejection. Script: `spikes/mcp-removed-tool-history`.
 
 ## Options
 

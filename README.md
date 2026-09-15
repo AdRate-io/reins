@@ -15,7 +15,7 @@ The loop is a few hundred lines you can read and copy. Nothing is hidden. Every 
 
 **0.1.0** — first public release. Eleven packages, ~32k lines of TypeScript, 760 tests, every default measured on real models (see `examples/eval`). Public types are frozen for the 0.1 line; breaking changes bump the minor version until 1.0.
 
-Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add @reinsjs/agent @reinsjs/lowering-fetch @reinsjs/brain` (or `@reinsjs/lowering-pi` for the pi-ai-based lowering layer; see "Choosing between" in `@reinsjs/lowering-fetch`'s README) — Node ≥ 22 or Cloudflare Workers (tested); Bun / Deno / Vercel Edge untested.
+Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add @reinsjs/agent @reinsjs/lowering-fetch @reinsjs/brain` (or `@reinsjs/lowering-pi` for the pi-ai-based lowering layer; see "Choosing between" in `@reinsjs/lowering-fetch`'s README) — Node ≥ 22, Cloudflare Workers, Bun, Deno or Vercel's Edge Runtime (all verified; runtime notes at the end of this README).
 
 ## Try it
 
