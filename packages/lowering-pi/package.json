@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/lowering-pi",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "reins — lowering layer on pi-ai: events ⇄ provider wire protocols (Anthropic Messages, OpenAI Responses)",
   "keywords": [
     "agent",
