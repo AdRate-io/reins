@@ -25,7 +25,6 @@
 - [ ] memory 挂载表（共享只读 + 私有可写，技术方案 §9.6）——等团队场景真出现"同时挂两块"再做
 - [x] **L1 lazy-tools 的 provider 原生路径**（2026-09-15）：core `ContentPart` 加 `tool_reference` 段（带定义快照）、`ToolSpec.deferLoading` / `LoweringCapabilities.deferredTools` / `BeforeModelPatch.deferredTools`；lazy-tools 按能力位分原生 / 过滤两路；fetch 版 Anthropic 线 `defer_loading` + `tool_reference` 块（GA 无 beta 头，Haiku 4.5 起），厂商规矩落进 encoder；其余线与 pi 版展开成文本、不发 deferLoading 的工具。spike：取回后第 2 请求 cache_read Haiku 8497 / Opus 4062，老路子归零；端到端 Haiku / Opus 各 9/9；取回之前被延迟的定义不进计费前缀（P9 六臂 6/6，删件臂整段命中带标臂）。`lazyTools()` 接口不变。+33 用例，1218 全绿；MCP 工具懒发现仍待 `SocketSetup` 加"此前已并入的工具"
 - [x] **运行时告警与构造期错误文案英文化**（2026-09-15）：实际不是「十几处」而是 **519 处字符串字面量 + 181 处测试断言**。改的是宿主 / 模型会看到的一切——`throw` 消息、`warn()` 文案、模型可见的 tool_result 说明、三条降级线与适配器的有损矩阵 `note` / `when`、协议装不下内容的占位文本、`core/testing` 四套一致性套件、eval 报告与门禁；注释 / JSDoc / 测试标题 / examples / docs 保持中文（边界与理由见 DECISIONS 同日）。零结构改动，1218 个用例全绿，产物自检 17/17；12 个包各一条 minor changeset
-- [ ] JSDoc 英文化评估（待 Boss 拍板）：`.d.ts` 保留 JSDoc，非中文宿主在 IDE 里看到的仍是中文注释——与告警同一个死路，但与「注释用中文」的全局约定冲突。选项：全改 / 只改公开导出的类型与函数 / 不改
 
 ## 待 Boss 本人操作（不挡开发）
 
