@@ -140,8 +140,8 @@ describe("runEval：对照运行器", () => {
     const md = renderReport(report, { gate, detail: true })
     expect(md).toContain("| none |")
     expect(md).toContain("| threshold |")
-    expect(md).toContain("## 门禁")
-    expect(md).toContain("## 明细")
+    expect(md).toContain("## Gate")
+    expect(md).toContain("## Details")
   })
 
   it("模型自决臂：装 @reinsjs/brain 的 compact 后，模型调 compact 工具记为 model 整理", async () => {
@@ -299,7 +299,7 @@ describe("runEval：对照运行器", () => {
         lowering: new ScriptedLowering(script),
         model: MODEL,
       }),
-    ).rejects.toThrow(/seq 必须从 1 起连续/)
+    ).rejects.toThrow(/must run contiguously from seq 1/)
   })
 
   it("配置错误在开跑前报：事实没 expect 也没 judge、臂名重复；有 judge 时用 judge 打分", async () => {
@@ -320,7 +320,7 @@ describe("runEval：对照运行器", () => {
     const noExpect: EvalFixture = { ...fixture, facts: [{ id: "f", question: "Q: code?" }] }
     await expect(
       runEval({ fixtures: [noExpect], arms: [thresholdArm()], lowering: neverCalled, model: MODEL }),
-    ).rejects.toThrow(/没有 expect/)
+    ).rejects.toThrow(/has no expect/)
     await expect(
       runEval({
         fixtures: [fixture],
@@ -328,7 +328,7 @@ describe("runEval：对照运行器", () => {
         lowering: neverCalled,
         model: MODEL,
       }),
-    ).rejects.toThrow(/臂名重复/)
+    ).rejects.toThrow(/duplicate arm name/)
     expect(called).toBe(0)
 
     const judged: string[] = []

@@ -107,23 +107,25 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
 
 /** 开跑前把配置错误一次挑出来，不要烧完 token 才发现某条事实没法打分 */
 function assertFixtures(opts: RunEvalOptions): void {
-  if (opts.fixtures.length === 0) throw new Error("没有 fixture")
-  if (opts.arms.length === 0) throw new Error("没有臂")
+  if (opts.fixtures.length === 0) throw new Error("no fixtures")
+  if (opts.arms.length === 0) throw new Error("no arms")
   const names = new Set<string>()
   for (const arm of opts.arms) {
-    if (names.has(arm.name)) throw new Error(`臂名重复：${arm.name}`)
+    if (names.has(arm.name)) throw new Error(`duplicate arm name: ${arm.name}`)
     names.add(arm.name)
   }
   for (const f of opts.fixtures) {
     for (const fact of f.facts ?? []) {
       if (fact.expect === undefined && !opts.judge) {
-        throw new Error(`fixture ${f.id} 的事实 ${fact.id} 没有 expect，也没有配 judge`)
+        throw new Error(`fact ${fact.id} of fixture ${f.id} has no expect and no judge configured`)
       }
     }
     if (f.task.seed) {
       f.task.seed.forEach((e, i) => {
         if (e.seq !== i + 1)
-          throw new Error(`fixture ${f.id} 的种子历史 seq 必须从 1 起连续，第 ${i + 1} 条 seq 为 ${e.seq}`)
+          throw new Error(
+            `the seed history of fixture ${f.id} must run contiguously from seq 1; entry ${i + 1} has seq ${e.seq}`,
+          )
       })
     }
   }
@@ -364,7 +366,7 @@ async function grade(
 ): Promise<Pick<FactResult, "score" | "gradedBy">> {
   const expect = fact.expect
   if (expect === undefined) {
-    if (!opts.judge) throw new Error(`事实 ${fact.id} 没有 expect 也没有 judge`) // assertFixtures 已拦，此处兜底
+    if (!opts.judge) throw new Error(`fact ${fact.id} has neither expect nor judge`) // assertFixtures 已拦，此处兜底
     return { score: clamp01(await opts.judge({ fixtureId: fixture.id, fact, answer })), gradedBy: "judge" }
   }
   return { score: gradeExpect(expect, answer), gradedBy: "expect" }

@@ -155,7 +155,7 @@ export function assertRunStateShape(raw: unknown): asserts raw is SerializedRunS
     typeof s.configHash === "string" &&
     typeof s.pendingDigest === "string" &&
     (s.sig === undefined || typeof s.sig === "string")
-  if (!ok) throw new RunStateError("malformed", "run 状态不是 v1 的形状")
+  if (!ok) throw new RunStateError("malformed", "run state is not in the v1 shape")
 }
 
 /**
@@ -175,7 +175,7 @@ export async function validateResume(input: {
   if (state.sessionId !== input.sessionId) {
     throw new RunStateError(
       "session_mismatch",
-      `状态属于会话 ${state.sessionId}，当前是 ${input.sessionId}`,
+      `state belongs to session ${state.sessionId}, but the current session is ${input.sessionId}`,
       {
         expected: input.sessionId,
         got: state.sessionId,
@@ -183,15 +183,22 @@ export async function validateResume(input: {
     )
   }
   if (input.secret !== undefined) {
-    if (state.sig === undefined) throw new RunStateError("missing_signature", "配置了密钥，但状态没有签名")
+    if (state.sig === undefined)
+      throw new RunStateError(
+        "missing_signature",
+        "a secret is configured but the state carries no signature",
+      )
     if (!(await verifyRunState(state, input.secret))) {
-      throw new RunStateError("bad_signature", "状态签名不匹配：内容被改过或密钥不同")
+      throw new RunStateError(
+        "bad_signature",
+        "state signature mismatch: the contents were altered or the secret differs",
+      )
     }
   }
   if (state.configHash !== input.configHash && !input.allowConfigDrift) {
     throw new RunStateError(
       "config_mismatch",
-      "模型、工具集或系统提示与暂停时不同；确认无误可传 allowConfigDrift",
+      "model, tool set or system prompt differs from when the run paused; pass allowConfigDrift if this is intended",
       {
         expected: state.configHash,
         got: input.configHash,
@@ -200,10 +207,14 @@ export async function validateResume(input: {
   }
   const lastSeq = input.timeline[input.timeline.length - 1]?.seq ?? 0
   if (lastSeq < state.lastSeq) {
-    throw new RunStateError("log_behind", `日志只到 seq ${lastSeq}，状态记录的是 ${state.lastSeq}`, {
-      logLastSeq: lastSeq,
-      stateLastSeq: state.lastSeq,
-    })
+    throw new RunStateError(
+      "log_behind",
+      `the log only reaches seq ${lastSeq}, but the state records ${state.lastSeq}`,
+      {
+        logLastSeq: lastSeq,
+        stateLastSeq: state.lastSeq,
+      },
+    )
   }
   const pending = pendingToolCalls(input.timeline)
   const ids = pending.map((c) => c.payload.toolCallId)
@@ -211,7 +222,7 @@ export async function validateResume(input: {
     JSON.stringify(ids) !== JSON.stringify(state.pendingToolCallIds) ||
     (await computePendingDigest(pending)) !== state.pendingDigest
   ) {
-    throw new RunStateError("pending_mismatch", "日志里的待处理调用与状态不一致", {
+    throw new RunStateError("pending_mismatch", "pending tool calls in the log do not match the state", {
       expected: state.pendingToolCallIds,
       got: ids,
     })

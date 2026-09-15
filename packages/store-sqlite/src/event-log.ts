@@ -40,11 +40,11 @@ export class SqliteEventLog implements EventLog {
   }
 
   async append(events: readonly Event[]): Promise<void> {
-    if (events.length === 0) throw new StoreError("empty_batch", "append 的事件数组为空")
+    if (events.length === 0) throw new StoreError("empty_batch", "append received an empty event array")
     const sessionId = (events[0] as Event).sessionId
     for (const e of events) {
       if (e.sessionId !== sessionId) {
-        throw new StoreError("session_mismatch", "同一批 append 必须属于同一个会话", {
+        throw new StoreError("session_mismatch", "all events in one append must belong to the same session", {
           expected: sessionId,
           got: e.sessionId,
         })
@@ -55,11 +55,15 @@ export class SqliteEventLog implements EventLog {
         let expected = this.lastSeqOf(sessionId) + 1
         for (const e of events) {
           if (e.seq !== expected) {
-            throw new StoreError("seq_conflict", `会话 ${sessionId} 期望 seq=${expected}，收到 ${e.seq}`, {
-              sessionId,
-              expected,
-              got: e.seq,
-            })
+            throw new StoreError(
+              "seq_conflict",
+              `session ${sessionId} expected seq=${expected}, got ${e.seq}`,
+              {
+                sessionId,
+                expected,
+                got: e.seq,
+              },
+            )
           }
           expected++
         }
@@ -68,7 +72,9 @@ export class SqliteEventLog implements EventLog {
     } catch (err) {
       // BEGIN IMMEDIATE 下同进程不会撞到，这里兜的是多进程写同一个文件
       if (isUniqueViolation(err)) {
-        throw new StoreError("seq_conflict", `会话 ${sessionId} 的 seq 已被别的写入者占用`, { sessionId })
+        throw new StoreError("seq_conflict", `session ${sessionId}: seq already taken by another writer`, {
+          sessionId,
+        })
       }
       throw err
     }
@@ -87,7 +93,7 @@ export class SqliteEventLog implements EventLog {
 
   async tail(sessionId: string, n: number): Promise<Event[]> {
     if (!Number.isInteger(n) || n < 0)
-      throw new StoreError("invalid_argument", `tail 的 n 必须是非负整数：${n}`)
+      throw new StoreError("invalid_argument", `tail: n must be a non-negative integer, got ${n}`)
     if (n === 0) return []
     const rows = this.stmts.tail.all(sessionId, n) as Row[]
     return rows.reverse().map((r) => JSON.parse(r.data) as Event)
@@ -99,7 +105,7 @@ export class SqliteEventLog implements EventLog {
       if (!Number.isInteger(atSeq) || atSeq < 1 || atSeq > lastSeq) {
         throw new StoreError(
           "out_of_range",
-          `fork 点 ${atSeq} 超出会话 ${fromSessionId} 的范围 [1, ${lastSeq}]`,
+          `fork point ${atSeq} is outside session ${fromSessionId}'s range [1, ${lastSeq}]`,
           {
             fromSessionId,
             atSeq,
@@ -108,7 +114,9 @@ export class SqliteEventLog implements EventLog {
         )
       }
       if (this.lastSeqOf(toSessionId) > 0) {
-        throw new StoreError("target_not_empty", `目标会话 ${toSessionId} 已有事件`, { toSessionId })
+        throw new StoreError("target_not_empty", `target session ${toSessionId} already has events`, {
+          toSessionId,
+        })
       }
       this.stmts.fork.run(toSessionId, toSessionId, fromSessionId, atSeq)
     })

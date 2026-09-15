@@ -33,13 +33,13 @@ describe("JSONL 读写", () => {
   it("坏 JSON 与未登记类型都报错并带行号（fail-closed）", () => {
     const text = `${JSON.stringify(events[0])}\n{not json\n`
     expect(() => parseEventsJsonl(text)).toThrow(JsonlParseError)
-    expect(() => parseEventsJsonl(text)).toThrow(/第 2 行/)
+    expect(() => parseEventsJsonl(text)).toThrow(/line 2/)
 
     const ext = { ...events[1], type: "ext.unknown", seq: 2 }
     const t2 = `${JSON.stringify(events[0])}\n${JSON.stringify(ext)}\n`
-    expect(() => parseEventsJsonl(t2)).toThrow(/第 2 行/)
+    expect(() => parseEventsJsonl(t2)).toThrow(/line 2/)
     // 未来版本也拒
     const future = { ...events[1], schemaVersion: 99 }
-    expect(() => parseEventsJsonl(JSON.stringify(future))).toThrow(/第 1 行/)
+    expect(() => parseEventsJsonl(JSON.stringify(future))).toThrow(/line 1/)
   })
 })

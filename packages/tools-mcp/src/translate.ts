@@ -33,11 +33,12 @@ export function riskOf(annotations: McpToolAnnotations | undefined): NonNullable
 
 /** `tools/list` 里的一项 → 纯数据 McpToolInfo；形状不对就抛（服务器声明不合法，宁可起步失败） */
 export function toToolInfo(raw: unknown): McpToolInfo {
-  if (typeof raw !== "object" || raw === null) throw new TypeError("MCP 工具声明不是对象")
+  if (typeof raw !== "object" || raw === null) throw new TypeError("MCP tool declaration is not an object")
   const t = raw as Record<string, unknown>
-  if (typeof t.name !== "string" || t.name.length === 0) throw new TypeError("MCP 工具声明缺少 name")
+  if (typeof t.name !== "string" || t.name.length === 0)
+    throw new TypeError("MCP tool declaration has no name")
   if (typeof t.inputSchema !== "object" || t.inputSchema === null)
-    throw new TypeError(`MCP 工具 ${t.name} 缺少 inputSchema`)
+    throw new TypeError(`MCP tool ${t.name} has no inputSchema`)
   const info: McpToolInfo = { name: t.name, inputSchema: t.inputSchema as Record<string, unknown> }
   if (typeof t.title === "string") info.title = t.title
   if (typeof t.description === "string") info.description = t.description

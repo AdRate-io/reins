@@ -77,7 +77,8 @@ export class FrameReader {
     const got: Frame[] = []
     while (true) {
       const f = await this.next()
-      if (!f) throw new Error(`流已结束，仍未等到目标帧；已收到 ${JSON.stringify(got)}`)
+      if (!f)
+        throw new Error(`the stream ended before the expected frame arrived; received ${JSON.stringify(got)}`)
       got.push(f)
       if (pred(f)) return got
     }
@@ -127,6 +128,6 @@ export function getRequest(query: Record<string, string>, headers: Record<string
 /** 拿到响应体的逐帧读取器；SSE 响应没有 body 就是 bug，直接抛 */
 export async function openReader(response: Promise<Response> | Response): Promise<FrameReader> {
   const res = await response
-  if (!res.body) throw new Error(`响应没有 body（status ${res.status}）`)
+  if (!res.body) throw new Error(`the response has no body (status ${res.status})`)
   return new FrameReader(res.body)
 }

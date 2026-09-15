@@ -104,7 +104,9 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
         return { model: input.model, capabilities, landings, payload: { api: model.api, body } }
       }
       default:
-        throw new LoweringError("unsupported_api", `不支持的线协议 ${model.api}`, { api: model.api })
+        throw new LoweringError("unsupported_api", `unsupported wire protocol ${model.api}`, {
+          api: model.api,
+        })
     }
   }
 
@@ -126,7 +128,7 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       return {
         stopReason: "error",
         usage: { input: 0, output: 0 },
-        errorMessage: "响应没有正文（body 为空）",
+        errorMessage: "the response has no body",
       }
     }
     const streamInput = {
@@ -145,7 +147,7 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       case "openai-responses":
         return yield* consumeResponsesStream(streamInput, ctx)
       default:
-        throw new LoweringError("unsupported_api", `不支持的线协议 ${req.payload.api}`, {
+        throw new LoweringError("unsupported_api", `unsupported wire protocol ${req.payload.api}`, {
           api: req.payload.api,
         })
     }
@@ -167,7 +169,7 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
     if (auth === "none") return headers
     const apiKey = this.opts.apiKey(model.provider)
     if (!apiKey) {
-      throw new LoweringError("missing_api_key", `未配置 ${model.provider} 的 API key`, {
+      throw new LoweringError("missing_api_key", `no API key configured for ${model.provider}`, {
         provider: model.provider,
       })
     }

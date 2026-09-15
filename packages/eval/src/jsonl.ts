@@ -17,7 +17,7 @@ export class JsonlParseError extends Error {
     message: string,
     options?: { cause?: unknown },
   ) {
-    super(`第 ${line} 行：${message}`, options)
+    super(`line ${line}: ${message}`, options)
     this.name = "JsonlParseError"
   }
 }
@@ -34,7 +34,7 @@ export function parseEventsJsonl(text: string, opts: ParseJsonlOptions = {}): Ev
     try {
       raw = JSON.parse(line)
     } catch (err) {
-      throw new JsonlParseError(i + 1, "不是合法 JSON", { cause: err })
+      throw new JsonlParseError(i + 1, "not valid JSON", { cause: err })
     }
     try {
       out.push(registry.read(raw))

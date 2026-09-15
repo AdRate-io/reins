@@ -229,8 +229,8 @@ export class RunConflictError extends Error {
   ) {
     super(
       heldBy === "lease"
-        ? `[run_in_progress] 会话 ${sessionId} 已有一个 run 在别的实例上跑（租约未过期）`
-        : `[run_in_progress] 会话 ${sessionId} 已有一个 run 在跑`,
+        ? `[run_in_progress] Session ${sessionId} already has a run on another instance (its lease has not expired)`
+        : `[run_in_progress] Session ${sessionId} already has a run in progress`,
     )
     this.name = "RunConflictError"
   }

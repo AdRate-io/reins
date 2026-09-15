@@ -92,7 +92,10 @@ export class ScriptedLowering implements Lowering<ScriptedPayload> {
   private turnAt(turn: number, input: ToRequestInput): ScriptedTurn {
     if (typeof this.script === "function") return this.script(input, turn)
     const step = this.script[turn]
-    if (!step) throw new Error(`剧本只有 ${this.script.length} 轮，第 ${turn + 1} 轮没有台词`)
+    if (!step)
+      throw new Error(
+        `the script has only ${this.script.length} turn(s); turn ${turn + 1} has no scripted response`,
+      )
     return step
   }
 }

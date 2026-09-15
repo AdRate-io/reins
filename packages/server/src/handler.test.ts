@@ -751,7 +751,7 @@ describe("R6 会话级鉴权：authorizeSession", () => {
 
     const res = await handler(getRequest({ sessionId: "s1", lastSeq: "0" }))
     expect(res.status).toBe(404)
-    expect(await res.json()).toEqual({ error: "not_found", message: "会话不存在" })
+    expect(await res.json()).toEqual({ error: "not_found", message: "session not found" })
     // 关口在读之前：一条日志都没碰
     expect(log.reads).toBe(0)
     expect(seen).toEqual([{ sessionId: "s1", method: "GET", isNew: false }])

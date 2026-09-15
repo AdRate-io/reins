@@ -68,7 +68,7 @@ describe("eventsToContext：说明后移", () => {
       ])
       const note = landings.find((l) => l.type === "core.system_note")
       expect(note?.kind).toBe(mid ? "exact" : "lossy")
-      expect(note?.note).toContain("已后移到同批工具结果之后")
+      expect(note?.note).toContain("moved after that batch of tool results")
     }
   })
 
@@ -126,7 +126,7 @@ describe("eventsToContext：用户消息后移", () => {
       ).toEqual(["user", "assistant", "result:a", "user", "assistant"])
       const late = landings.find((l) => l.eventId === "e3")
       expect(late).toMatchObject({ type: "core.user_message", kind: "lossy", landing: "user" })
-      expect(late?.note).toContain("已后移到同批工具结果之后")
+      expect(late?.note).toContain("moved after that batch of tool results")
     }
   })
 })
@@ -205,7 +205,7 @@ describe("eventsToContext：trust 标注（§14）", () => {
       type: "core.tool_result",
       kind: "lossy",
       landing: "tool_result",
-      note: expect.stringContaining("已转义"),
+      note: expect.stringContaining("was escaped"),
     })
     expect(textOf(context.messages[2] as { content: unknown })).toContain(
       '<untrusted source="fetch:https://x">\n外部网页摘录\n</untrusted>',

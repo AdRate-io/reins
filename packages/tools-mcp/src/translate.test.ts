@@ -47,7 +47,7 @@ describe("toToolInfo：服务器声明 → 纯数据", () => {
   it("缺 name 或 inputSchema 抛错（服务器声明不合法，宁可起步失败）", () => {
     expect(() => toToolInfo({ inputSchema: {} })).toThrow("name")
     expect(() => toToolInfo({ name: "x" })).toThrow("inputSchema")
-    expect(() => toToolInfo(null)).toThrow("对象")
+    expect(() => toToolInfo(null)).toThrow("is not an object")
   })
 })
 

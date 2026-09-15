@@ -57,24 +57,30 @@ export class EventSchemaRegistry {
   /** 登记一个 type。重复登记同一 type 视为错误，避免两处定义互相覆盖。 */
   register(schema: EventSchema): this {
     if (!schema.type || !/^(core|ext)\.[a-z][a-z0-9_]*$/.test(schema.type)) {
-      throw new SchemaError("invalid_schema", `type 必须形如 "core.xxx" 或 "ext.xxx"：${schema.type}`, {
-        type: schema.type,
-      })
+      throw new SchemaError(
+        "invalid_schema",
+        `type must look like "core.xxx" or "ext.xxx", got ${schema.type}`,
+        {
+          type: schema.type,
+        },
+      )
     }
     if (!Number.isInteger(schema.version) || schema.version < 1) {
-      throw new SchemaError("invalid_schema", `version 必须是 ≥1 的整数：${schema.version}`, {
+      throw new SchemaError("invalid_schema", `version must be an integer >= 1, got ${schema.version}`, {
         type: schema.type,
         version: schema.version,
       })
     }
     if (this.schemas.has(schema.type)) {
-      throw new SchemaError("invalid_schema", `type 已登记：${schema.type}`, { type: schema.type })
+      throw new SchemaError("invalid_schema", `type already registered: ${schema.type}`, {
+        type: schema.type,
+      })
     }
     for (let v = 1; v < schema.version; v++) {
       if (typeof schema.upcasters?.[v] !== "function") {
         throw new SchemaError(
           "invalid_schema",
-          `${schema.type} 当前版本 ${schema.version}，但缺少 v${v}→v${v + 1} 的升级函数`,
+          `${schema.type} is at version ${schema.version} but has no v${v} -> v${v + 1} upgrade function`,
           { type: schema.type, version: v },
         )
       }
@@ -90,7 +96,7 @@ export class EventSchemaRegistry {
   /** 该 type 当前应写入的版本号；未登记则抛 unknown_type。 */
   currentVersion(type: string): number {
     const s = this.schemas.get(type)
-    if (!s) throw new SchemaError("unknown_type", `未登记的事件类型：${type}`, { type })
+    if (!s) throw new SchemaError("unknown_type", `unregistered event type: ${type}`, { type })
     return s.version
   }
 
@@ -103,12 +109,12 @@ export class EventSchemaRegistry {
     const base = assertBase(raw)
     const schema = this.schemas.get(base.type)
     if (!schema) {
-      throw new SchemaError("unknown_type", `未登记的事件类型：${base.type}`, { type: base.type })
+      throw new SchemaError("unknown_type", `unregistered event type: ${base.type}`, { type: base.type })
     }
     if (base.schemaVersion > schema.version) {
       throw new SchemaError(
         "future_version",
-        `${base.type} v${base.schemaVersion} 比本地已知的 v${schema.version} 更新，请升级代码`,
+        `${base.type} v${base.schemaVersion} is newer than the locally known v${schema.version}; upgrade the code`,
         { type: base.type, version: base.schemaVersion },
       )
     }
@@ -118,7 +124,7 @@ export class EventSchemaRegistry {
       const up = schema.upcasters?.[v]
       if (!up) {
         // register() 已保证不会走到这里，留作防御
-        throw new SchemaError("missing_upcaster", `${base.type} 缺少 v${v}→v${v + 1} 的升级函数`, {
+        throw new SchemaError("missing_upcaster", `${base.type} has no v${v} -> v${v + 1} upgrade function`, {
           type: base.type,
           version: v,
         })
@@ -128,7 +134,7 @@ export class EventSchemaRegistry {
       } catch (cause) {
         throw new SchemaError(
           "upcaster_failed",
-          `${base.type} v${v}→v${v + 1} 升级失败：${cause instanceof Error ? cause.message : String(cause)}`,
+          `${base.type} v${v} -> v${v + 1} upgrade failed: ${cause instanceof Error ? cause.message : String(cause)}`,
           { type: base.type, version: v },
         )
       }
@@ -141,33 +147,33 @@ export class EventSchemaRegistry {
 /** 校验壳字段。只看公共字段，payload 不管。 */
 function assertBase(raw: unknown): EventBase {
   if (typeof raw !== "object" || raw === null) {
-    throw new SchemaError("malformed_base", "事件必须是对象")
+    throw new SchemaError("malformed_base", "event must be an object")
   }
   const r = raw as Record<string, unknown>
   const fail = (field: string, expect: string): never => {
     throw new SchemaError(
       "malformed_base",
-      `字段 ${field} 应为 ${expect}`,
+      `field ${field} must be ${expect}`,
       typeof r.type === "string" ? { type: r.type } : {},
     )
   }
-  if (typeof r.id !== "string" || r.id === "") fail("id", "非空字符串")
-  if (typeof r.sessionId !== "string" || r.sessionId === "") fail("sessionId", "非空字符串")
-  if (!Number.isInteger(r.seq) || (r.seq as number) < 1) fail("seq", "≥1 的整数")
-  if (typeof r.at !== "number" || !Number.isFinite(r.at)) fail("at", "有限数字")
-  if (typeof r.type !== "string" || r.type === "") fail("type", "非空字符串")
+  if (typeof r.id !== "string" || r.id === "") fail("id", "a non-empty string")
+  if (typeof r.sessionId !== "string" || r.sessionId === "") fail("sessionId", "a non-empty string")
+  if (!Number.isInteger(r.seq) || (r.seq as number) < 1) fail("seq", "an integer >= 1")
+  if (typeof r.at !== "number" || !Number.isFinite(r.at)) fail("at", "a finite number")
+  if (typeof r.type !== "string" || r.type === "") fail("type", "a non-empty string")
   if (!Number.isInteger(r.schemaVersion) || (r.schemaVersion as number) < 1)
-    fail("schemaVersion", "≥1 的整数")
+    fail("schemaVersion", "an integer >= 1")
   if (typeof r.actor !== "string" || !ACTORS.has(r.actor)) fail("actor", "user|model|tool|system|host")
   if (typeof r.trust !== "string" || !TRUSTS.has(r.trust)) fail("trust", "principal|system|model|untrusted")
-  if (r.parentId !== undefined && typeof r.parentId !== "string") fail("parentId", "字符串或缺省")
+  if (r.parentId !== undefined && typeof r.parentId !== "string") fail("parentId", "a string or undefined")
   if (r.provenance !== undefined) {
     const p = r.provenance as Record<string, unknown> | null
     if (typeof p !== "object" || p === null || typeof p.source !== "string")
       fail("provenance", "{ source: string }")
   }
   if (r.replay !== undefined && (typeof r.replay !== "object" || r.replay === null))
-    fail("replay", "对象或缺省")
+    fail("replay", "an object or undefined")
   return r as unknown as EventBase
 }
 

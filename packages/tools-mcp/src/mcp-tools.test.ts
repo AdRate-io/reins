@@ -173,7 +173,7 @@ describe("mcpTools：tools/call 的结果与失败", () => {
     expect(rs.map((r) => [r.payload.isError, textOf(r)])).toEqual([
       [false, "echo:hi"],
       [true, "server says: failed on purpose"],
-      [true, expect.stringContaining("工具执行失败")],
+      [true, expect.stringContaining("Tool execution failed")],
     ])
     expect(textOf(rs[2] as CoreEventOf<"core.tool_result">)).toMatch(/temp.*not found/i)
     await socket.close()
@@ -218,7 +218,7 @@ describe("mcpTools：tools/call 的结果与失败", () => {
     expect(result.status).toBe("done")
     const [r] = results(await all(log))
     expect(r?.payload.isError).toBe(true)
-    expect(textOf(r as CoreEventOf<"core.tool_result">)).toContain("工具执行失败")
+    expect(textOf(r as CoreEventOf<"core.tool_result">)).toContain("Tool execution failed")
     expect(textOf(r as CoreEventOf<"core.tool_result">)).toContain("ECONNREFUSED")
     expect(fx.connects).toBe(1)
 

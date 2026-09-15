@@ -113,7 +113,7 @@ describe("字段细节", () => {
       }),
     )
     expect(out[0]).toMatchObject({ type: "TEXT_MESSAGE_START", messageId: "e1", role: "user" })
-    expect(out[1]).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", delta: "看图\n[图片 image/png]" })
+    expect(out[1]).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", delta: "看图\n[image image/png]" })
     expect(out[0]?.metadata?.reins).toMatchObject({ dropped: ["image:image/png"] })
     expect(partsToText([])).toEqual({ text: "", dropped: [] })
   })

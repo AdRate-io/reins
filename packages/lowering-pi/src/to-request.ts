@@ -94,8 +94,9 @@ function foreignOrigin(a: ModelOrigin, target: ModelOrigin): boolean {
   return a.provider !== target.provider || a.api !== target.api
 }
 
-const DEFERRED_NOTE = "已后移到同批工具结果之后（工具结果必须紧跟调用）"
-const ESCAPED_NOTE = "不可信内容里含提前闭合的 </untrusted，已转义"
+const DEFERRED_NOTE =
+  "moved after that batch of tool results (tool results must immediately follow their call)"
+const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
 
 export interface ToContextInput {
   events: readonly Event[]
@@ -211,8 +212,8 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
             kind: "lossy",
             landing: "user",
             note: c.escaped
-              ? `用户消息落在工具调用与结果之间；${ESCAPED_NOTE}`
-              : "用户消息落在工具调用与结果之间",
+              ? `the user message sits between a tool call and its results; ${ESCAPED_NOTE}`
+              : "the user message sits between a tool call and its results",
           })
           break
         }
@@ -230,20 +231,20 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         if (r.redacted === true) block.redacted = true
         assistant(e, origin).content.push(block)
         if (!block.thinkingSignature)
-          land(e, "lossy", "text-or-drop", "无签名的 thinking 由 pi-ai 降为文本或丢弃")
+          land(e, "lossy", "text-or-drop", "pi-ai downgrades unsigned thinking to text or drops it")
         else if (foreignOrigin(origin, target))
           land(
             e,
             "lossy",
             "provider-dependent",
-            `来自 ${origin.provider}/${origin.model} 的 thinking，厂商可能忽略或拒收`,
+            `thinking from ${origin.provider}/${origin.model}, which the provider may ignore or reject`,
           )
         else if (origin.model !== target.model)
           land(
             e,
             "exact",
             isAnthropic ? "thinking-block" : "reasoning-item",
-            `签名来自 ${origin.model}，当前请求 ${target.model}`,
+            `the signature comes from ${origin.model}, but this request targets ${target.model}`,
           )
         else land(e, "exact", isAnthropic ? "thinking-block" : "reasoning-item")
         break
@@ -272,7 +273,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         if (typeof r.thoughtSignature === "string") block.thoughtSignature = r.thoughtSignature
         if (typeof r.namespace === "string") block.namespace = r.namespace
         assistant(e, origin).content.push(block)
-        if (wrapped) land(e, "lossy", "wrapped-args", "非对象入参包成 { value }")
+        if (wrapped) land(e, "lossy", "wrapped-args", "non-object arguments are wrapped as { value }")
         else land(e, "exact", isAnthropic ? "tool_use" : "function_call")
         break
       }
@@ -314,7 +315,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
             { role: "user", content: framedSystemNote(e.payload.kind, t.text), timestamp: e.at },
             "lossy",
             "user-role",
-            "模型不支持中途 system，以 <system_note> 标签包住走 user 角色",
+            "the model does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
           )
         }
         break
@@ -332,7 +333,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
           },
           "lossy",
           "user-text",
-          "摘要以 user 角色文本呈现",
+          "the summary is rendered as user-role text",
         )
         break
       }
@@ -345,11 +346,11 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.memory_op":
       case "core.handoff":
       case "core.error":
-        land(e, "dropped", "none", "运维事件不下发（投影默认已过滤）")
+        land(e, "dropped", "none", "operational event, not sent (the default projection already filters it)")
         break
 
       default:
-        land(raw, "dropped", "none", `无通用落点：${raw.type}`)
+        land(raw, "dropped", "none", `no general landing for ${raw.type}`)
     }
   }
   flush()

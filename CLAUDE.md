@@ -85,6 +85,7 @@
 - 降级层复用 pi-ai，pin 精确版本，pi-ai 类型不出 `@reinsjs/lowering-pi`；同理 `@tanstack/ai` 类型不出适配器。
 - 不自造前端协议：AG-UI 为一等输出。不做 MCP 动态注册（工具表 run 内不变）。多智能体只做子代理即工具与 handoff，不做编排器。
 - 安全默认值 fail-closed：鉴权只认显式 `true`；策略求值异常视为 deny；越权资源一律当不存在（404，不用 403）。
+- **运行时文案一律英文，注释与 docs 一律中文。** 英文的是宿主 / 模型会看到的：`throw` 的 message、`warn()`、模型可见的 tool_result 说明、有损矩阵的 `note` / `when`、占位文本、`core/testing` 一致性套件、eval 报告。构造期校验统一 `X must be …, got …`；模型可见的一句话首字母大写。新加一条告警又写中文就是回潮（2026-09-15 一次改了 519 处）。
 
 ## 技术要点与风险
 

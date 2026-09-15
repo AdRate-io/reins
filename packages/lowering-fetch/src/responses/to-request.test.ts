@@ -206,7 +206,7 @@ describe("encodeResponsesRequest", () => {
       content: [{ type: "output_text", text: "a", annotations: [] }],
     })
     expect(landingOf(r, own)).toMatchObject({ kind: "exact", landing: "assistant-message" })
-    expect(landingOf(r, bare)?.note).toContain("补")
+    expect(landingOf(r, bare)?.note).toContain("supplied by this package")
     expect(landingOf(r, empty)).toMatchObject({ kind: "dropped" })
   })
 
@@ -222,7 +222,7 @@ describe("encodeResponsesRequest", () => {
       { type: "function_call", call_id: "call_3", name: "f", arguments: '{"a":[1]}' },
     ])
     expect(landingOf(r, same)).toMatchObject({ kind: "exact", landing: "function_call" })
-    expect(landingOf(r, other)?.note).toContain("换了模型")
+    expect(landingOf(r, other)?.note).toContain("the model changed")
   })
 
   it("function_call_output：只有文本是字符串；isError 加前缀记 lossy；带图片且模型收图时是内容块数组；不收图换占位并记 lossy", () => {
@@ -313,7 +313,7 @@ describe("encodeResponsesRequest", () => {
     ])
     expect(landingOf(r, interject)).toMatchObject({ kind: "lossy", landing: "user" })
     expect(landingOf(r, n)).toMatchObject({ kind: "exact", landing: "developer" })
-    expect(landingOf(r, n)?.note).toContain("后移")
+    expect(landingOf(r, n)?.note).toContain("moved after")
     // 落点顺序与输入一致（线上顺序已变，落点仍按输入事件排回）
     expect(r.landings.map((l) => l.eventId)).toEqual(events.map((e) => e.id))
   })

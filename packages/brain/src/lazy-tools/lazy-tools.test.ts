@@ -208,7 +208,7 @@ describe("lazyTools() 静态贡献", () => {
       expect(r.tools.map((t) => t.name)).toEqual(["greet"])
       expect(r.systemPrompt).toBeUndefined()
     }
-    expect(warnings).toEqual([expect.stringContaining("没有一件 lazy: true 的工具")])
+    expect(warnings).toEqual([expect.stringContaining("No host tool is marked lazy: true")])
   })
 
   it("宿主已有同名 tool_find：整个不注册、告警一次", async () => {
@@ -221,7 +221,7 @@ describe("lazyTools() 静态贡献", () => {
     })
     expect(names(r.tools)).toEqual([TOOL_FIND_TOOL_NAME, "ads_list"])
     expect(r.systemPrompt).toBeUndefined()
-    expect(warnings).toEqual([expect.stringContaining("已有同名工具")])
+    expect(warnings).toEqual([expect.stringContaining("already has a tool named")])
   })
 
   it("rules 可替换或关掉；summarize / summaryChars 生效；构造期参数校验", async () => {
@@ -348,7 +348,7 @@ describe("lazyTools() 与 runLoop 集成", () => {
     expect(blocked.payload.isError).toBe(true)
     expect(textOf(blocked)).toContain('Tool "ads_disable" is on the on-request list but not loaded yet.')
     expect(textOf(blocked)).toContain(`${TOOL_FIND_TOOL_NAME}({ names: ["ads_disable"] })`)
-    expect(textOf(resultOf(events, "c2"))).toContain("未知工具：ghost")
+    expect(textOf(resultOf(events, "c2"))).toContain("Unknown tool: ghost")
     // 没有任何成功的取回：下一轮仍然藏着
     expect(names(lowering.requests[1]?.tools)).toEqual(["greet", TOOL_FIND_TOOL_NAME])
   })
@@ -423,7 +423,7 @@ describe("lazyTools() 与 runLoop 集成", () => {
     expect(none.trust).toBe("untrusted")
     expect(textOf(none)).toContain("Nothing loaded.")
     expect(textOf(none)).toContain("Not on the on-request list: nothing, greet.")
-    expect(textOf(resultOf(events, "c3"))).toContain("入参不合法")
+    expect(textOf(resultOf(events, "c3"))).toContain("Invalid arguments")
     for (const r of lowering.requests) expect(names(r.tools)).toEqual(["greet", TOOL_FIND_TOOL_NAME])
   })
 

@@ -100,7 +100,7 @@ export const APPROVAL_POLICY_IDS = {
   unmatched: "approval.unmatched",
   /** 三段都没命中、按 risk 兜底：`approval.risk.<low|medium|high|undeclared>` */
   risk: (level: Tool["risk"]) => `approval.risk.${level ?? "undeclared"}`,
-  /** 入参没过工具自己的 validate：不问人、放行给循环以"入参不合法"拒掉（执行不会发生） */
+  /** 入参没过工具自己的 validate：不问人、放行给循环以"Invalid arguments"拒掉（执行不会发生） */
   invalidArgs: "approval.invalid_args",
   /** 宿主的批准到得太晚（超过 `ttlMs`），按拒绝处理 */
   expired: "approval.expired",
@@ -206,23 +206,27 @@ export async function evaluatePolicy(
   const denyBy = (rule: PolicyRule): PolicyOutcome => ({
     verdict: "deny",
     policyId: rule.id,
-    reason: rule.reason ?? `策略 ${rule.id} 不允许调用 ${call.name}`,
+    reason: rule.reason ?? `policy ${rule.id} does not allow calling ${call.name}`,
   })
   const failClosed = (rule: string, err: unknown): PolicyOutcome => {
     opts.onError?.(rule, err)
     return {
       verdict: "deny",
       policyId: rule,
-      reason: `策略 ${rule} 求值异常，按拒绝处理：${err instanceof Error ? err.message : String(err)}`,
+      reason: `policy ${rule} threw while being evaluated and is treated as a denial: ${err instanceof Error ? err.message : String(err)}`,
     }
   }
 
   if (!call.tool) {
-    return { verdict: "deny", policyId: APPROVAL_POLICY_IDS.unknownTool, reason: `未知工具：${call.name}` }
+    return {
+      verdict: "deny",
+      policyId: APPROVAL_POLICY_IDS.unknownTool,
+      reason: `unknown tool: ${call.name}`,
+    }
   }
 
   // 入参先过工具自己的 validate（R1）：规则、needsApproval、审批摘要看到的都是将要执行的那份（校验 / 规范化之后）。
-  // 校验不过就不问人 —— 循环随后会以"入参不合法"把这次调用拒掉，执行不会发生，先让审批人批一个必定失败的调用只是浪费
+  // 校验不过就不问人 —— 循环随后会以"Invalid arguments"把这次调用拒掉，执行不会发生，先让审批人批一个必定失败的调用只是浪费
   const tool = call.tool
   const validated = validatedCall(call)
   if (!validated) return { verdict: "allow", policyId: APPROVAL_POLICY_IDS.invalidArgs }
@@ -274,7 +278,7 @@ export async function evaluatePolicy(
       return {
         verdict: "deny",
         policyId: APPROVAL_POLICY_IDS.unmatched,
-        reason: `没有策略允许调用 ${call.name}`,
+        reason: `no policy allows calling ${call.name}`,
       }
     case "ask":
       return { verdict: "ask", policyId: APPROVAL_POLICY_IDS.unmatched, summary: summaryOf(undefined) }
@@ -314,7 +318,7 @@ export function approval(options: ApprovalOptions = {}): Socket {
   const warn = options.warn ?? ((message: string) => console.warn(message))
   const ttlMs = options.ttlMs
   if (ttlMs !== undefined && !(Number.isFinite(ttlMs) && ttlMs > 0)) {
-    throw new RangeError(`approval.ttlMs 必须是正的有限数：${String(ttlMs)}`)
+    throw new RangeError(`approval.ttlMs must be a positive finite number, got ${String(ttlMs)}`)
   }
   // 设了有效期就让模型知道"过期的批准会被拒、可以再调一次"；宿主自定的规则文案不动
   const rules =
@@ -339,7 +343,7 @@ export function approval(options: ApprovalOptions = {}): Socket {
         maxSummaryChars,
         onError: (rule, err) =>
           warn(
-            `[reins/approval] 策略 ${rule} 求值异常，已按拒绝处理（${name}）：${err instanceof Error ? err.message : String(err)}`,
+            `[reins/approval] Policy ${rule} threw while being evaluated and was treated as a denial (${name}): ${err instanceof Error ? err.message : String(err)}`,
           ),
       })
       const deny = (policyId: string, reason: string): BeforeToolDecision => {
@@ -362,7 +366,7 @@ export function approval(options: ApprovalOptions = {}): Socket {
           if (expired !== undefined) {
             return deny(
               APPROVAL_POLICY_IDS.expired,
-              `审批已过期：请求发出后 ${expired.ageMs} ms 才收到批准，超过有效期 ${ttlMs} ms，未执行。如仍需要，请重新发起这次调用以获取新的审批`,
+              `Approval expired: it arrived ${expired.ageMs} ms after the request, beyond the ${ttlMs} ms lifetime, so the call was not executed. If you still need it, make the call again to request a fresh approval`,
             )
           }
           return { defer: { policyId: outcome.policyId, summary: outcome.summary } }

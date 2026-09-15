@@ -266,7 +266,7 @@ describe("encodeChatRequest", () => {
     expect(roles(body.messages)).toEqual(["assistant", "tool", "tool", "system", "user"])
     expect(landings.map((l) => l.eventId)).toEqual(["e1", "e2", "e3", "e4", "e5", "e6"])
     expect(landings[3]).toMatchObject({ kind: "exact", landing: "system" })
-    expect(landings[3]?.note).toContain("后移")
+    expect(landings[3]?.note).toContain("moved after")
     expect(landings[4]).toMatchObject({ kind: "lossy", landing: "user" })
   })
 

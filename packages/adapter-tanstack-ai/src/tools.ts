@@ -82,11 +82,11 @@ export function toTanstackTool(tool: ReinsTool, bridge: ToolBridge): AnyTool {
         if (tool.validate) input = tool.validate(input)
       } catch (err) {
         const result: ToolResult = {
-          content: [{ type: "text", text: `入参不合法：${errorMessageOf(err)}` }],
+          content: [{ type: "text", text: `Invalid arguments: ${errorMessageOf(err)}` }],
           isError: true,
         }
         bridge.outputs.set(toolCallId, result)
-        throw new Error(result.content[0]?.type === "text" ? result.content[0].text : "入参不合法")
+        throw new Error(result.content[0]?.type === "text" ? result.content[0].text : "Invalid arguments")
       }
       const raw = await execute(input, ctx)
       // 子代理暂停冒泡（§10.1）在 TanStack 路径做不到：TanStack 在边界只能整轮暂停，且中断由它自己的 interrupts 表达，
@@ -96,7 +96,7 @@ export function toTanstackTool(tool: ReinsTool, bridge: ToolBridge): AnyTool {
             content: [
               {
                 type: "text",
-                text: `子代理会话 ${raw.detail.childSessionId} 已暂停（${raw.detail.reason}）等待宿主处理；本路径不支持把暂停冒泡到父 run，这次调用按未完成处理`,
+                text: `subagent session ${raw.detail.childSessionId} is paused (${raw.detail.reason}) and waiting on the host; this path cannot bubble the pause up to the parent run, so the call is treated as unfinished`,
               },
             ],
             isError: true,

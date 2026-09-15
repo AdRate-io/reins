@@ -367,7 +367,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     }
     if (!s.approvalInterruptRegistered)
       warn(
-        "reinsApprovalInterrupt 未登记到 chat({ interrupts })，本次 run 无法请求人工审批：需要审批的工具调用一律按拒绝处理（fail-closed）",
+        "reinsApprovalInterrupt is not registered with chat({ interrupts }), so this run cannot ask a human for approval: every tool call that needs approval is denied (fail-closed)",
       )
 
     // 工具表快照（P1）：与 runLoop 同一份纯函数。configHash 的系统提示只取脑子片段（宿主提示是 TanStack 的条目，
@@ -395,10 +395,16 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       const imported = importModelMessages(fresh, origin, {
         startIndex: config.messages.length - fresh.length,
       })
-      if (imported.dropped.length > 0) warn(`导入客户端消息时有片段未能翻译：${imported.dropped.join(", ")}`)
+      if (imported.dropped.length > 0)
+        warn(
+          `some parts could not be translated while importing client messages: ${imported.dropped.join(", ")}`,
+        )
       // 网络重试 / 客户端重放会把同一条用户消息再发一遍：日志里已有同键同内容的就跳过，不让它入日志两次
       const { drafts, skipped } = dedupeImportedUserMessages(imported.drafts, timeline)
-      if (skipped > 0) warn(`客户端重发了 ${skipped} 条已在日志里的用户消息（网络重试？），已跳过`)
+      if (skipped > 0)
+        warn(
+          `the client re-sent ${skipped} user message(s) already in the log (a network retry?); they were skipped`,
+        )
       await append(ctx, s, drafts)
     }
     return s
@@ -532,7 +538,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (decided && !decided.approved) {
         s.verdicts.set(toolCallId, {
           kind: "block",
-          text: `审批被拒绝${decided.reason ? `：${decided.reason}` : ""}`,
+          text: `Approval denied${decided.reason ? `: ${decided.reason}` : ""}`,
         })
         continue
       }
@@ -561,7 +567,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       let approval = typeof verdict === "object" && "defer" in verdict ? verdict.defer : undefined
       // 工具自己声明 needsApproval：TanStack 宿主工具由 TanStack 原生审批处理；reins 工具在这里按 runLoop 兜底。
       // 入参先过 validate（R1，与 runLoop 同序）：needsApproval 与摘要看到的是将要执行的那份；校验不过就不问人，
-      // 执行时 toTanstackTool 会以"入参不合法"报错
+      // 执行时 toTanstackTool 会以"Invalid arguments"报错
       if (
         !approval &&
         !decided?.approved &&
@@ -605,14 +611,14 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         // 模型看到的是错误结果，而不是引擎抛错把 run 打死在一条等不到答复的 run_paused 上
         if (!s.approvalInterruptRegistered) {
           const reason =
-            "审批中断未登记（chat({ interrupts }) 缺 reinsApprovalInterrupt），无法请求人工审批，按拒绝处理"
+            "the approval interrupt is not registered (chat({ interrupts }) lacks reinsApprovalInterrupt), so approval cannot be requested and the call is denied"
           s.emitted.push({
             type: "core.approval_decision",
             actor: "system",
             parentId: call.id,
             payload: { toolCallId, approved: false, by: "reins", reason },
           })
-          s.verdicts.set(toolCallId, { kind: "block", text: `审批被拒绝：${reason}` })
+          s.verdicts.set(toolCallId, { kind: "block", text: `Approval denied: ${reason}` })
           continue
         }
         interrupts.push(
@@ -676,14 +682,14 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       await settle(
         ctx,
         s,
-        resultDraft(call, info.toolCallId, info.toolName, errorResult(`工具调用被拦截：${verdict.text}`)),
+        resultDraft(call, info.toolCallId, info.toolName, errorResult(`Tool call blocked: ${verdict.text}`)),
       )
       return
     }
     let result: ToolResult
     if (stored) result = stored
     else if (info.ok) result = { content: fromTanstackToolResult(info.result), isError: false }
-    else result = errorResult(`工具执行失败：${errorMessageOf(info.error)}`)
+    else result = errorResult(`Tool execution failed: ${errorMessageOf(info.error)}`)
     s.toolCallsTotal++
     if (s.turn) s.turn.ctx.budget.toolCalls = s.toolCallsTotal
 
@@ -858,7 +864,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       for (const r of resolutions.for(reinsApprovalInterrupt)) {
         const approved = r.status === "resolved" && r.response.approved === true
         const by = r.status === "resolved" && r.response.by ? r.response.by : TANSTACK_DECIDER
-        const reason = r.status === "resolved" ? r.response.reason : "审批被取消"
+        const reason = r.status === "resolved" ? r.response.reason : "Approval was cancelled"
         s.emitted.push({
           type: "core.approval_decision",
           actor: "host",
@@ -874,7 +880,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       const s = states.get(ctx)
       const v = s?.verdicts.get(hookCtx.toolCallId)
       if (!v) return undefined
-      if (v.kind === "block") return { type: "skip", result: { error: `工具调用被拦截：${v.text}` } }
+      if (v.kind === "block") return { type: "skip", result: { error: `Tool call blocked: ${v.text}` } }
       if (v.kind === "rewrite") return { type: "transformArgs", args: v.args }
       return undefined
     },

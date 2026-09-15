@@ -68,7 +68,7 @@ export function resolveModel(ref: ModelRef, extra: readonly PiModel[] = []): PiM
   if (!model) {
     throw new LoweringError(
       "unsupported_model",
-      `找不到模型 ${ref.provider}/${ref.id}；内置表只含 anthropic 与 openai，其余请通过 models 选项声明`,
+      `unknown model ${ref.provider}/${ref.id}; the built-in table covers only anthropic and openai, declare the rest through the models option`,
       {
         provider: ref.provider,
         id: ref.id,
@@ -78,7 +78,7 @@ export function resolveModel(ref: ModelRef, extra: readonly PiModel[] = []): PiM
   if (!SUPPORTED_APIS.has(model.api)) {
     throw new LoweringError(
       "unsupported_api",
-      `模型 ${ref.provider}/${ref.id} 走 ${model.api}，本实现只支持 anthropic-messages 与 openai-responses`,
+      `model ${ref.provider}/${ref.id} speaks ${model.api}, but this implementation supports only anthropic-messages and openai-responses`,
       {
         api: model.api,
       },

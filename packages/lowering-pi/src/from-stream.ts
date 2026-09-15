@@ -79,6 +79,6 @@ export async function* consumeStream(
   return {
     stopReason: "error",
     usage: { input: 0, output: 0 },
-    errorMessage: "pi-ai 流在 done / error 之前就结束了",
+    errorMessage: "the pi-ai stream ended before done / error",
   }
 }

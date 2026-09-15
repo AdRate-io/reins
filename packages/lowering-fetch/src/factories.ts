@@ -75,7 +75,7 @@ export function definitionOf(
   const builtin = findBuiltin(provider, id, api)
   const base: FetchModel = builtin ?? { provider, id, api, baseUrl: opts.baseUrl ?? "", ...DEFAULTS }
   if (!builtin && !opts.baseUrl) {
-    throw new RangeError(`模型 ${provider}/${id} 不在内置表里，必须给 baseUrl`)
+    throw new RangeError(`model ${provider}/${id} is not in the built-in table, so baseUrl is required`)
   }
   const chat = base.chat || opts.chat ? { ...base.chat, ...defined(opts.chat ?? {}) } : undefined
   const anthropic =

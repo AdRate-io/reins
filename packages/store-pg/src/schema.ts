@@ -11,9 +11,13 @@ export const DEFAULT_MEMORY_TABLE = "reins_memory"
  */
 export function assertTableName(name: string, what = "memoryTable"): string {
   if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(name)) {
-    throw new StoreError("invalid_argument", `${what} 不是合法表名（^[A-Za-z_][A-Za-z0-9_]{0,62}$）`, {
-      [what]: name,
-    })
+    throw new StoreError(
+      "invalid_argument",
+      `${what} is not a valid table name (^[A-Za-z_][A-Za-z0-9_]{0,62}$)`,
+      {
+        [what]: name,
+      },
+    )
   }
   return name
 }

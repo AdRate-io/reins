@@ -58,7 +58,7 @@ export function withCapabilities<P>(
 
 export function withContextWindow<P>(lowering: Lowering<P>, contextWindow: number): Lowering<P> {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
-    throw new RangeError(`contextWindow 必须是正的有限数，收到 ${contextWindow}`)
+    throw new RangeError(`contextWindow must be a positive finite number, got ${contextWindow}`)
   }
   return withCapabilities(lowering, { contextWindow })
 }

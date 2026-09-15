@@ -316,7 +316,10 @@ function apply(ev: ResponsesStreamEvent, a: ResponsesAssembly, ctx: LoweringStre
       a.sawTerminal = true
       a.status = "failed"
       const e = ev.response?.error
-      a.error = { code: str(e?.code) ?? "failed", message: str(e?.message) ?? "response.failed 没有错误详情" }
+      a.error = {
+        code: str(e?.code) ?? "failed",
+        message: str(e?.message) ?? "response.failed carries no error detail",
+      }
       if (ev.response?.usage) a.usage = ev.response.usage
       break
     }
@@ -364,8 +367,8 @@ function outcomeOf(a: ResponsesAssembly, cost: ModelCost | undefined): LoweringO
         out.stopReason = "error"
         out.errorMessage =
           a.incompleteReason === "content_filter"
-            ? "status=incomplete (content_filter)：厂商内容过滤截停了这次输出"
-            : `status=incomplete${a.incompleteReason ? ` (${a.incompleteReason})` : ""}：厂商没有说完`
+            ? "status=incomplete (content_filter): the provider's content filter cut this output short"
+            : `status=incomplete${a.incompleteReason ? ` (${a.incompleteReason})` : ""}: the provider did not finish`
       }
       break
     case "cancelled":

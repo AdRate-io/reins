@@ -46,10 +46,10 @@ const payloadSchema = reinsSchema<ReinsApprovalPayload>({
     required: ["toolCallId", "name", "policyId", "summary"],
   },
   check: (v) => {
-    if (!isRecord(v)) return ["payload 必须是对象"]
+    if (!isRecord(v)) return ["payload must be an object"]
     const issues: string[] = []
     for (const k of ["toolCallId", "name", "policyId", "summary"] as const)
-      if (typeof v[k] !== "string") issues.push(`${k} 必须是字符串`)
+      if (typeof v[k] !== "string") issues.push(`${k} must be a string`)
     return issues
   },
 })
@@ -65,11 +65,11 @@ const responseSchema = reinsSchema<ReinsApprovalResponse>({
     required: ["approved"],
   },
   check: (v) => {
-    if (!isRecord(v)) return ["答复必须是对象"]
+    if (!isRecord(v)) return ["the response must be an object"]
     const issues: string[] = []
-    if (typeof v.approved !== "boolean") issues.push("approved 必须是布尔值")
-    if (v.by !== undefined && typeof v.by !== "string") issues.push("by 必须是字符串")
-    if (v.reason !== undefined && typeof v.reason !== "string") issues.push("reason 必须是字符串")
+    if (typeof v.approved !== "boolean") issues.push("approved must be a boolean")
+    if (v.by !== undefined && typeof v.by !== "string") issues.push("by must be a string")
+    if (v.reason !== undefined && typeof v.reason !== "string") issues.push("reason must be a string")
     return issues
   },
 })

@@ -35,7 +35,7 @@ export class SqliteBlobStore implements BlobStore {
 
   async get(id: string): Promise<{ bytes: Uint8Array; meta: BlobMeta }> {
     const row = this.stmts.get.get(id) as (MetaRow & { bytes: Uint8Array }) | undefined
-    if (!row) throw new StoreError("not_found", `blob 不存在：${id}`, { id })
+    if (!row) throw new StoreError("not_found", `blob not found: ${id}`, { id })
     return { bytes: new Uint8Array(row.bytes), meta: metaOf(row) }
   }
 
@@ -43,7 +43,7 @@ export class SqliteBlobStore implements BlobStore {
     const start = Math.max(0, Math.floor(range.start))
     const length = Math.max(0, Math.floor(range.end) - start)
     const row = this.stmts.slice.get(start + 1, length, id) as { part: Uint8Array | null } | undefined
-    if (!row) throw new StoreError("not_found", `blob 不存在：${id}`, { id })
+    if (!row) throw new StoreError("not_found", `blob not found: ${id}`, { id })
     return row.part ? new Uint8Array(row.part) : new Uint8Array(0)
   }
 }

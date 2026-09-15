@@ -73,9 +73,10 @@ export interface IrInput {
   trustMarkers?: boolean
 }
 
-export const DEFERRED_NOTE = "已后移到同批工具结果之后（工具结果必须紧跟调用）"
-export const ESCAPED_NOTE = "不可信内容里含提前闭合的 </untrusted，已转义"
-export const NOT_SENT_NOTE = "运维事件不下发（投影默认已过滤）"
+export const DEFERRED_NOTE =
+  "moved after that batch of tool results (tool results must immediately follow their call)"
+export const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
+export const NOT_SENT_NOTE = "operational event, not sent (the default projection already filters it)"
 
 function originOf(replay: Record<string, unknown> | undefined, fallback: ModelOrigin): ModelOrigin {
   const r = (replay ?? {}) as Partial<ModelOrigin>
@@ -233,7 +234,7 @@ export function eventsToIr(input: IrInput): IrItem[] {
         items.push({ kind: "dropped", event: e, note: NOT_SENT_NOTE })
         break
       default:
-        items.push({ kind: "dropped", event: raw, note: `无通用落点：${raw.type}` })
+        items.push({ kind: "dropped", event: raw, note: `no general landing for ${raw.type}` })
     }
   }
   flush()

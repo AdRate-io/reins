@@ -61,7 +61,7 @@ export function partsToText(parts: readonly ContentPart[]): { text: string; drop
       if (p.type === "text") return p.text
       if (p.type === "tool_reference") return renderToolReference(p)
       dropped.push(`image:${p.mime}`)
-      return `[图片 ${p.mime}]`
+      return `[image ${p.mime}]`
     })
     .join("\n")
   return { text, dropped }

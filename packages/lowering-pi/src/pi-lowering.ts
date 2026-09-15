@@ -113,7 +113,7 @@ export class PiAiLowering implements Lowering<PiLoweredPayload> {
     const model = resolveModel(req.model, this.extraModels)
     const apiKey = this.opts.apiKey(model.provider)
     if (!apiKey) {
-      throw new LoweringError("missing_api_key", `未配置 ${model.provider} 的 API key`, {
+      throw new LoweringError("missing_api_key", `no API key configured for ${model.provider}`, {
         provider: model.provider,
       })
     }
@@ -144,7 +144,7 @@ function streamFunctionFor(api: string): StreamFunction<Api, StreamOptions> {
     case "openai-responses":
       return openaiResponsesStream as unknown as StreamFunction<Api, StreamOptions>
     default:
-      throw new LoweringError("unsupported_api", `不支持的线协议 ${api}`, { api })
+      throw new LoweringError("unsupported_api", `unsupported wire protocol ${api}`, { api })
   }
 }
 

@@ -16,7 +16,9 @@ export function assertAscending(name: string, bounds: readonly number[]): void {
     const cur = bounds[i]
     const prev = bounds[i - 1]
     if (cur === undefined || !Number.isFinite(cur) || (prev !== undefined && cur <= prev)) {
-      throw new RangeError(`${name} 的档位边界必须是严格升序的有限数：${JSON.stringify(bounds)}`)
+      throw new RangeError(
+        `the tier bounds of ${name} must be strictly ascending finite numbers, got ${JSON.stringify(bounds)}`,
+      )
     }
   }
 }

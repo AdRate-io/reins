@@ -23,7 +23,8 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
   const warn = options.warn ?? ((m: string) => console.warn(m))
   const prefix = options.prefix ?? ""
   const timeoutMs = options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError("callTimeoutMs 必须是正数")
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
+    throw new RangeError("callTimeoutMs must be a positive number")
   const conn = new McpConnection(transport, { clientInfo: options.clientInfo ?? REINS_MCP_CLIENT_INFO })
   const warned = new Set<string>()
   const warnOnce = (key: string, message: string) => {
@@ -36,7 +37,10 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
   const toTool = (info: McpToolInfo): Tool => {
     const name = modelToolName(info.name, prefix)
     if (name !== `${prefix}${info.name}`)
-      warnOnce(`name:${info.name}`, `MCP 工具名 ${info.name} 不符合模型侧要求，给模型看的名字改写为 ${name}`)
+      warnOnce(
+        `name:${info.name}`,
+        `MCP tool name ${info.name} does not meet the model-facing requirements; the name shown to the model is rewritten to ${name}`,
+      )
     const risk = riskOf(info.annotations)
     return defineTool<unknown>({
       name,
@@ -64,7 +68,10 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
         infos = await conn.listTools()
       } catch (err) {
         if (!options.optional) throw err
-        warnOnce("list", `MCP 服务器 ${transport.label} 不可用，本次 run 不带它的工具：${messageOf(err)}`)
+        warnOnce(
+          "list",
+          `MCP server ${transport.label} is unavailable, so this run carries none of its tools: ${messageOf(err)}`,
+        )
         return []
       }
       const tools: Tool[] = []

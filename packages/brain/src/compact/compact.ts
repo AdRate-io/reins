@@ -126,7 +126,7 @@ function receipt(plan: Extract<CompactPlan, { ok: true }>, withRecall: boolean):
 export function compact(opts: CompactOptions = {}): Socket {
   const maxConsecutive = opts.maxConsecutive ?? DEFAULT_MAX_CONSECUTIVE_COMPACTIONS
   if (!Number.isInteger(maxConsecutive) || maxConsecutive < 1) {
-    throw new RangeError(`compact.maxConsecutive 必须是 ≥1 的整数：${String(maxConsecutive)}`)
+    throw new RangeError(`compact.maxConsecutive must be an integer >= 1, got ${String(maxConsecutive)}`)
   }
   const withRecall = opts.recall ?? true
   const records = new WeakMap<TurnContext, TurnRecord>()

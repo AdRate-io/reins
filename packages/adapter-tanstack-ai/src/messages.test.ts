@@ -106,7 +106,7 @@ describe("toModelMessages", () => {
     expect(landings[0]).toMatchObject({
       kind: "lossy",
       landing: "user",
-      note: expect.stringContaining("已转义"),
+      note: expect.stringContaining("was escaped"),
     })
   })
 
@@ -200,7 +200,7 @@ describe("toModelMessages", () => {
       "user:[Summary of ",
       "assistant:done",
     ])
-    const moved = landings.filter((l) => l.note?.includes("后移"))
+    const moved = landings.filter((l) => l.note?.includes("moved after"))
     expect(moved.map((l) => l.type)).toEqual(["core.system_note", "core.compaction"])
     // 结果永远不来（pending）：下一条用户消息前把后移的放出
     const pending = [
@@ -316,7 +316,7 @@ describe("importModelMessages / trailingUserMessages", () => {
     expect(drafts[5]?.payload).toEqual({
       content: [
         { type: "text", text: "再来" },
-        { type: "text", text: "[audio 片段未能导入 reins 时间线]" },
+        { type: "text", text: "[audio part could not be imported into the reins timeline]" },
       ],
     })
   })

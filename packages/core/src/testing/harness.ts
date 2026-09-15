@@ -21,7 +21,7 @@ export function assert(cond: unknown, message: string): asserts cond {
 export function assertEqual<T>(actual: T, expected: T, message: string): void {
   const a = JSON.stringify(actual)
   const b = JSON.stringify(expected)
-  if (a !== b) throw new ConformanceError(`${message}\n  期望：${b}\n  实际：${a}`)
+  if (a !== b) throw new ConformanceError(`${message}\n  expected: ${b}\n  actual: ${a}`)
 }
 
 /** 断言 fn 抛出带指定 code 的错误（StoreError / SchemaError 都有 code 字段） */
@@ -36,10 +36,10 @@ export async function assertThrowsCode(
     const got = (err as { code?: unknown }).code
     if (got === code) return
     throw new ConformanceError(
-      `${message}\n  期望错误码 ${code}，实际 ${String(got)}：${(err as Error).message}`,
+      `${message}\n  expected error code ${code}, got ${String(got)}: ${(err as Error).message}`,
     )
   }
-  throw new ConformanceError(`${message}\n  期望抛出 ${code}，但没有抛错`)
+  throw new ConformanceError(`${message}\n  expected ${code} to be thrown, but nothing was`)
 }
 
 export async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {

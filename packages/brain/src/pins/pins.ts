@@ -184,13 +184,13 @@ function normalizeSpecs(specs: readonly PinSpec[]): NormalizedSpec[] {
         : "text" in spec
           ? { name: spec.name, text: spec.text }
           : { name: spec.name, extract: spec.extract }
-    if (n.name.trim().length === 0) throw new RangeError("pins：spec 名字不能为空")
-    if (names.has(n.name)) throw new RangeError(`pins：spec 名字重复：${JSON.stringify(n.name)}`)
+    if (n.name.trim().length === 0) throw new RangeError("pins: a spec name must not be empty")
+    if (names.has(n.name)) throw new RangeError(`pins: duplicate spec name ${JSON.stringify(n.name)}`)
     if (n.text !== undefined && n.text.trim().length === 0) {
-      throw new RangeError(`pins：静态 pin ${JSON.stringify(n.name)} 的文字不能为空`)
+      throw new RangeError(`pins: the text of static pin ${JSON.stringify(n.name)} must not be empty`)
     }
     if (n.extract !== undefined && typeof n.extract !== "function") {
-      throw new RangeError(`pins：spec ${JSON.stringify(n.name)} 的 extract 必须是函数`)
+      throw new RangeError(`pins: extract of spec ${JSON.stringify(n.name)} must be a function`)
     }
     names.add(n.name)
     out.push(n)
@@ -231,14 +231,14 @@ export function pins(opts: PinsOptions = {}): Socket {
   const withTool = opts.tool ?? true
   const maxTextLength = opts.maxTextLength ?? DEFAULT_MAX_PIN_TEXT_LENGTH
   if (!Number.isInteger(maxTextLength) || maxTextLength < 1) {
-    throw new RangeError(`pins.maxTextLength 必须是 ≥1 的整数：${String(maxTextLength)}`)
+    throw new RangeError(`pins.maxTextLength must be an integer >= 1, got ${String(maxTextLength)}`)
   }
   const tolerance = opts.overshootTolerance ?? DEFAULT_PIN_OVERSHOOT_TOLERANCE
   if (!(tolerance >= 0 && tolerance < 1)) {
-    throw new RangeError(`pins.overshootTolerance 必须在 [0, 1) 内：${String(tolerance)}`)
+    throw new RangeError(`pins.overshootTolerance must be within [0, 1), got ${String(tolerance)}`)
   }
   if (specs.length === 0 && !withTool) {
-    throw new RangeError("pins：既没有宿主 pin 也不给模型工具，这个 Socket 什么都不做")
+    throw new RangeError("pins: with neither host pins nor a model-facing tool this socket does nothing")
   }
 
   const tool: Tool = {

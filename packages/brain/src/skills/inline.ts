@@ -29,7 +29,7 @@ export function inlineSkills(
   for (const [name, skill] of Object.entries(skills)) {
     if (!SKILL_NAME_RE.test(name)) {
       throw new RangeError(
-        `inlineSkills：技能键 ${JSON.stringify(name)} 不是合法技能名（须匹配 ${SKILL_NAME_RE.source}，且与 SKILL.md 头部的 name 一致）`,
+        `inlineSkills: skill key ${JSON.stringify(name)} is not a valid skill name (it must match ${SKILL_NAME_RE.source} and equal the name in the SKILL.md front matter)`,
       )
     }
     if (typeof skill === "string") {
@@ -40,7 +40,7 @@ export function inlineSkills(
       const segments = rel.split("/").filter((s) => s.length > 0)
       if (segments.length === 0 || segments.some((s) => s === "." || s === "..")) {
         throw new RangeError(
-          `inlineSkills：技能 ${name} 的文件路径 ${JSON.stringify(rel)} 不合法（相对路径，不含 . / ..）`,
+          `inlineSkills: file path ${JSON.stringify(rel)} of skill ${name} is invalid (it must be relative and contain no . or .. segments)`,
         )
       }
       files.set(`${root}/${name}/${segments.join("/")}`, content)

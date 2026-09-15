@@ -138,7 +138,7 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
     expect(result.status).toBe("done")
     const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
     expect(res.payload.isError).toBe(true)
-    expect(res.payload.content).toEqual([{ type: "text", text: "审批被拒绝：先别" }])
+    expect(res.payload.content).toEqual([{ type: "text", text: "Approval denied: 先别" }])
   })
 
   it("恢复但没给结论：不重复发 approval_request，再次暂停并交出新状态", async () => {

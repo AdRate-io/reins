@@ -21,67 +21,84 @@ const dropped = (landing: string, note: string, when?: string): LandingSpec =>
 
 export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> = {
   "core.user_message": [
-    exact("user", "input 里的 user 消息，input_text / input_image 块"),
+    exact("user", "a user message in input, as input_text / input_image blocks"),
     lossy(
       "user",
-      "后移到同批工具结果之后（顺序有变）、不可信内容转义、或模型不接受图片而换成占位文本",
-      "工具结果没到齐时用户插话 / 内容含 </untrusted / 带图片而模型不收图",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, or images replaced with placeholder text because the model takes none",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images the model does not take",
     ),
-    dropped("none", "内容为空，不下发空消息", "用户消息没有任何非空内容"),
+    dropped(
+      "none",
+      "the content is empty, so no empty message is sent",
+      "the user message has no non-empty content",
+    ),
   ],
   "core.model_text": [
     exact(
       "assistant-message",
-      "type:message 的 assistant 输出项，一轮多段各自成项；item id 同家回放、否则补一个",
+      "a type:message assistant output item; each text segment of a turn becomes its own item; the item id is replayed when it comes from the same model, otherwise a new one is made up",
     ),
-    dropped("none", "空正文不下发", "text 为空串"),
+    dropped("none", "empty text is not sent", "the text is an empty string"),
   ],
   "core.model_thinking": [
     exact(
       "reasoning-item",
-      "整个 reasoning 项（含 encrypted_content）原样回放",
-      "replay.thinkingSignature 是带 encrypted_content 的 reasoning 项且来源同家（provider + api）",
+      "the whole reasoning item (including encrypted_content) is replayed verbatim",
+      "replay.thinkingSignature is a reasoning item with encrypted_content and comes from the same source (provider + api)",
     ),
     dropped(
       "none",
-      "没有 encrypted_content（未开加密项 / 流中断）或来自别家的 reasoning 无法回放，不降成正文",
+      "reasoning with no encrypted_content (the encrypted item was not requested, or the stream broke) or from another source cannot be replayed, and is not downgraded to text",
     ),
   ],
   "core.tool_call": [
     exact(
       "function_call",
-      "arguments 是 JSON 字符串，非对象入参也原样序列化；fc_ 项 id 只在同一模型时回放（避开配对校验）",
+      "arguments is a JSON string, and non-object arguments are serialized as they are; the fc_ item id is replayed only for the same model (to stay clear of the pairing check)",
     ),
   ],
   "core.tool_result": [
     exact(
       "function_call_output",
-      "按 call_id 对应；文本 output 字符串，带图片时 output 为内容块数组；工具引用段展开成文本（Responses 无延迟加载落点）",
+      "matched by call_id; output is a string for text, or an array of content blocks when images are present; tool reference parts are expanded into text (Responses has no deferred-loading landing)",
     ),
     lossy(
       "function_call_output",
-      "isError 以 [tool error] 前缀表达（协议没有错误位），或不可信内容转义，或模型不接受图片而换成占位文本",
+      "isError is expressed with a [tool error] prefix (the protocol has no error flag), or untrusted content is escaped, or images are replaced with placeholder text because the model takes none",
     ),
   ],
   "core.system_note": [
     exact(
       "developer",
-      "input 里任意位置的 developer 消息",
-      "推理模型（或 responses.systemRole = developer）",
+      "a developer message anywhere in input",
+      "a reasoning model (or responses.systemRole = developer)",
     ),
-    exact("system", "input 里任意位置的 system 消息", "非推理模型（或 responses.systemRole = system）"),
+    exact(
+      "system",
+      "a system message anywhere in input",
+      "a non-reasoning model (or responses.systemRole = system)",
+    ),
     lossy(
       "developer",
-      "developer 消息，但不可信内容里的提前闭合被转义",
-      "宿主标为 untrusted 的说明含 </untrusted",
+      "a developer message, with the early close inside untrusted content escaped",
+      "a note the host marked untrusted holds a </untrusted",
     ),
-    lossy("system", "system 消息，但不可信内容里的提前闭合被转义", "同上"),
+    lossy(
+      "system",
+      "a system message, with the early close inside untrusted content escaped",
+      "same as above",
+    ),
     lossy(
       "user-role",
-      "以 <system_note> 标签包住走 user 角色",
-      "宿主对特殊上游声明 midConversationSystem: false",
+      "wrapped in a <system_note> tag and sent with the user role",
+      "the host declared midConversationSystem: false for an unusual upstream",
     ),
   ],
-  "core.compaction": [lossy("user-text", "摘要以 user 角色文本呈现，模型无法区分它与用户原话")],
+  "core.compaction": [
+    lossy(
+      "user-text",
+      "the summary is rendered as user-role text, so the model cannot tell it apart from the user's own words",
+    ),
+  ],
   ...NOT_SENT,
 }

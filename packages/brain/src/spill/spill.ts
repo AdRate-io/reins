@@ -150,15 +150,15 @@ type Overflow = "spill" | "truncate"
 export function spill(opts: SpillOptions = {}): Socket {
   const maxTokens = opts.maxResultTokens ?? DEFAULT_MAX_RESULT_TOKENS
   if (!Number.isInteger(maxTokens) || maxTokens < 1) {
-    throw new RangeError(`spill.maxResultTokens 必须是 ≥1 的整数：${String(maxTokens)}`)
+    throw new RangeError(`spill.maxResultTokens must be an integer >= 1, got ${String(maxTokens)}`)
   }
   const previewLines = opts.previewLines ?? DEFAULT_PREVIEW_LINES
   if (!Number.isInteger(previewLines) || previewLines < 0) {
-    throw new RangeError(`spill.previewLines 必须是 ≥0 的整数：${String(previewLines)}`)
+    throw new RangeError(`spill.previewLines must be an integer >= 0, got ${String(previewLines)}`)
   }
   const previewChars = opts.previewChars ?? Math.min(DEFAULT_PREVIEW_CHARS, Math.floor(maxTokens / 4))
   if (!Number.isInteger(previewChars) || previewChars < 0) {
-    throw new RangeError(`spill.previewChars 必须是 ≥0 的整数：${String(previewChars)}`)
+    throw new RangeError(`spill.previewChars must be an integer >= 0, got ${String(previewChars)}`)
   }
   const estimate = opts.estimate ?? defaultTextTokens
   const withTool = opts.tool ?? true
@@ -209,7 +209,7 @@ export function spill(opts: SpillOptions = {}): Socket {
         if (!warnedNoBlobs) {
           warnedNoBlobs = true
           warn(
-            `[reins/spill] 没有配置 BlobStore，结果外溢已关闭：\`${name}\` 返回了 ${size}，将原样进入上下文。给 runLoop / createAgent 配上 blobs 即可开启。`,
+            `[reins/spill] No BlobStore configured, so spilling is off: \`${name}\` returned ${size} and will enter the context as is. Pass blobs to runLoop / createAgent to enable it.`,
           )
         }
         return undefined

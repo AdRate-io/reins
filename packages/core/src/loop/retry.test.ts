@@ -13,7 +13,7 @@ describe("retry：瞬断判定与退避", () => {
     expect(outcome("529 overloaded")).toBe(true)
     expect(outcome("Rate limit exceeded (429)")).toBe(true)
     expect(outcome("502 Bad Gateway")).toBe(true)
-    expect(outcome("pi-ai 流在 done / error 之前就结束了")).toBe(true)
+    expect(outcome("the pi-ai stream ended before done / error")).toBe(true)
 
     expect(outcome("400 invalid_request_error: messages.3.content is empty")).toBe(false)
     expect(outcome("401 authentication_error")).toBe(false)

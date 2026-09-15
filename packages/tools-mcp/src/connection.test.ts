@@ -33,7 +33,7 @@ describe("McpConnection.close", () => {
     const conn = new McpConnection(fx.transport, { clientInfo: INFO })
     const inflight = conn.listTools()
     await expect(conn.close()).resolves.toBeUndefined()
-    await expect(inflight).rejects.toThrow(/连接失败/)
+    await expect(inflight).rejects.toThrow(/Failed to connect to MCP server/)
     expect(conn.connected).toBe(false)
   })
 

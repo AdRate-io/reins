@@ -14,22 +14,39 @@ const exact = (landing: string): LossEntry => ({ kind: "exact", landing })
 const lossy = (landing: string, note: string): LossEntry => ({ kind: "lossy", landing, note })
 const dropped = (note: string): LossEntry => ({ kind: "dropped", landing: "none", note })
 
-const OPS = dropped("运维事件不下发（投影默认已过滤）")
+const OPS = dropped("operational event, not sent (the default projection already filters it)")
 
 export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>> = {
   "core.user_message": [
     exact("user"),
-    lossy("user", "落在 tool_call 与 tool_result 之间的用户消息后移到同批结果之后（工具结果必须紧跟调用）"),
+    lossy(
+      "user",
+      "a user message sitting between a tool_call and its tool_result is moved after that batch of results (tool results must immediately follow their call)",
+    ),
   ],
-  "core.model_text": [exact("assistant-text"), lossy("merged-text", "同一响应的多段正文合成一个字符串")],
-  "core.model_thinking": [exact("thinking"), dropped("无签名或来源不同的 thinking 不下发（厂商会拒收）")],
+  "core.model_text": [
+    exact("assistant-text"),
+    lossy("merged-text", "multiple text segments of one response are merged into a single string"),
+  ],
+  "core.model_thinking": [
+    exact("thinking"),
+    dropped("thinking with no signature or from another source is not sent (the provider would reject it)"),
+  ],
   "core.tool_call": [exact("tool-call")],
   "core.tool_result": [
     exact("tool"),
-    lossy("tool-error-field", "isError 只落在 ModelMessage.error 字段，是否告知模型取决于适配器"),
+    lossy(
+      "tool-error-field",
+      "isError lands only in ModelMessage.error; whether the model is told is up to the adapter",
+    ),
   ],
-  "core.system_note": [lossy("user-role", "TanStack 消息无 system 角色，以 <system_note> 标签包住走 user")],
-  "core.compaction": [lossy("user-text", "摘要以 user 角色文本呈现")],
+  "core.system_note": [
+    lossy(
+      "user-role",
+      "TanStack messages have no system role, so it is wrapped in a <system_note> tag and sent as user",
+    ),
+  ],
+  "core.compaction": [lossy("user-text", "the summary is rendered as user-role text")],
   "core.approval_request": [OPS],
   "core.approval_decision": [OPS],
   "core.run_paused": [OPS],

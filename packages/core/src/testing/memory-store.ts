@@ -6,21 +6,21 @@ export function memoryStoreConformance(
   t: TestHarness,
   factory: () => MemoryStore | Promise<MemoryStore>,
 ): void {
-  t.describe("MemoryStore 一致性", () => {
-    t.it("read 不存在的路径返回 null", async () => {
+  t.describe("MemoryStore conformance", () => {
+    t.it("read on an unknown path returns null", async () => {
       const store = await factory()
-      assertEqual(await store.read("/memories/none.md"), null, "缺失路径")
+      assertEqual(await store.read("/memories/none.md"), null, "missing path")
     })
 
-    t.it("write 后 read 原样返回；再次 write 覆盖", async () => {
+    t.it("read returns what write stored; a second write overwrites it", async () => {
       const store = await factory()
       await store.write("/memories/a.md", "v1")
-      assertEqual(await store.read("/memories/a.md"), "v1", "首次写")
+      assertEqual(await store.read("/memories/a.md"), "v1", "first write")
       await store.write("/memories/a.md", "v2")
-      assertEqual(await store.read("/memories/a.md"), "v2", "覆盖写")
+      assertEqual(await store.read("/memories/a.md"), "v2", "overwriting write")
     })
 
-    t.it("list 按前缀过滤并按字典序返回", async () => {
+    t.it("list filters by prefix and returns paths in lexicographic order", async () => {
       const store = await factory()
       await store.write("/memories/b.md", "")
       await store.write("/memories/a.md", "")
@@ -29,25 +29,32 @@ export function memoryStoreConformance(
       assertEqual(
         await store.list("/memories/"),
         ["/memories/a.md", "/memories/b.md", "/memories/sub/c.md"],
-        "前缀 /memories/",
+        "prefix /memories/",
       )
-      assertEqual(await store.list("/memories/sub/"), ["/memories/sub/c.md"], "子目录前缀")
-      assertEqual(await store.list("/nope/"), [], "无匹配")
+      assertEqual(await store.list("/memories/sub/"), ["/memories/sub/c.md"], "subdirectory prefix")
+      assertEqual(await store.list("/nope/"), [], "no match")
     })
 
-    t.it("delete 后 read 为 null、list 不再出现；删除不存在的路径不报错", async () => {
-      const store = await factory()
-      await store.write("/memories/a.md", "x")
-      await store.delete("/memories/a.md")
-      assertEqual(await store.read("/memories/a.md"), null, "删除后 read")
-      assertEqual(await store.list("/memories/"), [], "删除后 list")
-      await store.delete("/memories/a.md") // 幂等
-    })
+    t.it(
+      "after delete, read is null and list no longer shows it; deleting an unknown path does not throw",
+      async () => {
+        const store = await factory()
+        await store.write("/memories/a.md", "x")
+        await store.delete("/memories/a.md")
+        assertEqual(await store.read("/memories/a.md"), null, "read after delete")
+        assertEqual(await store.list("/memories/"), [], "list after delete")
+        await store.delete("/memories/a.md") // 幂等
+      },
+    )
 
-    t.it("空字符串是合法内容，与不存在区分", async () => {
+    t.it("an empty string is valid content, distinct from absence", async () => {
       const store = await factory()
       await store.write("/memories/empty.md", "")
-      assertEqual(await store.read("/memories/empty.md"), "", "空内容应返回空串而非 null")
+      assertEqual(
+        await store.read("/memories/empty.md"),
+        "",
+        "empty content must read back as an empty string, not null",
+      )
     })
   })
 }

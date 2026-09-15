@@ -92,7 +92,7 @@ export function inputDraft(input: NonNullable<LoopConfig["input"]>): EventDraft 
     (!INPUT_DRAFT_TYPES.has(input.type) && !input.type.startsWith("ext."))
   ) {
     throw new RangeError(
-      `input 草稿不接受事件类型 ${String(input.type)}：只能是 core.user_message、core.tool_result、core.system_note 或 ext.*`,
+      `input draft rejects event type ${String(input.type)}: only core.user_message, core.tool_result, core.system_note or ext.* are accepted`,
     )
   }
   return input
@@ -190,9 +190,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     const pendingIds = new Set(pendingToolCalls(timeline).map((c) => c.payload.toolCallId))
     for (const d of decisions) {
       if (!pendingIds.has(d.toolCallId)) {
-        throw new RunStateError("unknown_tool_call", `审批结论指向的调用 ${d.toolCallId} 并不在等待中`, {
-          toolCallId: d.toolCallId,
-        })
+        throw new RunStateError(
+          "unknown_tool_call",
+          `approval decision refers to call ${d.toolCallId}, which is not pending`,
+          {
+            toolCallId: d.toolCallId,
+          },
+        )
       }
     }
     if (cfg.resume !== undefined) {
@@ -293,7 +297,9 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // 宿主中止：先于"补齐 pending"检查。否则上一轮在工具批中途被中止时，余下的调用会在这里被当成 pending 继续执行，
     // 一轮一个直到跑完才暂停 —— 中止就成了空话。没执行的调用留作 pending，恢复时再补
     if (cfg.signal?.aborted) {
-      const { events, result } = await pause("host", [{ kind: "host", note: "宿主在本轮开始前中止" }])
+      const { events, result } = await pause("host", [
+        { kind: "host", note: "host aborted before this turn started" },
+      ])
       yield* events
       return result
     }
@@ -323,7 +329,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       continue
     }
     if (turns >= maxTurns) {
-      const note = `单次 run 轮数达到上限 ${maxTurns}`
+      const note = `reached the per-run turn limit of ${maxTurns}`
       const { events, result } = await pause("budget", [{ kind: "budget", note }])
       yield* events
       return result
@@ -398,7 +404,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         ctx.budget.tokensSpent = tokensSpent
         ctx.budget.lastUsage = outcome.usage
         if (outcome.stopReason === "error")
-          failure = { kind: "outcome", message: outcome.errorMessage ?? "模型响应出错" }
+          failure = { kind: "outcome", message: outcome.errorMessage ?? "model response failed" }
       }
       ctx.budget.wallMs = now() - startedAt
       if (!failure) break
@@ -449,19 +455,24 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       outcome = undefined
       await retry.sleep(delayMs, cfg.signal)
       if (cfg.signal?.aborted) {
-        const { events, result } = await pause("host", [{ kind: "host", note: "宿主在重试等待期间中止" }])
+        const { events, result } = await pause("host", [
+          { kind: "host", note: "host aborted while waiting to retry" },
+        ])
         yield* events
         return result
       }
     }
-    if (!outcome) throw new Error("runLoop 内部错误：模型调用既无结果也无失败")
+    if (!outcome)
+      throw new Error("runLoop internal error: the model call produced neither an outcome nor a failure")
 
     for (const s of sockets) await s.afterModel?.(ctx, modelEvents)
     yield* await flush()
 
     if (outcome.stopReason === "aborted") {
       // 已完整的内容块都入了日志；未回答的 tool_call 留给恢复时补齐
-      const { events, result } = await pause("host", [{ kind: "host", note: "宿主中止了模型响应" }])
+      const { events, result } = await pause("host", [
+        { kind: "host", note: "host aborted the model response" },
+      ])
       yield* events
       return result
     }
@@ -531,7 +542,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     if (decision === "continue") return undefined
     if (decision === "stop") return { status: "done", sessionId, lastSeq }
     if ("pause" in decision) {
-      const note = decision.pause.note ?? `Socket 要求暂停（${decision.pause.reason}）`
+      const note = decision.pause.note ?? `a socket requested a pause (${decision.pause.reason})`
       const kind = decision.pause.reason
       const { events, result } = await pause(kind, [{ kind, note }])
       yield* events
@@ -665,7 +676,7 @@ async function* executeToolCalls(
 
     const decided = decisions.get(toolCallId)
     if (decided && !decided.approved) {
-      yield* await append([errorResult(`审批被拒绝${decided.reason ? `：${decided.reason}` : ""}`)])
+      yield* await append([errorResult(`Approval denied${decided.reason ? `: ${decided.reason}` : ""}`)])
       continue
     }
 
@@ -688,12 +699,12 @@ async function* executeToolCalls(
       break
     }
     if (typeof verdict === "object" && "block" in verdict) {
-      yield* await settle(errorResult(`工具调用被拦截：${verdict.block}`))
+      yield* await settle(errorResult(`Tool call blocked: ${verdict.block}`))
       continue
     }
 
     if (!tool) {
-      yield* await settle(errorResult(`未知工具：${name}`))
+      yield* await settle(errorResult(`Unknown tool: ${name}`))
       continue
     }
 
@@ -702,7 +713,7 @@ async function* executeToolCalls(
     try {
       if (tool.validate) args = tool.validate(args)
     } catch (err) {
-      yield* await settle(errorResult(`入参不合法：${errorMessageOf(err)}`))
+      yield* await settle(errorResult(`Invalid arguments: ${errorMessageOf(err)}`))
       continue
     }
 
@@ -772,7 +783,7 @@ async function* executeToolCalls(
         payload: { toolCallId, name, content: normalized.content, isError: normalized.isError ?? false },
       }
     } catch (err) {
-      result = errorResult(`工具执行失败：${errorMessageOf(err)}`)
+      result = errorResult(`Tool execution failed: ${errorMessageOf(err)}`)
     }
 
     // afterTool：脑子可替换结果（外溢、截断），此时尚未 append

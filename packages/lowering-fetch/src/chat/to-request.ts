@@ -149,9 +149,13 @@ export function encodeChatRequest(input: ChatEncodeInput): {
           item.event,
           lossy ? "lossy" : "exact",
           "user",
-          item.deferred ? `用户消息落在工具调用与结果之间；${DEFERRED_NOTE}` : undefined,
+          item.deferred
+            ? `the user message sits between a tool call and its results; ${DEFERRED_NOTE}`
+            : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
-          c.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
+          c.imagesDropped
+            ? "the model takes no images, so they are replaced with placeholder text"
+            : undefined,
         )
         break
       }
@@ -172,8 +176,12 @@ export function encodeChatRequest(input: ChatEncodeInput): {
           item.event,
           lossy ? "lossy" : "exact",
           c.imagesDropped ? "tool-text-only" : "tool",
-          item.isError ? "Chat 的 tool 消息没有错误位，isError 以 [tool error] 前缀表达" : undefined,
-          c.imagesDropped ? "tool 消息只收文本，图片换成占位文本" : undefined,
+          item.isError
+            ? "a Chat tool message has no error flag, so isError is expressed with a [tool error] prefix"
+            : undefined,
+          c.imagesDropped
+            ? "a tool message takes text only, so images are replaced with placeholder text"
+            : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
         break
@@ -196,7 +204,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
             item.event,
             "lossy",
             "user-role",
-            "上游不接受中途 system，以 <system_note> 标签包住走 user 角色",
+            "the upstream does not accept mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
             item.escaped ? ESCAPED_NOTE : undefined,
             item.deferred ? DEFERRED_NOTE : undefined,
           )
@@ -210,7 +218,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
           item.event,
           "lossy",
           "user-text",
-          "摘要以 user 角色文本呈现",
+          "the summary is rendered as user-role text",
           item.escaped ? ESCAPED_NOTE : undefined,
           item.deferred ? DEFERRED_NOTE : undefined,
         )
@@ -266,7 +274,14 @@ function assistantMessage(
   const foreign = foreignOrigin(origin, target)
 
   for (const t of texts) {
-    if (texts.length > 1) land(landings, t.event, "lossy", "merged-text", "同一轮多段正文合并成一个字符串")
+    if (texts.length > 1)
+      land(
+        landings,
+        t.event,
+        "lossy",
+        "merged-text",
+        "multiple text segments of one turn are merged into a single string",
+      )
     else land(landings, t.event, "exact", "assistant-content")
   }
   const replayable = reasoningContent && !foreign
@@ -278,10 +293,16 @@ function assistantMessage(
         t.event,
         "dropped",
         "none",
-        `来自 ${origin.provider}/${origin.api} 的 thinking 不回填给别家模型`,
+        `thinking from ${origin.provider}/${origin.api} is not filled back in for a model of another family`,
       )
     else
-      land(landings, t.event, "dropped", "none", "Chat Completions 没有 thinking 回放位（无签名、无加密项）")
+      land(
+        landings,
+        t.event,
+        "dropped",
+        "none",
+        "Chat Completions has no landing for replaying thinking (no signature, no encrypted item)",
+      )
   }
   for (const c of calls) land(landings, c.event, "exact", "tool_calls")
 

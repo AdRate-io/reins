@@ -102,7 +102,7 @@ export function asTool(agent: Agent, opts: AsToolOptions): Tool {
     risk: opts.risk ?? "low",
     validate(input) {
       const task = (input as { task?: unknown } | null)?.task
-      if (typeof task !== "string" || task.trim() === "") throw new Error("task 必须是非空字符串")
+      if (typeof task !== "string" || task.trim() === "") throw new Error("task must be a non-empty string")
       return { task }
     },
     async execute(input, ctx) {

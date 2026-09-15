@@ -8,55 +8,78 @@ import { assert, assertEqual, type TestHarness } from "./harness.js"
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 export function runLeaseConformance(t: TestHarness, factory: () => RunLease | Promise<RunLease>): void {
-  t.describe("RunLease 一致性", () => {
-    t.it("空会话 acquire 成功；别人未过期时再 acquire 失败；会话之间互不影响", async () => {
-      const lease = await factory()
-      assertEqual(await lease.acquire("s1", "a", 60_000), true, "首次占用")
-      assertEqual(await lease.acquire("s1", "b", 60_000), false, "别人持有中")
-      assertEqual(await lease.acquire("s2", "b", 60_000), true, "另一会话不受影响")
-    })
+  t.describe("RunLease conformance", () => {
+    t.it(
+      "acquire succeeds on a free session, fails while someone else holds an unexpired lease, and sessions do not affect each other",
+      async () => {
+        const lease = await factory()
+        assertEqual(await lease.acquire("s1", "a", 60_000), true, "first acquire")
+        assertEqual(await lease.acquire("s1", "b", 60_000), false, "someone else is holding it")
+        assertEqual(await lease.acquire("s2", "b", 60_000), true, "another session is unaffected")
+      },
+    )
 
-    t.it("同一 owner 重复 acquire 幂等成功（等于续期），不改变持有关系", async () => {
-      const lease = await factory()
-      assertEqual(await lease.acquire("s1", "a", 60_000), true, "首次")
-      assertEqual(await lease.acquire("s1", "a", 60_000), true, "自己再占")
-      assertEqual(await lease.acquire("s1", "b", 60_000), false, "别人仍占不到")
-      assertEqual(await lease.renew("s1", "a", 60_000), true, "自己仍能续")
-    })
+    t.it(
+      "a repeated acquire by the same owner is idempotent (it renews) and does not change who holds the lease",
+      async () => {
+        const lease = await factory()
+        assertEqual(await lease.acquire("s1", "a", 60_000), true, "first")
+        assertEqual(await lease.acquire("s1", "a", 60_000), true, "the same owner acquires again")
+        assertEqual(await lease.acquire("s1", "b", 60_000), false, "someone else still cannot acquire")
+        assertEqual(await lease.renew("s1", "a", 60_000), true, "the owner can still renew")
+      },
+    )
 
-    t.it("renew：持有者成功；非持有者失败；从未占过的会话失败", async () => {
+    t.it("renew: the holder succeeds; a non-holder fails; a never-acquired session fails", async () => {
       const lease = await factory()
       await lease.acquire("s1", "a", 60_000)
-      assertEqual(await lease.renew("s1", "a", 60_000), true, "持有者续期")
-      assertEqual(await lease.renew("s1", "b", 60_000), false, "非持有者")
-      assertEqual(await lease.renew("nope", "a", 60_000), false, "不存在的会话")
+      assertEqual(await lease.renew("s1", "a", 60_000), true, "the holder renews")
+      assertEqual(await lease.renew("s1", "b", 60_000), false, "a non-holder")
+      assertEqual(await lease.renew("nope", "a", 60_000), false, "an unknown session")
     })
 
-    t.it("release：持有者释放后别人可占；非持有者释放无效；释放不存在的会话不报错", async () => {
-      const lease = await factory()
-      await lease.acquire("s1", "a", 60_000)
-      await lease.release("s1", "b") // 不是自己的，不该动
-      assertEqual(await lease.acquire("s1", "b", 60_000), false, "非持有者 release 后 a 仍持有")
-      await lease.release("s1", "a")
-      assertEqual(await lease.acquire("s1", "b", 60_000), true, "持有者 release 后可再占")
-      await lease.release("nope", "a") // 幂等
-    })
+    t.it(
+      "release: after the holder releases, someone else can acquire; a release by a non-holder does nothing; releasing an unknown session does not throw",
+      async () => {
+        const lease = await factory()
+        await lease.acquire("s1", "a", 60_000)
+        await lease.release("s1", "b") // 不是自己的，不该动
+        assertEqual(
+          await lease.acquire("s1", "b", 60_000),
+          false,
+          "a still holds the lease after a non-holder releases",
+        )
+        await lease.release("s1", "a")
+        assertEqual(
+          await lease.acquire("s1", "b", 60_000),
+          true,
+          "after the holder releases, the lease can be acquired again",
+        )
+        await lease.release("nope", "a") // 幂等
+      },
+    )
 
-    t.it("过期：到期后别人能接手，原持有者 renew 为 false；接手者续期正常", async () => {
-      const lease = await factory()
-      assertEqual(await lease.acquire("s1", "a", 1), true, "短租约")
-      await sleep(30)
-      assertEqual(await lease.acquire("s1", "b", 60_000), true, "过期后接手")
-      assertEqual(await lease.renew("s1", "a", 60_000), false, "丢了租约的一方续期失败")
-      assertEqual(await lease.renew("s1", "b", 60_000), true, "接手者续期")
-    })
+    t.it(
+      "expiry: once it lapses, someone else can take over, the old holder's renew is false, and the new holder renews normally",
+      async () => {
+        const lease = await factory()
+        assertEqual(await lease.acquire("s1", "a", 1), true, "short lease")
+        await sleep(30)
+        assertEqual(await lease.acquire("s1", "b", 60_000), true, "taking over after expiry")
+        assertEqual(await lease.renew("s1", "a", 60_000), false, "the party that lost the lease cannot renew")
+        assertEqual(await lease.renew("s1", "b", 60_000), true, "the new holder renews")
+      },
+    )
 
-    t.it("过期但无人接手：原持有者 renew 为 false，但可以重新 acquire", async () => {
-      const lease = await factory()
-      await lease.acquire("s1", "a", 1)
-      await sleep(30)
-      assertEqual(await lease.renew("s1", "a", 60_000), false, "过期后不能续")
-      assert(await lease.acquire("s1", "a", 60_000), "过期后重新占用应成功")
-    })
+    t.it(
+      "expired with no one taking over: the old holder's renew is false, but it can acquire again",
+      async () => {
+        const lease = await factory()
+        await lease.acquire("s1", "a", 1)
+        await sleep(30)
+        assertEqual(await lease.renew("s1", "a", 60_000), false, "no renew after expiry")
+        assert(await lease.acquire("s1", "a", 60_000), "acquiring again after expiry must succeed")
+      },
+    )
   })
 }

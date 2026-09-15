@@ -190,7 +190,7 @@ describe("approval：evaluatePolicy 管线", () => {
     expect(out).toEqual({
       verdict: "deny",
       policyId: APPROVAL_POLICY_IDS.unknownTool,
-      reason: "未知工具：ghost",
+      reason: "unknown tool: ghost",
     })
   })
 
@@ -220,7 +220,11 @@ describe("approval：evaluatePolicy 管线", () => {
     })
     expect(asked).toEqual({ verdict: "ask", policyId: "prod-gate", summary: "要上线到 prod" })
     const denied = await run(call(deployTool), { deny: [always("freeze")] })
-    expect(denied).toEqual({ verdict: "deny", policyId: "freeze", reason: "策略 freeze 不允许调用 deploy" })
+    expect(denied).toEqual({
+      verdict: "deny",
+      policyId: "freeze",
+      reason: "policy freeze does not allow calling deploy",
+    })
   })
 
   it("工具自己的 needsApproval 是 ask 段的最后一条：布尔与函数都认，函数拿到入参", async () => {
@@ -269,7 +273,7 @@ describe("approval：evaluatePolicy 管线", () => {
     expect(await run(call(readTool), {}, "deny")).toEqual({
       verdict: "deny",
       policyId: APPROVAL_POLICY_IDS.unmatched,
-      reason: "没有策略允许调用 read_file",
+      reason: "no policy allows calling read_file",
     })
     expect(await run(call(readTool, { path: "a" }), {}, "ask")).toEqual({
       verdict: "ask",
@@ -290,7 +294,7 @@ describe("approval：evaluatePolicy 管线", () => {
     expect(inAllow).toEqual({
       verdict: "deny",
       policyId: "boom",
-      reason: "策略 boom 求值异常，按拒绝处理：网断了",
+      reason: "policy boom threw while being evaluated and is treated as a denial: 网断了",
     })
     expect(onError).toHaveBeenCalledWith("boom", expect.any(Error))
     // ask 段抛错同样 deny，即使 allow 段本会放行
@@ -305,7 +309,7 @@ describe("approval：evaluatePolicy 管线", () => {
       },
     }
     expect(await run(call(readTool), { deny: [weird] })).toMatchObject({
-      reason: "策略 weird 求值异常，按拒绝处理：字符串",
+      reason: "policy weird threw while being evaluated and is treated as a denial: 字符串",
     })
   })
 
@@ -319,7 +323,8 @@ describe("approval：evaluatePolicy 管线", () => {
     expect(await run(call(t), { allow: [always("ok")] })).toEqual({
       verdict: "deny",
       policyId: BUILTIN_APPROVAL_POLICY,
-      reason: "策略 tool.needsApproval 求值异常，按拒绝处理：策略服务 500",
+      reason:
+        "policy tool.needsApproval threw while being evaluated and is treated as a denial: 策略服务 500",
     })
   })
 
@@ -389,12 +394,12 @@ describe("approval × runLoop", () => {
       toolCallId: "c1",
       approved: false,
       by: "name:deploy",
-      reason: "策略 name:deploy 不允许调用 deploy",
+      reason: "policy name:deploy does not allow calling deploy",
     })
     expect(decisionsOf(logged)[0]?.actor).toBe("system")
     const res = resultOf(logged, "c1")
     expect(res.payload.isError).toBe(true)
-    expect(textOf(res)).toBe("工具调用被拦截：策略 name:deploy 不允许调用 deploy")
+    expect(textOf(res)).toBe("Tool call blocked: policy name:deploy does not allow calling deploy")
     // 第二轮模型看到结果，看不到决策事件
     expect(types(lowering.requests[1]?.events ?? [])).toEqual(["user_message", "tool_call", "tool_result"])
   })
@@ -464,7 +469,7 @@ describe("approval × runLoop", () => {
       approved: false,
       by: APPROVAL_POLICY_IDS.unknownTool,
     })
-    expect(textOf(resultOf(logged, "c1"))).toBe("工具调用被拦截：未知工具：ghost")
+    expect(textOf(resultOf(logged, "c1"))).toBe("Tool call blocked: unknown tool: ghost")
   })
 
   it("管线判定的是改写后的入参：前面的钩子 rewrite 后，按入参写的 deny 规则仍能拦住", async () => {
@@ -538,7 +543,7 @@ describe("approval × runLoop", () => {
       toolCallId: "c1",
       approved: false,
       by: "acl",
-      reason: "策略 acl 求值异常，按拒绝处理：ACL 服务超时",
+      reason: "policy acl threw while being evaluated and is treated as a denial: ACL 服务超时",
     })
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0]?.[0]).toContain("acl")
@@ -686,9 +691,9 @@ describe("approval：批准有效期 ttlMs", () => {
     const expired = decisionsOf(logged)[1]
     const result = resultOf(logged, "c1")
     expect(result.payload.isError).toBe(true)
-    expect(textOf(result)).toContain("审批已过期")
-    expect(textOf(result)).toContain("重新发起")
-    expect(expired?.payload.reason).toContain("超过有效期 60000 ms")
+    expect(textOf(result)).toContain("Approval expired")
+    expect(textOf(result)).toContain("make the call again")
+    expect(expired?.payload.reason).toContain("beyond the 60000 ms lifetime")
     // 留痕在结果之前
     expect(logged.indexOf(expired as CoreEvent)).toBeLessThan(logged.indexOf(result as CoreEvent))
   })

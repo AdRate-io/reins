@@ -23,65 +23,88 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     exact("user"),
     lossy(
       "user",
-      "后移到同批工具结果之后（顺序有变）、不可信内容转义、或模型不接受图片而换成占位文本",
-      "工具结果没到齐时用户插话 / 内容含 </untrusted / 带图片而模型不收图",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, or images replaced with placeholder text because the model takes none",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images the model does not take",
     ),
-    dropped("none", "内容为空，Anthropic 不接受空文本块", "用户消息没有任何非空内容"),
+    dropped(
+      "none",
+      "the content is empty and Anthropic rejects empty text blocks",
+      "the user message has no non-empty content",
+    ),
   ],
   "core.model_text": [
-    exact("assistant-text", "assistant 的 text 块，一轮多段各自成块"),
-    dropped("none", "空正文不下发（厂商不接受空文本块）", "text 为空串"),
+    exact(
+      "assistant-text",
+      "a text block on the assistant; each text segment of a turn becomes its own block",
+    ),
+    dropped(
+      "none",
+      "empty text is not sent (the provider rejects empty text blocks)",
+      "the text is an empty string",
+    ),
   ],
   "core.model_thinking": [
     exact(
       "thinking-block",
-      "带 signature 原样回放",
-      "replay 有 thinkingSignature 且来源同家（provider + api）",
+      "replayed verbatim with its signature",
+      "the replay has a thinkingSignature and comes from the same source (provider + api)",
     ),
-    exact("redacted-thinking", "redacted_thinking 以 data 原样回放", "replay.redacted 为真"),
-    dropped("none", "无 signature（流中断）或来自别家的 thinking 厂商不接受，不回放；不降成正文"),
+    exact(
+      "redacted-thinking",
+      "redacted_thinking is replayed verbatim through its data",
+      "replay.redacted is true",
+    ),
+    dropped(
+      "none",
+      "thinking with no signature (a broken stream) or from another family is rejected by the provider, so it is not replayed, and not downgraded to text either",
+    ),
   ],
   "core.tool_call": [
     exact("tool_use"),
-    lossy("wrapped-args", "非对象入参包成 { value }", "tool_call.args 不是对象"),
+    lossy("wrapped-args", "non-object arguments are wrapped as { value }", "tool_call.args is not an object"),
   ],
   "core.tool_result": [
     exact(
       "tool_result",
-      "紧跟 tool_use 所在 assistant 的下一条 user；is_error 原样；工具引用段在无原生能力、或结果不是 system 信任时展开成文本",
+      "in the user message right after the assistant that holds the tool_use; is_error is passed through; tool reference parts are expanded into text when the native capability is missing or the result is not trusted as system",
     ),
     lossy(
       "tool_result",
-      "不可信内容转义，或模型不接受图片而换成占位文本，或引用的工具不在本次请求工具表里而展开成文本",
+      "untrusted content is escaped, or images are replaced with placeholder text because the model takes none, or the referenced tool is absent from this request's tool table and its definition is expanded into text",
     ),
     exact(
       "tool-reference",
-      "结果只有工具引用段：tool_result 里放 tool_reference 块，厂商就地展开成完整定义（工具表整段不变）",
-      "模型支持 defer_loading、结果是 system 信任、引用的工具都在本次工具表里",
+      "the result holds nothing but tool reference parts: a tool_reference block goes into the tool_result and the provider expands it in place into the full definition (the tool table stays byte-identical)",
+      "the model supports defer_loading, the result is trusted as system, and every referenced tool is in this request's tool table",
     ),
     lossy(
       "tool-reference",
-      "引用块进 tool_result，结果里的文本段改放同条 user 里紧随的 text 块（tool_result 内引用不能与文本混放）",
-      "结果同时有引用段与文本段（说明文字、untrusted 标记）",
+      "the reference block goes into the tool_result and the result's text segments move to a text block right after it in the same user message (a reference inside a tool_result cannot be mixed with text)",
+      "the result holds both reference parts and text segments (explanatory text, untrusted markers)",
     ),
   ],
   "core.system_note": [
     exact(
       "system",
-      "带正文的中途 system 消息；放出位置是下一条 assistant 之前或收尾",
-      "模型族支持中途 system（Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8，或宿主声明）",
+      "a mid-conversation system message carrying the text; it is placed before the next assistant message, or at the very end",
+      "the model family supports mid-conversation system (Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8, or the host says so)",
     ),
     lossy(
       "system",
-      "中途 system 消息，但不可信内容里的提前闭合被转义",
-      "宿主标为 untrusted 的说明含 </untrusted",
+      "a mid-conversation system message, with the early close inside untrusted content escaped",
+      "a note the host marked untrusted holds a </untrusted",
     ),
     lossy(
       "user-role",
-      "以 <system_note> 标签包住走 user 角色",
-      "模型族不支持中途 system；或摆放规则不允许（前一条是 assistant / 说明是首条）",
+      "wrapped in a <system_note> tag and sent with the user role",
+      "the model family does not support mid-conversation system, or the placement rules forbid it (the previous message is an assistant, or the note would be first)",
     ),
   ],
-  "core.compaction": [lossy("user-text", "摘要以 user 角色文本呈现，模型无法区分它与用户原话")],
+  "core.compaction": [
+    lossy(
+      "user-text",
+      "the summary is rendered as user-role text, so the model cannot tell it apart from the user's own words",
+    ),
+  ],
   ...NOT_SENT,
 }

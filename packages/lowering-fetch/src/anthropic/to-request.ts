@@ -7,7 +7,7 @@
  * - **中途 system 摆放**（S1）：不能是首条、必须紧跟 user（含只带 tool_result 的 user）、后接 assistant 或收尾。所以说明
  *   一律攒到"下一条 assistant 之前"或末尾再放出；此刻前一条不是 user（是 assistant 或什么都没有）就退成 `<system_note>`
  *   框住的 user 文本，记 lossy(user-role)。放出位置比时间线晚了一条 user 的，仍算 exact（说明只换位置，见 CLAUDE.md）；
- * - **thinking 回放**：带 signature 原样回放（F0 A7b 接受、伪造签名 400）；无签名（流中断）与来自别家的一律 dropped 声明——
+ * - **thinking 回放**：replayed verbatim with its signature（F0 A7b 接受、伪造签名 400）；无签名（流中断）与来自别家的一律 dropped 声明——
  *   不像 pi-ai 那样降成正文，模型的私下推理不该以它"说过的话"出现在历史里；`redacted_thinking` 用 data 原样回放；
  * - **缓存断点**：最多 4 个。我们打三处——system 末块、tools 末项、最后一条 user 末块（厂商按前缀向前找命中，20 块回看窗口）；
  *   说明殿后（末条是 system）时按 `midSystemCacheBreakpoint` 处置，缺省顶层 `cache_control`（B1 实测与不注入持平）；
@@ -114,14 +114,16 @@ export interface AnthropicEncodeInput {
 export const MAX_ANTHROPIC_BREAKPOINTS = 4
 
 const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
-const EMPTY_NOTE = "内容为空，Anthropic 不接受空文本块，整条不下发"
-const MOVED_NOTE = "归位到下一条 user 之后（system 须紧跟 user、后接 assistant 或收尾）"
+const EMPTY_NOTE =
+  "the content is empty and Anthropic rejects empty text blocks, so the whole message is not sent"
+const MOVED_NOTE =
+  "moved to just after the next user message (a system message must follow a user message, and be followed by an assistant message or the end)"
 const REF_TEXT_ASIDE_NOTE =
-  "结果里的文本段改放同条 user 里、这批 tool_result 之后的 text 块（tool_result 内引用不能与文本混放，且同条 user 里 tool_result 必须排在最前）"
+  "the result's text segments move to a text block after this batch of tool_result in the same user message (a reference inside a tool_result cannot be mixed with text, and tool_result must come first in a user message)"
 const REF_UNTRUSTED_NOTE =
-  "untrusted 结果里的工具引用不走原生落点（不可信内容不能替模型点亮工具），展开成文本"
+  "a tool reference in an untrusted result does not take the native landing (untrusted content must not light up tools for the model), so it is expanded into text"
 const REF_UNBOUND_NOTE =
-  "引用的工具不在本次请求的工具表里（厂商对整段历史校验引用，缺一个就 400），定义展开成文本"
+  "the referenced tool is absent from this request's tool table (the provider validates references across the whole history and answers 400 if one is missing), so the definition is expanded into text"
 
 function land(
   out: LandingRecord[],
@@ -221,7 +223,9 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
         )
       }
     } else {
-      const why = last ? "前一条是 assistant，system 必须紧跟 user" : "system 不能是首条消息"
+      const why = last
+        ? "the previous message is an assistant, and a system message must follow a user message"
+        : "a system message cannot come first"
       messages.push({
         role: "user",
         content: pendingNotes.map(({ item }) => ({
@@ -235,7 +239,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           item.event,
           "lossy",
           "user-role",
-          `${why}，以 <system_note> 标签包住走 user 角色`,
+          `${why}, so it is wrapped in a <system_note> tag and sent with the user role`,
           item.escaped ? ESCAPED_NOTE : undefined,
           item.deferred ? DEFERRED_NOTE : undefined,
         )
@@ -259,9 +263,13 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           item.event,
           lossy ? "lossy" : "exact",
           "user",
-          item.deferred ? `用户消息落在工具调用与结果之间；${DEFERRED_NOTE}` : undefined,
+          item.deferred
+            ? `the user message sits between a tool call and its results; ${DEFERRED_NOTE}`
+            : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
-          c.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
+          c.imagesDropped
+            ? "the model takes no images, so they are replaced with placeholder text"
+            : undefined,
         )
         break
       }
@@ -294,7 +302,9 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
             aside || item.escaped || rest.imagesDropped ? "lossy" : "exact",
             "tool-reference",
             aside ? REF_TEXT_ASIDE_NOTE : undefined,
-            rest.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
+            rest.imagesDropped
+              ? "the model takes no images, so they are replaced with placeholder text"
+              : undefined,
             item.escaped ? ESCAPED_NOTE : undefined,
           )
           break
@@ -312,7 +322,9 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           "tool_result",
           unbound ? REF_UNBOUND_NOTE : undefined,
           untrustedRefs ? REF_UNTRUSTED_NOTE : undefined,
-          c.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
+          c.imagesDropped
+            ? "the model takes no images, so they are replaced with placeholder text"
+            : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
         break
@@ -324,7 +336,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           item.event,
           "lossy",
           "user-text",
-          "摘要以 user 角色文本呈现",
+          "the summary is rendered as user-role text",
           item.escaped ? ESCAPED_NOTE : undefined,
           item.deferred ? DEFERRED_NOTE : undefined,
         )
@@ -340,7 +352,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
             item.event,
             "lossy",
             "user-role",
-            "模型不支持中途 system，以 <system_note> 标签包住走 user 角色",
+            "the model does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
             item.escaped ? ESCAPED_NOTE : undefined,
             item.deferred ? DEFERRED_NOTE : undefined,
           )
@@ -414,16 +426,24 @@ function assistantBlocks(
             b.event,
             "dropped",
             "none",
-            `来自 ${origin.provider}/${origin.api} 的 thinking 没有本家签名，不回放`,
+            `thinking from ${origin.provider}/${origin.api} has no signature of its own, so it is not replayed`,
           )
           break
         }
         if (signature.length === 0) {
-          land(landings, b.event, "dropped", "none", "无 signature 的 thinking（流中断）厂商不接受，不回放")
+          land(
+            landings,
+            b.event,
+            "dropped",
+            "none",
+            "thinking with no signature (a broken stream) is rejected by the provider, so it is not replayed",
+          )
           break
         }
         const modelNote =
-          origin.model !== target.model ? `签名来自 ${origin.model}，当前请求 ${target.model}` : undefined
+          origin.model !== target.model
+            ? `the signature comes from ${origin.model}, but this request targets ${target.model}`
+            : undefined
         if (b.replay.redacted === true) {
           out.push({ type: "redacted_thinking", data: signature })
           land(
@@ -431,7 +451,7 @@ function assistantBlocks(
             b.event,
             "exact",
             "redacted-thinking",
-            "redacted_thinking 以 data 原样回放",
+            "redacted_thinking is replayed verbatim through its data",
             modelNote,
           )
         } else {
@@ -454,7 +474,7 @@ function assistantBlocks(
             b.event,
             "lossy",
             "wrapped-args",
-            "非对象入参包成 { value }（tool_use.input 必须是对象）",
+            "non-object arguments are wrapped as { value } (tool_use.input must be an object)",
           )
         else land(landings, b.event, "exact", "tool_use")
         break

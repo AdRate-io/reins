@@ -55,7 +55,7 @@ export function fromTanstackContent(
     }
     const what = p.type === "image" ? "image(url)" : p.type
     dropped.push(what)
-    parts.push({ type: "text", text: `[${what} 片段未能导入 reins 时间线]` })
+    parts.push({ type: "text", text: `[${what} part could not be imported into the reins timeline]` })
   }
   return { parts, dropped }
 }

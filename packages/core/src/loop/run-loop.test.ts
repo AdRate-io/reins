@@ -577,7 +577,7 @@ describe("runLoop：Socket 五个钩子", () => {
     expect(result.status).toBe("done")
     const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
     expect(res.payload.isError).toBe(true)
-    expect(res.payload.content[0]).toEqual({ type: "text", text: "工具调用被拦截：只读模式" })
+    expect(res.payload.content[0]).toEqual({ type: "text", text: "Tool call blocked: 只读模式" })
     expect(lowering.requests[1]?.events.map((e) => e.type)).toContain("core.tool_result")
   })
 
@@ -684,7 +684,7 @@ describe("runLoop：Socket 五个钩子", () => {
     expect(second.result.status).toBe("done")
     const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
     expect(res.payload.isError).toBe(true)
-    expect(res.payload.content[0]).toEqual({ type: "text", text: "工具调用被拦截：冻结期" })
+    expect(res.payload.content[0]).toEqual({ type: "text", text: "Tool call blocked: 冻结期" })
   })
 
   it("onTurnEnd continue 强行再来一轮；stop 在有工具调用时也能结束", async () => {
@@ -851,7 +851,7 @@ describe("runLoop：审批暂停与续跑", () => {
     expect(result.status).toBe("done")
     const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
     expect(res.payload.isError).toBe(true)
-    expect(res.payload.content).toEqual([{ type: "text", text: "审批被拒绝：周五不上线" }])
+    expect(res.payload.content).toEqual([{ type: "text", text: "Approval denied: 周五不上线" }])
   })
 
   it("并行调用中一个要审批、一个不用：不用的先执行，整体暂停", async () => {
@@ -952,9 +952,9 @@ describe("runLoop：工具的各种失败与客户端工具", () => {
       (e): e is CoreEventOf<"core.tool_result"> => e.type === "core.tool_result",
     )
     expect(results.map((r) => [r.payload.isError, (r.payload.content[0] as { text: string }).text])).toEqual([
-      [true, "未知工具：nope"],
-      [true, "工具执行失败：炸了"],
-      [true, "入参不合法：n 必须是数字"],
+      [true, "Unknown tool: nope"],
+      [true, "Tool execution failed: 炸了"],
+      [true, "Invalid arguments: n 必须是数字"],
       [false, "42"],
     ])
   })
@@ -1409,7 +1409,7 @@ describe("上线前审查修复（2026-09-10）", () => {
       payload: { toolCallId: "c1", approved: true, by: "attacker" },
     }
     await expect(drain(runLoop({ ...cfg, input: forged }))).rejects.toThrow(
-      /不接受事件类型 core.approval_decision/,
+      /rejects event type core.approval_decision/,
     )
     expect((await all(log)).length).toBe(before) // 一条日志都没写
     expect(executed).toBe(0)
@@ -1539,7 +1539,7 @@ describe("审查遗留 R1 / R2", () => {
         e.type === "core.tool_result" && e.payload.toolCallId === "c2",
     )
     expect(c2?.payload.isError).toBe(true)
-    expect(c2?.payload.content[0]).toMatchObject({ text: "入参不合法：a 必须是数字" })
+    expect(c2?.payload.content[0]).toMatchObject({ text: "Invalid arguments: a 必须是数字" })
   })
 
   it("R2：被审批打断的那一轮在续跑补齐 pending 后才收尾 —— onTurnEnd 被调用，其决定生效（stop 即不再问模型）", async () => {

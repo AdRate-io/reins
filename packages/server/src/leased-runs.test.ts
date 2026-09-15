@@ -88,7 +88,7 @@ describe("D4 leasedRunRegistry：两台实例共用一份租约", () => {
     expect(conflict.status).toBe(409)
     expect(await conflict.json()).toMatchObject({
       error: "run_in_progress",
-      message: expect.stringContaining("别的实例"),
+      message: expect.stringContaining("on another instance"),
     })
     // 别的会话不受影响
     expect((await b.handler(postRequest({ sessionId: "s2", input: "另一条" }))).status).toBe(200)
@@ -146,7 +146,7 @@ describe("D4 leasedRunRegistry：两台实例共用一份租约", () => {
     expect(await lease.acquire("s1", "B", 60_000)).toBe(true)
     await until(() => run?.controller.signal.aborted === true, "心跳发现丢租约后 abort")
     expect(warns).toHaveLength(1)
-    expect(warns[0]).toContain("租约已丢失")
+    expect(warns[0]).toContain("Lost the run lease")
 
     w.g.open()
     expect(resultIn(await first.rest())).toMatchObject({ status: "paused", reason: "host" })
@@ -185,11 +185,11 @@ describe("D4 leasedRunRegistry：两台实例共用一份租约", () => {
     fail.release = true
     const first = await openReader(a.handler(postRequest({ sessionId: "s1", input: "go" })))
     await first.until((f) => f.id === "3")
-    await until(() => warns.some((m) => m.includes("续期失败")), "续期失败告警")
+    await until(() => warns.some((m) => m.includes("Failed to renew the run lease")), "renew-failure warning")
     w.g.open()
     expect(resultIn(await first.rest())).toMatchObject({ status: "done" })
     await a.runs.get("s1")?.done
-    expect(warns.some((m) => m.includes("释放失败"))).toBe(true)
+    expect(warns.some((m) => m.includes("Failed to release the run lease"))).toBe(true)
     // release 失败：租约仍挂在 A 名下，但本进程名额已还；同一 owner 再 acquire 幂等成功 → 再 POST 正常
     expect(inner.holderOf("s1")).toBe("A")
     fail.renew = false

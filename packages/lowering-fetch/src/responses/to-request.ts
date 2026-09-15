@@ -87,7 +87,7 @@ export interface ResponsesEncodeInput {
 
 const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
 const ERROR_PREFIX = "[tool error]\n"
-const EMPTY_NOTE = "内容为空，不下发空消息"
+const EMPTY_NOTE = "the content is empty, so no empty message is sent"
 const ENCRYPTED_INCLUDE = "reasoning.encrypted_content"
 
 function land(
@@ -196,9 +196,13 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           item.event,
           lossy ? "lossy" : "exact",
           "user",
-          item.deferred ? `用户消息落在工具调用与结果之间；${DEFERRED_NOTE}` : undefined,
+          item.deferred
+            ? `the user message sits between a tool call and its results; ${DEFERRED_NOTE}`
+            : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
-          c.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
+          c.imagesDropped
+            ? "the model takes no images, so they are replaced with placeholder text"
+            : undefined,
         )
         break
       }
@@ -225,9 +229,11 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           lossy ? "lossy" : "exact",
           "function_call_output",
           item.isError
-            ? "Responses 的 function_call_output 没有错误位，isError 以 [tool error] 前缀表达"
+            ? "the Responses function_call_output has no error flag, so isError is expressed with a [tool error] prefix"
             : undefined,
-          c.imagesDropped ? "模型不接受图片，图片换成占位文本" : undefined,
+          c.imagesDropped
+            ? "the model takes no images, so they are replaced with placeholder text"
+            : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
         break
@@ -239,7 +245,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           item.event,
           "lossy",
           "user-text",
-          "摘要以 user 角色文本呈现",
+          "the summary is rendered as user-role text",
           item.escaped ? ESCAPED_NOTE : undefined,
           item.deferred ? DEFERRED_NOTE : undefined,
         )
@@ -266,7 +272,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             item.event,
             "lossy",
             "user-role",
-            "宿主声明该上游不支持中途 system，以 <system_note> 标签包住走 user 角色",
+            "the host declared that this upstream does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
             item.escaped ? ESCAPED_NOTE : undefined,
             item.deferred ? DEFERRED_NOTE : undefined,
           )
@@ -339,7 +345,9 @@ function assistantItems(
   const foreign = foreignOrigin(origin, target)
   const sameModel = !foreign && origin.model === target.model
   const modelNote =
-    !foreign && origin.model !== target.model ? `来自 ${origin.model}，当前请求 ${target.model}` : undefined
+    !foreign && origin.model !== target.model
+      ? `it comes from ${origin.model}, but this request targets ${target.model}`
+      : undefined
   for (const b of blocks) {
     switch (b.type) {
       case "text": {
@@ -362,7 +370,7 @@ function assistantItems(
           b.event,
           "exact",
           "assistant-message",
-          own.id === undefined ? "项 id 由本包补" : undefined,
+          own.id === undefined ? "the item id is supplied by this package" : undefined,
         )
         break
       }
@@ -373,7 +381,7 @@ function assistantItems(
             b.event,
             "dropped",
             "none",
-            `来自 ${origin.provider}/${origin.api} 的 reasoning 没有本家加密项，不回放`,
+            `reasoning from ${origin.provider}/${origin.api} has no encrypted item of its own, so it is not replayed`,
           )
           break
         }
@@ -384,7 +392,7 @@ function assistantItems(
             b.event,
             "dropped",
             "none",
-            "reasoning 项没有 encrypted_content（未开加密项或流中断），store:false 下无法回放",
+            "the reasoning item has no encrypted_content (it was not requested, or the stream broke), so it cannot be replayed under store:false",
           )
           break
         }
@@ -407,7 +415,7 @@ function assistantItems(
           "exact",
           "function_call",
           itemId === undefined && typeof b.replay.itemId === "string"
-            ? "换了模型，fc_ 项 id 不带回"
+            ? "the model changed, so the fc_ item id is not carried back"
             : undefined,
         )
         break

@@ -38,7 +38,7 @@ export class McpConnection {
         await client.connect(this.transport.create() as Transport)
       } catch (err) {
         throw new McpToolsError(
-          `MCP 服务器连接失败（${this.transport.label}）：${messageOf(err)}`,
+          `Failed to connect to MCP server (${this.transport.label}): ${messageOf(err)}`,
           this.transport.label,
           { cause: err },
         )
@@ -65,7 +65,7 @@ export class McpConnection {
       result = await client.listTools({}, { cacheMode: "bypass", ...(signal ? { signal } : {}) })
     } catch (err) {
       throw new McpToolsError(
-        `MCP tools/list 失败（${this.transport.label}）：${messageOf(err)}`,
+        `MCP tools/list failed (${this.transport.label}): ${messageOf(err)}`,
         this.transport.label,
         { cause: err },
       )

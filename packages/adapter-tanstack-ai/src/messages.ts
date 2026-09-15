@@ -63,8 +63,9 @@ interface AssistantGroup {
  * 而日志里 pin / memory 等留痕、感知说明都可能落在 tool_call 与 tool_result 之间。翻译时把这段里的
  * user 角色说明后移到同批工具结果之后，落点记录里注明。
  */
-const DEFERRED_NOTE = "已后移到同批工具结果之后（工具结果必须紧跟调用）"
-const ESCAPED_NOTE = "不可信内容里含提前闭合的 </untrusted，已转义"
+const DEFERRED_NOTE =
+  "moved after that batch of tool results (tool results must immediately follow their call)"
+const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
 
 interface DeferredNote {
   msg: ModelMessage
@@ -134,7 +135,13 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
     messages.push(msg)
     for (const c of g.toolCalls) awaiting.add(c.id)
     if (g.textEvents.length > 1)
-      for (const e of g.textEvents) land(e, "lossy", "merged-text", "同一响应的多段正文合成一个字符串")
+      for (const e of g.textEvents)
+        land(
+          e,
+          "lossy",
+          "merged-text",
+          "multiple text segments of one response are merged into a single string",
+        )
     else for (const e of g.textEvents) land(e, "exact", "assistant-text")
   }
   const assistant = (): AssistantGroup => {
@@ -159,8 +166,8 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
             event: e,
             landing: "user",
             note: c.escaped
-              ? `用户消息落在工具调用与结果之间；${ESCAPED_NOTE}`
-              : "用户消息落在工具调用与结果之间",
+              ? `the user message sits between a tool call and its results; ${ESCAPED_NOTE}`
+              : "the user message sits between a tool call and its results",
           })
           break
         }
@@ -186,10 +193,10 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
             e,
             "dropped",
             "none",
-            `签名来自 ${String(r.provider)}/${String(r.model)}，当前请求 ${opts.model.provider}/${opts.model.id}，不回放`,
+            `the signature comes from ${String(r.provider)}/${String(r.model)}, but this request targets ${opts.model.provider}/${opts.model.id}, so it is not replayed`,
           )
         } else {
-          land(e, "dropped", "none", "无签名的 thinking 不下发（厂商会拒收）")
+          land(e, "dropped", "none", "unsigned thinking is not sent (the provider would reject it)")
         }
         break
       }
@@ -223,8 +230,8 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
             "lossy",
             "tool-error-field",
             c.escaped
-              ? `isError 只落在 ModelMessage.error 字段，是否告知模型取决于适配器；${ESCAPED_NOTE}`
-              : "isError 只落在 ModelMessage.error 字段，是否告知模型取决于适配器",
+              ? `isError lands only in ModelMessage.error; whether the model is told is up to the adapter; ${ESCAPED_NOTE}`
+              : "isError lands only in ModelMessage.error; whether the model is told is up to the adapter",
           )
         } else if (c.escaped) land(e, "lossy", "tool", ESCAPED_NOTE)
         else land(e, "exact", "tool")
@@ -240,7 +247,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
           e,
           { role: "user", content: framedSystemNote(e.payload.kind, text(e, e.payload.text).text) },
           "user-role",
-          "TanStack 消息无 system 角色，以 <system_note> 标签包住走 user",
+          "TanStack messages have no system role, so it is wrapped in a <system_note> tag and sent as user",
         )
         break
 
@@ -250,7 +257,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
           e,
           { role: "user", content: `${COMPACTION_PREFIX}${text(e, e.payload.summary).text}` },
           "user-text",
-          "摘要以 user 角色文本呈现",
+          "the summary is rendered as user-role text",
         )
         break
 
@@ -262,11 +269,11 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
       case "core.memory_op":
       case "core.handoff":
       case "core.error":
-        land(e, "dropped", "none", "运维事件不下发（投影默认已过滤）")
+        land(e, "dropped", "none", "operational event, not sent (the default projection already filters it)")
         break
 
       default:
-        land(raw, "dropped", "none", `无通用落点：${raw.type}`)
+        land(raw, "dropped", "none", `no general landing for ${raw.type}`)
     }
   }
   flush()

@@ -52,13 +52,13 @@ export function memory(opts: MemoryOptions = {}): Socket {
     maxViewChars: opts.maxViewChars ?? DEFAULT_MAX_VIEW_CHARS,
   }
   if (!Number.isInteger(limits.maxFileBytes) || limits.maxFileBytes < 1) {
-    throw new RangeError(`memory.maxFileBytes 必须是 ≥1 的整数：${String(limits.maxFileBytes)}`)
+    throw new RangeError(`memory.maxFileBytes must be an integer >= 1, got ${String(limits.maxFileBytes)}`)
   }
   if (!Number.isInteger(limits.maxViewChars) || limits.maxViewChars < 1) {
-    throw new RangeError(`memory.maxViewChars 必须是 ≥1 的整数：${String(limits.maxViewChars)}`)
+    throw new RangeError(`memory.maxViewChars must be an integer >= 1, got ${String(limits.maxViewChars)}`)
   }
   if (opts.namespace !== undefined && typeof opts.namespace !== "function") {
-    throw new RangeError("memory.namespace 必须是函数")
+    throw new RangeError("memory.namespace must be a function")
   }
   const namespace = opts.namespace ?? (() => "")
   const warn = opts.warn ?? ((message: string) => console.warn(message))
@@ -100,7 +100,7 @@ export function memory(opts: MemoryOptions = {}): Socket {
     if (!warned) {
       warned = true
       warn(
-        "[reins/memory] 没有配置 MemoryStore，memory 工具与规则提示未注册。给 runLoop / createAgent 的 store 配上 memory 即可开启。",
+        "[reins/memory] No MemoryStore configured, so the memory tool and its rules are not registered. Pass a memory store to runLoop / createAgent to enable them.",
       )
     }
     return false

@@ -277,7 +277,7 @@ describe("skills(): 静态贡献", () => {
       `宿主提示\n\n${SKILL_RULES}\n\nAvailable skills:\n- adrate-ads: Inspect and change TikTok campaigns safely.\n- adrate-shared: Operate AdRate CLI authentication, pagination and rate limits safely.`,
     )
     expect(warnings).toHaveLength(2)
-    expect(warnings.every((w) => w.includes("跳过不合规的技能"))).toBe(true)
+    expect(warnings.every((w) => w.includes("Skipping invalid skill"))).toBe(true)
     // 第二个 run 同一实例：菜单重读，但告警不重复
     await resolveSocketContributions(setupWith(socket))
     expect(warnings).toHaveLength(2)
@@ -305,7 +305,7 @@ describe("skills(): 静态贡献", () => {
     expect(r1.systemPrompt).toBeUndefined()
     expect(r2.tools).toEqual([])
     expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain("没有给 source")
+    expect(warnings[0]).toContain("No source given")
   })
 
   it("source 下没有一份合规技能：同样不注册，告警一次（含只有不合规技能的情况）", async () => {
@@ -317,8 +317,8 @@ describe("skills(): 静态贡献", () => {
     const r = await resolveSocketContributions(setupWith(socket))
     expect(r.tools).toEqual([])
     expect(r.systemPrompt).toBeUndefined()
-    expect(warnings.some((w) => w.includes("没有任何合规的 SKILL.md"))).toBe(true)
-    expect(warnings.some((w) => w.includes("跳过不合规的技能"))).toBe(true)
+    expect(warnings.some((w) => w.includes("holds no valid SKILL.md"))).toBe(true)
+    expect(warnings.some((w) => w.includes("Skipping invalid skill"))).toBe(true)
   })
 
   it("rules 可替换或关掉；关掉时工具仍注册", async () => {
@@ -337,8 +337,8 @@ describe("skills(): 静态贡献", () => {
     expect(() => skills({ root: "/skills/../memories" })).toThrow("skills.root")
     expect(() => skills({ root: "/skills/./x" })).toThrow("skills.root")
     // 与记忆根重叠：模型能 memory create 写进去的东西不能变成 system 信任的技能
-    expect(() => skills({ root: "/memories" })).toThrow("重叠")
-    expect(() => skills({ root: "/memories/skills" })).toThrow("重叠")
+    expect(() => skills({ root: "/memories" })).toThrow("overlaps the memory root")
+    expect(() => skills({ root: "/memories/skills" })).toThrow("overlaps the memory root")
     expect(() => skills({ root: "/" })).toThrow("skills.root")
     expect(() => assertSkillsRoot("/team/skills")).not.toThrow()
     expect(() => skills({ maxReadChars: 0 })).toThrow("skills.maxReadChars")
@@ -358,15 +358,15 @@ describe("skills(): 静态贡献", () => {
     const r = await resolveSocketContributions(setupWith(socket, { tools: [hostSkillRead] }))
     expect(r.tools).toEqual([hostSkillRead])
     expect(r.systemPrompt).toBeUndefined()
-    expect(warnings).toEqual([expect.stringContaining("已有同名工具")])
+    expect(warnings).toEqual([expect.stringContaining("already has a tool named")])
   })
 
   it("inlineSkills 的键必须是合法技能名，文件路径不含 . / ..：不合规直接抛错而不是静默丢失", () => {
-    expect(() => inlineSkills({ "a/b": md("a", "x") })).toThrow("不是合法技能名")
-    expect(() => inlineSkills({ "": md("a", "x") })).toThrow("不是合法技能名")
-    expect(() => inlineSkills({ "../evil": md("a", "x") })).toThrow("不是合法技能名")
-    expect(() => inlineSkills({ Ads: md("a", "x") })).toThrow("不是合法技能名")
-    expect(() => inlineSkills({ a: { "../x.md": "y" } })).toThrow("不合法")
+    expect(() => inlineSkills({ "a/b": md("a", "x") })).toThrow("is not a valid skill name")
+    expect(() => inlineSkills({ "": md("a", "x") })).toThrow("is not a valid skill name")
+    expect(() => inlineSkills({ "../evil": md("a", "x") })).toThrow("is not a valid skill name")
+    expect(() => inlineSkills({ Ads: md("a", "x") })).toThrow("is not a valid skill name")
+    expect(() => inlineSkills({ a: { "../x.md": "y" } })).toThrow("is invalid")
     expect(SKILL_NAME_RE.test("adrate-ads")).toBe(true)
   })
 
@@ -615,7 +615,7 @@ describe("skills() 与 runLoop 集成", () => {
     const events = await all(log)
     const traversal = resultOf(events, "c1")
     expect(traversal.payload.isError).toBe(true)
-    expect(textOf(traversal)).toContain("入参不合法")
+    expect(textOf(traversal)).toContain("Invalid arguments")
     expect(textOf(traversal)).toContain("`.` and `..` segments")
     expect(traversal.trust).toBe("untrusted")
     const missing = resultOf(events, "c2")

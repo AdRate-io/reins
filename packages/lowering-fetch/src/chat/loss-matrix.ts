@@ -17,16 +17,43 @@ const dropped = (landing: string, note: string, when?: string): LandingSpec =>
 
 /** 不下发的运维事件：服务宿主与审计，信息由别的事件承载；投影默认已过滤，这里是第二道声明 */
 export const NOT_SENT: Readonly<Record<string, readonly LandingSpec[]>> = {
-  "core.approval_request": [dropped("none", "审批结果由 tool_result(isError) 告知模型")],
-  "core.approval_decision": [dropped("none", "同上")],
-  "core.run_paused": [dropped("none", "运行记录；感知模块会提炼进 system_note")],
-  "core.run_resumed": [dropped("none", "同上")],
-  "core.budget_usage": [dropped("none", "同上")],
-  "core.memory_op": [dropped("none", "记忆读写留痕，模型已通过工具结果知晓")],
-  "core.handoff": [dropped("none", "交接后本会话结束；新会话首条 user 承载 triggerMessage")],
-  "core.tools_bound": [dropped("none", "工具表快照；工具表变化由循环另发 system_note 告知")],
-  "core.error": [dropped("none", "provider 错误由循环处理；工具错误已在 tool_result.isError")],
-  "ext.*": [dropped("none", "宿主扩展事件无通用落点；需要模型看见的应在投影层翻译成 core 事件")],
+  "core.approval_request": [
+    dropped("none", "the approval outcome reaches the model through tool_result(isError)"),
+  ],
+  "core.approval_decision": [dropped("none", "same as above")],
+  "core.run_paused": [dropped("none", "a run record; the perception module distills it into a system_note")],
+  "core.run_resumed": [dropped("none", "same as above")],
+  "core.budget_usage": [dropped("none", "same as above")],
+  "core.memory_op": [
+    dropped(
+      "none",
+      "an audit trail of memory reads and writes; the model already learned of them from the tool result",
+    ),
+  ],
+  "core.handoff": [
+    dropped(
+      "none",
+      "this session ends at the handoff; the new session's first user message carries the triggerMessage",
+    ),
+  ],
+  "core.tools_bound": [
+    dropped(
+      "none",
+      "a snapshot of the tool table; the loop announces changes to it in a separate system_note",
+    ),
+  ],
+  "core.error": [
+    dropped(
+      "none",
+      "provider errors are handled by the loop; tool errors already live in tool_result.isError",
+    ),
+  ],
+  "ext.*": [
+    dropped(
+      "none",
+      "host extension events have no general landing; translate the ones the model must see into core events in the projection layer",
+    ),
+  ],
 }
 
 export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> = {
@@ -34,44 +61,67 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
     exact("user"),
     lossy(
       "user",
-      "后移到同批工具结果之后（顺序有变）、不可信内容转义、或模型不接受图片而换成占位文本",
-      "工具结果没到齐时用户插话 / 内容含 </untrusted / 带图片而模型不收图",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, or images replaced with placeholder text because the model takes none",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images the model does not take",
     ),
   ],
   "core.model_text": [
     exact("assistant-content"),
     lossy(
       "merged-text",
-      "同一轮多段正文合并成一个字符串（assistant.content 只能是 string）",
-      "一轮里不止一段正文",
+      "multiple text segments of one turn are merged into a single string (assistant.content can only be a string)",
+      "the turn holds more than one text segment",
     ),
   ],
   "core.model_thinking": [
     exact(
       "reasoning_content",
-      "DeepSeek 方言：思考正文原样回填",
-      "模型开了 chat.reasoningContent 且来源同家",
+      "the DeepSeek dialect: the thinking text is filled back in verbatim",
+      "the model has chat.reasoningContent on and the source is the same family",
     ),
-    dropped("none", "Chat Completions 没有 thinking 回放位（无签名、无加密项），或来源是别家"),
+    dropped(
+      "none",
+      "Chat Completions has no landing for replaying thinking (no signature, no encrypted item), or the source is another family",
+    ),
   ],
-  "core.tool_call": [exact("tool_calls", "arguments 为 JSON 字符串")],
+  "core.tool_call": [exact("tool_calls", "arguments is a JSON string")],
   "core.tool_result": [
     exact(
       "tool",
-      "role:tool 消息，紧跟带 tool_calls 的 assistant；工具引用段展开成文本（Chat 无延迟加载落点）",
+      "a role:tool message right after the assistant that carries the tool_calls; tool reference parts are expanded into text (Chat has no deferred-loading landing)",
     ),
-    lossy("tool", "isError 以 [tool error] 前缀表达（tool 消息没有错误位），或不可信内容转义"),
-    lossy("tool-text-only", "tool 消息只收文本，图片换成占位文本", "结果里有图片"),
+    lossy(
+      "tool",
+      "isError is expressed with a [tool error] prefix (a tool message has no error flag), or untrusted content is escaped",
+    ),
+    lossy(
+      "tool-text-only",
+      "a tool message takes text only, so images are replaced with placeholder text",
+      "the result carries images",
+    ),
   ],
   "core.system_note": [
-    exact("system", "中途 system 消息", "上游接受中途 system（缺省）"),
+    exact(
+      "system",
+      "a mid-conversation system message",
+      "the upstream accepts mid-conversation system (the default)",
+    ),
     lossy(
       "system",
-      "中途 system 消息，但不可信内容里的提前闭合被转义",
-      "宿主标为 untrusted 的说明含 </untrusted",
+      "a mid-conversation system message, with the early close inside untrusted content escaped",
+      "a note the host marked untrusted holds a </untrusted",
     ),
-    lossy("user-role", "以 <system_note> 标签包住走 user 角色", "模型声明 midConversationSystem: false"),
+    lossy(
+      "user-role",
+      "wrapped in a <system_note> tag and sent with the user role",
+      "the model declares midConversationSystem: false",
+    ),
   ],
-  "core.compaction": [lossy("user-text", "摘要以 user 角色文本呈现，模型无法区分它与用户原话")],
+  "core.compaction": [
+    lossy(
+      "user-text",
+      "the summary is rendered as user-role text, so the model cannot tell it apart from the user's own words",
+    ),
+  ],
   ...NOT_SENT,
 }

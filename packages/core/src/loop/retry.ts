@@ -193,7 +193,7 @@ export interface ResolvedRetry {
 export function resolveRetry(opts: RetryOptions = {}): ResolvedRetry {
   const maxAttempts = opts.maxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
-    throw new RangeError(`retry.maxAttempts 必须是 ≥1 的整数：${String(maxAttempts)}`)
+    throw new RangeError(`retry.maxAttempts must be an integer >= 1, got ${String(maxAttempts)}`)
   }
   return {
     maxAttempts,

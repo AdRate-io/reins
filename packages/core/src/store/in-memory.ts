@@ -15,7 +15,7 @@ export class InMemoryEventLog implements EventLog {
   private readonly sessions = new Map<string, Event[]>()
 
   async append(events: readonly Event[]): Promise<void> {
-    if (events.length === 0) throw new StoreError("empty_batch", "append 的事件数组为空")
+    if (events.length === 0) throw new StoreError("empty_batch", "append received an empty event array")
     const sessionId = (events[0] as Event).sessionId
     const existing = this.sessions.get(sessionId) ?? []
     let expected = existing.length + 1
@@ -23,13 +23,13 @@ export class InMemoryEventLog implements EventLog {
     // 先整批校验，再一次性写入：保证"要么全写、要么不写"
     for (const e of events) {
       if (e.sessionId !== sessionId) {
-        throw new StoreError("session_mismatch", "同一批 append 必须属于同一个会话", {
+        throw new StoreError("session_mismatch", "all events in one append must belong to the same session", {
           expected: sessionId,
           got: e.sessionId,
         })
       }
       if (e.seq !== expected) {
-        throw new StoreError("seq_conflict", `会话 ${sessionId} 期望 seq=${expected}，收到 ${e.seq}`, {
+        throw new StoreError("seq_conflict", `session ${sessionId} expected seq=${expected}, got ${e.seq}`, {
           sessionId,
           expected,
           got: e.seq,
@@ -55,7 +55,7 @@ export class InMemoryEventLog implements EventLog {
 
   async tail(sessionId: string, n: number): Promise<Event[]> {
     if (!Number.isInteger(n) || n < 0)
-      throw new StoreError("invalid_argument", `tail 的 n 必须是非负整数：${n}`)
+      throw new StoreError("invalid_argument", `tail: n must be a non-negative integer, got ${n}`)
     const events = this.sessions.get(sessionId) ?? []
     return events.slice(Math.max(0, events.length - n)).map((e) => structuredClone(e))
   }
@@ -65,7 +65,7 @@ export class InMemoryEventLog implements EventLog {
     if (!Number.isInteger(atSeq) || atSeq < 1 || atSeq > source.length) {
       throw new StoreError(
         "out_of_range",
-        `fork 点 ${atSeq} 超出会话 ${fromSessionId} 的范围 [1, ${source.length}]`,
+        `fork point ${atSeq} is outside session ${fromSessionId}'s range [1, ${source.length}]`,
         {
           fromSessionId,
           atSeq,
@@ -74,7 +74,9 @@ export class InMemoryEventLog implements EventLog {
       )
     }
     if ((this.sessions.get(toSessionId)?.length ?? 0) > 0) {
-      throw new StoreError("target_not_empty", `目标会话 ${toSessionId} 已有事件`, { toSessionId })
+      throw new StoreError("target_not_empty", `target session ${toSessionId} already has events`, {
+        toSessionId,
+      })
     }
     this.sessions.set(
       toSessionId,
@@ -98,7 +100,7 @@ export class InMemoryBlobStore implements BlobStore {
 
   async get(id: string): Promise<{ bytes: Uint8Array; meta: BlobMeta }> {
     const hit = this.blobs.get(id)
-    if (!hit) throw new StoreError("not_found", `blob 不存在：${id}`, { id })
+    if (!hit) throw new StoreError("not_found", `blob not found: ${id}`, { id })
     return { bytes: hit.bytes.slice(), meta: { ...hit.meta } }
   }
 

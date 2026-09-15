@@ -265,7 +265,7 @@ describe("reinsMiddleware：基本流程", () => {
       { role: "user", content: "hi" },
       { role: "assistant", content: "你好" },
     ])
-    expect(warns).toEqual([expect.stringContaining("重发了 1 条")])
+    expect(warns).toEqual([expect.stringContaining("re-sent 1 user message")])
   })
 
   it("用户真的连说两遍同样的话：位置不同，照常入日志（R5 只挡同位置同内容）", async () => {
@@ -504,7 +504,7 @@ describe("reinsMiddleware：脑子模块", () => {
     ) as CoreEventOf<"core.tool_result">[]
     expect(results.map((r) => r.payload.content[0])).toEqual([
       { type: "text", text: "20" },
-      { type: "text", text: "工具调用被拦截：不许" },
+      { type: "text", text: "Tool call blocked: 不许" },
     ])
     expect(results[1]?.payload.isError).toBe(true)
     expect(executed).toBe(1)
@@ -662,7 +662,7 @@ describe("reinsMiddleware：审批", () => {
     expect(decision.payload).toEqual({ toolCallId: "c1", approved: false, by: "tanstack", reason: "太晚了" })
     const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
     expect(result.payload.isError).toBe(true)
-    expect((result.payload.content[0] as { text: string }).text).toContain("审批被拒绝：太晚了")
+    expect((result.payload.content[0] as { text: string }).text).toContain("Approval denied: 太晚了")
     expect(executed).toBe(0)
   })
 
@@ -697,7 +697,7 @@ describe("reinsMiddleware：审批", () => {
       { warn: (m) => warns.push(m) },
     )
     await f.run({ messages: [user("上线")], tools: [deployTool], withoutInterrupts: true })
-    expect(warns).toEqual([expect.stringContaining("未登记")])
+    expect(warns).toEqual([expect.stringContaining("not registered")])
     const events = await all(f.log)
     expect(types(events)).toEqual([
       "tools_bound",
@@ -714,15 +714,15 @@ describe("reinsMiddleware：审批", () => {
       toolCallId: "c1",
       approved: false,
       by: "reins",
-      reason: expect.stringContaining("未登记"),
+      reason: expect.stringContaining("not registered"),
     })
     const result = events[6] as CoreEventOf<"core.tool_result">
     expect(result.payload.isError).toBe(true)
-    expect((result.payload.content[0] as { text: string }).text).toContain("审批被拒绝")
+    expect((result.payload.content[0] as { text: string }).text).toContain("Approval denied")
     // 没有 run_paused，也没有引擎抛错：run 正常跑完，模型在下一轮看到拒绝结果
     expect(f.adapter.calls[1]?.messages?.[2]).toMatchObject({
       role: "tool",
-      error: expect.stringContaining("审批被拒绝"),
+      error: expect.stringContaining("Approval denied"),
     })
   })
 
@@ -746,7 +746,7 @@ describe("reinsMiddleware：审批", () => {
     expect((events[5] as CoreEventOf<"core.tool_result">).payload.isError).toBe(true)
     expect(f.adapter.calls[1]?.messages?.[2]).toMatchObject({
       role: "tool",
-      error: expect.stringContaining("拦截"),
+      error: expect.stringContaining("blocked"),
     })
   })
 })

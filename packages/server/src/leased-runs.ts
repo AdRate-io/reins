@@ -34,7 +34,7 @@ export interface LeasedRunRegistryOptions {
 export function leasedRunRegistry(lease: RunLease, options: LeasedRunRegistryOptions = {}): RunRegistry {
   const ttlMs = options.ttlMs ?? 30_000
   if (!Number.isFinite(ttlMs) || ttlMs <= 0)
-    throw new RangeError(`leasedRunRegistry: ttlMs 必须是正数，收到 ${ttlMs}`)
+    throw new RangeError(`leasedRunRegistry: ttlMs must be a positive number, got ${ttlMs}`)
   const owner = options.owner ?? uuidv7()
   const warn = options.warn ?? ((message: string) => console.warn(message))
   const heartbeatMs = Math.max(1, Math.floor(ttlMs / 3))
@@ -66,14 +66,14 @@ export function leasedRunRegistry(lease: RunLease, options: LeasedRunRegistryOpt
             lost = true
             clearInterval(timer)
             warn(
-              `[reins/server] 会话 ${sessionId} 的 run 租约已丢失（本实例被冻结超过 ${ttlMs} ms 或别的实例已接手），中止本 run；它将以 paused(host) 收场，可续跑`,
+              `[reins/server] Lost the run lease for session ${sessionId} (this instance was frozen for more than ${ttlMs} ms, or another instance took over). Aborting this run; it will end as paused(host) and can be resumed.`,
             )
             run.controller.abort()
           },
           (err: unknown) => {
             // 存储暂时不可用：不中止（可能只是抖动），下次心跳再试；真丢了会有别的实例接手、seq_conflict 兜底
             warn(
-              `[reins/server] 会话 ${sessionId} 的 run 租约续期失败：${messageOf(err)}。本 run 继续，下次心跳再试`,
+              `[reins/server] Failed to renew the run lease for session ${sessionId}: ${messageOf(err)}. The run continues and will retry on the next heartbeat.`,
             )
           },
         )
@@ -85,7 +85,7 @@ export function leasedRunRegistry(lease: RunLease, options: LeasedRunRegistryOpt
           await lease.release(sessionId, owner)
         } catch (err) {
           warn(
-            `[reins/server] 会话 ${sessionId} 的 run 租约释放失败：${messageOf(err)}。${ttlMs} ms 后自然过期`,
+            `[reins/server] Failed to release the run lease for session ${sessionId}: ${messageOf(err)}. It expires on its own after ${ttlMs} ms.`,
           )
         }
       })

@@ -75,13 +75,13 @@ export function project(opts: ProjectOptions): ProjectionResult {
     const cur = timeline[i]
     if (prev && cur && cur.seq <= prev.seq) {
       throw new RangeError(
-        `投影输入必须按 seq 严格升序：位置 ${i} 的 seq ${cur.seq} 不大于前一条 ${prev.seq}`,
+        `projection input must be strictly ascending by seq: seq ${cur.seq} at index ${i} is not greater than the previous ${prev.seq}`,
       )
     }
   }
   const last = timeline[timeline.length - 1]
   const sessionId = opts.sessionId ?? last?.sessionId
-  if (sessionId === undefined) throw new RangeError("空时间线必须显式提供 sessionId")
+  if (sessionId === undefined) throw new RangeError("an empty timeline requires an explicit sessionId")
 
   const reserveTokens =
     opts.budget.reserveTokens ?? Math.floor(opts.budget.contextLimit * DEFAULT_RESERVE_RATIO)

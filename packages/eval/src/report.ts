@@ -22,14 +22,14 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
   const arms = Object.values(report.summary)
   const lines: string[] = []
   const fixtures = new Set(report.outcomes.map((o) => o.fixtureId)).size
-  lines.push(`# eval 报告`)
+  lines.push(`# eval report`)
   lines.push("")
   lines.push(
-    `模型 \`${report.model.provider}/${report.model.id}\`，${fixtures} 个 fixture × ${arms.length} 臂，共 ${report.outcomes.length} 次运行，耗时 ${secs(report.finishedAt - report.startedAt)}。`,
+    `Model \`${report.model.provider}/${report.model.id}\`, ${fixtures} fixture(s) x ${arms.length} arm(s), ${report.outcomes.length} run(s), took ${secs(report.finishedAt - report.startedAt)}.`,
   )
   lines.push("")
   lines.push(
-    "| 臂 | 跑完 | 完成度 | 总 token | 计费等价 | 缓存命中 | 召回 | 违规率 前→后 | 整理 模型/阈值/连续 | 轮 | 工具 | 重复调用 | 墙钟 |",
+    "| arm | finished | completion | total tokens | billable equiv. | cache hits | recall | violation rate before->after | compactions model/threshold/consecutive | turns | tool calls | repeated calls | wall clock |",
   )
   lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
   for (const a of arms) {
@@ -39,16 +39,16 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
   }
   lines.push("")
   lines.push(
-    "均值按 fixture × 重复取；整理三列是每次运行的次数均值。总 token 把缓存读按 1× 计（模型每轮读了多少），计费等价按缓存读 0.1× 折算（账单）。",
+    "Averages are taken over fixture x repeat; the three compaction columns are mean counts per run. Total tokens count cache reads at 1x (what the model read each turn); the billable equivalent discounts cache reads to 0.1x (what the bill looks like).",
   )
 
   if (opts.gate) {
     lines.push("")
     lines.push(
-      `## 门禁：${opts.gate.pass ? "通过 ✅" : "未通过 ❌"}（候选 \`${opts.gate.candidate.arm}\` 对照 \`${opts.gate.reference.arm}\`）`,
+      `## Gate: ${opts.gate.pass ? "passed ✅" : "failed ❌"} (candidate \`${opts.gate.candidate.arm}\` against \`${opts.gate.reference.arm}\`)`,
     )
     lines.push("")
-    lines.push("| 规则 | 基线 | 候选 | 结果 |")
+    lines.push("| rule | reference | candidate | result |")
     lines.push("| --- | ---: | ---: | --- |")
     for (const c of opts.gate.checks) {
       const fmt = (v: number | undefined) =>
@@ -61,10 +61,10 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
 
   if (opts.detail) {
     lines.push("")
-    lines.push("## 明细")
+    lines.push("## Details")
     lines.push("")
     lines.push(
-      "| fixture | 臂 | # | 状态 | 完成度 | 总 token | 计费等价 | 缓存命中 | 召回 | 违规 前/后 | 整理 模型/阈值/连续 | 轮 | 工具 | 墙钟 |",
+      "| fixture | arm | # | status | completion | total tokens | billable equiv. | cache hits | recall | violations before/after | compactions model/threshold/consecutive | turns | tool calls | wall clock |",
     )
     lines.push(
       "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",

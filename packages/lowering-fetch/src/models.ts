@@ -274,14 +274,14 @@ export function resolveModel(ref: ModelRef, extra: readonly FetchModel[] = []): 
   if (!model) {
     throw new LoweringError(
       "unsupported_model",
-      `找不到模型 ${ref.provider}/${ref.id}；内置表只是最小集合，其余请通过 models 选项声明（或用工厂函数）`,
+      `unknown model ${ref.provider}/${ref.id}; the built-in table is a minimal set, declare the rest through the models option (or use a factory function)`,
       { provider: ref.provider, id: ref.id },
     )
   }
   if (!SUPPORTED_APIS.has(model.api)) {
     throw new LoweringError(
       "unsupported_api",
-      `模型 ${ref.provider}/${ref.id} 走 ${model.api}，本实现目前只支持 ${[...SUPPORTED_APIS].join(" / ")}`,
+      `model ${ref.provider}/${ref.id} speaks ${model.api}, but this implementation currently supports only ${[...SUPPORTED_APIS].join(" / ")}`,
       { api: model.api },
     )
   }

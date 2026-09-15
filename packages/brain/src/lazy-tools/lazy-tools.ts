@@ -182,11 +182,11 @@ interface Resolved {
 export function lazyTools(opts: LazyToolsOptions = {}): Socket {
   const summaryChars = opts.summaryChars ?? DEFAULT_LAZY_SUMMARY_CHARS
   if (!Number.isInteger(summaryChars) || summaryChars < 1) {
-    throw new RangeError(`lazyTools.summaryChars 必须是 ≥1 的整数：${String(summaryChars)}`)
+    throw new RangeError(`lazyTools.summaryChars must be an integer >= 1, got ${String(summaryChars)}`)
   }
   const maxPerCall = opts.maxPerCall ?? DEFAULT_TOOL_FIND_MAX
   if (!Number.isInteger(maxPerCall) || maxPerCall < 1) {
-    throw new RangeError(`lazyTools.maxPerCall 必须是 ≥1 的整数：${String(maxPerCall)}`)
+    throw new RangeError(`lazyTools.maxPerCall must be an integer >= 1, got ${String(maxPerCall)}`)
   }
   const summarize = opts.summarize ?? ((t: Tool) => summarizeTool(t, summaryChars))
   const warn = opts.warn ?? ((message: string) => console.warn(message))
@@ -209,14 +209,14 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
       // 那是宿主的另一个工具。宁可整个不注册
       warnOnce(
         "host-tool",
-        `[reins/lazy-tools] 宿主工具表里已有同名工具 ${TOOL_FIND_TOOL_NAME}，本模块的工具与菜单未注册。换掉宿主那个工具的名字即可。`,
+        `[reins/lazy-tools] The host tool table already has a tool named ${TOOL_FIND_TOOL_NAME}, so this module's tool and menu are not registered. Rename the host tool to enable them.`,
       )
     } else {
       const menu = lazyMenuOf(setup.hostTools, summarize)
       if (menu.tools.length === 0) {
         warnOnce(
           "no-lazy",
-          "[reins/lazy-tools] 宿主工具表里没有一件 lazy: true 的工具，tool_find 与菜单未注册。给想按需披露的工具加 lazy: true 即可开启。",
+          "[reins/lazy-tools] No host tool is marked lazy: true, so tool_find and the menu are not registered. Mark the tools you want disclosed on demand with lazy: true to enable them.",
         )
       } else {
         for (const t of menu.tools) menuTools.add(t)

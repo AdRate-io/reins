@@ -89,21 +89,22 @@ function isValidSessionId(x: unknown): x is string {
 /** 请求体只做壳校验；resume 的形状与签名交给 core 的 validateResume，input 的内容交给循环 */
 function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: false; error: string } {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return { ok: false, error: "请求体必须是 JSON 对象" }
+    return { ok: false, error: "request body must be a JSON object" }
   }
   const b = raw as Record<string, unknown>
   if (b.sessionId !== undefined && !isValidSessionId(b.sessionId)) {
-    return { ok: false, error: "sessionId 必须是非空的可打印 ASCII 字符串（不含空格）" }
+    return { ok: false, error: "sessionId must be a non-empty printable ASCII string with no spaces" }
   }
   if (b.lastSeq !== undefined && !isNonNegativeInt(b.lastSeq)) {
-    return { ok: false, error: "lastSeq 必须是非负整数" }
+    return { ok: false, error: "lastSeq must be a non-negative integer" }
   }
   if (b.input !== undefined) {
     const okInput =
       typeof b.input === "string" ||
       Array.isArray(b.input) ||
       (typeof b.input === "object" && b.input !== null && "type" in b.input && "payload" in b.input)
-    if (!okInput) return { ok: false, error: "input 必须是字符串、内容片段数组或事件草稿" }
+    if (!okInput)
+      return { ok: false, error: "input must be a string, an array of content parts, or an event draft" }
   }
   if (b.decisions !== undefined) {
     const okDecisions =
@@ -121,11 +122,11 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
       return {
         ok: false,
         error:
-          "decisions 每项必须含 toolCallId / approved / by（sessionId 可选，给子代理会话的结论用，字符集与请求的 sessionId 同一规则）",
+          "every decisions entry must carry toolCallId / approved / by (sessionId is optional and addresses a subagent session; it follows the same character rules as the request's sessionId)",
       }
   }
   if (b.resume !== undefined && (typeof b.resume !== "object" || b.resume === null)) {
-    return { ok: false, error: "resume 必须是对象" }
+    return { ok: false, error: "resume must be an object" }
   }
   return { ok: true, body: b as AgentRequestBody }
 }
@@ -166,7 +167,7 @@ function checkInput(
         ok: false,
         status: 400,
         error: "bad_request",
-        message: "user_message 的 content 必须是非空内容片段数组",
+        message: "content of user_message must be a non-empty array of content parts",
       }
     return {
       ok: true,
@@ -180,7 +181,7 @@ function checkInput(
         ok: false,
         status: 409,
         error: "unknown_tool_call",
-        message: `回填的调用 ${String(payload.toolCallId)} 并不在等待中`,
+        message: `the call ${String(payload.toolCallId)} being filled in is not pending`,
       }
     }
     const tool = tools.find((t) => t.name === call.payload.name)
@@ -189,7 +190,7 @@ function checkInput(
         ok: false,
         status: 400,
         error: "bad_request",
-        message: `只能回填客户端工具的结果；${call.payload.name} 由服务端执行`,
+        message: `only client-side tool results can be filled in; ${call.payload.name} runs on the server`,
       }
     }
     if (!isContentParts(payload.content))
@@ -197,7 +198,7 @@ function checkInput(
         ok: false,
         status: 400,
         error: "bad_request",
-        message: "tool_result 的 content 必须是非空内容片段数组",
+        message: "content of tool_result must be a non-empty array of content parts",
       }
     return {
       ok: true,
@@ -219,7 +220,7 @@ function checkInput(
     ok: false,
     status: 400,
     error: "bad_request",
-    message: `input 草稿只接受 core.user_message 或客户端工具的 core.tool_result，收到 ${String(draft.type)}`,
+    message: `input drafts accept only core.user_message or a core.tool_result for a client-side tool, got ${String(draft.type)}`,
   }
 }
 
@@ -228,7 +229,7 @@ function lastSeqOf(request: Request, url: URL): number | string {
   const raw = request.headers.get("last-event-id") ?? url.searchParams.get("lastSeq")
   if (raw === null || raw === "") return 0
   const n = Number(raw)
-  return isNonNegativeInt(n) ? n : "lastSeq 必须是非负整数"
+  return isNonNegativeInt(n) ? n : "lastSeq must be a non-negative integer"
 }
 
 /**
@@ -257,7 +258,7 @@ async function* observed(
     warned = true
     const reason = err instanceof Error ? err.message : String(err)
     warn(
-      `[reins/server] onEvent 钩子出错（会话 ${input.sessionId}，事件 #${event.seq} ${event.type}）：${reason}。run 不受影响；本次 run 后续出错不再告警`,
+      `[reins/server] The onEvent hook threw (session ${input.sessionId}, event #${event.seq} ${event.type}): ${reason}. The run is unaffected; further errors in this run are not reported.`,
     )
   }
   try {
@@ -427,19 +428,19 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
       if (err instanceof Response) return err
       throw err
     }
-    if (allowed !== true) return json(404, { error: "not_found", message: "会话不存在" })
+    if (allowed !== true) return json(404, { error: "not_found", message: "session not found" })
     return undefined
   }
 
   async function handleGet(request: Request, url: URL, principal: Principal | undefined): Promise<Response> {
     const sessionId = url.searchParams.get("sessionId")
     if (sessionId === null || sessionId === "")
-      return json(400, { error: "bad_request", message: "缺少 sessionId" })
+      return json(400, { error: "bad_request", message: "missing sessionId" })
     // query 来的 sessionId 同样是客户端输入，越界字符会让回写响应头时抛 TypeError
     if (!isValidSessionId(sessionId))
       return json(400, {
         error: "bad_request",
-        message: "sessionId 必须是非空的可打印 ASCII 字符串（不含空格）",
+        message: "sessionId must be a non-empty printable ASCII string with no spaces",
       })
     // 读日志之前先问归属：GET 拿到 sessionId 就能补发整条时间线，这里是唯一的关口
     const denied = await denyBySessionAuthz({
@@ -471,7 +472,7 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     try {
       raw = await request.json()
     } catch {
-      return json(400, { error: "bad_request", message: "请求体不是合法 JSON" })
+      return json(400, { error: "bad_request", message: "request body is not valid JSON" })
     }
     const parsed = parseBody(raw)
     if (!parsed.ok) return json(400, { error: "bad_request", message: parsed.error })
@@ -518,9 +519,13 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
         for (const d of body.decisions ?? []) {
           if (d.sessionId !== undefined && d.sessionId !== sessionId) continue
           if (!pendingIds.has(d.toolCallId)) {
-            throw new RunStateError("unknown_tool_call", `审批结论指向的调用 ${d.toolCallId} 并不在等待中`, {
-              toolCallId: d.toolCallId,
-            })
+            throw new RunStateError(
+              "unknown_tool_call",
+              `approval decision refers to call ${d.toolCallId}, which is not pending`,
+              {
+                toolCallId: d.toolCallId,
+              },
+            )
           }
         }
         const checked = checkInput(body.input, pending, contributions.tools)
@@ -576,6 +581,10 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     const url = new URL(request.url)
     if (request.method === "GET") return handleGet(request, url, principal)
     if (request.method === "POST") return handlePost(request, ctx, principal)
-    return json(405, { error: "method_not_allowed", message: "只接受 GET 与 POST" }, { allow: "GET, POST" })
+    return json(
+      405,
+      { error: "method_not_allowed", message: "only GET and POST are accepted" },
+      { allow: "GET, POST" },
+    )
   }
 }

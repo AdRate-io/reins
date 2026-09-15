@@ -31,7 +31,7 @@ export class PgBlobStore implements BlobStore {
       [id],
     )
     const row = res.rows[0] as (MetaRow & { bytes: Uint8Array }) | undefined
-    if (!row) throw new StoreError("not_found", `blob 不存在：${id}`, { id })
+    if (!row) throw new StoreError("not_found", `blob not found: ${id}`, { id })
     return { bytes: new Uint8Array(row.bytes), meta: metaOf(row) }
   }
 
@@ -43,7 +43,7 @@ export class PgBlobStore implements BlobStore {
       [id, start + 1, length],
     )
     const row = res.rows[0] as { part: Uint8Array | null } | undefined
-    if (!row) throw new StoreError("not_found", `blob 不存在：${id}`, { id })
+    if (!row) throw new StoreError("not_found", `blob not found: ${id}`, { id })
     return row.part ? new Uint8Array(row.part) : new Uint8Array(0)
   }
 }

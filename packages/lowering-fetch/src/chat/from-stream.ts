@@ -163,7 +163,7 @@ function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolea
         break
       case "content_filter":
         out.stopReason = "error"
-        out.errorMessage = "finish_reason=content_filter：厂商内容过滤截停了这次输出"
+        out.errorMessage = "finish_reason=content_filter: the provider's content filter cut this output short"
         break
       case "insufficient_system_resource":
         out.stopReason = "error"
@@ -171,7 +171,7 @@ function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolea
         break
       case "aborted":
         out.stopReason = "error"
-        out.errorMessage = "finish_reason=aborted：服务端中止了这次生成"
+        out.errorMessage = "finish_reason=aborted: the server aborted this generation"
         break
       case undefined:
         if (!sawDone || a.text.length === 0) {

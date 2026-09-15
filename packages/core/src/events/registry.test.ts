@@ -168,7 +168,7 @@ describe("EventSchemaRegistry.register — 登记时即校验", () => {
   it("升级链有缺口不允许登记", () => {
     expect(
       () => new EventSchemaRegistry([{ type: "ext.gap", version: 3, upcasters: { 1: (p) => p } }]),
-    ).toThrow(/invalid_schema.*v2→v3/)
+    ).toThrow(/invalid_schema.*v2 -> v3/)
   })
 
   it("type 命名空间与版本号校验", () => {
@@ -178,7 +178,7 @@ describe("EventSchemaRegistry.register — 登记时即校验", () => {
   })
 
   it("重复登记拒绝", () => {
-    expect(() => createCoreRegistry([{ type: "core.tool_call", version: 1 }])).toThrow(/已登记/)
+    expect(() => createCoreRegistry([{ type: "core.tool_call", version: 1 }])).toThrow(/already registered/)
   })
 })
 

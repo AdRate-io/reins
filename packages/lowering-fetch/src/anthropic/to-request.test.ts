@@ -259,7 +259,7 @@ describe("encodeAnthropicRequest — 中途 system 摆放（S1）", () => {
     const u = r.body.messages[0]
     expect(u?.content.map((b) => (b as { text: string }).text)).toEqual(["a", "b"])
     expect(landingOf(r, n)).toMatchObject({ kind: "exact", landing: "system" })
-    expect(landingOf(r, n)?.note).toContain("归位")
+    expect(landingOf(r, n)?.note).toContain("moved to just after the next user message")
   })
 
   it("说明是首条：前面没有 user，退成 <system_note> 框住的 user 文本，记 lossy(user-role)", () => {
@@ -269,7 +269,7 @@ describe("encodeAnthropicRequest — 中途 system 摆放（S1）", () => {
     const first = r.body.messages[0]?.content[0] as { text: string } | undefined
     expect(first?.text).toContain('<system_note kind="perception">')
     expect(landingOf(r, n)).toMatchObject({ kind: "lossy", landing: "user-role" })
-    expect(landingOf(r, n)?.note).toContain("首条")
+    expect(landingOf(r, n)?.note).toContain("cannot come first")
   })
 
   it("assistant → 说明 → assistant：前一条是 assistant，退成 user 文本；两条说明合成一条 user", () => {
@@ -288,7 +288,7 @@ describe("encodeAnthropicRequest — 中途 system 摆放（S1）", () => {
     const r = encode(events)
     expect(roles(r.body.messages)).toEqual(["user", "assistant", "user", "system", "assistant"])
     expect(landingOf(r, n)).toMatchObject({ kind: "exact", landing: "system" })
-    expect(landingOf(r, n)?.note).toContain("后移")
+    expect(landingOf(r, n)?.note).toContain("moved after")
   })
 
   it("不支持中途 system 的模型：说明以 <system_note> 走 user 文本、并进当前 user 消息，记 lossy(user-role)", () => {
@@ -465,7 +465,7 @@ describe("延迟加载（L1，spikes/l1-deferred-tools 实测的厂商规矩）"
         ),
     ).toEqual(["tool_result:c1", "tool_result:c2", "text:Loaded 1 tool (g).", "text:Not on list: x"])
     expect(landingOf(r, events[3] as Event)).toMatchObject({ kind: "lossy", landing: "tool-reference" })
-    expect(landingOf(r, events[3] as Event)?.note).toContain("之后")
+    expect(landingOf(r, events[3] as Event)?.note).toContain("after this batch of tool_result")
     expect(landingOf(r, events[4] as Event)).toMatchObject({ kind: "exact", landing: "tool_result" })
   })
 
@@ -481,7 +481,7 @@ describe("延迟加载（L1，spikes/l1-deferred-tools 实测的厂商规矩）"
       ],
     })
     expect(landingOf(r, events[2] as Event)).toMatchObject({ kind: "lossy", landing: "tool_result" })
-    expect(landingOf(r, events[2] as Event)?.note).toContain("不在本次请求的工具表里")
+    expect(landingOf(r, events[2] as Event)?.note).toContain("absent from this request's tool table")
   })
 
   it("untrusted 结果里的引用不走原生落点：展开成文本并包 untrusted 标记，落点 exact tool_result 带备注", () => {

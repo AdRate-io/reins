@@ -53,7 +53,9 @@ export function assertLimits(limits: BudgetLimits): void {
   for (const [dimension, limit] of Object.entries(limits)) {
     if (limit === undefined) continue
     if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
-      throw new RangeError(`budget.limits.${dimension} 必须是正的有限数：${String(limit)}`)
+      throw new RangeError(
+        `budget.limits.${dimension} must be a positive finite number, got ${String(limit)}`,
+      )
     }
   }
 }

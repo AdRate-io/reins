@@ -334,7 +334,7 @@ describe("spill × runLoop：结果外溢", () => {
       ])
       await drain(runLoop(config(lowering, log)))
       const logged = await all(log)
-      expect(textOf(resultOf(logged, "f1"))).toContain("入参不合法")
+      expect(textOf(resultOf(logged, "f1"))).toContain("Invalid arguments")
       expect(textOf(resultOf(logged, "f2"))).toContain("`end` must be greater than `start`")
     })
 
@@ -422,7 +422,7 @@ describe("spill × runLoop：结果外溢", () => {
     expect(textOf(resultOf(logged, "c2"))).toBe(BIG)
     expect(resultOf(logged, "c1").payload.spilled).toBeUndefined()
     expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain("没有配置 BlobStore")
+    expect(warnings[0]).toContain("No BlobStore configured")
     expect(textOf(resultOf(logged, "c3"))).toContain("was truncated")
   })
 

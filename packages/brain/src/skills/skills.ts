@@ -166,12 +166,12 @@ export function assertSkillsRoot(root: string): void {
     segments.slice(1).some((s) => s.length === 0 || s === "." || s === ".." || /\s/.test(s))
   if (bad) {
     throw new RangeError(
-      `skills.root 必须是 "/" 起、不以 "/" 收、不含空段与 . / .. 的规范路径：${JSON.stringify(root)}`,
+      `skills.root must be a canonical path starting with "/", not ending with "/", with no empty, . or .. segments, got ${JSON.stringify(root)}`,
     )
   }
   if (root === MEMORY_ROOT || root.startsWith(`${MEMORY_ROOT}/`) || MEMORY_ROOT.startsWith(`${root}/`)) {
     throw new RangeError(
-      `skills.root ${JSON.stringify(root)} 与记忆根 ${MEMORY_ROOT} 重叠：模型能用 memory 工具写进去的东西不能当技能（system 信任）`,
+      `skills.root ${JSON.stringify(root)} overlaps the memory root ${MEMORY_ROOT}: whatever the model can write through the memory tool must not become a skill (which is trusted as system)`,
     )
   }
 }
@@ -181,7 +181,7 @@ export function skills(opts: SkillsOptions = {}): Socket {
   assertSkillsRoot(root)
   const maxReadChars = opts.maxReadChars ?? DEFAULT_SKILL_READ_CHARS
   if (!Number.isInteger(maxReadChars) || maxReadChars < 1) {
-    throw new RangeError(`skills.maxReadChars 必须是 ≥1 的整数：${String(maxReadChars)}`)
+    throw new RangeError(`skills.maxReadChars must be an integer >= 1, got ${String(maxReadChars)}`)
   }
   const source = opts.source
   const warn = opts.warn ?? ((message: string) => console.warn(message))
@@ -201,7 +201,7 @@ export function skills(opts: SkillsOptions = {}): Socket {
         if (!source) {
           warnOnce(
             "no-source",
-            "[reins/skills] 没有给 source，skill_read 工具与技能菜单未注册。传 skills({ source }) 即可开启（任何 MemoryStore、fsSkillSource、inlineSkills 都行）。",
+            "[reins/skills] No source given, so the skill_read tool and the skill menu are not registered. Pass skills({ source }) to enable them (any MemoryStore, fsSkillSource or inlineSkills works).",
           )
           return undefined
         }
@@ -210,18 +210,21 @@ export function skills(opts: SkillsOptions = {}): Socket {
           // 那是宿主的另一个工具、语义与 trust 都不同。宁可整个不注册
           warnOnce(
             "host-tool",
-            `[reins/skills] 宿主工具表里已有同名工具 ${SKILL_READ_TOOL_NAME}，本模块的工具与菜单未注册。换掉宿主那个工具的名字即可。`,
+            `[reins/skills] The host tool table already has a tool named ${SKILL_READ_TOOL_NAME}, so this module's tool and menu are not registered. Rename the host tool to enable them.`,
           )
           return undefined
         }
         const menu = await loadSkillMenu(source, root)
         for (const r of menu.rejected) {
-          warnOnce(`rejected:${r.path}:${r.reason}`, `[reins/skills] 跳过不合规的技能 ${r.path}：${r.reason}`)
+          warnOnce(
+            `rejected:${r.path}:${r.reason}`,
+            `[reins/skills] Skipping invalid skill ${r.path}: ${r.reason}`,
+          )
         }
         if (menu.skills.length === 0) {
           warnOnce(
             "empty",
-            `[reins/skills] source 在 ${root}/ 下没有任何合规的 SKILL.md，skill_read 工具与技能菜单未注册。检查：① 载体的 root 是否与 skills({ root }) 一致（都缺省 ${DEFAULT_SKILLS_ROOT}）；② 目录布局须是 <root>/<name>/${SKILL_FILE_NAME}（fsSkillSource 的 dir 按 process.cwd() 解析，最好传绝对路径）；③ 头部的 name 须与目录名一致。`,
+            `[reins/skills] The source holds no valid SKILL.md under ${root}/, so the skill_read tool and the skill menu are not registered. Check: (1) the source's root matches skills({ root }) (both default to ${DEFAULT_SKILLS_ROOT}); (2) the layout is <root>/<name>/${SKILL_FILE_NAME} (fsSkillSource resolves dir against process.cwd(), so an absolute path is safer); (3) the name in the front matter equals the directory name.`,
           )
           return undefined
         }
@@ -260,7 +263,7 @@ export function skills(opts: SkillsOptions = {}): Socket {
         content = await source.read(key)
       } catch (err) {
         // 载体故障（数据库断了、磁盘 EIO）：告警给宿主看细节，模型只知道"现在读不到"——错误文案可能带宿主路径或连接串
-        warnOnce(`read-failed:${String(err)}`, `[reins/skills] 读取 ${key} 失败：${String(err)}`)
+        warnOnce(`read-failed:${String(err)}`, `[reins/skills] Failed to read ${key}: ${String(err)}`)
         return {
           content: [
             { type: "text", text: `Skill file ${input.name}/${input.path} could not be read right now.` },

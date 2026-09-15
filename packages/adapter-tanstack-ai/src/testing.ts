@@ -62,7 +62,7 @@ export function scriptedAdapter(script: AdapterScript): ScriptedAdapter {
       calls.push(options)
       const call = n++
       const response = typeof script === "function" ? script(options, call) : script[call]
-      if (!response) throw new Error(`剧本没有第 ${call + 1} 次响应`)
+      if (!response) throw new Error(`the script has no response #${call + 1}`)
       const runId = options.runId ?? `run_${call}`
       const threadId = options.threadId ?? "thread"
       const ts = () => Date.now()
@@ -150,7 +150,7 @@ export function scriptedAdapter(script: AdapterScript): ScriptedAdapter {
       } as unknown as StreamChunk
     },
     structuredOutput() {
-      return Promise.reject(new Error("scripted adapter 不支持结构化输出"))
+      return Promise.reject(new Error("the scripted adapter does not support structured output"))
     },
   }
   return adapter as unknown as ScriptedAdapter
