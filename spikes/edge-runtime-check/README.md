@@ -92,8 +92,9 @@ flag 也能 `import("node:fs")`）。所以只跑新 date 会**高估**结论。
 
 ## 没覆盖什么（别把结论用超）
 
-- **只测了 workerd。** Deno、Bun 未测（本机未装）。Vercel Edge / Netlify Edge 等虽同属 Web 标准运行时，
-  各自实现有差异，未验。
+- **本目录只测 workerd。** Bun / Deno / Vercel Edge（edge-runtime）2026-09-15 起由 `spikes/runtime-matrix/` 覆盖：
+  同一个 `worker.mjs` 探针、同一份内容核对（`fetch-verdict.mjs`）、同一套密钥读法（`secrets.mjs`），两处结论可比。
+  Netlify Edge 等其它 Web 标准运行时仍未验。
 - **只测了单轮首个请求。** 多轮回放 thinking 签名、中途 `system_note` 的落点等语义行为不在此列 ——
   那些由 lowering-pi 单测与 `t7-live-roundtrip`、lowering-fetch 单测与 `f1/f2/f3-*-live` 覆盖，与运行时无关。
 - **没测 `@reinsjs/server` / `store-*` 在 edge 上的表现。** store-sqlite 明确是 Node-only 可选包，

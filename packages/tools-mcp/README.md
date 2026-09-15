@@ -36,8 +36,9 @@ const files = mcpTools({
 ```
 
 The main entry uses only Web-standard APIs (`fetch`, `URL`, `Headers`) and runs on Cloudflare Workers without
-`nodejs_compat` (verified on a 2023 compatibility date, see `spikes/edge-runtime-check`). Only `/node` imports
-`node:*`.
+`nodejs_compat` (verified on a 2023 compatibility date, see `spikes/edge-runtime-check`), and on Bun, Deno
+(`--allow-net` is enough) and Vercel's `edge-runtime` (`spikes/runtime-matrix` — `tools/list` + `tools/call`
+against a local server in each). Only `/node` imports `node:*`.
 
 ## What happens at run time
 

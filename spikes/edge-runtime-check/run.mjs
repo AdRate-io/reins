@@ -13,7 +13,9 @@
  * Anthropic / Responses → CF 网关打官方模型），并对 fetch 版产出做**自动内容核对**（判据不是状态码）。
  */
 import { spawn } from "node:child_process"
-import { readFile, rm, writeFile } from "node:fs/promises"
+import { rm, writeFile } from "node:fs/promises"
+import { FETCH_CELLS, fetchChecksOf } from "./fetch-verdict.mjs"
+import { readCf, readDeepSeek, readGateway } from "./secrets.mjs"
 
 const HERE = new URL("./", import.meta.url)
 const live = process.argv.includes("--live")
@@ -22,38 +24,6 @@ const onlyOld = process.argv.includes("--only-old")
 const FAKE_PORT = 8790
 const WORKER_PORT = 8791
 const MCP_PORT = 8792
-
-/** 从信息文件取 DeepSeek 官方 Anthropic 端口的 key 与 baseUrl。选它是因为直连 https、已实测五项全 200，
- *  不经 aireiter（网关会改写请求、吞消息）也不经 Claude 中转（那个是 http 明文，会污染运行时结论）。 */
-async function readDeepSeek() {
-  const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-  const key = info.match(/deepseek官方[\s\S]*?key:\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-  // 注意：信息文件第 135 行有一句**说明文字**也含"anthropic 协议 baseurl："字样，后面紧跟反引号，
-  // 只用 \S+ 会先撞上它抓到一个反引号（实测 Invalid URL string.）。所以锚定必须以 http(s):// 开头。
-  const base = info.match(/anthropic 协议 baseurl：\s*(https?:\/\/\S+)/)?.[1]
-  const model = info.match(/deepseek官方[\s\S]*?模型：\s*(\S+)/)?.[1]
-  if (!key || !base) throw new Error("没在信息文件里找到 DeepSeek 的 key 或 baseUrl")
-  return { key, base, model }
-}
-
-/** aireiter 聚合网关的 key：OpenAI Responses 协议侧用它（DeepSeek 的 responses 端口未经 reins 核实）。
- *  网关对 Claude 那条路有改写请求、吞消息的问题，但这里只验运行时能否跑通 openai SDK，与语义无关。 */
-async function readGateway() {
-  const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-  const key = info.match(/密钥（三种协议共用）：`(sk-[^`]+)`/)?.[1]
-  if (!key) throw new Error("没在信息文件里找到网关密钥")
-  return { key, base: "https://aireiter.com/api/v1", model: "gpt-5.5" }
-}
-
-/** CF AI Gateway 的透传基址与令牌（F0 体检过的官方靶子）；读法与 f1 / f2 / f3 spike 一致 */
-async function readCf() {
-  const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-  const token = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-  const account = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-  const gateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
-  if (!token || !account) throw new Error("信息文件里缺 CF 令牌 / account id")
-  return { token, base: `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}` }
-}
 
 function sh(cmd, args, opts = {}) {
   const p = spawn(cmd, args, { cwd: new URL(".", HERE).pathname, ...opts })
@@ -249,61 +219,7 @@ const compat = onlyOld ? null : await runArch("wrangler-compat.toml", "宽松档
 fake.p.kill("SIGTERM")
 mcp.p.kill("SIGTERM")
 
-// ---- fetch 版产出的自动内容核对（F4）：HTTP 200 从不等于探测通过，逐项对产出 ----
-/** 一条 tool_call 草稿是否是"调 get_weather 查上海"：入参里 city 含"上海"或 Shanghai（模型可能翻译城市名） */
-const weatherCall = (body) =>
-  (body?.草稿 ?? []).find(
-    (d) =>
-      d.type === "core.tool_call" &&
-      d.payload?.name === "get_weather" &&
-      /上海|shanghai/i.test(String(d.payload?.args?.city ?? "")),
-  )
-/** 返回 { 通过, 说明 }；x 为 null 表示这一格没跑（跳过），HTTP 非 200 直接判不过 */
-function checkFetch(kind, x) {
-  if (x === null) return { 通过: null, 说明: "跳过" }
-  if (x.status !== 200) return { 通过: false, 说明: `HTTP ${x.status}` }
-  const b = x.body ?? {}
-  const fails = []
-  if (kind === "load") {
-    const apis = b.有损矩阵覆盖的协议 ?? []
-    for (const api of ["openai-chat", "anthropic-messages", "openai-responses"]) {
-      if (!apis.includes(api)) fails.push(`矩阵缺 ${api}`)
-      const line = b.三条线?.[api]
-      if (line?.工具数 !== 1) fails.push(`${api} 工具数 ${line?.工具数}`)
-      if (line?.非exact落点?.length) fails.push(`${api} 有非 exact 落点`)
-    }
-  } else {
-    const call = weatherCall(b)
-    if (!call) fails.push("没有 get_weather(上海) 的 tool_call 草稿")
-    if (b.收尾?.stopReason !== "toolUse")
-      fails.push(`stopReason=${b.收尾?.stopReason}${b.收尾?.errorMessage ? ` (${b.收尾.errorMessage})` : ""}`)
-    if (!(b.收尾?.usage?.output > 0)) fails.push(`output 用量 ${b.收尾?.usage?.output}`)
-    if (kind === "fake") {
-      // 假端点给的定值：签名 base64 40 字符、usage 123 / 42、入参切成两段 input_json_delta 且含中文
-      const thinking = (b.草稿 ?? []).find((d) => d.type === "core.model_thinking")
-      if (thinking?.thinking签名长度 !== 40) fails.push(`thinking 签名长度 ${thinking?.thinking签名长度}`)
-      if (call && call.payload.args.city !== "上海")
-        fails.push(`入参 city=${JSON.stringify(call.payload.args.city)}（UTF-8 乱切重组失败）`)
-      if (b.收尾?.usage?.input !== 123 || b.收尾?.usage?.output !== 42)
-        fails.push(`usage ${JSON.stringify(b.收尾?.usage)}`)
-    }
-    if (kind === "live-responses") {
-      // 推理模型缺省带 include，reasoning 项应带 encrypted_content → 草稿里有带签名的 thinking
-      const thinking = (b.草稿 ?? []).find((d) => d.type === "core.model_thinking" && d.thinking签名长度 > 0)
-      if (!thinking) fails.push("没有带 encrypted_content 的 reasoning 草稿")
-    }
-  }
-  return fails.length ? { 通过: false, 说明: fails.join("；") } : { 通过: true, 说明: "通过" }
-}
-const FETCH_CELLS = [
-  ["load", "fetchLoad"],
-  ["fake", "fetchFake"],
-  ["live-chat", "fetchLiveChat"],
-  ["live-anthropic", "fetchLiveAnthropic"],
-  ["live-responses", "fetchLiveResponses"],
-]
-const fetchChecksOf = (r) =>
-  Object.fromEntries(FETCH_CELLS.map(([kind, key]) => [kind, checkFetch(kind, r[key])]))
+// ---- fetch 版产出的自动内容核对（F4）：实现在 fetch-verdict.mjs，与 runtime-matrix 共用同一份判据 ----
 
 // ---- 结论 ----
 const verdict = (r) => {

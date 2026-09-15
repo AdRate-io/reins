@@ -144,6 +144,8 @@ async function probeStream(baseUrl, id, apiKey, label, api = "anthropic-messages
     const d = r.value
     drafts.push({
       type: d.type,
+      // tool_call 的 payload 原样带回，供编排器核对入参（与 fetch-probes 同形；runtime-matrix 的 pi 版核对靠它）
+      payload: d.type === "core.tool_call" ? d.payload : undefined,
       payload摘要: JSON.stringify(d.payload).slice(0, 200),
       thinking签名长度: d.replay?.thinkingSignature ? String(d.replay.thinkingSignature).length : null,
     })

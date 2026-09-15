@@ -4,7 +4,7 @@
 
 reins is an embeddable agent library. Install it, plug in your own model, and you get an agent that knows how to drive a long task: it sees its own context, decides when to tidy it, never loses the constraints you pinned, hands off to a fresh session with a proper summary, remembers what matters, and leaves a timeline you can replay and fork at any point.
 
-The loop is a few hundred lines you can read and copy. Nothing is hidden. Every part is removable. The core is written against Web standards only and is verified on Node 22 and Cloudflare Workers (strictest compat, no `nodejs_compat`); Bun, Deno and Vercel Edge should work but are not yet tested.
+The loop is a few hundred lines you can read and copy. Nothing is hidden. Every part is removable. The core is written against Web standards only and is verified on Node 22, Cloudflare Workers (strictest compat, no `nodejs_compat`), Bun, Deno and Vercel's Edge Runtime — the same built artifacts, the same probes, every cell checked on content (`spikes/edge-runtime-check`, `spikes/runtime-matrix`).
 
 ## Two principles
 
@@ -221,7 +221,12 @@ external dependencies. `@reinsjs/lowering-pi` pulls `pi-ai`, which declares ten 
 own — installing it fetches roughly 65 MB, of which about 29 MB (`@google/genai`, the AWS Bedrock SDK)
 is outside the import graph reins actually reaches. Nothing Node-specific ends up on the paths we use:
 both lowering layers are verified on Cloudflare workerd with no `nodejs_compat` flag and a 2023
-`compatibility_date`, each protocol against a live provider (see `spikes/edge-runtime-check`).
+`compatibility_date`, each protocol against a live provider (see `spikes/edge-runtime-check`), and on
+Bun 1.4, Deno 2.9 and Vercel's `edge-runtime` with the same probes (`spikes/runtime-matrix`). Two runtime
+notes for `lowering-pi`: on Deno, pi-ai's user-agent string reads `os.release()`, so grant
+`--allow-sys=osRelease` (`lowering-fetch` needs only `--allow-net`); on an Edge runtime the `openai` SDK
+expects a `process` global to exist (Vercel provides `process.env`; the bare local emulator does not).
+On Bun, raise `Bun.serve({ idleTimeout })` above its 10-second default or a slow model call is cut off.
 
 **Session ids are validated.** A `sessionId` must be non-empty printable ASCII with no spaces;
 anything else is answered `400 bad_request` on both `GET` and `POST`. The handler echoes the id

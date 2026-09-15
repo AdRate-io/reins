@@ -49,13 +49,13 @@ Both implement the same `Lowering` interface from `@reinsjs/core` and both decla
 | Mid-conversation `system` on Anthropic | placed by the encoder | placed by rewriting pi-ai's payload |
 | Unsigned thinking | `dropped` (declared) | may fall back to visible text |
 | Model table | a minimal built-in table you override per model | pi-ai's table, maintained upstream |
-| Runtime | verified on Cloudflare workerd at the strictest tier (2023 compatibility date, no `nodejs_compat`), all three protocols against live providers | verified on workerd at the same tier, both protocols |
+| Runtime | verified on Cloudflare workerd at the strictest tier (2023 compatibility date, no `nodejs_compat`), Bun, Deno (`--allow-net` only) and Vercel `edge-runtime`, all three protocols against live providers | verified on the same four runtimes, both protocols; Deno needs `--allow-sys=osRelease`, an Edge runtime needs a `process` global for the OpenAI path |
 
 **Start with `lowering-fetch`** for a new host: it covers everything `lowering-pi` covers plus the OpenAI-compatible ecosystem, ships nothing but this package, and the request you debug is the request that was sent. Stay on `lowering-pi` when you already run on it (there is nothing to migrate for), or when you want the provider table and new wire-protocol features to arrive through pi-ai rather than through this package. Events written by one layer replay through the other: `replay.thinkingSignature` uses the same shape on both, so switching does not invalidate a stored timeline.
 
 ## Runtime
 
-No `node:*`, no `process`, no `Buffer` — the same `dist/index.js` runs on Node ≥ 22 and on Cloudflare Workers with a 2023 `compatibility_date` and no compatibility flags (`spikes/edge-runtime-check`, tier "最严档": module load, a byte-sliced SSE stream against a local fake endpoint, and one live request per protocol). Bun / Deno / Vercel Edge are expected to work for the same reason but have not been run. Bring your own `fetch` through `FetchLoweringOptions.fetch` when the host needs a proxy or a Workers service binding.
+No `node:*`, no `process`, no `Buffer` — the same `dist/index.js` runs on Node ≥ 22 and on Cloudflare Workers with a 2023 `compatibility_date` and no compatibility flags (`spikes/edge-runtime-check`, tier "最严档": module load, a byte-sliced SSE stream against a local fake endpoint, and one live request per protocol). Bun 1.4, Deno 2.9 (only `--allow-net` needed — the layer reads no system information) and Vercel's `edge-runtime` (bare vm, no `process`, no `eval`) pass the same probes, all three protocols against live providers (`spikes/runtime-matrix`).
 
 ## Options
 
