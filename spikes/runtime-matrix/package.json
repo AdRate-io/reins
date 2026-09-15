@@ -10,7 +10,8 @@
     "bun": "1.4.2",
     "deno": "2.9.6",
     "edge-runtime": "4.0.1",
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "vercel": "^59.17.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

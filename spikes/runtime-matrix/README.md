@@ -1,6 +1,6 @@
 # runtime-matrix —— Bun / Deno / Vercel Edge 上的运行时兼容性核实（四环境验证）
 
-**结论（2026-09-15）：`@reinsjs/core`、`@reinsjs/lowering-fetch`、`@reinsjs/lowering-pi`、`@reinsjs/tools-mcp` 的打包产物在 Bun 1.4.2、Deno 2.9.6、Vercel 官方本地 Edge 运行时 `edge-runtime` 4.0.1 上全部跑通，库代码一行未改。** fetch 版三条线在四个运行时（含 Node 22 对照）真模型各臂 5/5；pi 版全通的三个宿主条件都出在上游而非 reins：Deno 要 `--allow-sys=osRelease`、Edge 运行时要有 `process` 全局、Bun 要拉高 `Bun.serve` 的空闲超时。
+**结论（2026-09-15）：`@reinsjs/core`、`@reinsjs/lowering-fetch`、`@reinsjs/lowering-pi`、`@reinsjs/tools-mcp` 的打包产物在 Bun 1.4.2、Deno 2.9.6、Vercel 官方本地 Edge 运行时 `edge-runtime` 4.0.1 以及**真 Vercel Edge 生产部署**（sfo1，7/7）上全部跑通，库代码一行未改。** fetch 版三条线在四个运行时（含 Node 22 对照）真模型各臂 5/5；pi 版全通的三个宿主条件都出在上游而非 reins：Deno 要 `--allow-sys=osRelease`、Edge 运行时要有 `process` 全局、Bun 要拉高 `Bun.serve` 的空闲超时。
 
 ## 为什么这么做
 
@@ -70,9 +70,28 @@ edge 臂比 workerd 最严档还多缺 `setImmediate` 与 `navigator`，是本�
 2. **Edge 运行时 + pi 版 OpenAI 路径要有 `process` 全局。** `openai` SDK 6.40 的 `detect-platform` 在 `typeof EdgeRuntime !== "undefined"` 分支裸读 `globalThis.process.version`；`@anthropic-ai/sdk` 0.123 同一处是 `process?.version ?? "unknown"`，所以 Anthropic 路径无事。Vercel 线上 Edge 提供 `process.env`（对象存在 → `.version` 是 undefined，不抛）；裸 `edge-runtime` 没有。`edge-process` 臂用只含 `env` 的垫片实证：够。
 3. **Bun 宿主要拉高 `Bun.serve({ idleTimeout })`。** 缺省 10 秒，上游慢或 SDK 退避重试时 Bun 无声掐断连接，客户端只见 `fetch failed`、进程无任何日志。探针宿主设 255（上限）。
 
+## 真 Vercel 部署（2026-09-15 下午，Boss 的 Hobby 账号，项目 `reins-runtime-probe`，区域 sfo1）
+
+```bash
+# Boss 先在真终端登录一次：spikes/runtime-matrix/node_modules/.bin/vercel login
+node spikes/runtime-matrix/build-vercel.mjs                       # ESM 单文件 → vercel-probe/bundle.js（1.7 MB，gzip 后 ~200 KB，Hobby 上限 1 MB）
+REINS_OAI_MODEL=gpt-5.6-sol node spikes/runtime-matrix/deploy-vercel.mjs   # 生产部署，凭证经 -e 注入
+node spikes/runtime-matrix/probe-vercel.mjs                       # 从本机打七格，落 out-vercel.json
+```
+
+`vercel-probe/api/probe.js` 是 `export const config = { runtime: "edge" }` 的 Edge 函数，按 `?path=` 分派到同一个探针处理器。假端点 / 假 MCP 在线上打不到本机，跳过；其余 **7/7 通过**（内容核对）：
+
+| pi: load | live-anthropic | live-openai | fetch: load | live-chat | live-anthropic | live-responses |
+| --- | --- | --- | --- | --- | --- | --- |
+| 通过 | 通过 | 通过（reasoning 签名 1624 字符） | 通过 | 通过 | 通过 | 通过 |
+
+**线上运行时面**（`/load` 自述）：`process` **object**（`process.versions.node` 无）、`Buffer` function、`setImmediate` undefined、无 `navigator`、`import("node:fs")` 失败、`import("node:crypto")` **成功**。也就是说线上比裸 `edge-runtime` 多给了 `process`、`Buffer` 与一小撮 `node:` 内置——`edge-process` 臂的判断成立：openai SDK 那处只要 `process` 对象存在就不抛，pi 版 OpenAI 路径线上直接通。第一遍 gpt-5.5 那格是 aireiter 上游 "Network connection lost."（与本机同一时刻同一症状），换同网关 gpt-5.6-sol 重部署后通过。
+
+顺带一条平台现状：Vercel 2026 年起**不再推荐** Edge 运行时（Middleware 与 Edge Functions 底层改由 Vercel Functions 承载，缺省 Node.js 24 的 Fluid Compute），`runtime: "edge"` 仍支持。所以这次实测的意义是坐实 README 那句话；在 Vercel 上跑 reins，正路是缺省的 Node 运行时，那就是我们本来就验过的 Node 路径。
+
 ## 没覆盖什么
 
-- **真 Vercel 部署未测**（要 Boss 的 Vercel 账号）。`edge-runtime` 是 Vercel 官方维护、`next dev` 跑 edge 函数用的那份实现，但线上多的 `process.env` 已用垫片臂单独量出；线上还可能有别的差（如 `node:` 白名单里的 `async_hooks` / `events` / `buffer` / `util`），本矩阵走的路径一处都没碰它们。
+- **线上 Edge 的 `node:` 白名单**（`async_hooks` / `events` / `buffer` / `util` 等）本矩阵走的路径一处都没碰；`node:crypto` 能进只是自述观察，reins 不依赖它。
 - **Netlify Edge、Fastly Compute 等**同属 Web 标准运行时，未验。
 - **只测降级层、core 与 tools-mcp 主入口。** `@reinsjs/server`、`store-*`、`brain` 不在此矩阵（brain 主入口零 `node:*`，与 core 同一套约束；store-sqlite 的 `bun:sqlite` 路径见其 README，未在此实证）。
 - **只测单轮首个请求**，多轮语义由各自 live spike 覆盖，与运行时无关。

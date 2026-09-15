@@ -225,7 +225,7 @@ both lowering layers are verified on Cloudflare workerd with no `nodejs_compat` 
 Bun 1.4, Deno 2.9 and Vercel's `edge-runtime` with the same probes (`spikes/runtime-matrix`). Two runtime
 notes for `lowering-pi`: on Deno, pi-ai's user-agent string reads `os.release()`, so grant
 `--allow-sys=osRelease` (`lowering-fetch` needs only `--allow-net`); on an Edge runtime the `openai` SDK
-expects a `process` global to exist (Vercel provides `process.env`; the bare local emulator does not).
+expects a `process` global to exist (Vercel's deployed Edge runtime has one — verified with a live deployment; the bare local emulator does not).
 On Bun, raise `Bun.serve({ idleTimeout })` above its 10-second default or a slow model call is cut off.
 
 **Session ids are validated.** A `sessionId` must be non-empty printable ASCII with no spaces;

@@ -1,0 +1,6 @@
+{
+  "name": "reins-runtime-probe",
+  "private": true,
+  "type": "module",
+  "description": "reins 四环境验证：把 edge-runtime-check 的探针部署到真 Vercel Edge 上打一遍（spikes/runtime-matrix）"
+}
