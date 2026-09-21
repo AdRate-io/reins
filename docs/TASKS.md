@@ -30,6 +30,8 @@
 - [x] **L1 lazy-tools 的 provider 原生路径**（2026-09-15）：core `ContentPart` 加 `tool_reference` 段（带定义快照）、`ToolSpec.deferLoading` / `LoweringCapabilities.deferredTools` / `BeforeModelPatch.deferredTools`；lazy-tools 按能力位分原生 / 过滤两路；fetch 版 Anthropic 线 `defer_loading` + `tool_reference` 块（GA 无 beta 头，Haiku 4.5 起），厂商规矩落进 encoder；其余线与 pi 版展开成文本、不发 deferLoading 的工具。spike：取回后第 2 请求 cache_read Haiku 8497 / Opus 4062，老路子归零；端到端 Haiku / Opus 各 9/9；取回之前被延迟的定义不进计费前缀（P9 六臂 6/6，删件臂整段命中带标臂）。`lazyTools()` 接口不变。+33 用例，1218 全绿；MCP 工具懒发现仍待 `SocketSetup` 加"此前已并入的工具"
 - [x] **运行时告警与构造期错误文案英文化**（2026-09-15）：实际不是「十几处」而是 **519 处字符串字面量 + 181 处测试断言**。改的是宿主 / 模型会看到的一切——`throw` 消息、`warn()` 文案、模型可见的 tool_result 说明、三条降级线与适配器的有损矩阵 `note` / `when`、协议装不下内容的占位文本、`core/testing` 四套一致性套件、eval 报告与门禁；注释 / JSDoc / 测试标题 / examples / docs 保持中文（边界与理由见 DECISIONS 同日）。零结构改动，1218 个用例全绿，产物自检 17/17；12 个包各一条 minor changeset
 
+- [ ] 工具批并发执行（0.3 候选，**不排期**）——现状串行是宪法二的后果，不是疏漏；要做则限死「整批 beforeTool 全 proceed 才并发、结果按原顺序 append」。等真出现「多个慢的只读工具并列」的场景 + eval 数据再议，理由见 DECISIONS 2026-09-21
+
 ## 待 Boss 本人操作（不挡开发）
 
 - [x] **Cloudflare AI Gateway 验证靶子**（2026-09-14 Boss 已建，网关 `reins-dev`；轻测 Anthropic Messages / OpenAI Responses / OpenAI Chat 三条透传端点非流式均原样回暗号、Anthropic 流式透传；配置与路径写法在 `模型API测试信息.md` 末尾。REST `/ai/v1/*` 路径不适用——它要账户级 API token，透传路径才是我们要的）
