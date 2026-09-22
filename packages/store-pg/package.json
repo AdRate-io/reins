@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/store-pg",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "reins — PostgreSQL-backed EventLog / BlobStore / MemoryStore. Works with any client exposing query(text, params) → { rows } (pg, PGlite, …)",
   "keywords": [
     "agent",

@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/tools-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "reins — MCP servers as a Socket: tools/list once per run, tools/call as Tool.execute, annotations → risk / approval defaults. Streamable HTTP on the Web-standard entry, stdio under ./node",
   "keywords": [
     "agent",

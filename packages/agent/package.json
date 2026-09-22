@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/agent",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "reins — hand the reins to the model. createAgent() + re-exports of @reinsjs/core, @reinsjs/server and @reinsjs/ui-agui",
   "keywords": [
     "agent",

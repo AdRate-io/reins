@@ -1,5 +1,16 @@
 # @reinsjs/eval
 
+## 0.3.0
+
+### Minor Changes
+
+- Version alignment: every `@reinsjs/*` package ships as 0.3.0 together with `@reinsjs/core` and `@reinsjs/brain` (MCP tools on the `lazyTools()` menu via `SocketSetup.tools`). No behaviour change in these packages beyond the dependency bump.
+
+### Patch Changes
+
+- Updated dependencies [a3afbf9]
+  - @reinsjs/core@0.3.0
+
 ## 0.2.1
 
 ### Patch Changes
