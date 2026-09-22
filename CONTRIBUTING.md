@@ -42,6 +42,6 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ## 发布（维护者）
 
 1. `pnpm changeset version` → 检查各包版本与 `packages/core/src/index.ts` 的 `REINS_VERSION` 一致，`pnpm check && pnpm build && pnpm check:dist` 全绿，提交。
-2. 在仓库根目录发布，**只用 pnpm**：`pnpm -r publish --access public --no-git-checks`。pnpm 会把 `workspace:*` 依赖重写成当前版本号并读根 `.npmrc`（官方源）；`npm publish` 会把 `workspace:*` 原样传上去，发出的包装不上（2026-09-15 的 0.2.0 就是这样作废的）。每个包要一次 2FA 验证码。
+2. 先 `npm whoami` 确认令牌还有效且是 `reinsjs` 组织的 owner——npm 令牌有有效期，过期后 publish 报的是 **404 Not Found（PUT）** 而不是 401（scoped 包对鉴权失败刻意伪装成 404，2026-09-22 发 0.3.0 踩过），`npm login` 重登即可。然后在仓库根目录发布，**只用 pnpm**：`pnpm -r publish --access public --no-git-checks`。pnpm 会把 `workspace:*` 依赖重写成当前版本号并读根 `.npmrc`（官方源）；`npm publish` 会把 `workspace:*` 原样传上去，发出的包装不上（2026-09-15 的 0.2.0 就是这样作废的）。每个包要一次 2FA 验证码。
 3. 发后**从官方源真实安装冒烟**：新建空目录，`pnpm add @reinsjs/agent@<版本> @reinsjs/lowering-fetch@<版本> @reinsjs/brain@<版本>`，import 主入口并起一次 handler。`npm view` 只能证明传上去了。
 4. 冒烟通过再推远程、打 `v<版本>` tag、发 GitHub Release。
