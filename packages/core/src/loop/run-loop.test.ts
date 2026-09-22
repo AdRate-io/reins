@@ -11,7 +11,15 @@ import { BUILTIN_APPROVAL_POLICY, runLoop } from "./run-loop.js"
 import { resolveSocketContributions } from "./static.js"
 import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
-import type { ApprovalDecisionInput, Interruption, LoopConfig, RunResult, Socket, Tool } from "./types.js"
+import type {
+  ApprovalDecisionInput,
+  Interruption,
+  LoopConfig,
+  RunResult,
+  Socket,
+  SocketSetup,
+  Tool,
+} from "./types.js"
 
 const registry = createCoreRegistry()
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -561,6 +569,49 @@ describe("runLoop：Socket 五个钩子", () => {
       sockets: [socket],
     })
     expect(resolved).toEqual({ tools: [] })
+  })
+
+  it("SocketSetup.tools 是到本 Socket 为止已并入的工具表：看得见前面的、看不见后面的与自己的；tools 与 systemPrompt 拿同一个对象", async () => {
+    const mk = (name: string): Tool => ({ name, description: "", inputSchema: {}, execute: () => "ok" })
+    const seen: Record<string, string[]> = {}
+    const setups: Record<string, SocketSetup[]> = {}
+    const remember = (name: string, setup: SocketSetup) => {
+      const list = setups[name] ?? []
+      list.push(setup)
+      setups[name] = list
+    }
+    const probe = (name: string, contributes: Tool[]): Socket => ({
+      name,
+      tools: (setup) => {
+        seen[name] = setup.tools.map((t) => t.name)
+        remember(name, setup)
+        return contributes
+      },
+      systemPrompt: (setup) => {
+        remember(name, setup)
+        return undefined
+      },
+    })
+    const host = [mk("add"), mk("dup")]
+    const r = await resolveSocketContributions({
+      log: new InMemoryEventLog(),
+      model: MODEL,
+      tools: host,
+      sockets: [probe("a", [mk("a1"), mk("dup")]), probe("b", [mk("b1")]), probe("c", [])],
+    })
+    // a 只看见宿主的；b 看见宿主 + a 的（a 的同名 dup 被去重，不在表里）；c 看见全部
+    expect(seen).toEqual({ a: ["add", "dup"], b: ["add", "dup", "a1"], c: ["add", "dup", "a1", "b1"] })
+    expect(r.tools.map((t) => t.name)).toEqual(["add", "dup", "a1", "b1"])
+    // hostTools 始终只有宿主的
+    for (const list of Object.values(setups)) for (const st of list) expect(st.hostTools).toBe(host)
+    // 同一个 Socket 的两次解析拿同一个 setup 对象（模块按对象缓存"算一次"的结果）；不同 Socket 的不同
+    for (const list of Object.values(setups)) {
+      expect(list).toHaveLength(2)
+      expect(list[0]).toBe(list[1])
+    }
+    expect(setups.a?.[0]).not.toBe(setups.b?.[0])
+    // 快照：a 拿到的表不会因为后面并入了别的工具而变
+    expect(setups.a?.[0]?.tools.map((t) => t.name)).toEqual(["add", "dup"])
   })
 
   it("beforeTool block：结果为 isError 并说明原因，模型下一轮看得到", async () => {

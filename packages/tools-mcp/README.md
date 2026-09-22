@@ -179,7 +179,68 @@ Two more things worth knowing about servers of this shape:
   budget for that one tool: `override: (tool, info) => info.name === "tool_list" ? { ...tool, resultPolicy: { maxTokens: 100_000, overflow: "spill" } } : tool`.
 - **Upstream business errors may not set `isError`.** TikTok returns `{"code": 40001, "message": "..."}` as a
   *successful* MCP result; only MCP-level failures (unknown tool, transport error) are `isError`. Anything keying
-  off `isError` — retries, your own policies — will not see those. The model reads the code from the JSON.
+  off `isError` — retries, your own policies, `onEvent` observers — will not see those unless you translate them;
+  the `withBusinessErrors` wrapper in the next section does exactly that.
+
+## Large flat tool tables
+
+The opposite shape: hundreds of ordinary tools, each annotated honestly. TikTok's flat endpoint lists 377 of them,
+about 200 reads and 130 writes, every one with `readOnlyHint`. Two things you usually want there: keep the writes
+out of the model's reach entirely (they go through your own tools, with your own authorization and audit trail),
+and stop sending two hundred tool definitions on every request. Both are one `override` plus
+`@reinsjs/brain`'s `lazyTools()`:
+
+```ts
+import { lazyTools } from "@reinsjs/brain"
+import { normalizeToolOutput, type Tool, type ToolResult } from "@reinsjs/core"
+
+/** TikTok puts business errors in a successful result: text = {"code": <non-zero>, "message": ...} */
+const businessErrorOf = (result: ToolResult): string | undefined => {
+  if (result.isError) return undefined
+  for (const part of result.content) {
+    if (part.type !== "text") continue
+    try {
+      const body = JSON.parse(part.text) as { code?: unknown; message?: unknown }
+      if (typeof body.code === "number" && body.code !== 0)
+        return `Upstream error ${body.code}: ${String(body.message ?? "")}`
+    } catch {
+      // not JSON, not an error envelope
+    }
+  }
+  return undefined
+}
+
+/** Keep the original text for the model, but mark it as an error so retries, policies and observers see it */
+const withBusinessErrors = (tool: Tool): Tool => ({
+  ...tool,
+  async execute(input, ctx) {
+    const result = normalizeToolOutput(await tool.execute?.(input, ctx))
+    const error = businessErrorOf(result)
+    return error ? { content: [...result.content, { type: "text", text: error }], isError: true } : result
+  },
+})
+
+/** reads: on the menu, loaded on demand; everything else: not a tool the model has */
+const readOnlyLazy = (tool: Tool, info: McpToolInfo) =>
+  info.annotations?.readOnlyHint === true ? withBusinessErrors({ ...tool, lazy: true }) : false
+
+const tiktok = mcpTools({ transport, override: readOnlyLazy })
+
+createAgent({ sockets: [tiktok, lazyTools()] }) // order matters — see below
+```
+
+`lazyTools()` builds its menu from the tools bound *before* it: the host's, plus those of every socket registered
+earlier. So it goes after `mcpTools()`. The other order is not an error, just useless: the MCP tools are sent in
+full every turn, and `lazyTools()` warns once, naming them. With a lowering layer that has a native place for
+deferred tools (`@reinsjs/lowering-fetch` on Anthropic) loading a tool does not even re-warm the prompt cache; see
+the brain README for the numbers.
+
+Loaded definitions are trusted like the tools block itself (`tool_find` results are `trust: "system"`) — the
+same descriptions were already going to the model unwrapped. A 200-line menu costs roughly 10k tokens of system
+prompt; it sits in the cached prefix and does not change within a run, and `lazyTools({ summarize })` can shorten it.
+
+The executable version of this recipe is `packages/tools-mcp/src/readonly-lazy.recipe.test.ts`, including the
+wrong-order case.
 
 ## Verified upstream behaviour
 

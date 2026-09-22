@@ -218,6 +218,12 @@ export interface SocketSetup {
   principal?: Principal
   /** 宿主自己的工具（尚未并入任何 Socket 的贡献） */
   hostTools: readonly Tool[]
+  /**
+   * 到本 Socket 为止已并入的工具表（2026-09-22）：宿主工具 + 注册在本 Socket **之前**的各 Socket 贡献，按同名先到者为准去重后。
+   * 各 Socket 按注册顺序依次解析，所以排在后面的能看见前面的，反过来不行——lazy-tools 靠它把 MCP 等 Socket 贡献的
+   * `lazy: true` 工具也收进菜单，前提是 `lazyTools()` 注册在 `mcpTools()` 之后。本 Socket 自己的贡献不在其中
+   */
+  tools: readonly Tool[]
 }
 
 /**

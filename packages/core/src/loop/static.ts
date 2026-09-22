@@ -35,11 +35,15 @@ async function resolve<T>(
  *
  * 异步（P1）：贡献函数可以 await（MCP 的 `tools/list`）。各 Socket 仍按注册顺序**依次**解析而不是并发 ——
  * 同名去重以先到者为准，顺序一变 configHash 就变，续跑会被误判配置漂移。
+ *
+ * 每个 Socket 拿到**自己的一份** `SocketSetup`（2026-09-22）：`tools` 是到它为止已并入的工具表快照，让后面的 Socket 看见前面的贡献
+ * （lazy-tools 把 MCP 工具收进菜单靠这个）。同一个 Socket 的 `tools` 与 `systemPrompt` 两次解析拿同一个对象——模块按对象缓存
+ * "算一次"的结果（lazy-tools / skills 都这么做），拆成两个对象会让它们算两遍、菜单与工具可能对不上。
  */
 export async function resolveSocketContributions(cfg: ContributionConfig): Promise<ResolvedContributions> {
   const hostTools: readonly Tool[] = cfg.tools ?? []
   const sockets: readonly Socket[] = cfg.sockets ?? []
-  const setup: SocketSetup = {
+  const base: Omit<SocketSetup, "tools"> = {
     log: cfg.log,
     model: cfg.model,
     hostTools,
@@ -55,6 +59,8 @@ export async function resolveSocketContributions(cfg: ContributionConfig): Promi
     prompts.push(cfg.systemPrompt)
 
   for (const s of sockets) {
+    // 快照而不是共享 `tools` 数组：本 Socket 自己的贡献并入后，它手里的表不该跟着变
+    const setup: SocketSetup = { ...base, tools: [...tools] }
     for (const t of (await resolve(s.tools, setup)) ?? []) {
       if (names.has(t.name)) continue
       names.add(t.name)

@@ -2,7 +2,7 @@
  * lazy-tools —— 工具懒发现（技术方案 §9.10，D1）：大工具表的渐进式披露，`Tool.lazy` 的消费者。
  *
  * 库只做两件事（宪法一）：
- * - **让它看见**：系统提示里一份菜单（每件 `lazy: true` 的宿主工具的 name + 一行摘要），run 起步算一次、run 内不变、进 configHash。
+ * - **让它看见**：系统提示里一份菜单（每件 `lazy: true` 的工具的 name + 一行摘要），run 起步算一次、run 内不变、进 configHash。
  * - **给它能力**：`tool_find({ names })` 取回几件工具的完整 description + inputSchema；从下一轮起那几件出现在请求的工具表里。
  * 取哪几件、什么时候取是模型的判断；规则提示只给经验（rules.ts）。
  *
@@ -18,18 +18,20 @@
  * - **过滤路径**（其余降级层）：本轮工具表 = 非 lazy + 已取回的 lazy；取回后的第一个请求缓存前缀重算一次（Anthropic 文档：工具表
  *   变动使三段缓存全失效），所以规则文案要求一次把要用的都取回；实测数字见 `spikes/d1-lazy-tools-cache/`。
  *
- * 作用范围只有**宿主工具**（`SocketSetup.hostTools`）：静态贡献阶段各 Socket 互不可见，Socket 贡献的工具（如 MCP 经 `override`
- * 标了 lazy）不进菜单——菜单上没有的工具若被藏起来就等于消失，所以也不藏。模块用对象同一性（WeakSet）记住"哪些工具是菜单工具"，
- * 同一个 Socket 实例给多个 agent 定义共用也不会串。
+ * 作用范围是**注册在本模块之前已并入的工具**（`SocketSetup.tools`：宿主工具 + 排在前面的 Socket 贡献，2026-09-22 起）：MCP 经
+ * `override` 标了 lazy 的工具也进菜单，前提是 `lazyTools()` 注册在 `mcpTools()` 之后——静态贡献按注册顺序依次解析，后面的看得见前面的，
+ * 反过来不行。注册在本模块之后的 Socket 贡献的 lazy 工具不进菜单也不藏（菜单上没有的工具若被藏起来就等于消失），`beforeModel`
+ * 见到这样的工具告警一次指出顺序。模块用对象同一性（WeakSet）记住"哪些工具是菜单工具"，同一个 Socket 实例给多个 agent 定义共用也不会串。
  *
  * 模型没取回就直接调菜单里的工具：`beforeTool` 回 `block` 并指向 `tool_find`——不拦的话循环回"未知工具"，模型会以为工具不存在；
  * 也不放行，因为请求里没给 schema 的调用入参多半不对（原生路径同样拦：厂商知道这件工具、模型只凭菜单摘要就能报出名字）。
  * 续跑补齐 pending 时没有 beforeModel、表是全表，隐藏工具照常执行。
  *
  * trust：工具说明与 schema 是宿主配置，视同系统提示可信，`tool_find` 声明 `resultTrust: "system"`（与 `skill_read` 同一条理由）。
+ * MCP 工具的说明来自服务器，但它本就直接进请求的 tools 块、与系统提示同一信任层级，经 `tool_find` 取回不另降级。
  * `resultPolicy.maxTokens` 按"最大的 maxPerCall 件条目估算之和 + 256"在 setup 时算出：spill 永不把 schema 换成 untrusted 预览。
  *
- * 缺则不注册：宿主没有一件 `lazy: true` 的工具、或宿主自己已有同名 `tool_find` → 工具与菜单都不出现，告警一次（同 skills）。
+ * 缺则不注册：此前并入的工具里没有一件 `lazy: true`、或已有同名 `tool_find` → 工具与菜单都不出现，告警一次（同 skills）。
  * 不做：关键词搜索（菜单就是搜索空间，200 行约 4k token 且逐轮不变）、按 provider 原生 deferred-tools 下发（降级层的优化，另立任务）。
  */
 import {
@@ -96,18 +98,18 @@ export interface LazyToolMenu {
 }
 
 /**
- * 从宿主工具表挑出 `lazy: true` 的做菜单。纯函数，菜单与测试共用。
- * 按 name 排序，与宿主给的顺序无关——菜单进 configHash，顺序抖动会误判配置漂移。
+ * 从一张工具表挑出 `lazy: true` 的做菜单。纯函数，菜单与测试共用；模块传的是 `SocketSetup.tools`（到本模块为止已并入的表）。
+ * 按 name 排序，与给的顺序无关——菜单进 configHash，顺序抖动会误判配置漂移。
  */
 export function lazyMenuOf(
-  hostTools: readonly Tool[],
+  tools: readonly Tool[],
   summarize: (tool: Tool) => string = (t) => summarizeTool(t),
 ): LazyToolMenu {
-  const tools = hostTools
+  const picked = tools
     .filter((t) => t.lazy === true)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  const entries = tools.map((t) => ({ name: t.name, summary: summarize(t).replace(/\s*\n\s*/g, " ") }))
-  return { tools, entries, byName: new Map(tools.map((t) => [t.name, t])) }
+  const entries = picked.map((t) => ({ name: t.name, summary: summarize(t).replace(/\s*\n\s*/g, " ") }))
+  return { tools: picked, entries, byName: new Map(picked.map((t) => [t.name, t])) }
 }
 
 export interface ToolFindInput {
@@ -197,26 +199,26 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
     warn(message)
   }
 
-  /** 哪些 Tool 对象是（某次 setup 的）菜单工具：对象同一性，别的 Socket 贡献的同名 / 标 lazy 的工具不在其中 */
+  /** 哪些 Tool 对象是（某次 setup 的）菜单工具：对象同一性，注册在本模块之后的 Socket 贡献的同名 / 标 lazy 的工具不在其中 */
   const menuTools = new WeakSet<Tool>()
   /** 每次 run 起步 tools 与 systemPrompt 各被解析一次，菜单只算一遍：按 setup 对象缓存 */
   const resolved = new WeakMap<SocketSetup, Resolved | undefined>()
   const resolveFor = (setup: SocketSetup): Resolved | undefined => {
     if (resolved.has(setup)) return resolved.get(setup)
     let out: Resolved | undefined
-    if (setup.hostTools.some((t) => t.name === TOOL_FIND_TOOL_NAME)) {
-      // 同名以宿主为准（resolveSocketContributions 去重规则）：本模块的工具会被丢掉，菜单却仍会指向 "tool_find"——
-      // 那是宿主的另一个工具。宁可整个不注册
+    if (setup.tools.some((t) => t.name === TOOL_FIND_TOOL_NAME)) {
+      // 同名以先到者为准（resolveSocketContributions 去重规则）：本模块的工具会被丢掉，菜单却仍会指向 "tool_find"——
+      // 那是宿主或前面某个 Socket 的另一个工具。宁可整个不注册
       warnOnce(
         "host-tool",
-        `[reins/lazy-tools] The host tool table already has a tool named ${TOOL_FIND_TOOL_NAME}, so this module's tool and menu are not registered. Rename the host tool to enable them.`,
+        `[reins/lazy-tools] The tool table already has a tool named ${TOOL_FIND_TOOL_NAME} (from the host or a socket registered before lazyTools()), so this module's tool and menu are not registered. Rename that tool to enable them.`,
       )
     } else {
-      const menu = lazyMenuOf(setup.hostTools, summarize)
+      const menu = lazyMenuOf(setup.tools, summarize)
       if (menu.tools.length === 0) {
         warnOnce(
           "no-lazy",
-          "[reins/lazy-tools] No host tool is marked lazy: true, so tool_find and the menu are not registered. Mark the tools you want disclosed on demand with lazy: true to enable them.",
+          "[reins/lazy-tools] No tool bound before lazyTools() is marked lazy: true, so tool_find and the menu are not registered. Mark the tools you want disclosed on demand with lazy: true, and register lazyTools() after the sockets (such as mcpTools()) that contribute them.",
         )
       } else {
         for (const t of menu.tools) menuTools.add(t)
@@ -238,7 +240,19 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
     },
     beforeModel(ctx) {
       const menuNames = new Set<string>()
-      for (const t of ctx.tools) if (t.lazy === true && menuTools.has(t)) menuNames.add(t.name)
+      const late: string[] = []
+      for (const t of ctx.tools) {
+        if (t.lazy !== true) continue
+        if (menuTools.has(t)) menuNames.add(t.name)
+        else late.push(t.name)
+      }
+      if (late.length > 0) {
+        // 标了 lazy 却不在菜单：贡献它的 Socket 注册在本模块之后。不藏（菜单上没有等于消失），只指出顺序
+        warnOnce(
+          "late",
+          `[reins/lazy-tools] ${late.length} tool(s) marked lazy: true are not on the menu because their socket is registered after lazyTools(): ${late.sort().join(", ")}. They are sent in full every turn. Register lazyTools() after the sockets that contribute them.`,
+        )
+      }
       if (menuNames.size === 0) return undefined
       const revealed = revealedLazyTools(ctx.timeline, menuNames)
       const hidden = new Map<string, Tool>()

@@ -28,7 +28,7 @@ transport.create() → MCP SDK Transport → Client.connect
 | --- | --- |
 | `packages/tools-mcp/package.json` | `@reinsjs/tools-mcp`，exports `.` 与 `./node`；依赖 `@reinsjs/core` + `@modelcontextprotocol/client` 2.0.0（精确）；devDeps 官方 server、zod、brain（测试用） |
 | `packages/tools-mcp/tsup.config.ts` | 两个入口，`removeNodeProtocol: false`，dts 清 paths |
-| `packages/tools-mcp/README.md` | 对外说明（英文）：用法、按 run 绑定、注解映射、连接生命周期、免重启原理与漂移三选一、上游实测 |
+| `packages/tools-mcp/README.md` | 对外说明（英文）：用法、按 run 绑定、注解映射、连接生命周期、免重启原理与漂移三选一、网关型服务器审批配方、大而平工具表配方（只读 → `lazy` 进 lazy-tools 菜单、业务错误信封转 isError，2026-09-22）、上游实测 |
 | `packages/tools-mcp/src/index.ts` | 主入口门面：`mcpTools`、`httpTransport`、翻译纯函数、公开类型 |
 | `packages/tools-mcp/src/types.ts` | `McpToolInfo` / `McpToolAnnotations`（纯数据）、`McpTransport`（配方：`kind` / `label` / `create(): unknown`）、`McpAuth`（`token()` / `onUnauthorized?()`，结构兼容 SDK 的 `AuthProvider` 但不引用其类型）、`McpToolsOptions`、`McpToolsSocket`（Socket + `close()`）、`McpToolsError` |
 | `packages/tools-mcp/src/mcp-tools.ts` | `mcpTools(options): McpToolsSocket`：`tools` 异步贡献（list → 翻译 → `override` → 去掉 `false`）；`optional` 决定 list 失败是抛还是空表 + 告警一次；`execute` = `callTool` + `toContentParts`，`isError` 直通 |
@@ -40,6 +40,7 @@ transport.create() → MCP SDK Transport → Client.connect
 | `packages/tools-mcp/src/connection.test.ts` | `McpConnection.close` 边界：建连进行中 close 不漏连接、之后重建；建连失败时 close 不抛；空操作 |
 | `packages/tools-mcp/src/translate.test.ts` | 纯函数用例：名字改写、风险档、声明解析、七种内容块翻译 |
 | `packages/tools-mcp/src/mcp-tools.test.ts` | 端到端（内存传输 × runLoop）：list 翻译与懒连复用、prefix / override / 改名告警、isError 直通、服务器删工具后调用 → isError、服务器死掉 → isError 且回来后重建、连接断而服务器在 → 同 run 内重建、run 中 listChanged 不改本 run 表且下次 run 出说明、暂停中换表 → `config_mismatch` / `allowConfigDrift` 放行且出说明、× spill × approval 同装、起步连不上 fail-closed / optional |
+| `packages/tools-mcp/src/readonly-lazy.recipe.test.ts` | 大而平工具表配方的可执行版本（与 README 逐字一致）：`override` 只留 `readOnlyHint` 工具并标 `lazy: true`、`withBusinessErrors` 把 `{code≠0}` 成功结果翻成 isError；用例 ① mcpTools 在前 + lazyTools 在后（菜单只列只读、首轮只有 tool_find、取回后可调、写工具是未知工具、trust=system）② 反面：顺序反了退化为全表下发 + 两处告警 ③ 纯函数边界 |
 | `packages/tools-mcp/src/http.test.ts` | Streamable HTTP 走 `createMcpHandler().fetch`：list + call、鉴权头、标签、第二个客户端先后初始化 |
 | `packages/tools-mcp/src/node.test.ts` | stdio：起 `test-fixtures/stdio-server.mjs` 子进程 list + call |
 | `packages/tools-mcp/test-fixtures/stdio-server.mjs` | 测试用 stdio MCP 服务器（一个 echo 工具） |

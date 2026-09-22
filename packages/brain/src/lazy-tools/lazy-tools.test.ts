@@ -73,7 +73,12 @@ function tool(name: string, extra: Partial<Tool> = {}): Tool {
 /** 一件可见工具 + 两件按需的 */
 const hostTools = () => [tool("greet"), tool("ads_list", { lazy: true }), tool("ads_disable", { lazy: true })]
 
-const setupOf = (tools: readonly Tool[]) => ({ log: new InMemoryEventLog(), model: MODEL, hostTools: tools })
+const setupOf = (tools: readonly Tool[]) => ({
+  log: new InMemoryEventLog(),
+  model: MODEL,
+  hostTools: tools,
+  tools,
+})
 
 describe("lazy-tools 纯函数", () => {
   it("summarizeTool：取 description 首个非空行、折叠空白、超长截断加省略号；没正文用工具名", () => {
@@ -208,10 +213,12 @@ describe("lazyTools() 静态贡献", () => {
       expect(r.tools.map((t) => t.name)).toEqual(["greet"])
       expect(r.systemPrompt).toBeUndefined()
     }
-    expect(warnings).toEqual([expect.stringContaining("No host tool is marked lazy: true")])
+    expect(warnings).toEqual([
+      expect.stringContaining("No tool bound before lazyTools() is marked lazy: true"),
+    ])
   })
 
-  it("宿主已有同名 tool_find：整个不注册、告警一次", async () => {
+  it("宿主或前面的 Socket 已有同名 tool_find：整个不注册、告警一次", async () => {
     const warnings: string[] = []
     const r = await resolveSocketContributions({
       log: new InMemoryEventLog(),
@@ -222,6 +229,41 @@ describe("lazyTools() 静态贡献", () => {
     expect(names(r.tools)).toEqual([TOOL_FIND_TOOL_NAME, "ads_list"])
     expect(r.systemPrompt).toBeUndefined()
     expect(warnings).toEqual([expect.stringContaining("already has a tool named")])
+    // 前面的 Socket 贡献的同名工具同样以先到者为准，一样不注册
+    const w2: string[] = []
+    const r2 = await resolveSocketContributions({
+      log: new InMemoryEventLog(),
+      model: MODEL,
+      tools: [tool("ads_list", { lazy: true })],
+      sockets: [
+        { name: "other", tools: [tool(TOOL_FIND_TOOL_NAME)] },
+        lazyTools({ warn: (m) => w2.push(m) }),
+      ],
+    })
+    expect(names(r2.tools)).toEqual(["ads_list", TOOL_FIND_TOOL_NAME])
+    expect(r2.systemPrompt).toBeUndefined()
+    expect(w2).toEqual([expect.stringContaining("already has a tool named")])
+  })
+
+  it("注册在前面的 Socket 贡献的 lazy 工具进菜单（MCP 经 override 标 lazy 的路径）；宿主一件 lazy 都没有也照样注册", async () => {
+    const mcpLike: Socket = {
+      name: "mcp:tiktok",
+      tools: async () => [
+        tool("tt_ad_get", { lazy: true }),
+        tool("tt_report_get", { lazy: true }),
+        tool("tt_meta"),
+      ],
+    }
+    const r = await resolveSocketContributions({
+      log: new InMemoryEventLog(),
+      model: MODEL,
+      tools: [tool("greet")],
+      sockets: [mcpLike, lazyTools({ warn: () => {} })],
+    })
+    expect(names(r.tools)).toEqual(["greet", "tt_ad_get", "tt_report_get", "tt_meta", TOOL_FIND_TOOL_NAME])
+    expect(r.systemPrompt).toBe(
+      `${LAZY_TOOL_RULES}\n\nAvailable on request:\n- tt_ad_get: Tool tt_ad_get.\n- tt_report_get: Tool tt_report_get.`,
+    )
   })
 
   it("rules 可替换或关掉；summarize / summaryChars 生效；构造期参数校验", async () => {
@@ -427,29 +469,90 @@ describe("lazyTools() 与 runLoop 集成", () => {
     for (const r of lowering.requests) expect(names(r.tools)).toEqual(["greet", TOOL_FIND_TOOL_NAME])
   })
 
-  it("只藏宿主的 lazy 工具：别的 Socket 贡献的 lazy 工具不进菜单也不藏", async () => {
+  it("注册在 lazyTools() 之后的 Socket 贡献的 lazy 工具：不进菜单也不藏，每轮全量下发，告警一次指出顺序", async () => {
     const other: Socket = { name: "other", tools: [tool("from_socket", { lazy: true })] }
-    const lowering = new ScriptedLowering([{ drafts: [say("done")] }])
+    const warnings: string[] = []
+    const lowering = new ScriptedLowering([{ drafts: [say("one")] }, { drafts: [say("done")] }])
     const r = await resolveSocketContributions({
       log: new InMemoryEventLog(),
       model: MODEL,
       tools: hostTools(),
-      sockets: [lazyTools({ warn: () => {} }), other],
+      sockets: [lazyTools({ warn: (m) => warnings.push(m) }), other],
     })
     expect(r.systemPrompt).not.toContain("from_socket")
+    const log = new InMemoryEventLog()
     await drain(
       runLoop({
         sessionId: SESSION,
-        log: new InMemoryEventLog(),
+        log,
         lowering,
         model: MODEL,
         tools: hostTools(),
-        sockets: [lazyTools({ warn: () => {} }), other],
+        sockets: [lazyTools({ warn: (m) => warnings.push(m) }), other],
         input: "开始",
         ...deterministic(),
       }),
     )
-    expect(names(lowering.requests[0]?.tools ?? [])).toEqual(["greet", TOOL_FIND_TOOL_NAME, "from_socket"])
+    await drain(
+      runLoop({
+        sessionId: SESSION,
+        log,
+        lowering,
+        model: MODEL,
+        tools: hostTools(),
+        sockets: [lazyTools({ warn: (m) => warnings.push(m) }), other],
+        input: "再来",
+        ...deterministic(),
+      }),
+    )
+    for (const req of lowering.requests)
+      expect(names(req.tools ?? [])).toEqual(["greet", TOOL_FIND_TOOL_NAME, "from_socket"])
+    // 两个 lazyTools 实例各告警一次，文案点名工具与顺序
+    expect(warnings).toHaveLength(2)
+    for (const w of warnings) {
+      expect(w).toContain("registered after lazyTools()")
+      expect(w).toContain("from_socket")
+    }
+  })
+
+  it("MCP 形态的 Socket 排在前面：它的 lazy 工具首轮被藏、取回后可见可调用；非 lazy 的照常全程可见", async () => {
+    const mcpLike: Socket = {
+      name: "mcp:tiktok",
+      tools: async () => [
+        tool("tt_ad_get", { lazy: true }),
+        tool("tt_report_get", { lazy: true }),
+        tool("tt_meta"),
+      ],
+    }
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", TOOL_FIND_TOOL_NAME, { names: ["tt_ad_get"] })] },
+      { drafts: [callTool("c2", "tt_ad_get", { x: "1" })] },
+      { drafts: [say("done")] },
+    ])
+    const log = new InMemoryEventLog()
+    const { result } = await drain(
+      runLoop({
+        sessionId: SESSION,
+        log,
+        lowering,
+        model: MODEL,
+        tools: [tool("greet")],
+        sockets: [mcpLike, lazyTools({ warn: () => {} })],
+        input: "开始",
+        ...deterministic(),
+      }),
+    )
+    expect(result.status).toBe("done")
+    expect(names(lowering.requests[0]?.tools ?? [])).toEqual(["greet", "tt_meta", TOOL_FIND_TOOL_NAME])
+    expect(names(lowering.requests[1]?.tools ?? [])).toEqual([
+      "greet",
+      "tt_ad_get",
+      "tt_meta",
+      TOOL_FIND_TOOL_NAME,
+    ])
+    const events = await all(log)
+    expect(resultOf(events, "c1").payload.isError).toBe(false)
+    expect(textOf(resultOf(events, "c2"))).toBe('tt_ad_get:{"x":"1"}')
   })
 
   it("与 spill 同装：取回 20 件大 schema 的结果整段进时间线，不被外溢成 blob", async () => {
