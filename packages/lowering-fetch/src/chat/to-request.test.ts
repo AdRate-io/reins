@@ -411,6 +411,20 @@ describe("工具结果图片上浮（2026-10-27，OnSet）", () => {
     expect(body.messages[4]).toEqual({ role: "user", content: "顺便看背景色" })
   })
 
+  it("同批结果之间夹着不下发的事件（ext.* 留痕、运维事件）：附件仍排在全部 tool 消息之后，不打断 tool_calls → tool 配对", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看" }] }),
+      call("c1"),
+      call("c2"),
+      result("c1", [img("A")]),
+      ev("core.budget_usage", "system", { tokens: { input: 1, output: 1 }, toolCalls: 1, wallMs: 0 }),
+      result("c2", [{ type: "text", text: "ok" }]),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "assistant", "tool", "tool", "user"])
+    expect(landings[4]).toMatchObject({ kind: "dropped" })
+  })
+
   it("isError 结果带图：前缀照加、图片照样上浮；resultTrust system 的结果不包 untrusted", () => {
     seq = 0
     const { body, landings } = encode(deepseek, [

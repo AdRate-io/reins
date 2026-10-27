@@ -169,8 +169,10 @@ export function encodeChatRequest(input: ChatEncodeInput): {
   const messages: ChatMessage[] = []
   const landings: LandingRecord[] = []
   /**
-   * 本批 tool 消息上浮的图片，遇到第一个非 tool_result 的条目（或收尾）时作为一条 user 消息放出。
-   * IR 保证同批结果连续、被后移的用户消息 / 说明排在整批之后，所以附件天然落在"全部 tool 消息之后、后移内容之前"。
+   * 本批 tool 消息上浮的图片，遇到第一个**会下发的**非 tool_result 条目（或收尾）时作为一条 user 消息放出。
+   * IR 把被后移的用户消息 / 说明排在整批之后，所以附件落在"全部 tool 消息之后、后移内容之前"；
+   * 但不下发的事件（运维事件、ext.* 留痕）不经后移、原位夹在同批结果之间，它们不能触发放出——
+   * 否则附件插进两条 tool 消息之间，破坏 tool_calls → tool 配对（发前审查抓到）。
    */
   let lifted: ContentPart[] = []
   const releaseLifted = () => {
@@ -182,7 +184,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
   if (input.systemPrompt) messages.push({ role: "system", content: input.systemPrompt })
 
   for (const item of input.ir) {
-    if (item.kind !== "tool_result") releaseLifted()
+    if (item.kind !== "tool_result" && item.kind !== "dropped") releaseLifted()
     switch (item.kind) {
       case "user": {
         const c = userContent(item.parts, capabilities.images)
