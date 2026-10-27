@@ -52,6 +52,8 @@ export type IrItem =
       parts: ContentPart[]
       isError: boolean
       escaped: boolean
+      /** 内容按 untrusted 包过标记时的来源标签（`tool:<name>`）；没包就没有。Chat 线上浮图片时据此给附件同样标注 */
+      untrustedSource?: string
     }
   | {
       kind: "system_note"
@@ -197,6 +199,7 @@ export function eventsToIr(input: IrInput): IrItem[] {
           parts: c.parts,
           isError: e.payload.isError,
           escaped: c.escaped,
+          ...(trustMarkers && needsUntrustedMark(e) ? { untrustedSource: untrustedSourceOf(e) } : {}),
         })
         awaiting.delete(e.payload.toolCallId)
         if (awaiting.size === 0) release()

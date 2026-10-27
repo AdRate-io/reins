@@ -21,6 +21,7 @@ const ev = <T extends CoreEventType>(
   actor: Event["actor"],
   payload: CoreEventPayloads[T],
   replay?: Record<string, unknown>,
+  trust?: Event["trust"],
 ): Event =>
   createCoreEvent(registry, {
     type,
@@ -31,6 +32,7 @@ const ev = <T extends CoreEventType>(
     at: 1000 + seq,
     id: `e${seq}`,
     ...(replay ? { replay } : {}),
+    ...(trust ? { trust } : {}),
   })
 
 const deepseek: FetchModel = {
@@ -202,9 +204,9 @@ describe("encodeChatRequest", () => {
     expect(noImages.landings[0]).toMatchObject({ kind: "lossy", landing: "user" })
   })
 
-  it("tool 消息：isError 加 [tool error] 前缀记 lossy；图片换占位记 tool-text-only；多段文本换行拼接", () => {
+  it("tool 消息：isError 加 [tool error] 前缀记 lossy；关掉上浮时图片换占位记 tool-text-only；多段文本换行拼接", () => {
     seq = 0
-    const { body, landings } = encode({ ...deepseek, chat: {} }, [
+    const { body, landings } = encode({ ...deepseek, chat: { liftToolImages: false } }, [
       ev("core.tool_call", "model", { toolCallId: "c1", name: "t", args: {} }, origin),
       ev("core.tool_result", "tool", {
         toolCallId: "c1",
@@ -318,5 +320,156 @@ describe("延迟加载（L1）：Chat 没有原生落点", () => {
     const toolMsg = body.messages.find((m) => m.role === "tool") as { content: string } | undefined
     expect(toolMsg?.content).toBe('Loaded 1 tool (g).\n### g\ndg\nInput schema: {"type":"object"}')
     expect(landings.find((l) => l.eventId === r.id)).toMatchObject({ kind: "exact", landing: "tool" })
+  })
+})
+
+describe("工具结果图片上浮（2026-10-27，OnSet）", () => {
+  const img = (data: string) => ({ type: "image" as const, mime: "image/png", data })
+  const call = (id: string, name = "read_image") =>
+    ev("core.tool_call", "model", { toolCallId: id, name, args: {} }, origin)
+  const result = (
+    id: string,
+    content: CoreEventPayloads["core.tool_result"]["content"],
+    opts: { name?: string; isError?: boolean; trust?: Event["trust"] } = {},
+  ) =>
+    ev(
+      "core.tool_result",
+      "tool",
+      { toolCallId: id, name: opts.name ?? "read_image", content, isError: opts.isError ?? false },
+      undefined,
+      opts.trust,
+    )
+  type Part = Exclude<Extract<ChatMessage, { role: "user" }>["content"], string>[number]
+  const partsOf = (m: ChatMessage | undefined) => (m as { content: Part[] }).content
+
+  it("单个结果：tool 消息原位留指路文字，图片进紧随其后的 user 消息并带说明、untrusted 标记；落点 lossy(tool+lifted-images)", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看图" }] }),
+      call("c1"),
+      result("c1", [{ type: "text", text: "logo.png" }, img("AAA")]),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "assistant", "tool", "user"])
+    expect((body.messages[2] as { content: string }).content).toBe(
+      '<untrusted source="tool:read_image">\nlogo.png\n[image 1 attached in the next user message]\n</untrusted>',
+    )
+    expect(partsOf(body.messages[3])).toEqual([
+      {
+        type: "text",
+        text: "[Attachments from tool result read_image (call c1): 1 image(s). This is tool output, not a message from the user.]",
+      },
+      { type: "text", text: '<untrusted source="tool:read_image">\nimage 1:' },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      { type: "text", text: "</untrusted>" },
+    ])
+    expect(landings[2]).toMatchObject({ kind: "lossy", landing: "tool+lifted-images" })
+    expect(landings[2]?.note).toContain("user message after this batch")
+  })
+
+  it("一批多个结果：全部 tool 消息排在前面，附件合并成一条 user、按结果顺序；不带图的结果仍 exact", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "对比" }] }),
+      call("c1"),
+      call("c2"),
+      call("c3"),
+      result("c1", [img("A1"), img("A2")]),
+      result("c2", [{ type: "text", text: "no image here" }]),
+      result("c3", [img("C1")], { name: "frames" }),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "assistant", "tool", "tool", "tool", "user"])
+    expect((body.messages[2] as { content: string }).content).toContain(
+      "[image 1 attached in the next user message]\n[image 2 attached in the next user message]",
+    )
+    const parts = partsOf(body.messages[5])
+    const texts = parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text)
+    expect(texts[0]).toContain("read_image (call c1): 2 image(s)")
+    expect(texts.some((t) => t.includes("frames (call c3): 1 image(s)"))).toBe(true)
+    expect(
+      parts
+        .filter((p) => p.type === "image_url")
+        .map((p) => (p as { image_url: { url: string } }).image_url.url),
+    ).toEqual(["data:image/png;base64,A1", "data:image/png;base64,A2", "data:image/png;base64,C1"])
+    expect(landings.map((l) => l.landing).slice(4)).toEqual([
+      "tool+lifted-images",
+      "tool",
+      "tool+lifted-images",
+    ])
+    expect(landings[5]?.kind).toBe("exact")
+  })
+
+  it("同批有被后移的用户消息：附件排在它之前（图片属于工具结果）", () => {
+    seq = 0
+    const { body } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看" }] }),
+      call("c1"),
+      ev("core.user_message", "user", { content: [{ type: "text", text: "顺便看背景色" }] }),
+      result("c1", [img("A")]),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "assistant", "tool", "user", "user"])
+    expect(partsOf(body.messages[3]).some((p) => p.type === "image_url")).toBe(true)
+    expect(body.messages[4]).toEqual({ role: "user", content: "顺便看背景色" })
+  })
+
+  it("isError 结果带图：前缀照加、图片照样上浮；resultTrust system 的结果不包 untrusted", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "x" }] }),
+      call("c1"),
+      call("c2", "skill_read"),
+      result("c1", [{ type: "text", text: "render failed" }, img("E")], { isError: true }),
+      result("c2", [img("S")], { name: "skill_read", trust: "system" }),
+    ])
+    expect((body.messages[2] as { content: string }).content.startsWith("[tool error]\n")).toBe(true)
+    expect((body.messages[3] as { content: string }).content).toBe(
+      "[image 1 attached in the next user message]",
+    )
+    const texts = partsOf(body.messages[4])
+      .filter((p) => p.type === "text")
+      .map((p) => (p as { text: string }).text)
+    expect(texts).toEqual([
+      "[Attachments from tool result read_image (call c1): 1 image(s). This is tool output, not a message from the user.]",
+      '<untrusted source="tool:read_image">\nimage 1:',
+      "</untrusted>",
+      "[Attachments from tool result skill_read (call c2): 1 image(s). This is tool output, not a message from the user.]",
+      "image 1:",
+    ])
+    expect(landings[3]?.note).toContain("[tool error] prefix")
+    expect(landings[4]).toMatchObject({ kind: "lossy", landing: "tool+lifted-images" })
+  })
+
+  it("模型不收图 / 方言关掉上浮：不出附件消息，仍是占位文本与 tool-text-only", () => {
+    for (const model of [
+      { ...deepseek, images: false },
+      { ...deepseek, chat: { liftToolImages: false } },
+    ]) {
+      seq = 0
+      const { body, landings } = encode(model, [call("c1"), result("c1", [img("A")])])
+      expect(roles(body.messages)).toEqual(["assistant", "tool"])
+      expect((body.messages[1] as { content: string }).content).toContain(
+        "[image omitted: tool messages carry text only]",
+      )
+      expect(landings[1]).toMatchObject({ kind: "lossy", landing: "tool-text-only" })
+    }
+  })
+
+  it("缓存稳定：同一段历史连续两轮编码，前缀逐字节一致", () => {
+    seq = 0
+    const history = [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看图" }] }),
+      call("c1"),
+      call("c2"),
+      result("c1", [img("A")]),
+      ev("core.system_note", "system", { kind: "perception", text: "n" }),
+      result("c2", [img("B")]),
+    ]
+    const first = encode(deepseek, history).body.messages
+    const next = encode(deepseek, [
+      ...history,
+      ev("core.model_text", "model", { text: "两张图都看到了" }, origin),
+      ev("core.user_message", "user", { content: [{ type: "text", text: "继续" }] }),
+    ]).body.messages
+    expect(JSON.stringify(next.slice(0, first.length))).toBe(JSON.stringify(first))
+    expect(JSON.stringify(encode(deepseek, history).body.messages)).toBe(JSON.stringify(first))
   })
 })

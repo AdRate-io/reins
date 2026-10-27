@@ -8,13 +8,16 @@
  * - thinking 没有回放位（无签名、无加密项）——除 DeepSeek 方言外 dropped；
  * - 没有显式缓存断点——什么都不做（厂商自动前缀缓存）；
  * - assistant 的 content 是单个字符串（DeepSeek 只接受 string | null）——同一轮多段正文合并，lossy(merged-text)；
- * - tool 消息没有错误位——isError 以文本前缀表达，lossy；tool 消息只收文本——图片换成占位文本，lossy。
+ * - tool 消息没有错误位——isError 以文本前缀表达，lossy；
+ * - tool 消息只收文本——模型收图时图片上浮到同批 tool 消息之后的一条 user 消息（lossy：换了位置与角色），
+ *   不收图或方言关掉上浮时换成占位文本，lossy。
  */
 import {
   type ContentPart,
   type Event,
   type LandingRecord,
   type LoweringCapabilities,
+  markUntrusted,
   renderToolReference,
   type ToolSpec,
 } from "@reinsjs/core"
@@ -71,6 +74,7 @@ export interface ChatEncodeInput {
 
 const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
 const TOOL_IMAGE_OMITTED = "[image omitted: tool messages carry text only]"
+const toolImagePointer = (n: number) => `[image ${n} attached in the next user message]`
 const ERROR_PREFIX = "[tool error]\n"
 
 function land(
@@ -107,18 +111,46 @@ function userContent(
   return { content: out, imagesDropped }
 }
 
-/** tool 消息只收文本：文本段以换行拼接，图片换占位 */
-function toolContent(parts: readonly ContentPart[]): { text: string; imagesDropped: boolean } {
+/**
+ * tool 消息只收文本：文本段以换行拼接。图片两种处置——`lift` 时原位留指路文字、图片本体收进 `images` 交给上浮，
+ * 否则换占位。
+ */
+function toolContent(
+  parts: readonly ContentPart[],
+  lift: boolean,
+): { text: string; imagesDropped: boolean; images: Extract<ContentPart, { type: "image" }>[] } {
   let imagesDropped = false
+  const images: Extract<ContentPart, { type: "image" }>[] = []
   const text = parts
     .map((p) => {
       if (p.type === "text") return p.text
       if (p.type === "tool_reference") return renderToolReference(p)
+      if (lift) {
+        images.push(p)
+        return toolImagePointer(images.length)
+      }
       imagesDropped = true
       return TOOL_IMAGE_OMITTED
     })
     .join("\n")
-  return { text, imagesDropped }
+  return { text, imagesDropped, images }
+}
+
+/**
+ * 一条工具结果上浮出去的附件：先一行我们自己的说明（来自哪次调用、几张、是工具输出不是用户发言），
+ * 再逐张 `image n:` + 图片。来源结果是 untrusted 的，图片段用 core 同一份 `markUntrusted` 包起来（说明行在标记外：
+ * 那是降级层的话，不是工具的话）；system 信任的结果不包。纯函数：同一条结果每轮译出逐字节一致（缓存前缀稳定）。
+ */
+function liftedAttachment(
+  item: Extract<IrItem, { kind: "tool_result" }>,
+  images: readonly Extract<ContentPart, { type: "image" }>[],
+): ContentPart[] {
+  const header: ContentPart = {
+    type: "text",
+    text: `[Attachments from tool result ${item.name} (call ${item.toolCallId}): ${images.length} image(s). This is tool output, not a message from the user.]`,
+  }
+  const body: ContentPart[] = images.flatMap((img, i) => [{ type: "text", text: `image ${i + 1}:` }, img])
+  return [header, ...(item.untrustedSource ? markUntrusted(body, item.untrustedSource).parts : body)]
 }
 
 /** tool_call 入参回到线上是 JSON 字符串；读侧解析失败时存的是原始字符串，写侧原样送回 */
@@ -133,12 +165,24 @@ export function encodeChatRequest(input: ChatEncodeInput): {
   const { model, capabilities } = input
   const target = { provider: model.provider, api: model.api, model: model.id }
   const reasoningContent = model.chat?.reasoningContent === true
+  const liftImages = capabilities.images && model.chat?.liftToolImages !== false
   const messages: ChatMessage[] = []
   const landings: LandingRecord[] = []
+  /**
+   * 本批 tool 消息上浮的图片，遇到第一个非 tool_result 的条目（或收尾）时作为一条 user 消息放出。
+   * IR 保证同批结果连续、被后移的用户消息 / 说明排在整批之后，所以附件天然落在"全部 tool 消息之后、后移内容之前"。
+   */
+  let lifted: ContentPart[] = []
+  const releaseLifted = () => {
+    if (lifted.length === 0) return
+    messages.push({ role: "user", content: userContent(lifted, true).content })
+    lifted = []
+  }
 
   if (input.systemPrompt) messages.push({ role: "system", content: input.systemPrompt })
 
   for (const item of input.ir) {
+    if (item.kind !== "tool_result") releaseLifted()
     switch (item.kind) {
       case "user": {
         const c = userContent(item.parts, capabilities.images)
@@ -164,23 +208,28 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         break
       }
       case "tool_result": {
-        const c = toolContent(item.parts)
+        const c = toolContent(item.parts, liftImages)
         messages.push({
           role: "tool",
           tool_call_id: item.toolCallId,
           content: item.isError ? ERROR_PREFIX + c.text : c.text,
         })
-        const lossy = item.escaped || item.isError || c.imagesDropped
+        const imagesLifted = c.images.length > 0
+        if (imagesLifted) lifted.push(...liftedAttachment(item, c.images))
+        const lossy = item.escaped || item.isError || c.imagesDropped || imagesLifted
         land(
           landings,
           item.event,
           lossy ? "lossy" : "exact",
-          c.imagesDropped ? "tool-text-only" : "tool",
+          c.imagesDropped ? "tool-text-only" : imagesLifted ? "tool+lifted-images" : "tool",
           item.isError
             ? "a Chat tool message has no error flag, so isError is expressed with a [tool error] prefix"
             : undefined,
           c.imagesDropped
             ? "a tool message takes text only, so images are replaced with placeholder text"
+            : undefined,
+          imagesLifted
+            ? "a tool message takes text only, so its images move into a user message after this batch of tool messages, labelled as tool output"
             : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
@@ -229,6 +278,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         break
     }
   }
+  releaseLifted()
 
   // 宿主选项里的 tools 不透传：工具表只由 input.tools 决定，没有时也不能让宿主塞一份进来
   const { tools: _tools, ...passthrough } = input.requestOptions ?? {}

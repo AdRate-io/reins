@@ -95,9 +95,14 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
       "isError is expressed with a [tool error] prefix (a tool message has no error flag), or untrusted content is escaped",
     ),
     lossy(
+      "tool+lifted-images",
+      "a tool message takes text only, so it keeps a pointer where each image was and the images move into a user message right after the whole batch of tool messages (the order and the role change); that message labels them as tool output, with the tool name, call id and index, and keeps the result's untrusted marking",
+      "the result carries images and the model takes images (chat.liftToolImages is on by default)",
+    ),
+    lossy(
       "tool-text-only",
       "a tool message takes text only, so images are replaced with placeholder text",
-      "the result carries images",
+      "the result carries images and the model takes no images, or chat.liftToolImages is false",
     ),
   ],
   "core.system_note": [

@@ -72,6 +72,12 @@ export interface ChatDialect {
    * 写侧把自家 thinking 回填、没有就回空串。关着（OpenAI 官方）：thinking 无处可放，矩阵记 dropped。
    */
   reasoningContent?: boolean
+  /**
+   * 工具结果里的图片上浮（2026-10-27，OnSet 需求）：`role:"tool"` 消息只收文本，模型声明收图（`images: true`）时，
+   * 同一 assistant 轮全部 tool 消息之后补一条 `role:"user"` 消息放这些图片，tool 消息原位留指路文字。缺省 true；
+   * 上游不接受"tool 之后紧跟带图 user"时关掉，退回占位文本。DeepSeek 官方 2026-10-27 实测接受（spikes/chat-tool-images）。
+   */
+  liftToolImages?: boolean
 }
 
 /**

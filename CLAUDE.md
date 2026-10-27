@@ -141,7 +141,7 @@
 - **`HttpError` 文案是 SDK 同款 `"<status> <body>"`、对象带 `status` / `headers`** — core 的瞬断判据原样适用，别在本包里再判重试；超时走 `AbortSignal.timeout`（TimeoutError 可重试），宿主中止 AbortError 不重试，两者都发生算宿主中止。
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败（F0）。
 - **内置模型表是最小表，`definitionOf` 用内置打底、选项覆盖，表外必须给 `baseUrl`** — 价目是 2026-09-14 查阅值，DeepSeek 存峰值价、`costUsd` 是上限；表过期不阻塞使用。
-- **Chat 线四处有损都在矩阵里**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点（什么都不做）。
+- **Chat 线四处有损都在矩阵里**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点（什么都不做）。**工具结果的图片缺省上浮**到同批 tool 之后的一条 user（`tool+lifted-images`，`chat.liftToolImages: false` 退回占位）——附件的位置靠 IR"后移内容排在整批结果之后"白送，encoder 只在第一个非 tool_result 条目前放出；改 IR 后移顺序会把图片挪到用户插话之后。
 - **Anthropic 线的中途 system 是"攒到下一条 assistant 之前或收尾"再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user、后接 assistant 或收尾（F0 A2d 跟在 assistant 后 400）；说明位置比时间线晚一条 user 仍算 exact 并备注。IR 后移到 tool_result 之后的说明也走这条路。
 - **Anthropic 线的缓存断点是本包打的：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 不覆盖且占一格；`anthropic.midSystemCacheBreakpoint` 三档来自 B1 数据，别把断点留在 system 消息上（几乎零命中）。
 - **thinking 回放判据是签名不是正文，且签名绑模型：provider + api + model 三者一致才回放** — Fable 5.1 缺省 display omitted：正文空、签名在，流侧仍出草稿、写侧照发；无签名（流中断）、别家的、同家别的型号的一律 dropped 声明而不是降成正文（eval resume fixture 的种子是 DeepSeek 录的，签名喂给 Sonnet 5 厂商 400，0.2 发前抓到）；Responses 线的加密推理项同一规则；`redacted_thinking` 的 data 存在 `replay.thinkingSignature` + `redacted: true`（与 pi 版同字段）。
