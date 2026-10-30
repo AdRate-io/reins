@@ -274,6 +274,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 - **compact 摘要里自动附被折叠工具结果清单，`recall({ seq })` 按 `tool_result` 的 seq 逐字取回** — 靠 fork 保留 seq；任何重排 / 重编号 seq 的改动都会让历史摘要里的引用失效。关掉 `manifest` 必须一并换 `rules`，否则缺省文案说"会列清单"就成了谎话。
 - **模型看到"已整理过一次"会认定旧细节已丢而拒答，即使原件就在上文** — 解法是让它能取回，不是删说明（踩坑 8）。
+- **compact 缺省过 75% 在末尾请模型整理一次（`force`），照做记 `decidedBy: "forced"`** — 每段只请一次，判据全从时间线读；中途 system 不被执行的线路（如号池中转站）请求会被无视，宿主要配 `midConversationSystem: false`（踩坑 42）。消费方按 `=== "model"` 判"模型自己挑的时机"，forced 不算。
 - **pin 字数校验有两成容差** — 声明 500、601 起才拒，报错仍报 500。
 - **`fetch_blob` 按"本会话时间线引用过"授权，不按 blob 归属** — fork 会话能读父会话的 blob；未引用的 id 回"不存在"，与真不存在同一句话。
 - **spill 只有 `resultPolicy.overflow="truncate"` 才截断**，且向模型明说不可恢复。
