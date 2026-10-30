@@ -301,7 +301,8 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         flush()
         // 宿主注入的外部内容可能把 system_note 标成 untrusted（如抓取的网页），同样包裹
         const t = text(e, e.payload.text)
-        if (capabilities.midConversationSystem) {
+        // 指令类说明（directive）不走中途 system：有的上游收下却不执行其中的指令（踩坑 42），一律带标签走 user
+        if (capabilities.midConversationSystem && e.payload.directive !== true) {
           note(
             e,
             { role: "user", content: markSystemNote(t.text), timestamp: e.at },
@@ -315,7 +316,9 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
             { role: "user", content: framedSystemNote(e.payload.kind, t.text), timestamp: e.at },
             "lossy",
             "user-role",
-            "the model does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
+            e.payload.directive === true
+              ? "the note is a directive the model must act on, so it is wrapped in a <system_note> tag and sent with the user role"
+              : "the model does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
           )
         }
         break

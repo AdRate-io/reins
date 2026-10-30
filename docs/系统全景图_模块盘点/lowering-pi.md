@@ -81,7 +81,7 @@
 
 ### 3.3 system_note 的两跳与 Anthropic 归位
 
-1. 第一跳在 `eventsToContext` 的 `core.system_note` 分支：`capabilities.midConversationSystem` 为真 → `markSystemNote(text)` 前缀上 `[[reins:system_note]]` 标记、以 **user** 消息进 Context，落点记 `exact`（Anthropic 记 `system`，OpenAI 按 `model.reasoning` 记 `developer` / `system`）；为假 → `framedSystemNote(kind, text)` 用 `<system_note kind="…">` 标签包住、仍走 user，记 `lossy` / `user-role`。
+1. 第一跳在 `eventsToContext` 的 `core.system_note` 分支：`capabilities.midConversationSystem` 为真且说明不是 `directive`（指令类一律走下一档带标签的 user，OPT-261031-1） → `markSystemNote(text)` 前缀上 `[[reins:system_note]]` 标记、以 **user** 消息进 Context，落点记 `exact`（Anthropic 记 `system`，OpenAI 按 `model.reasoning` 记 `developer` / `system`）；为假 → `framedSystemNote(kind, text)` 用 `<system_note kind="…">` 标签包住、仍走 user，记 `lossy` / `user-role`。
 2. 第二跳在 `PiAiLowering.stream` 装的 `onPayload` 钩子 → `rewritePayload(api, …)` 分派。
 3. `rewriteOpenAIResponsesPayload`：Responses 的 `input` 项允许任意位置的 developer / system 消息，所以只做**原地替换**，无归位；角色按 `model.reasoning` 选 `developer` / `system`。没有标记消息时返回 `undefined`（= 请求体不变）。
 4. `rewriteAnthropicPayload` 要满足官方摆放规则（不能是首条、必须紧跟 user 轮、后接 assistant 或收尾、连续 system 视为一组），算法是：先把标记消息全部摘出成 `pending`、其余成 `body`；`placeOf()` 为每条算出它在 **原始 body** 里的落点（"它之后的第一条 assistant"之前；没有 assistant 就落到末尾，并跳过 pi-ai 追加的 content 为空的 effort 专用 system；落点为 0 时挪到第一条 user 之后）；同落点的按原顺序装进 `groups`；最后一次性拼出 `messages`。**先算完再拼、不边算边 splice**，否则同一落点的多条说明会前后颠倒。

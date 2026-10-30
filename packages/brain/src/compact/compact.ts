@@ -10,8 +10,8 @@
  *    宿主经 LoopConfig.projection.reserveTokens 调；perception 会把这个点告诉模型。
  * 4. **连续上限**：连着整理（模型自决 + 阈值兜底合计）达到 maxConsecutive 次仍没有一轮"正常"工作，
  *    说明卡死了（折叠后仍放不下、或模型在反复整理）→ onTurnEnd 返回 pause(budget) 交宿主处理。
- * 6. **到线请整理**（OPT-261030-3）：过软线（缺省 75%）且本段没请过 → beforeModel 末尾追加一条说明请模型先整理，
- *    照做记 decidedBy=forced；不理就留给第 3 条的机械兜底。见 request.ts。
+ * 6. **到线请整理**（OPT-261030-3 / OPT-261031-1）：过软线（缺省 75%、80% 两级，每段每级一次）→ beforeModel 末尾追加一条
+ *    指令类说明（directive，降级层以带标签的 user 文本送达）请模型先整理，照做记 decidedBy=forced；两级都不理就留给第 3 条的机械兜底。见 request.ts。
  * 5. **取回**（E3c）：摘要下面列出被折叠的每条工具结果（seq + 工具 + 入参），`recall({ seq })` 工具逐字取回一条。
  *    整理丢细节是机制的代价（模型按自己的重要性判断留东西），清单与取回让丢掉的东西有路可回，见 recall.ts。
  *
@@ -43,10 +43,13 @@ import {
 } from "./plan.js"
 import { recallTool } from "./recall.js"
 import {
+  type CompactRequestInfo,
   compactRequestedSinceLastCompaction,
+  compactRequestsSinceLastCompaction,
   contextUsageRatio,
   DEFAULT_FORCE_AT,
   type ForceOptions,
+  modelActedSinceLastCompaction,
   renderCompactRequest,
   timelineSoFar,
 } from "./request.js"
@@ -76,8 +79,8 @@ export interface CompactOptions {
   /** 是否给模型 recall 取回工具（E3c）。缺省 true；false 时清单照列，只是模型自己取不回（宿主另有读法时用） */
   recall?: boolean
   /**
-   * 到线请模型整理（OPT-261030-3）：真实上下文过软线（缺省 75%）、且上次整理之后还没请过时，在末尾追加一条说明
-   * 请模型先 compact 再继续；照做的整理记 decidedBy=forced。每段只请一次，不理就留给触发线的机械裁剪。
+   * 到线请模型整理（OPT-261030-3 / OPT-261031-1）：真实上下文过某一级软线（缺省 75%、80%）、且本段（上次整理之后）还没在这一级请过时，
+   * 在末尾追加一条指令类说明请模型先 compact 再继续；照做的整理记 decidedBy=forced。刚整理完模型还没动过不请；两级都不理就留给触发线的机械裁剪。
    * 传 false 关闭；传对象调软线与措辞
    */
   force?: false | ForceOptions
@@ -153,10 +156,18 @@ export function compact(opts: CompactOptions = {}): Socket {
   }
   const withRecall = opts.recall ?? true
   const force = opts.force === false ? undefined : (opts.force ?? {})
-  const forceAt = force?.at ?? DEFAULT_FORCE_AT
-  if (force && !(forceAt > 0 && forceAt < 1)) {
-    throw new RangeError(`compact.force.at must be a number in (0, 1), got ${String(forceAt)}`)
+  const forceAt: readonly number[] =
+    typeof force?.at === "number" ? [force.at] : (force?.at ?? DEFAULT_FORCE_AT)
+  if (
+    force &&
+    (forceAt.length === 0 ||
+      forceAt.some((at, i) => !(at > 0 && at < 1) || (i > 0 && at <= (forceAt[i - 1] ?? 0))))
+  ) {
+    throw new RangeError(
+      `compact.force.at must be a number in (0, 1) or a strictly ascending non-empty list of them, got ${JSON.stringify(force.at)}`,
+    )
   }
+  const directive = force?.directive ?? true
   const renderRequest = force?.render ?? renderCompactRequest
   const records = new WeakMap<TurnContext, TurnRecord>()
   const recordOf = (ctx: TurnContext): TurnRecord => {
@@ -183,11 +194,16 @@ export function compact(opts: CompactOptions = {}): Socket {
 
     beforeModel(ctx: TurnContext) {
       if (!force) return undefined
+      // 本段已请过几次 = 已用掉几级；下一级没到线、或刚整理完模型还没动过，都不请
+      const timeline = timelineSoFar(ctx)
+      const used = compactRequestsSinceLastCompaction(timeline)
+      const at = forceAt[used]
       const usage = contextUsageRatio(ctx)
-      if (usage < forceAt || compactRequestedSinceLastCompaction(timelineSoFar(ctx))) return undefined
-      const info = {
+      if (at === undefined || usage < at || !modelActedSinceLastCompaction(timeline)) return undefined
+      const info: CompactRequestInfo = {
         usage: percent(usage),
         autoFoldAt: percent(ctx.budget.targetTokens / ctx.budget.contextLimit),
+        attempt: used + 1,
       }
       ctx.emit({
         type: "core.system_note",
@@ -195,7 +211,8 @@ export function compact(opts: CompactOptions = {}): Socket {
         payload: {
           kind: "budget",
           text: renderRequest(info),
-          meta: { compactRequest: { ...info, at: forceAt } },
+          meta: { compactRequest: { ...info, at } },
+          ...(directive ? { directive: true as const } : {}),
         },
       })
       return undefined

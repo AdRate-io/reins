@@ -148,6 +148,10 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       events: [user(), call("c1"), user("wait"), result("c1")],
     },
     { label: "system_note 收尾", events: [user(), note()] },
+    {
+      label: "system_note 指令类（OPT-261031-1）",
+      events: [user(), mk("core.system_note", { kind: "budget", text: "compact now", directive: true })],
+    },
     { label: "system_note 夹在 user 与 assistant 之间", events: [user(), note(), text()] },
     { label: "system_note 首条", events: [note(), text(), user()] },
     { label: "system_note 跟在 assistant 后", events: [user(), text(), note(), text()] },

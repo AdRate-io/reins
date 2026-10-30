@@ -12,7 +12,10 @@
  * 而是到触发线机械裁剪。做法：问答时把窗口声明成 340k，现场 30 万出头的上下文就越过 85% 触发线、裁到回落线。
  * OPT-261031-1 预验证：`--user-request` 在降级之前把整理请求换成 user 身份 + `<system_note>` 标签（与 lowering-fetch 关掉中途 system 时
  * 的落点逐字相同），其余说明仍走 system——模拟"只这一条按 user 送达"；`--relay` 走公司中转站（OnSet 线路）；`--no-probes` 只跑第 ① 步。
- * 运行：node examples/eval/fixtures/onset-pause/verify-force.ts [--repeats 2] [--relay] [--user-request] [--no-probes]
+ * 实施后（OPT-261031-1）请求由 compact 缺省标 directive、降级层自己以 user 标签送达，不再需要 `--user-request`。
+ * `--second`：只跑 mid 现场，保留原先被无视的那条请求（标成 directive，当作第一级已请过），软线 [0.7, 0.75] 让本轮触发第二级。
+ * Socket 顺序同 brain README（perception 在 compact 之前）。
+ * 运行：node examples/eval/fixtures/onset-pause/verify-force.ts [--repeats 2] [--relay] [--user-request] [--no-probes] [--second]
  * 结果写 examples/eval/out/onset-verify/results.jsonl（只在本地）。
  */
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs"
@@ -39,7 +42,8 @@ const repeats = i >= 0 ? Number(process.argv[i + 1]) : 2
 const INFO = readFileSync(new URL("../../../../模型API测试信息.md", import.meta.url), "utf8")
 const relayRoute = process.argv.includes("--relay")
 const userRequest = process.argv.includes("--user-request")
-const noProbes = process.argv.includes("--no-probes")
+const second = process.argv.includes("--second")
+const noProbes = second || process.argv.includes("--no-probes")
 const relaySection = INFO.slice(INFO.lastIndexOf("Claude中转"))
 const apiKey = relayRoute
   ? relaySection.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
@@ -152,10 +156,21 @@ const lastSeqOf = (events: readonly Event[]) => events.reduce((m, e) => Math.max
 
 console.log(`线路 ${relayRoute ? "中转站 deepseek-v4.1-flash" : "官方 deepseek-flash"}，整理请求身份 ${userRequest ? "user 标签" : "system"}`)
 const started = Date.now()
-const jobs = SCENES.flatMap((scene) => {
+const scenes = second
+  ? [{ id: "mid-2nd", cell: "onset-pause-work__force__3", before: 596, keepAsDirective: 576 }]
+  : SCENES
+const jobs = scenes.flatMap((scene) => {
   const all = parseEventsJsonl(readFileSync(new URL(`${scene.cell}.jsonl`, CELLS), "utf8"))
   const drop: readonly number[] = "drop" in scene ? scene.drop : []
-  const seed = all.filter((e) => e.seq < scene.before && !drop.includes(e.seq)).map((e, k) => ({ ...e, seq: k + 1 }))
+  const keep = "keepAsDirective" in scene ? scene.keepAsDirective : undefined
+  const seed = all
+    .filter((e) => e.seq < scene.before && !drop.includes(e.seq))
+    .map((e) =>
+      e.seq === keep && isCompactRequest(e)
+        ? ({ ...e, payload: { ...(e as CoreEventOf<"core.system_note">).payload, directive: true } } as Event)
+        : e,
+    )
+    .map((e, k) => ({ ...e, seq: k + 1 }))
   const sessionId = seed[0]?.sessionId as string
 
   // 对照：未整理的现场直接问
@@ -170,7 +185,8 @@ const jobs = SCENES.flatMap((scene) => {
     const log = new InMemoryEventLog()
     await log.append(seed)
     // ① 一步
-    const { fresh, status } = await run(log, sessionId, [compact(), spill(), perception({ limits }), budget({ limits })], {
+    const force = second ? compact({ force: { at: [0.7, 0.75] } }) : compact()
+    const { fresh, status } = await run(log, sessionId, [perception({ limits }), force, spill(), budget({ limits })], {
       tools,
       systemPrompt: world.systemPrompt,
       maxTurns: 1,
@@ -196,7 +212,9 @@ const jobs = SCENES.flatMap((scene) => {
       kind: "trial" as const,
       repeat: r + 1,
       status,
-      requested: request ? (request.payload.meta?.compactRequest as { usage: string }).usage : undefined,
+      requested: request
+        ? `${(request.payload.meta?.compactRequest as { usage: string; attempt: number }).usage}#${(request.payload.meta?.compactRequest as { attempt: number }).attempt}${request.payload.directive ? "(directive)" : ""}`
+        : undefined,
       first: calls[0] ?? "（无工具调用）",
       complied: calls[0] === COMPACT_TOOL_NAME,
       compaction,

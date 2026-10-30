@@ -59,6 +59,8 @@ export type IrItem =
       kind: "system_note"
       event: Event
       noteKind: SystemNotePayload["kind"]
+      /** 注入者声明是要模型去做的指令：三条线都以带标签的 user 文本送达，不看 midConversationSystem */
+      directive: boolean
       text: string
       escaped: boolean
       deferred: boolean
@@ -212,6 +214,7 @@ export function eventsToIr(input: IrInput): IrItem[] {
           kind: "system_note",
           event: e,
           noteKind: e.payload.kind,
+          directive: e.payload.directive === true,
           text: t.text,
           escaped: t.escaped,
           deferred: false,

@@ -37,7 +37,7 @@ import {
   orderLandings,
 } from "../ir.js"
 import type { FetchModel } from "../models.js"
-import { framedSummary, framedSystemNote } from "../notes.js"
+import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
 export interface AnthropicCacheControl {
   type: "ephemeral"
@@ -343,7 +343,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
         break
       }
       case "system_note": {
-        if (capabilities.midConversationSystem) {
+        if (capabilities.midConversationSystem && !item.directive) {
           pendingNotes.push({ item, moved: false })
         } else {
           openUser().push({ type: "text", text: framedSystemNote(item.noteKind, item.text) })
@@ -352,7 +352,9 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
             item.event,
             "lossy",
             "user-role",
-            "the model does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
+            item.directive
+              ? DIRECTIVE_NOTE
+              : "the model does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
             item.escaped ? ESCAPED_NOTE : undefined,
             item.deferred ? DEFERRED_NOTE : undefined,
           )

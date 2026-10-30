@@ -253,6 +253,20 @@ describe("encodeChatRequest", () => {
       content: '<system_note kind="perception">\nContext 40% used.\n</system_note>',
     })
     expect(framed.landings[2]).toMatchObject({ kind: "lossy", landing: "user-role" })
+
+    // 指令类说明（OPT-261031-1）：上游接受中途 system 也走带标签的 user；同轮普通说明仍走 system
+    const directive = ev("core.system_note", "system", {
+      kind: "budget",
+      text: "Call compact now.",
+      directive: true,
+    })
+    const both = encode(deepseek, [...events, directive])
+    expect(both.body.messages.slice(2)).toEqual([
+      { role: "system", content: "Context 40% used." },
+      { role: "user", content: '<system_note kind="budget">\nCall compact now.\n</system_note>' },
+    ])
+    expect(both.landings[3]).toMatchObject({ kind: "lossy", landing: "user-role" })
+    expect(both.landings[3]?.note).toContain("directive")
   })
 
   it("并行工具之间的说明与用户插话后移到同批 tool 消息之后；用户消息记 lossy、说明仍 exact 但备注后移；落点按输入顺序", () => {

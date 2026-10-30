@@ -91,7 +91,7 @@ export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     lossy(
       "user-role",
       "wrapped in a <system_note> tag and sent with the user role",
-      "the host declared midConversationSystem: false for an unusual upstream",
+      "the host declared midConversationSystem: false for an unusual upstream, or the note is a directive the model must act on (SystemNotePayload.directive)",
     ),
   ],
   "core.compaction": [

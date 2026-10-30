@@ -57,7 +57,7 @@
 | `packages/brain/src/compact/index.ts` | compact 子模块聚合导出 |
 | `packages/brain/src/compact/compact.ts` | `compact(opts): Socket`：注册 `compact` / `recall` 工具与规则提示，afterTool 落 compaction 并换回执，onTurnEnd 查连续整理上限 |
 | `packages/brain/src/compact/plan.ts` | 纯函数 `planCompaction`：算切点、幸存者、被吸收的旧摘要、被折叠工具结果清单；另有按轮分段与连续整理计数 |
-| `packages/brain/src/compact/request.ts` | 到线请模型整理：`DEFAULT_FORCE_AT`、`renderCompactRequest`、`isCompactRequest`、`compactRequestedSinceLastCompaction`、`timelineSoFar`、`contextUsageRatio`（全从时间线读，无跨轮状态） |
+| `packages/brain/src/compact/request.ts` | 到线请模型整理：`DEFAULT_FORCE_AT`（两级）、`renderCompactRequest`（按 attempt 换措辞）、`isCompactRequest`、`compactRequestedSinceLastCompaction` / `compactRequestsSinceLastCompaction`、`modelActedSinceLastCompaction`、`timelineSoFar`、`contextUsageRatio`（全从时间线读，无跨轮状态） |
 | `packages/brain/src/compact/recall.ts` | `recall({ seq })` 工具：从本会话日志按 seq 逐字取回一条被折叠的工具结果 |
 | `packages/brain/src/compact/rules.ts` | compact / recall 的工具名、工具说明与规则提示 `COMPACT_RULES`（英文常量） |
 | `packages/brain/src/compact/compact.test.ts` | compact 的全部用例（自决整理、阈值兜底与连续上限、recall、纯函数层） |
@@ -112,7 +112,7 @@
 ### compact
 
 1. run 起步：静态贡献带上 `compact` 工具（`execute` 只返回占位串）、`recall` 工具与 `COMPACT_RULES`。
-2. `beforeModel`（`force` 缺省开）：`contextUsageRatio(ctx)`（估算 + `contextOverheadOf`，与感知、阈值兜底同一把尺）≥ `force.at`（缺省 0.75），且 `timelineSoFar(ctx)` 里最后一次 compaction 之后没请过，就 emit 一条 `system_note(kind=budget, meta.compactRequest)` 请模型先整理。每段只请一次，不理就留给阈值兜底。
+2. `beforeModel`（`force` 缺省开）：`timelineSoFar(ctx)` 里最后一次 compaction 之后已有 n 条请求 → 看第 n+1 级软线（缺省 `[0.75, 0.8]`）；`contextUsageRatio(ctx)`（估算 + `contextOverheadOf`，与感知、阈值兜底同一把尺）过线、且整理后模型动过（`modelActedSinceLastCompaction`），就 emit 一条 `system_note(kind=budget, directive, meta.compactRequest={usage, autoFoldAt, attempt, at})` 请模型先整理。两级都不理就留给阈值兜底。
 3. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 4. `afterTool` 见到 `compact` 调用：`parseCompactArgs` 拿规范入参 → `planCompaction(ctx.events, args, { protectCallId, timeline, manifest })` 算切点与幸存者 → `ctx.emit` 一条 `core.compaction(decidedBy=forced 或 model, actor=model, parentId=tool_call)`（本段请过即 forced） → 把占位结果换成 `receipt()` 回执。日志顺序是 tool_call → compaction → tool_result。
 5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result`，原样返回内容并加说明头；原件已外溢则指向 blob 让模型用 `fetch_blob`。
@@ -185,7 +185,7 @@
 
 **真正的工作在 afterTool，工具的 execute 只占位**（B2 / B3 / B5）— compact / pins / handoff 都要"模型本轮看到的视图 + 完整时间线"，这些只有 `TurnContext` 有、`ToolContext` 没有；工具自己 `readTimeline` 又会绕开宿主的事件注册表（`ext.*` 事件读不出）。边界：模型看到的占位串只会在"装了工具却没装 Socket"时出现，文案里直说了。
 
-**到线请模型整理，用末尾追加说明而不是强制 tool_choice**（OPT-261030-3，2026-10-31）— 过软线 75% 请一次，模型照做记 `decidedBy: "forced"`（时机框架定、摘要模型写），不理才留给 85% 机械兜底。强制 tool_choice 在 DeepSeek thinking 模式 400、在 Haiku 5.5 缓存归零，收窄工具表两家缓存都崩（`spikes/forced-compact/`）。门禁 DeepSeek 官方两轮照做 12/12、召回 35/36（`examples/eval/results/2026-10-31-force-compact/`）。边界：中途 system 不被执行的线路（踩坑 42）要配 `midConversationSystem: false`。
+**到线请模型整理，用末尾追加说明而不是强制 tool_choice**（OPT-261030-3 / OPT-261031-1，2026-10-31）— 过 75%、80% 各请一次，请求标 directive 以带标签的 user 送达（号池中转站 system 身份 0/4、user 5/6）；模型照做记 `decidedBy: "forced"`（时机框架定、摘要模型写），不理才留给 85% 机械兜底。强制 tool_choice 在 DeepSeek thinking 模式 400、在 Haiku 5.5 缓存归零，收窄工具表两家缓存都崩（`spikes/forced-compact/`）。门禁 DeepSeek 官方两轮照做 12/12、召回 35/36（`examples/eval/results/2026-10-31-force-compact/`）。边界：相邻两级间隔小于一步能涨的量（spill 单个结果 16k）时后一级可能被跨过。
 
 **模块没有跨轮状态**（compact / handoff / budget）— 本轮的临时记录挂在 `WeakMap<TurnContext>` 上，轮结束随 ctx 回收，两个并发 run 互不干扰。边界：被打断的轮没有 `onTurnEnd`，内存记录会丢，所以 handoff 另有从日志重建的路（见下）。
 

@@ -33,7 +33,7 @@ import {
   orderLandings,
 } from "../ir.js"
 import type { FetchModel } from "../models.js"
-import { framedSummary, framedSystemNote } from "../notes.js"
+import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
 export type ResponsesInputContent =
   | { type: "input_text"; text: string }
@@ -254,7 +254,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
         break
       }
       case "system_note": {
-        if (capabilities.midConversationSystem) {
+        if (capabilities.midConversationSystem && !item.directive) {
           items.push({ role: systemRole, content: [{ type: "input_text", text: item.text }] })
           land(
             landings,
@@ -274,7 +274,9 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             item.event,
             "lossy",
             "user-role",
-            "the host declared that this upstream does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
+            item.directive
+              ? DIRECTIVE_NOTE
+              : "the host declared that this upstream does not support mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
             item.escaped ? ESCAPED_NOTE : undefined,
             item.deferred ? DEFERRED_NOTE : undefined,
           )

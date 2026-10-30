@@ -274,7 +274,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 - **compact 摘要里自动附被折叠工具结果清单，`recall({ seq })` 按 `tool_result` 的 seq 逐字取回** — 靠 fork 保留 seq；任何重排 / 重编号 seq 的改动都会让历史摘要里的引用失效。关掉 `manifest` 必须一并换 `rules`，否则缺省文案说"会列清单"就成了谎话。
 - **模型看到"已整理过一次"会认定旧细节已丢而拒答，即使原件就在上文** — 解法是让它能取回，不是删说明（踩坑 8）。
-- **compact 缺省过 75% 在末尾请模型整理一次（`force`），照做记 `decidedBy: "forced"`** — 每段只请一次，判据全从时间线读；中途 system 不被执行的线路（如号池中转站）请求会被无视，宿主要配 `midConversationSystem: false`（踩坑 42）。消费方按 `=== "model"` 判"模型自己挑的时机"，forced 不算。
+- **compact 缺省过 75%、80% 各请模型整理一次（`force`），照做记 `decidedBy: "forced"`** — 每段每级一次、刚整理完模型没动过不请，判据全从时间线读；请求标 `directive`，降级层一律以带标签的 user 送达（号池中转站对中途 system 里的指令不执行，踩坑 42）。消费方按 `=== "model"` 判"模型自己挑的时机"，forced 不算。
 - **pin 字数校验有两成容差** — 声明 500、601 起才拒，报错仍报 500。
 - **`fetch_blob` 按"本会话时间线引用过"授权，不按 blob 归属** — fork 会话能读父会话的 blob；未引用的 id 回"不存在"，与真不存在同一句话。
 - **spill 只有 `resultPolicy.overflow="truncate"` 才截断**，且向模型明说不可恢复。
@@ -303,6 +303,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败。
 - **内置模型表是最小表，`definitionOf` 内置打底、选项覆盖，表外必须给 `baseUrl`；同一 OpenAI id 两条协议各一份，无协议解析缺省走 Responses** — 测试目标模型显式取条目，别靠无协议解析。
 - **Chat 线有损**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点。**工具结果图片缺省上浮**到同批 tool 之后的一条 user（`tool+lifted-images`，`chat.liftToolImages: false` 退回占位）——放出时机是第一个**会下发的**非 tool_result 条目，`dropped` 不算（踩坑 39）。
+- **`system_note.directive: true` 的说明三条线都走带标签的 user，不看 `midConversationSystem`** — 只给要模型去做的指令用（compact 请求）；写进日志即定格，历史说明升级后送达方式不变。Anthropic 线同轮有感知说明时形状是 user(tool_result + 请求) → system(感知)，请求不是最后一条（用例锁住）。
 - **Anthropic 线的中途 system 攒到下一条 assistant 之前或收尾再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user（含只带 tool_result 的 user）、后接 assistant 或收尾；说明位置比时间线晚一条 user 仍算 exact 并备注。
 - **Anthropic 线缓存断点由本包打：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 占一格；别把断点留在 system 消息上（几乎零命中）。
 - ⚠️ **thinking / 加密推理项 / `fc_` 项 id 的回放判据是 provider + api + model 三者一致** — 判据是签名不是正文：Fable 5.1 缺省 display omitted（正文空、签名在）照发；无签名、别家的、同家别的型号一律 dropped，不降成正文（踩坑 37）。`redacted_thinking` 存 `replay.thinkingSignature` + `redacted: true`。
@@ -347,6 +348,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`withContextWindow` 只改 `capabilities`，真实窗口不变** — 测的是"机制在窄窗口怎么动"，不是"溢出会怎样"。
 - **探针里脑子工具保留、宿主工具清空** — 装 compact / spill 的臂能 `recall` / `fetch_blob`，基线臂不能，召回这一格两臂不是同一张卷子，有意为之。
 - **门禁第四条 governance 是候选自己前后比**，"双方都无预埋事实视为通过"——四条里两条可能在无信息时亮绿。
+- **examples 引用各包的 `dist/`，改了源码跑真模型前先 `pnpm build`** — 否则跑的是旧代码、白花钱（2026-10-31 OPT-261031-1 误跑一轮）；判据：结果里新字段为 undefined。
 - **fixture 给模型的每个值按工具 schema 核类型；门禁差一两格先看掉分在哪题、两臂是否都掉** — 两臂同题都掉多半是题的问题（踩坑 25）。
 
 ### 工作方法

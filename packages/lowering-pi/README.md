@@ -25,7 +25,7 @@ export const agent = createAgent({ model: claude, store, tools })
 | `apiKey` | required |
 | `baseUrl` | gateway or proxy; both factories accept any endpoint speaking the respective protocol (DeepSeek's Anthropic-compatible endpoint is tested) |
 | `requestOptions` | passed to pi-ai **as a whole, not merged** — if you set it on `openai()`, include `reasoningEffort` yourself or reasoning turns off |
-| `contextWindow`, `maxOutputTokens`, `reasoning`, `images`, `midConversationSystem` | override the capability table (`capabilitiesOf`) for models the table does not know |
+| `contextWindow`, `maxOutputTokens`, `reasoning`, `images`, `midConversationSystem` | override the capability table (`capabilitiesOf`) for models the table does not know; a `system_note` marked `directive: true` is always sent as a framed `user` message |
 | `trustMarkers` | default on: tool output is wrapped in `<untrusted source="tool:…">` in the request (the log keeps the original) |
 
 ## How events land

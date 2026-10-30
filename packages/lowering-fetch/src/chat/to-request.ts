@@ -30,7 +30,7 @@ import {
   orderLandings,
 } from "../ir.js"
 import type { FetchModel } from "../models.js"
-import { framedSummary, framedSystemNote } from "../notes.js"
+import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
 export type ChatContentPart =
   | { type: "text"; text: string }
@@ -238,7 +238,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         break
       }
       case "system_note": {
-        if (capabilities.midConversationSystem) {
+        if (capabilities.midConversationSystem && !item.directive) {
           messages.push({ role: "system", content: item.text })
           land(
             landings,
@@ -255,7 +255,9 @@ export function encodeChatRequest(input: ChatEncodeInput): {
             item.event,
             "lossy",
             "user-role",
-            "the upstream does not accept mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
+            item.directive
+              ? DIRECTIVE_NOTE
+              : "the upstream does not accept mid-conversation system, so it is wrapped in a <system_note> tag and sent with the user role",
             item.escaped ? ESCAPED_NOTE : undefined,
             item.deferred ? DEFERRED_NOTE : undefined,
           )

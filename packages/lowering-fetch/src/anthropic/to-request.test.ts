@@ -314,6 +314,26 @@ describe("encodeAnthropicRequest — 中途 system 摆放（S1）", () => {
     expect(r.body.messages[0]?.content[1]).toMatchObject({ cache_control: { type: "ephemeral" } })
   })
 
+  it("指令类说明（directive，OPT-261031-1）：支持中途 system 也以 <system_note> 并进 user；同轮的感知说明仍走 system、排在其后", () => {
+    const perceptionNote = note("Context 78% used.")
+    const request = ev("core.system_note", "system", {
+      kind: "budget",
+      text: "Call compact now.",
+      directive: true,
+    })
+    const r = encode([user("go"), call("c1"), result("c1"), perceptionNote, request])
+    // 实际形状（锁住）：user(tool_result + 请求) → system(感知)，请求不再是最后一条，但不 400、前缀稳定
+    expect(roles(r.body.messages)).toEqual(["user", "assistant", "user", "system"])
+    const toolUser = r.body.messages[2]?.content ?? []
+    expect(toolUser.map((b) => b.type)).toEqual(["tool_result", "text"])
+    expect((toolUser[1] as { text: string }).text).toBe(
+      '<system_note kind="budget">\nCall compact now.\n</system_note>',
+    )
+    expect(landingOf(r, request)).toMatchObject({ kind: "lossy", landing: "user-role" })
+    expect(landingOf(r, request)?.note).toContain("directive")
+    expect(landingOf(r, perceptionNote)).toMatchObject({ kind: "exact", landing: "system" })
+  })
+
   it("untrusted 说明含提前闭合的 </untrusted：转义后仍落 system，记 lossy(system)", () => {
     const n = ev(
       "core.system_note",

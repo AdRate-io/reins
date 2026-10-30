@@ -83,7 +83,7 @@
 
 ### 3.2 `encodeChatRequest`：IR → Chat 请求体
 
-- `systemPrompt` → 首条 `system`。`system_note` → 中途 `system`（缺省 exact），否则 `<system_note kind=…>` 框住走 user（lossy user-role）。`compaction` → `[Summary of earlier conversation]` user 文本（lossy user-text）。
+- `systemPrompt` → 首条 `system`。`system_note` → 中途 `system`（缺省 exact），否则 `<system_note kind=…>` 框住走 user（lossy user-role）。三条线同一规则：`directive: true` 的说明（IR 带 `directive`）不看 `midConversationSystem`，一律走框住的 user，落点 note 为 `DIRECTIVE_NOTE`（OPT-261031-1）。`compaction` → `[Summary of earlier conversation]` user 文本（lossy user-text）。
 - user：单段文本用字符串，否则 content parts；图片走 `data:` URL，模型不收图时换占位文本并记 lossy。
 - assistant：正文多段合并成一个字符串（lossy merged-text）；`tool_calls[].function.arguments` 是 JSON 字符串；**方言开着时 `reasoning_content` 字段必在**。
 - tool：只收文本；`isError` 以 `[tool error]\n` 前缀表达（lossy）。图片两种处置：模型收图且 `chat.liftToolImages` 未关（缺省）→ 原位留 `[image n attached in the next user message]`，图片本体攒进 `lifted`，遇到第一个会下发的非 tool_result 条目（`dropped` 不算——它们原位夹在同批结果之间）或收尾时放成一条 user 消息（每条结果一行说明 + 逐张 `image n:`；untrusted 结果的图片段用 core `markUntrusted` 包），落点 lossy `tool+lifted-images`；否则换占位（lossy tool-text-only）。IR 已把后移的用户消息排在整批结果之后，所以附件天然在它们之前。

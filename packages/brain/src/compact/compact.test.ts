@@ -26,7 +26,13 @@ import {
   trailingCompactionRun,
 } from "./plan.js"
 import { parseRecallArgs, recallResult } from "./recall.js"
-import { contextUsageRatio, isCompactRequest, renderCompactRequest } from "./request.js"
+import {
+  type CompactRequestInfo,
+  contextUsageRatio,
+  DEFAULT_FORCE_AT,
+  isCompactRequest,
+  renderCompactRequest,
+} from "./request.js"
 import { COMPACT_REQUEST_RULE, COMPACT_RULES } from "./rules.js"
 
 const registry = createCoreRegistry()
@@ -832,7 +838,7 @@ describe("compact 纯函数层", () => {
   })
 })
 
-describe("compact：到线请模型整理（OPT-261030-3）", () => {
+describe("compact：到线请模型整理（OPT-261030-3 / OPT-261031-1）", () => {
   /** 每条可见事件估 100 token、窗口 1000：触发线 850、回落线 600；软线取 0.65，视图到 7 条（700）就请 */
   const window = { projection: { estimate: () => 100 } }
   const caps = { capabilities: { contextWindow: 1000 } }
@@ -870,10 +876,44 @@ describe("compact：到线请模型整理（OPT-261030-3）", () => {
     expect(reqs[0]?.actor).toBe("system")
     expect(reqs[0]?.payload).toEqual({
       kind: "budget",
-      text: renderCompactRequest({ usage: "70%", autoFoldAt: "85%" }),
-      meta: { compactRequest: { usage: "70%", autoFoldAt: "85%", at: 0.65 } },
+      text: renderCompactRequest({ usage: "70%", autoFoldAt: "85%", attempt: 1 }),
+      meta: { compactRequest: { usage: "70%", autoFoldAt: "85%", attempt: 1, at: 0.65 } },
+      directive: true,
     })
     expect(compactionsOf(logged).map((c) => c.payload.decidedBy)).toEqual(["forced", "threshold", "forced"])
+  })
+
+  it("两级：过第一级请一次，没理、过第二级再请一次（措辞更直接），之后同段不再请", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([...work(3), { drafts: [say("完")] }], caps)
+    await drain(
+      runLoop(config(lowering, log, { ...window, sockets: [compact({ force: { at: [0.35, 0.75] } })] })),
+    )
+    // 第 2 次请求 4 条（400 ≥ 350）→ 第一级；第 3 次 8 条（800 ≥ 750）→ 第二级；第 4 次 12 条过 850 机械裁剪
+    expect(lowering.requests.slice(0, 3).map((r) => r.events.length)).toEqual([1, 5, 9])
+    const reqs = requestsIn(await all(log))
+    expect(reqs.map((r) => r.payload.meta?.compactRequest as { attempt: number; at: number })).toEqual([
+      { usage: "40%", autoFoldAt: "85%", attempt: 1, at: 0.35 },
+      { usage: "80%", autoFoldAt: "85%", attempt: 2, at: 0.75 },
+    ])
+    expect(reqs[1]?.payload.text).toBe(renderCompactRequest({ usage: "80%", autoFoldAt: "85%", attempt: 2 }))
+    expect(reqs[1]?.payload.text).toContain("This is the last request")
+  })
+
+  it("刚整理完、模型还没动过不请：折后仍在软线之上，等它干一轮活再请", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering(
+      [{ drafts: [doCompact("k", { summary: "S", keep: [] })] }, ...work(1), { drafts: [say("完")] }],
+      caps,
+    )
+    await drain(runLoop(config(lowering, log, { ...window, sockets: [compact({ force: { at: 0.05 } })] })))
+    // 第 1 次请求就过 5% → 请；照做后第 2 次请求模型还没动过 → 不请；第 3 次（干过一轮）→ 新一段再请
+    expect(lowering.requests.map((r) => isCompactRequest(r.events.at(-1) as Event))).toEqual([
+      true,
+      false,
+      true,
+    ])
+    expect(compactionsOf(await all(log)).map((c) => c.payload.decidedBy)).toEqual(["forced"])
   })
 
   it("同段只请一次：用量一直在软线之上、没到触发线，后面的轮不再追加", async () => {
@@ -904,8 +944,7 @@ describe("compact：到线请模型整理（OPT-261030-3）", () => {
     expect(COMPACT_RULES).toContain(COMPACT_REQUEST_RULE)
 
     const zh = new ScriptedLowering([...work(2), { drafts: [say("完")] }], caps)
-    const render = (i: { usage: string; autoFoldAt: string }) =>
-      `上下文已用 ${i.usage}，${i.autoFoldAt} 会机械折叠，请先整理`
+    const render = (i: CompactRequestInfo) => `上下文已用 ${i.usage}，${i.autoFoldAt} 会机械折叠，请先整理`
     await drain(
       runLoop(
         config(zh, new InMemoryEventLog(), {
@@ -919,11 +958,26 @@ describe("compact：到线请模型整理（OPT-261030-3）", () => {
     )
     expect(zh.requests[0]?.systemPrompt).toContain(COMPACT_REQUEST_RULE)
 
-    for (const at of [0, 1, -0.5, Number.NaN]) {
+    for (const at of [0, 1, -0.5, Number.NaN, [], [0.8, 0.75], [0.5, 0.5], [0.5, 1]]) {
       expect(() => compact({ force: { at } })).toThrow(
-        `compact.force.at must be a number in (0, 1), got ${at}`,
+        `compact.force.at must be a number in (0, 1) or a strictly ascending non-empty list of them, got ${JSON.stringify(at)}`,
       )
     }
+    expect(DEFAULT_FORCE_AT).toEqual([0.75, 0.8])
+
+    // directive: false：请求照发，但不标指令，降级层按普通说明送
+    const plain = new ScriptedLowering([...work(2), { drafts: [say("完")] }], caps)
+    await drain(
+      runLoop(
+        config(plain, new InMemoryEventLog(), {
+          ...window,
+          sockets: [compact({ force: { at: 0.35, directive: false } })],
+        }),
+      ),
+    )
+    const sent = requestsIn(plain.requests[1]?.events ?? [])[0]
+    expect(sent).toBeDefined()
+    expect(sent?.payload.directive).toBeUndefined()
   })
 
   it("用量按校准后的真实上下文判：估算未过软线、加上固定开销过了 → 请（与感知、阈值兜底同一把尺）", () => {

@@ -105,6 +105,10 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     },
     { label: "system_note", events: [user(), mk("core.system_note", { kind: "perception", text: "n" })] },
     {
+      label: "system_note 指令类（OPT-261031-1）",
+      events: [user(), mk("core.system_note", { kind: "budget", text: "compact now", directive: true })],
+    },
+    {
       label: "system_note untrusted 含提前闭合",
       events: [
         user(),

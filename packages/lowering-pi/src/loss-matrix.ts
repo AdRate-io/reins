@@ -91,7 +91,7 @@ export const LOSS_MATRIX: LossMatrix = {
       lossy(
         "user-role",
         "wrapped in a <system_note> tag and sent with the user role",
-        "the model family does not support mid-conversation system",
+        "the model family does not support mid-conversation system, or the note is a directive the model must act on (SystemNotePayload.directive)",
       ),
     ],
     "core.compaction": [
@@ -121,6 +121,11 @@ export const LOSS_MATRIX: LossMatrix = {
     "core.system_note": [
       exact("developer", "reasoning models take the developer role"),
       exact("system", "non-reasoning models take the system role"),
+      lossy(
+        "user-role",
+        "wrapped in a <system_note> tag and sent with the user role",
+        "the note is a directive the model must act on (SystemNotePayload.directive)",
+      ),
     ],
     "core.compaction": [lossy("user-text", "the summary is rendered as user-role text")],
     ...NOT_SENT,

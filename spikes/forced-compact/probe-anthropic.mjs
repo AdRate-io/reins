@@ -6,6 +6,8 @@
  * tool_result 的 user）；缓存用顶层 `cache_control` 自动断点；thinking 不设（Haiku 5.5 缺省 adaptive），即真实用法。
  * 各臂同 probe.mjs：W2 基线 / A 追加说明 / B tool_choice 指定 compact / Br tool_choice any / C 只留 compact；
  * 另有 A2：感知说明 + 整理请求两条连续中途 system（同轮各追加一条时的真实形状）。
+ * U（OPT-261031-1，2026-10-31）：整理请求标 directive 后 lowering-fetch 的实际形状——请求以 <system_note> 文本并进末条
+ * user（tool_result 之后），感知说明仍是其后的中途 system。`ARMS=W2,U` 只跑列出的臂（按名字前缀）。
  * 缓存看 usage.cache_read_input_tokens 占 (read + creation + input) 的比例。
  */
 import { readFileSync } from "node:fs"
@@ -106,6 +108,25 @@ for (let round = 1; round <= ROUNDS; round++) {
       { role: "system", content: NOTE },
     ],
   }
+  const last = P.messages.at(-1)
+  const withDirective = {
+    ...P,
+    messages: [
+      ...P.messages.slice(0, -1),
+      {
+        ...last,
+        content: [
+          ...(Array.isArray(last.content) ? last.content : [{ type: "text", text: last.content }]),
+          { type: "text", text: `<system_note kind="budget">\n${NOTE}\n</system_note>` },
+        ],
+      },
+      {
+        role: "system",
+        content:
+          "Runtime context status:\n- Context window used: 70%–85% (the harness auto-folds the oldest turns at 85%)",
+      },
+    ],
+  }
   const all = toolsOf(allTools)
   const warm = await ask({ ...P, tools: all, max_tokens: 0 }) // 写缓存
   if (warm.status !== 200) console.log(`#${round} 暖缓存失败 HTTP ${warm.status} ${warm.error}`)
@@ -117,7 +138,8 @@ for (let round = 1; round <= ROUNDS; round++) {
     // 感知说明与整理请求同轮各追加一条 → 末尾两条连续中途 system（OPT-260915-2：厂商是否接受、两条是否都读到）
     ["A2 连续两条 system", { ...withPerception, tools: all }],
     ["C 只留 compact", { ...withNote, tools: toolsOf([compactTool]) }],
-  ]
+    ["U 请求走 user + 感知 system", { ...withDirective, tools: all }],
+  ].filter(([name]) => !process.env.ARMS || process.env.ARMS.split(",").some((a) => name.startsWith(`${a} `)))
   for (const [name, body] of arms) {
     const r = await ask(body)
     const j = name.startsWith("W2")

@@ -45,7 +45,7 @@ type Render = (usage: string) => string
 const CANARY = `CHECK-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
 const VARIANTS: Record<string, Render> = {
   // 现行缺省
-  A: (usage) => renderCompactRequest({ usage, autoFoldAt: "85%" }),
+  A: (usage) => renderCompactRequest({ usage, autoFoldAt: "85%", attempt: 1 }),
   // 讲后果
   B: (usage) =>
     `IMPORTANT: the context window is ${usage} full. In a few more steps the harness will mechanically cut the oldest part of this conversation, ` +

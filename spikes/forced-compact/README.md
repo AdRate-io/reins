@@ -39,6 +39,15 @@
 
 收口 OPT-260915-2（"Anthropic 线连续两条中途 system 未实证"）：官方接受，不用合并。
 
+## 请求走 user、感知仍走 system（2026-10-31，OPT-261031-1，Haiku 5.5 经 CF 网关，3 轮）
+
+`ARMS=W2,U node spikes/forced-compact/probe-anthropic.mjs 3`。U 臂是整理请求标 `directive` 后 lowering-fetch Anthropic 线的实际形状：请求以 `<system_note>` 文本并进末条 user（tool_result 之后），同轮感知说明仍是其后的中途 system。
+
+| 臂 | 照做 | 缓存命中率 |
+| --- | --- | --- |
+| W2 基线 | — | 100% |
+| U 请求走 user + 感知 system | 3/3，入参合法（摘要 3k～3.9k 字） | 98.8% |
+
 ## 结论
 
 - DeepSeek thinking 模式拒绝一切强制 tool_choice；Anthropic 新一代 Fable 5.1 / Opus 5.5 / Sonnet 5.5 文档写明强制 400，Haiku 5.5 接受但缓存全失、还会夹带别的调用——"加 tool_choice 通道"这条路不值得走。

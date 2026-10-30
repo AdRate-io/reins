@@ -97,7 +97,7 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     lossy(
       "user-role",
       "wrapped in a <system_note> tag and sent with the user role",
-      "the model family does not support mid-conversation system, or the placement rules forbid it (the previous message is an assistant, or the note would be first)",
+      "the model family does not support mid-conversation system, or the placement rules forbid it (the previous message is an assistant, or the note would be first), or the note is a directive the model must act on (SystemNotePayload.directive)",
     ),
   ],
   "core.compaction": [

@@ -296,6 +296,21 @@ describe("encodeResponsesRequest", () => {
     const framed = compat.body.input[1] as Exclude<ResponsesInputItem, { type: string }>
     expect(textOf(framed.content[0])).toContain('<system_note kind="perception">')
     expect(landingOf(compat, tail)).toMatchObject({ kind: "lossy", landing: "user-role" })
+
+    // 指令类说明（OPT-261031-1）：接受中途 system 也走带标签的 user
+    const directive = ev("core.system_note", "system", {
+      kind: "budget",
+      text: "Call compact now.",
+      directive: true,
+    })
+    const dr = encode([user("q"), directive])
+    expect(kinds(dr.body.input)).toEqual(["user", "user"])
+    const framedDirective = dr.body.input[1] as Exclude<ResponsesInputItem, { type: string }>
+    expect(textOf(framedDirective.content[0])).toBe(
+      '<system_note kind="budget">\nCall compact now.\n</system_note>',
+    )
+    expect(landingOf(dr, directive)).toMatchObject({ kind: "lossy", landing: "user-role" })
+    expect(landingOf(dr, directive)?.note).toContain("directive")
   })
 
   it("后移：结果没到齐时的用户消息 / 说明排到同批 function_call_output 之后，用户消息记 lossy、说明仍 exact 并备注", () => {

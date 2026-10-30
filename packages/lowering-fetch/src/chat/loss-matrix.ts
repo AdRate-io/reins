@@ -119,7 +119,7 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
     lossy(
       "user-role",
       "wrapped in a <system_note> tag and sent with the user role",
-      "the model declares midConversationSystem: false",
+      "the model declares midConversationSystem: false, or the note is a directive the model must act on (SystemNotePayload.directive)",
     ),
   ],
   "core.compaction": [

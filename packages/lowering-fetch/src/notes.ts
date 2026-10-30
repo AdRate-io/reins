@@ -9,6 +9,13 @@ export function framedSystemNote(kind: SystemNotePayload["kind"], text: string):
   return `<system_note kind="${kind}">\n${text}\n</system_note>`
 }
 
+/**
+ * 指令类说明（`SystemNotePayload.directive`）的落点说明：上游接受中途 system 也走带标签的 user 文本——
+ * 有的上游收下中途 system 却不执行其中的指令（踩坑 42），user 文本两条实测线路都照做
+ */
+export const DIRECTIVE_NOTE =
+  "the note is a directive the model must act on, so it is wrapped in a <system_note> tag and sent with the user role"
+
 /** compaction 摘要以 user 文本呈现时的前缀 */
 export function framedSummary(summary: string): string {
   return `[Summary of earlier conversation]\n${summary}`
