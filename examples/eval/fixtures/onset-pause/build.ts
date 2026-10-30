@@ -14,7 +14,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { DatabaseSync } from "node:sqlite"
 
-/** 第三轮试拍里摄影（程野）的会话：11 次 run、683 条事件，上下文从 <50% 涨到 ≥85%，一次都没整理 */
+/** 第三轮试拍里摄影角色的会话：11 次 run、683 条事件，上下文从 <50% 涨到 ≥85%，一次都没整理 */
 export const CINEMATOGRAPHER_SESSION = "01a18abb-3a7d-7780-809f-406a2a67b31a"
 
 const [dbPath, specPath] = process.argv.slice(2)

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import type { Actor, Event } from "../events/base.js"
-import type { CoreEventOf, CoreEventPayloads, CoreEventType } from "../events/core.js"
+import {
+  type CoreEventOf,
+  type CoreEventPayloads,
+  type CoreEventType,
+  contextOverheadOf,
+} from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { createCoreRegistry } from "../events/registry.js"
 import { estimateTextTokens, roughTokenEstimate } from "./estimate.js"
@@ -607,6 +612,18 @@ describe("阈值兜底按校准后的真实上下文判（与感知同一口径�
     expect(() => project({ timeline, ...opts, budget: { ...opts.budget, overheadTokens: -1 } })).toThrow(
       RangeError,
     )
+  })
+
+  it("坏用量（NaN / Infinity）算不出开销时回 0，run 起步不因此抛错", () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const broken = timeline.map((e) => (e.seq === 5 ? usage(5, bad, 40) : e))
+      expect(contextOverheadOf(broken)).toBe(0)
+      const r = project({ timeline: broken, ...opts })
+      expect(r.stats.overheadTokens).toBe(0)
+      expect(r.emitted).toEqual([])
+    }
+    const nanEstimate = timeline.map((e) => (e.seq === 5 ? usage(5, 70, Number.NaN) : e))
+    expect(contextOverheadOf(nanEstimate)).toBe(0)
   })
 
   it("开销大到只剩最后一轮也放不下时 overBudget 为真（不能只看估算报没超）", () => {

@@ -68,7 +68,7 @@
 | --- | --- |
 | `events/index.ts` | 汇总导出 base / core / create / id / registry |
 | `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image / **tool_reference**——工具定义引用，带 name / description / inputSchema 快照，L1）、`renderToolReference()`（引用段展开成文本的唯一写法）、各 actor 的默认信任 `DEFAULT_TRUST` |
-| `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite）与 `contextOverheadOf(timeline)`（估算不含的固定开销；阈值兜底与感知共用，2026-10-30 从 brain 搬来） |
+| `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite）与 `contextOverheadOf(timeline)`（估算不含的固定开销，非有限值回 0；阈值兜底与感知共用，2026-10-30 从 brain 搬来） |
 | `events/create.ts` | `EventDraft`（无 id/seq/at/sessionId 的草稿）与 `createEvent` / `createCoreEvent` 工厂：补齐壳字段、从注册表取 schemaVersion |
 | `events/id.ts` | 自实现 `uuidv7`（RFC 9562，只用 `crypto.getRandomValues`，不引依赖） |
 | `events/registry.ts` | `EventSchemaRegistry`：登记 type → 当前版本 + 逐级 upcaster，`read()` fail-closed（6 种 `SchemaError` code）；`CORE_SCHEMAS`（全部 v1）与 `createCoreRegistry()` |

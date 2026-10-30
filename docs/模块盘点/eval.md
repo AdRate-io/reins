@@ -133,12 +133,14 @@ harness 在 `packages/eval`，**具体的 fixture 与跑真模型的脚本在这
 
 | 路径 | 内容 |
 | --- | --- |
-| `examples/eval/README.md` | 跑法、fixture 说明、脱敏口径、三个 fixture 的任务/评分/约束一览 |
+| `examples/eval/README.md` | 跑法、三组 fixture（adrate-patrol / tool-discovery / onset-pause）说明、脱敏口径、任务/评分/约束一览 |
 | `examples/eval/run.ts` | 对照跑数脚本：`--arms / --fixtures / --repeats / --repeat-start / --context-window / --out`，`REINS_PROVIDER` 选 deepseek（fetch 版官方 Chat Completions 直连）/ cloudflare（Cloudflare AI Gateway 透传官方 Anthropic）/ relay（Claude 中转）/ aireiter；降级层 0.2 起是 `@reinsjs/lowering-fetch`；组出 `none / threshold / brain / brain-lean / compact-only` 五臂，调 `runEval`，**一格跑完立刻落盘**三个文件到 `out/<run>/cells/`：`<key>.json`（指标、事实问答、状态，剥掉时间线）、`<key>.jsonl`（全链时间线）、`<key>.probes.jsonl`（探针事件）；最后写 `run-<臂名>.json` |
 | `examples/eval/report.ts` | 汇总脚本：读 `cells/*.json`，`summarize` 求臂均值、`checkGate` 跑四条、`renderReport` 出表，写 `report.md` / `report.json`；`--reference` / `--candidate` / `--token-ratio` 可配；`--rescore` 用落盘时间线按当前评分器重算完成度、按探针记录重判召回，**改口径不必重跑模型** |
-| `examples/eval/fixtures/adrate-patrol/` | 唯一一套 fixture（AdRate"巡检降本"真实长任务脱敏版）：`build.ts`（源录像 → 去外溢 → 脱敏 → 自查 → 写出）、`recording.jsonl`（229 事件的脱敏时间线，就是 fixture 的"世界"）、`tools.json`（dogfood 同一张 10 个工具的声明）、`fixture.ts`（世界解析 + 回放工具与补位 + 预埋事实/约束 + 完成判定 + 三个 fixture 装配）、`fixture.test.ts`（脚本化模型自检，不联网）。三个 fixture：`adrate-patrol-disable`（全流程）、`adrate-patrol-audit`（只读）、`adrate-patrol-resume`（种子 = 真实第一次 run 的全部历史 + "工具修好了，继续"），共用一个世界，缺省 `contextWindow` 64k |
+| `examples/eval/fixtures/onset-pause/` | OnSet 反馈 ②：长期会话里"run 收尾"算不算整理停顿。`build.ts`（OnSet 库副本 → `data/`，**data 已 gitignore、不进仓库**）、`dump-onset.mts`（在 OnSet 仓库里导出系统提示与工具声明）、`fixture.ts`（五个切点 early / idle / wrapup / work / tight、两臂规则文案、回放工具、整理时机分类）、`fixture.test.ts`（分类器始终跑，依赖 data 的部分没生成就跳过）、`summary.ts`（按切点 × 臂汇总 `timing`）；`run.ts --suite onset-pause` 跑 |
+| `examples/eval/fixtures/tool-discovery/` | D1 工具懒发现门禁：`catalog.ts`（200 件工具目录）、`fixture.ts`、`fixture.test.ts` |
+| `examples/eval/fixtures/adrate-patrol/` | 第一套 fixture（AdRate"巡检降本"真实长任务脱敏版）：`build.ts`（源录像 → 去外溢 → 脱敏 → 自查 → 写出）、`recording.jsonl`（229 事件的脱敏时间线，就是 fixture 的"世界"）、`tools.json`（dogfood 同一张 10 个工具的声明）、`fixture.ts`（世界解析 + 回放工具与补位 + 预埋事实/约束 + 完成判定 + 三个 fixture 装配）、`fixture.test.ts`（脚本化模型自检，不联网）。三个 fixture：`adrate-patrol-disable`（全流程）、`adrate-patrol-audit`（只读）、`adrate-patrol-resume`（种子 = 真实第一次 run 的全部历史 + "工具修好了，继续"），共用一个世界，缺省 `contextWindow` 64k |
 | `examples/eval/out/` | 跑数原始产物，**已 gitignore、未入库**。一个子目录一次运行（`smoke`、`smoke2`、`smoke-relay`、`e3-*`、`e3v2~v4-*`、`e3b-*`、`e3c-*`、`e3c2-*`），每个下面是 `cells/`（每格三个文件）+ `run-*.json` + `report.md` |
-| `examples/eval/results/` | 入库的结论目录，目前只有 `2026-09-09-deepseek-v4-flash/`（README + 8 份报告） |
+| `examples/eval/results/` | 入库的结论目录：`2026-09-09-deepseek-v4-flash/`、`2026-09-14-tool-discovery/`、`2026-09-15-lowering-fetch/`、`2026-10-30-onset-pause/`（两轮 66 格，规则候选无效、提示行只在纯收尾 run 起效，并发现兜底与感知口径不一） |
 
 `results/2026-09-15-lowering-fetch/`（0.2 发前，示例与 eval 切到 fetch 版后两族复跑）：`README.md` 是总账——Sonnet 5 巡检 + 两族工具发现全过，DeepSeek 巡检 token 项 6 遍未过；
 四份 `control-patrol-disable-*` 是同日只跑 disable 的对照（fetch 版 Anthropic 端口 / 0.2 pi 版 / 英文化前代码 / v0.1.1 原代码），结论：轮数 6.3 → 10 是模型自己变的、与降级层无关，英文化对每轮上下文的影响未排除（n=6 分不出）。

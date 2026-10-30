@@ -146,6 +146,8 @@ export function contextTokensOf(usage: TokenUsage): number {
  * 这些多出来的部分在一个 run 里基本是常量（系统提示与工具表整轮不变），所以用**加法**校准而不是比例：
  * 比例会随历史变长把误差放大，加法只补那块固定的开销。
  * 数据来自日志最后一条同时带 tokens 与 contextEstimate 的 budget_usage；没有可对照的请求时为 0，不为负。
+ * 那条记录算出非有限值（宿主 / 适配器写进 NaN、Infinity）也回 0：日志里一条坏用量不该让 project() 的开销校验
+ * 在 run 起步就抛错，退化成"不校准"即可。
  *
  * 阈值兜底（投影）与感知读数**必须**都调这一个函数：两处口径一分叉，模型被告知"到 85% 自动折叠"就不成立。
  */
@@ -153,7 +155,8 @@ export function contextOverheadOf(timeline: readonly Event[]): number {
   for (let i = timeline.length - 1; i >= 0; i--) {
     const e = timeline[i] as CoreEvent | undefined
     if (e?.type !== "core.budget_usage" || e.payload.contextEstimate === undefined) continue
-    return Math.max(0, contextTokensOf(e.payload.tokens) - e.payload.contextEstimate)
+    const overhead = contextTokensOf(e.payload.tokens) - e.payload.contextEstimate
+    return Number.isFinite(overhead) && overhead > 0 ? overhead : 0
   }
   return 0
 }

@@ -1,5 +1,5 @@
 /**
- * 从 OnSet 的真实装配导出摄影角色（程野）的"世界声明"：系统提示（宿主提示 + memory / skills 等宿主 Socket 的规则片段）与全部工具声明。
+ * 从 OnSet 的真实装配导出摄影角色的"世界声明"：系统提示（宿主提示 + memory / skills 等宿主 Socket 的规则片段）与全部工具声明。
  *
  * 为什么要从 OnSet 代码导：时间线里只有 `tools_bound` 的名字，没有说明与 schema，也没有系统提示；
  * 凭记忆重写会让模型面对的不是当时那张卷子。compact / spill / perception / budget 四个模块不导 —— 它们由 eval 的臂提供，
