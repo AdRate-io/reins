@@ -3,7 +3,7 @@
 >
 > 读它的时候要分辨两类行为：**服务器的**（L0/L1 两层工具、三件元工具、无 annotations、业务错误不置 isError、
 > `campaign_create` 描述被污染）与 **zcode 客户端的**（`mcp__tiktok-ads__` 名字前缀、57474 → 50000 字节硬截断、
-> 工具列表会话中途不刷新、看不到 `isError` 包装）。结论与取舍见 `docs/DECISIONS.md` 同日三条。
+> 工具列表会话中途不刷新、看不到 `isError` 包装）。结论与取舍见 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 同日三条。
 
 ---
 

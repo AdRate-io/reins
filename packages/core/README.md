@@ -71,6 +71,6 @@ A `Socket` is the seam brain modules use — five hooks (`beforeModel`, `afterMo
 
 ## Documentation
 
-The design documents live in `docs/` at the repository root and are written in Chinese: `docs/技术方案.md` (spec, §6 run state, §7 sockets, §10 tools), `docs/模块盘点/core.md` (file-by-file map), `docs/DECISIONS.md`.
+The design documents live in `docs/` at the repository root and are written in Chinese: `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` (spec, §6 run state, §7 sockets, §10 tools), `docs/系统全景图_模块盘点/core.md` (file-by-file map), `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md`.
 
 MIT © 2026 NewRate Limited.

@@ -35,7 +35,7 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
 | Claude（网关 claude-opus-5），16k | 同上 | 同上，同样没续读 | 42 条事件，正确得出 0 条 ENABLE，用 fetch_blob 读完两页 109 条 |
 | DeepSeek，缺省改为 40k | 同上 | `adrate-ads` 一次读到 355 行，未外溢 | 29 条事件，按 `adrate-ads` 技能"定不了授权就列候选问 Owner 一次，绝不猜"停下来问 Owner |
 
-两族都在动手前先翻书，验收过；两族都不按截断提示续读"先读再动手"的说明书，所以 `skill_read` 的缺省上限从 16k 改成 40k（DECISIONS 2026-09-13、踩坑记录同日）。
+两族都在动手前先翻书，验收过；两族都不按截断提示续读"先读再动手"的说明书，所以 `skill_read` 的缺省上限从 16k 改成 40k（DECISIONS 2026-09-13、踩坑记录 #22 / #23）。
 录像 `s1-skills-*.jsonl` / `.html` 是脱敏版（见下文「录像与脱敏」）。
 
 ## 录像与脱敏

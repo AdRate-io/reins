@@ -25,5 +25,8 @@ export default defineConfig({
       { find: "@reinsjs/ui-agui", replacement: src("ui-agui/src/index.ts") },
     ],
   },
-  test: { include: ["packages/*/src/**/*.test.ts", "examples/*/**/*.test.ts"], passWithNoTests: true },
+  test: {
+    include: ["packages/*/src/**/*.test.ts", "examples/*/**/*.test.ts", "scripts/structure/*.test.ts"],
+    passWithNoTests: true,
+  },
 })

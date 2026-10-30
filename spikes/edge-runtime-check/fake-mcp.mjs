@@ -13,7 +13,7 @@ const { z } = require("zod")
 /**
  * 每个请求 / 会话由工厂造一个 McpServer 实例（`createMcpHandler` 的约定）。
  * 踩过的坑：一个 `WebStandardStreamableHTTPServerTransport` 只服务一个会话，第二个客户端 initialize 直接 400
- * "Server already initialized"——workerd 里的 tools-mcp 断了重建就是"第二个客户端"。见 docs/踩坑记录.md 2026-09-10。
+ * "Server already initialized"——workerd 里的 tools-mcp 断了重建就是"第二个客户端"。见 docs/踩坑记录.md #19。
  */
 function makeServer() {
   const server = new McpServer({ name: "edge-fake-mcp", version: "0.0.0" })

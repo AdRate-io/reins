@@ -5,7 +5,7 @@ fixture：`examples/eval/fixtures/tool-discovery`（200 件工具、6 个短任�
 | 轮 | 模型 | 报告 | 结论 |
 | --- | --- | --- | --- |
 | r1 | DeepSeek v4 flash | `r1-deepseek-v4-flash-report.md` | 门禁过（98.3% = 98.3%）；**fixture 有缺陷**：假账户 authId 是字符串，schema 要整数 |
-| r1 | Claude sonnet-5 | `r1-claude-sonnet-5-report.md` | 完成度 96.7% < 98.3% 差一格未过；掉分格两臂同题，全是模型按契约停下来问 authId（见踩坑记录 2026-09-14） |
+| r1 | Claude sonnet-5 | `r1-claude-sonnet-5-report.md` | 完成度 96.7% < 98.3% 差一格未过；掉分格两臂同题，全是模型按契约停下来问 authId（见踩坑记录 #25） |
 | r2 | DeepSeek v4 flash | `r2-deepseek-v4-flash-report.md` | **通过**：完成度 100% = 100%，总 token 27.7k vs 73.2k（−62%），计费等价 4.7k vs 8.4k（−44%），零走错门 |
 | r2 | Claude sonnet-5 | `r2-claude-sonnet-5-report.md` | **通过**：完成度 100% = 100%，总 token 40.2k vs 97.4k（−59%），计费等价 9.2k vs 10.5k（−13%），零走错门 |
 

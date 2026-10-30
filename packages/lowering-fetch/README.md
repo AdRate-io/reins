@@ -116,6 +116,6 @@ Non-2xx responses throw `HttpError` with `status`, `headers` and the raw body (`
 
 ## Documentation
 
-`docs/技术方案.md` §11, `docs/模块盘点/lowering-fetch.md`, `spikes/f1-chat-live/`, `spikes/f2-anthropic-live/`, `spikes/f3-responses-live/` (live verification against DeepSeek and, through the Cloudflare AI Gateway, OpenAI and Anthropic) and `spikes/edge-runtime-check/` (Cloudflare workerd) — in Chinese, at the repository root.
+`docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §11, `docs/系统全景图_模块盘点/lowering-fetch.md`, `spikes/f1-chat-live/`, `spikes/f2-anthropic-live/`, `spikes/f3-responses-live/` (live verification against DeepSeek and, through the Cloudflare AI Gateway, OpenAI and Anthropic) and `spikes/edge-runtime-check/` (Cloudflare workerd) — in Chinese, at the repository root.
 
 MIT © 2026 NewRate Limited.

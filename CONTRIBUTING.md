@@ -11,7 +11,7 @@ CI（`.github/workflows/ci.yml`）跑的就是 `pnpm check`，本地绿 = CI 绿
 
 ## 提交信息
 
-首行格式 `type: 摘要`，摘要不超过 72 字符；正文写对应的任务号（见 `docs/TASKS.md`）。
+首行格式 `type: 摘要`，摘要不超过 72 字符；正文写根因与取向，以及对应编号（`docs/待处理任务.md` 的 OPT / BUG 号或实施方案名）。
 `pnpm install` 会自动挂载 `.githooks/commit-msg` 做校验。
 
 | type | 用途 |
@@ -37,7 +37,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 ## 硬约束
 
-见 `CLAUDE.md`「工程硬约束」与 `docs/技术方案.md` §1。违反即返工。
+见 `AGENTS.md`「工程硬约束」（规格原文在 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §1）。违反即返工。
 
 ## 发布（维护者）
 

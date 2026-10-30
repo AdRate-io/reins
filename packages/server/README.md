@@ -100,6 +100,6 @@ It observes, it does not edit: the event is already in the log. Only *live* even
 
 ## Documentation
 
-`docs/技术方案.md` §12, `docs/模块盘点/server.md`, `README.md` at the repository root ("Security notes") — in Chinese unless noted.
+`docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §12, `docs/系统全景图_模块盘点/server.md`, `README.md` at the repository root ("Security notes") — in Chinese unless noted.
 
 MIT © 2026 NewRate Limited.

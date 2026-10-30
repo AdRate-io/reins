@@ -1,6 +1,6 @@
 # @reinsjs/tools-mcp 模块盘点
 
-> 依据 2026-09-10 的 `packages/tools-mcp/src/` 源码写成（任务 P1）。规格在 `docs/技术方案.md` §10，决策在 `docs/DECISIONS.md` 2026-09-10 的 MCP 三行。
+> 依据 2026-09-10 的 `packages/tools-mcp/src/` 源码写成（任务 P1）。规格在 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §10，决策在 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 2026-09-10 的 MCP 三行。
 
 ## 架构概览
 

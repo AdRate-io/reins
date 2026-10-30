@@ -63,6 +63,6 @@ Any `MemoryStore` (in-memory, `@reinsjs/store-sqlite`, `@reinsjs/store-pg`) is a
 
 ## Documentation
 
-`docs/技术方案.md` §9 (module specs and measurements), `docs/模块盘点/brain.md` (file map), `docs/踩坑记录.md` (pitfalls) — in Chinese, at the repository root.
+`docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §9 (module specs and measurements), `docs/系统全景图_模块盘点/brain.md` (file map), `docs/踩坑记录.md` (pitfalls) — in Chinese, at the repository root.
 
 MIT © 2026 NewRate Limited.

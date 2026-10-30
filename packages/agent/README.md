@@ -66,6 +66,6 @@ Whether to call an expert, what to ask, and whether to trust the answer are the 
 
 ## Documentation
 
-The design documents are in Chinese under `docs/` at the repository root: `docs/系统全景图.md` (overview), `docs/技术方案.md` (spec), `docs/DECISIONS.md` (why). Package READMEs are in English.
+The design documents are in Chinese under `docs/` at the repository root: `docs/系统全景图.md` (overview), `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` (spec), `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` (why). Package READMEs are in English.
 
 MIT © 2026 NewRate Limited.

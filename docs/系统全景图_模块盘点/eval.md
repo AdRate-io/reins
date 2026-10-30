@@ -1,6 +1,6 @@
 # 模块盘点：`packages/eval`（`@reinsjs/eval`）
 
-> 对照 `docs/技术方案.md` §13 与 `docs/TASKS.md` E1～E3c，**以代码为准**。
+> 对照 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §13 与 `docs/待处理任务.md` E1～E3c，**以代码为准**。
 > 一句话：把"同一个 fixture、同一个模型、只换循环配置"这件事跑起来，并把结果变成可机器判定的数字与一张 Markdown 表。
 > 依赖只有 `@reinsjs/core`（`@reinsjs/brain` 仅 devDependency），零 `node:*`；文件读写与 CLI 都在调用方 `examples/eval`。
 

@@ -1,6 +1,6 @@
 # @reinsjs/brain 模块盘点
 
-> 依据 2026-09-14 的 `packages/brain/src/` 源码写成（D1 lazy-tools、D3 approval `ttlMs` 落地后更新）。与 `docs/技术方案.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
+> 依据 2026-09-14 的 `packages/brain/src/` 源码写成（D1 lazy-tools、D3 approval `ttlMs` 落地后更新）。与 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §9 有出入处以代码为准，出入已在文末"核心设计决策"与文中注明。
 
 ## 架构概览
 
@@ -23,7 +23,7 @@
 | skills | 无钩子 | 工具 `skill_read`（`resultTrust: "system"`）与规则提示 `SKILL_RULES` + 菜单，均为按 `SocketSetup` 算一次的**异步函数形态**（菜单只读载体一遍） | opt-in：给了 `source` 即开 | 无 `source`、或 `root/` 下无一份合规 SKILL.md → **工具与菜单都不注册**并告警一次；不合规的单份技能跳过、各告警一次 |
 | lazy-tools | beforeModel、beforeTool | 工具 `tool_find`（`resultTrust: "system"`）与规则提示 `LAZY_TOOL_RULES` + 菜单（每件 `lazy: true` 的工具一行（宿主 + 注册在它之前的 Socket 贡献，2026-09-22 起）），按 `SocketSetup` 算一次的函数形态 | opt-in：装了即开（无 eval 不进 README 推荐，eval 见 `examples/eval/fixtures/tool-discovery`） | 宿主没有一件 `lazy: true` 的工具、或已有同名 `tool_find` → **工具与菜单都不注册**并告警一次 |
 
-缺省开关的依据：`docs/DECISIONS.md` 2026-09-09 **E3** 行（spill 8k → 16k；compact / memory / handoff 不默认；perception / pins / budget / approval 推荐默认）与 2026-09-10 **E3c 结论**行（compact 含清单与 recall 后改为**推荐默认**，memory / handoff 仍不默认，其余不变），以及 `docs/TASKS.md` 的 E3 / E3c 行。
+缺省开关的依据：`docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 2026-09-09 **E3** 行（spill 8k → 16k；compact / memory / handoff 不默认；perception / pins / budget / approval 推荐默认）与 2026-09-10 **E3c 结论**行（compact 含清单与 recall 后改为**推荐默认**，memory / handoff 仍不默认，其余不变），以及 `docs/待处理任务.md` 的 E3 / E3c 行。
 
 注册顺序有两处敏感（`onTurnEnd` 第一个给意见的 Socket 说了算）：handoff 应排在 compact 等可能返回 `pause` 的模块**之前**（否则回执说了交接却被别人暂停，回执撒谎）；budget 应排在 handoff **之后**（模型已决定交接就让它交接）。approval 建议排在 `sockets` **末尾**（至少在会 `rewrite` 入参的钩子之后），这样判定的是真正要执行的入参。
 
@@ -207,7 +207,7 @@
 
 **没有 BlobStore 时外溢自动关闭，不退化成截断**（B4）— 静默截断会在宿主不知情时丢数据；宁可原样通过让感知与预算兜底，并告警一次。边界：工具显式声明 `overflow: "truncate"` 的照常截断（截断不需要存储）。
 
-**fetch_blob 用字符偏移，授权按"本会话时间线引用过"**（B4 / B9 附）— `BlobStore.slice` 按字节切会切坏 UTF-8 多字节字符，而模型说的偏移是字符。授权口径从"blob.meta.sessionId 等于当前会话"改成"本会话某条 `tool_result.spilled.blobId` 指向它"：fork 出的会话复制了 tool_result 却不复制字节，旧口径下看得见 id 取不回。边界：未被本会话引用的 id 一律当不存在（回执与"真不存在"同一句话）；handoff 不复制 tool_result，所以新会话仍读不到外溢结果。（`docs/技术方案.md` §9.4 仍写"只能读本会话的 blob"，以此处为准。）
+**fetch_blob 用字符偏移，授权按"本会话时间线引用过"**（B4 / B9 附）— `BlobStore.slice` 按字节切会切坏 UTF-8 多字节字符，而模型说的偏移是字符。授权口径从"blob.meta.sessionId 等于当前会话"改成"本会话某条 `tool_result.spilled.blobId` 指向它"：fork 出的会话复制了 tool_result 却不复制字节，旧口径下看得见 id 取不回。边界：未被本会话引用的 id 一律当不存在（回执与"真不存在"同一句话）；handoff 不复制 tool_result，所以新会话仍读不到外溢结果。（`docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §9.4 仍写"只能读本会话的 blob"，以此处为准。）
 
 **审批管线建议放 sockets 末尾，且入参先过 validate**（B7 / R1）— 放首位会让后面的 `rewrite` 绕过按入参写的规则；放末尾则前面的钩子只可能收紧。审批人批的必须是将要执行的那份入参，`needsApproval(input)` 才不是谎话；校验不过不问人，以 `approval.invalid_args` 放行给循环以"入参不合法"拒掉。边界：宿主已批准的调用再遇到 `defer` 只是略过，deny 在任何顺序下都拦得住。
 

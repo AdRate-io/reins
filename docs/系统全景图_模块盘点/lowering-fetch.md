@@ -1,6 +1,6 @@
 # @reinsjs/lowering-fetch 模块盘点
 
-> 以 `packages/lowering-fetch/src/` 代码为准；术语对照 `docs/技术方案.md` §11、决策出处标 `docs/DECISIONS.md`（2026-09-14「lowering-fetch 立项」「F1 定形」，2026-09-15「F2 定形」「F3 定形」）。
+> 以 `packages/lowering-fetch/src/` 代码为准；术语对照 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §11、决策出处标 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md`（2026-09-14「lowering-fetch 立项」「F1 定形」，2026-09-15「F2 定形」「F3 定形」）。
 
 ## 1 架构概览
 

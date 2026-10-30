@@ -1,7 +1,7 @@
 （`@reinsjs/tools-mcp` dist 在 workerd 里连本地假 MCP 服务器 `fake-mcp.mjs` 做 list + call，服务端用 `createMcpHandler` 按请求建实例）与 `--only-old`（只跑最严档）：最严档 load / mcp / fake 全过。**2026-09-15 F4 追加 `/fetch-*` 五条**（`@reinsjs/lowering-fetch` dist：三条线构造请求体、Anthropic 线打字节乱切的假端点、三条线各打一次真模型——DeepSeek 直连 / CF 网关 Haiku 4.5 / CF 网关 gpt-5-mini），编排器对 fetch 版产出做自动内容核对（tool_call 名与入参、stopReason、用量、Responses 加密 reasoning 项），三档 × 五格 15/15。详见目录内 README |# spikes — 进代码前的核实脚本
 
 > 这些脚本只是证据，不是产品代码；不在 pnpm workspace 内，不参与 `pnpm check`。
-> 结论已写入 `docs/DECISIONS.md`，脚本留下是为了将来上游升级时能一键复核。
+> 0.4 之前的结论在 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md`，此后写进 `docs/系统全景图.md`「核心设计决策」或 `docs/踩坑记录.md`；脚本留下是为了将来上游升级时能一键复核。
 
 | 目录 | 对应任务 | 运行 | 结论摘要 |
 | --- | --- | --- | --- |
@@ -45,7 +45,7 @@ system 字段： [{"type":"text","text":"你是代码评审员。","cache_contro
 → 改写成功；但 system 后紧跟 user 违反官方摆放规则（须后接 assistant 或收尾），降级层需归位
 ```
 
-S2~S4 是读上游源码与文档得出的结论，无需脚本，见 DECISIONS.md 对应行。
+S2~S4 是读上游源码与文档得出的结论，无需脚本，见 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 对应行。
 
 ## Cloudflare AI Gateway 作官方模型靶子（2026-09-14 轻测；同日 F0 全量体检 43/43 通过，见 `cf-gateway-fidelity/`）
 

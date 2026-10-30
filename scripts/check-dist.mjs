@@ -2,7 +2,7 @@
  * 构建产物自检（E4）：`pnpm build` 之后跑，发布前必过。
  *
  * 1. 每个包 package.json `exports` 里的每个 JS 入口都能被 `import()`，且约定的关键导出存在——源码与 vitest 全绿不代表 dist 能跑
- *    （tsup 剥 `node:` 前缀、条件导出写错、d.ts 内联依赖，都只在 dist 上炸，见踩坑记录 store-sqlite）。
+ *    （tsup 剥 `node:` 前缀、条件导出写错、d.ts 内联依赖，都只在 dist 上炸，见踩坑记录 #5）。
  * 2. 硬约束（技术方案 §1）：`@reinsjs/core` / `@reinsjs/brain` 及各包主入口零 `node:*`；`node:*` 只允许出现在 `/node` 子路径。
  * 3. `/node` 子路径必须保留 `node:` 协议前缀（tsup 8 缺省 removeNodeProtocol 会把 `node:sqlite` 剥成裸 `sqlite`，运行时找不到模块）。
  * 4. 运行时版本常量 `REINS_VERSION` 与 `@reinsjs/core` 的 package.json 版本一致（MCP 握手、排错都拿它报版本；0.1 发前审查抓到过 0.0.0）。

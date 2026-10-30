@@ -1,6 +1,6 @@
 # 模块盘点：`@reinsjs/agent`（总包，目录 `packages/agent`，2026-09-14 前叫 `reins`）
 
-> 依据 `packages/agent/src/` 的实际代码（2026-09-10，`main` @ 9e0b99e）。与 `docs/技术方案.md` §12 的 T14 条目核对，冲突以代码为准。
+> 依据 `packages/agent/src/` 的实际代码（2026-09-10，`main` @ 9e0b99e）。与 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §12 的 T14 条目核对，冲突以代码为准。
 
 ## 1 架构概览
 

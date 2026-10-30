@@ -45,7 +45,7 @@
 
 resume fixture 的种子历史是 2026-09-08 用 DeepSeek 录的，thinking 事件带签名；fetch 版两条线（Anthropic / Responses）当时只按"同厂商 + 同协议"回放，
 签名喂给 Sonnet 5 厂商 400 `Invalid signature in thinking block`，六格 0 秒 error。已改为 provider + api + model 三者一致才回放、换型号 dropped 并进有损矩阵；
-案卷见 `docs/踩坑记录.md` 2026-09-15。这 6 格用修复后的 dist 重跑通过。
+案卷见 `docs/踩坑记录.md` #37。这 6 格用修复后的 dist 重跑通过。
 
 ## 花费
 

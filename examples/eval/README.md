@@ -43,7 +43,7 @@ pnpm vitest run examples/eval/fixtures/tool-discovery     # 世界与评分器�
 | Claude sonnet-5 | eager | 100% | 97,358 | 10,523 | 99.5% | 2.4 | 0 | — |
 | Claude sonnet-5 | lazy | 100% | 40,182 | 9,164 | 86.6% | 3.4 | 0 | ✅ 通过 |
 
-以上是第二轮（r2）。第一轮 fixture 有缺陷（假账户 authId 给了字符串、schema 要整数），两族模型都按"不能编 id"的契约在同一题停下来问人，Claude 侧候选臂因此差一格未过——两轮报告都在 `results/2026-09-14-tool-discovery/`，案卷见 `docs/踩坑记录.md` 2026-09-14。
+以上是第二轮（r2）。第一轮 fixture 有缺陷（假账户 authId 给了字符串、schema 要整数），两族模型都按"不能编 id"的契约在同一题停下来问人，Claude 侧候选臂因此差一格未过——两轮报告都在 `results/2026-09-14-tool-discovery/`，案卷见 `docs/踩坑记录.md` #25。
 
 - 两族、两臂都零走错门：172 件干扰项与 `metaads_*` 陷阱没人碰；靶工具全部找对，完成度只差在个别格的入参或汇报。
 - lazy 每题多约一轮（先 `tool_find` 再动手），上下文小一半以上（200 件 schema 约 30k token）。

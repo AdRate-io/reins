@@ -1,6 +1,6 @@
 # 任务记录 —— lowering-fetch（F0～F4，2026-09-14～15）
 
-> 2026-09-15 从 `docs/TASKS.md` 整段迁入，原文不改。立项与各步定形见 `docs/DECISIONS.md` 同期各行，实现细节见 `docs/模块盘点/lowering-fetch.md`，复核脚本见 `spikes/f1-chat-live` / `f2-anthropic-live` / `f3-responses-live` / `cf-gateway-fidelity` / `edge-runtime-check`。
+> 2026-09-15 从 `docs/待处理任务.md` 整段迁入，原文不改。立项与各步定形见 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 同期各行，实现细节见 `docs/系统全景图_模块盘点/lowering-fetch.md`，复核脚本见 `spikes/f1-chat-live` / `f2-anthropic-live` / `f3-responses-live` / `cf-gateway-fidelity` / `edge-runtime-check`。
 
 ## lowering-fetch（2026-09-14 与 Boss 讨论立项，见 DECISIONS 同日「lowering-fetch 立项」；按顺序做，每步一个会话）
 

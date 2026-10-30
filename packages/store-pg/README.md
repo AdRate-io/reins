@@ -35,6 +35,6 @@ Passes the conformance suite in `@reinsjs/core/testing` (run against PGlite in C
 
 ## Documentation
 
-`docs/模块盘点/store.md` and `docs/技术方案.md` §5 — in Chinese, at the repository root.
+`docs/系统全景图_模块盘点/store.md` and `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §5 — in Chinese, at the repository root.
 
 MIT © 2026 NewRate Limited.

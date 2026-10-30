@@ -1,6 +1,6 @@
 # @reinsjs/lowering-pi 模块盘点
 
-> 以 `packages/lowering-pi/src/` 代码为准；术语对照 `docs/技术方案.md` §11、决策出处标 `docs/DECISIONS.md`。
+> 以 `packages/lowering-pi/src/` 代码为准；术语对照 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §11、决策出处标 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md`。
 
 ## 1 架构概览
 

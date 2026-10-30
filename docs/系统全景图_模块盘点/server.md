@@ -1,6 +1,6 @@
 # 模块盘点：`@reinsjs/server`
 
-> 依据 `packages/server/src/` 的实际代码（2026-09-14，D4 跨进程 run 登记落地后）。与 `docs/技术方案.md` §12、根 `README.md` 的 Security notes 相互核对，冲突以代码为准。
+> 依据 `packages/server/src/` 的实际代码（2026-09-14，D4 跨进程 run 登记落地后）。与 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §12、根 `README.md` 的 Security notes 相互核对，冲突以代码为准。
 
 ## 1 架构概览
 

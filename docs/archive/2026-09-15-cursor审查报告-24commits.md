@@ -168,10 +168,10 @@ lowering-fetch Anthropic 默认 `true`，lowering-pi 恒 `false`。符合 DECISI
 
 | # | 位置 | 偏差 | 建议 |
 |---|------|------|------|
-| D1 | `docs/模块盘点/brain.md` | 引用 `no-node-builtins.test.ts`，文件系统中**不存在** | 删除条目或恢复文件 |
-| D2 | `docs/模块盘点/lowering-fetch.md` | 测试数写 **369**，实际 **392** | 更新或改为「14 个 `*.test.ts`」 |
+| D1 | `docs/系统全景图_模块盘点/brain.md` | 引用 `no-node-builtins.test.ts`，文件系统中**不存在** | 删除条目或恢复文件 |
+| D2 | `docs/系统全景图_模块盘点/lowering-fetch.md` | 测试数写 **369**，实际 **392** | 更新或改为「14 个 `*.test.ts`」 |
 | D3 | `docs/系统全景图.md` §2 ASCII | 写「九个 Socket」，实际十个（含 lazy-tools） | 改为「十个」 |
-| D4 | `docs/TASKS.md` L1 行 + `docs/技术方案.md` §9.10 | 用例数写 **1218**，实际 **1224** | 更新为 1224 |
+| D4 | `docs/待处理任务.md` L1 行 + `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §9.10 | 用例数写 **1218**，实际 **1224** | 更新为 1224 |
 
 ---
 

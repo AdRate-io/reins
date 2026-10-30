@@ -50,6 +50,6 @@ Zero `node:*`: file I/O and the CLI live in the caller (`examples/eval` in the r
 
 ## Documentation
 
-`docs/技术方案.md` §13, `docs/模块盘点/eval.md`, the E1–E4 reports under `docs/归档/` — in Chinese.
+`docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §13, `docs/系统全景图_模块盘点/eval.md`, the E1–E4 reports under `docs/archive/` — in Chinese.
 
 MIT © 2026 NewRate Limited.
