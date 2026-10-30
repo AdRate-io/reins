@@ -1,6 +1,6 @@
 {
   "name": "@reinsjs/ui-agui",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "reins — timeline events → AG-UI protocol events (encoder for @reinsjs/server, or standalone mapper)",
   "keywords": [
     "agent",

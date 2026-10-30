@@ -1,5 +1,19 @@
 # @reinsjs/brain
 
+## 0.5.0
+
+### Minor Changes
+
+- 0455c28: Deliver `compact`'s request as a directive and ask twice. `SystemNotePayload` gains an optional `directive: true` for notes that ask the model to act; `@reinsjs/lowering-fetch` (all three protocols) and `@reinsjs/lowering-pi` send those as a framed `<system_note>` user message even when the model accepts mid-conversation system messages, and record the landing as `lossy(user-role)`. Measured on a pooled DeepSeek relay, the same request was ignored 4 of 4 times as a mid-conversation system message and followed 5 of 6 times as a framed user note; the official DeepSeek endpoint followed it 6 of 6 either way. Other notes (perception, pins) keep their current landing, and notes already in a log keep theirs, so cached prefixes do not change on upgrade. `compact({ force })` now asks at two lines by default (`at: [0.75, 0.8]`; a single number still works), uses blunter wording on the second request (`CompactRequestInfo.attempt`), skips the turn right after a compaction until the model has acted, and marks requests as directives unless `force.directive` is `false`.
+- 24ba407: Ask the model to compact before the mechanical fallback kicks in. When the real context passes a soft line (`compact({ force: { at } })`, default `0.75` of the window) and nothing has been compacted since the last request, `compact` appends one runtime note at the end asking the model to call `compact` before doing anything else. A compaction made after such a request is recorded as `decidedBy: "forced"` (new value on `CompactionPayload.decidedBy`: the harness picked the timing, the model wrote the summary). The request is made once per segment; if the model ignores it, threshold truncation still folds mechanically at `contextLimit - reserveTokens`. Appending at the end keeps the prompt cache intact, unlike forcing `tool_choice` or narrowing the tool list. Pass `force: false` to turn it off (the default rules then drop the sentence that promises the request); `force.render` customizes the wording. `@reinsjs/eval` counts the new value separately (`CompactionCounts.forced`). The default `COMPACT_RULES` text gains one line, so sessions paused under an older version see a config change on resume.
+
+### Patch Changes
+
+- Updated dependencies [0455c28]
+- Updated dependencies [24ba407]
+- Updated dependencies [4a57a7a]
+  - @reinsjs/core@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
