@@ -7,6 +7,7 @@
  */
 import { type ContentPart, type Event, renderToolReference } from "../events/base.js"
 import type { CoreEvent } from "../events/core.js"
+import type { ProjectionBudget } from "./types.js"
 
 const PER_EVENT_OVERHEAD = 4
 const IMAGE_TOKENS = 1600
@@ -70,4 +71,12 @@ export function estimateTotal(events: readonly Event[], estimate: (e: Event) => 
   let n = 0
   for (const e of events) n += estimate(e)
   return n
+}
+
+/**
+ * 投影估算可用的 token 数：裁剪目标减去估算不含的固定开销。
+ * 兜底裁剪"要不要裁、裁到哪"与 stats.overBudget 都按它判，同一口径只此一份
+ */
+export function estimateBudgetOf(budget: ProjectionBudget): number {
+  return budget.contextLimit - budget.reserveTokens - (budget.overheadTokens ?? 0)
 }

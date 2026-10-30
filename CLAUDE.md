@@ -99,6 +99,7 @@
 - **它是 async，各 Socket 依次 await 不并发** — 同名去重以先到者为准，并发会让顺序不定、configHash 抖动；MCP 的 `tools/list` 就在这里发生（P1）。
 - **每次 run 起步都 append 一条 `tools_bound`，有增删再 append 一条模型可见说明** — 任何断言日志开头 / seq / lastSeq 的测试都要把它算进去；说明缺省开（`announceToolChanges: false` 关），首次 run 与工具表不变时不出。
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
+- **阈值兜底按"估算 + 固定开销"比 `contextLimit − reserveTokens`，开销是 core `contextOverheadOf(timeline)`，感知读数调同一份**（2026-10-30）— 只比估算时感知报 ≥85% 而兜底不折；`targetTokens` 仍是真实上下文口径，别把开销减进它（感知 `autoFoldAt` 按它算）；`reserveTokens` 实际只给输出留。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试（日志里不能有两份半截）；判不出的错误当非瞬断。改这条等于改日志语义。
 - **瞬断判定先看状态码，有状态码就只按它定（408/409/429/5xx，与两家 SDK 及 pi-ai 同策略），文案关键词只在没有状态码时兜底且不匹配裸数字**（R3）— SDK 错误文案固定是 "<status> <body>"，pi-ai 原样转成 errorMessage，正文里的 "timeout" / "429" 字样不是信号。
 - **`beforeTool` 的 `defer` 可被已有批准略过，`block` 永远不能** — 批准只解决"要不要问人"，排在后面的 Socket 仍有权拦。

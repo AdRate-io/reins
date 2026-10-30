@@ -15,7 +15,7 @@
 import type { Event } from "../events/base.js"
 import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
-import { estimateTotal } from "./estimate.js"
+import { estimateBudgetOf, estimateTotal } from "./estimate.js"
 import { isCompaction, isPinNote, supersededIds } from "./fold.js"
 import { foldedToolResults, renderFoldedToolResults } from "./manifest.js"
 import type { ProjectionContext, ProjectionStrategy } from "./types.js"
@@ -125,7 +125,8 @@ export function budgetTruncate(opts: BudgetTruncateOptions = {}): ProjectionStra
   return {
     name: "budget-truncate",
     apply(events, ctx) {
-      const target = ctx.budget.contextLimit - ctx.budget.reserveTokens
+      // 按真实上下文判：估算 + 固定开销 ≤ 裁剪目标。只比估算会比感知报给模型的用量晚触发（2026-10-30 onset-pause）
+      const target = estimateBudgetOf(ctx.budget)
       const total = estimateTotal(events, ctx.estimate)
       if (total <= target) return { events: [...events] }
 

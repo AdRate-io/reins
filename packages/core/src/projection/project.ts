@@ -6,9 +6,10 @@
  * 追加到时间线末尾（prompt cache 约束：只追加、不改前缀）。投影只负责"看历史"，不负责"说话"。
  */
 import type { Event } from "../events/base.js"
+import { contextOverheadOf } from "../events/core.js"
 import { uuidv7 } from "../events/id.js"
 import { createCoreRegistry, type EventSchemaRegistry } from "../events/registry.js"
-import { estimateTotal, roughTokenEstimate } from "./estimate.js"
+import { estimateBudgetOf, estimateTotal, roughTokenEstimate } from "./estimate.js"
 import { type VisibilityFilterOptions, visibilityFilter } from "./filter.js"
 import { type FoldOptions, foldCompactions } from "./fold.js"
 import { reinjectPins } from "./pins.js"
@@ -42,7 +43,11 @@ export function defaultProjectionChain(opts: DefaultChainOptions = {}): Projecti
 export interface ProjectOptions {
   /** 完整时间线快照，按 seq 升序、同一会话 */
   timeline: readonly Event[]
-  budget: { contextLimit: number; reserveTokens?: number }
+  /**
+   * `overheadTokens` 缺省从时间线校准（contextOverheadOf：上一请求真实上下文 − 当时估算），与感知读数同一口径；
+   * 显式给 0 即只按估算判（校准前的行为）
+   */
+  budget: { contextLimit: number; reserveTokens?: number; overheadTokens?: number }
   /** 缺省 defaultProjectionChain() */
   strategies?: readonly ProjectionStrategy[]
   /** 缺省 roughTokenEstimate */
@@ -85,7 +90,11 @@ export function project(opts: ProjectOptions): ProjectionResult {
 
   const reserveTokens =
     opts.budget.reserveTokens ?? Math.floor(opts.budget.contextLimit * DEFAULT_RESERVE_RATIO)
-  const budget = { contextLimit: opts.budget.contextLimit, reserveTokens }
+  const overheadTokens = opts.budget.overheadTokens ?? contextOverheadOf(timeline)
+  if (!Number.isFinite(overheadTokens) || overheadTokens < 0) {
+    throw new RangeError(`budget.overheadTokens must be a non-negative finite number, got ${overheadTokens}`)
+  }
+  const budget = { contextLimit: opts.budget.contextLimit, reserveTokens, overheadTokens }
   const estimate = opts.estimate ?? roughTokenEstimate
   const registry = opts.registry ?? coreRegistry()
   const now = opts.now ?? Date.now()
@@ -121,6 +130,12 @@ export function project(opts: ProjectOptions): ProjectionResult {
   return {
     events,
     emitted,
-    stats: { estimatedTokens, targetTokens, overBudget: estimatedTokens > targetTokens, steps },
+    stats: {
+      estimatedTokens,
+      targetTokens,
+      overheadTokens,
+      overBudget: estimatedTokens > estimateBudgetOf(budget),
+      steps,
+    },
   }
 }

@@ -50,7 +50,7 @@
 | `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读；`enforceLimit` 硬上限模式给 skills：带范围也截、超长单行切开）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
 | `packages/brain/src/perception/index.ts` | perception 子模块聚合导出 |
 | `packages/brain/src/perception/perception.ts` | `perception(opts): Socket`：beforeModel 算读数、渲染、与可见的上一条说明按文字判重，不同才 emit `system_note(kind=perception)` |
-| `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数、外溢条数、预算最紧一维余量、加法校准的上下文开销 |
+| `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数、外溢条数、预算最紧一维余量；上下文开销调 core `contextOverheadOf` 并原名转出 |
 | `packages/brain/src/perception/render.ts` | 读数 → 给模型看的英文说明文字；含"折叠到底拿走了什么"那句（E3 实测补的） |
 | `packages/brain/src/perception/tiers.ts` | 档位离散化：`rangeTier` / `countTier` / `percent` / `compactNumber`，以及边界严格升序的构造期校验 |
 | `packages/brain/src/perception/perception.test.ts` | perception 的全部用例（档位、判重、校准、与 runLoop 集成） |
@@ -103,7 +103,7 @@
 ### perception
 
 1. `beforeModel`：`readPerception(ctx, thresholds, limits)` 从 `ctx.events`（本轮视图）算未折叠模型轮数与可见外溢结果数，从 `ctx.timeline`（完整日志）算整理次数与会话累计 token（`sumSessionTokens` 累加 `budget_usage`，含缓存读写）。缺省 `renderPerception` 只报上下文使用率、整理次数（带"折叠了什么"说明）、预算余量、外溢条数；**累计 token 与未折叠轮数只进读数不进文字**（2026-10-30：两项开头连跨档、每跨一档多一条说明，对决策无用）。
-2. 上下文使用率先经 `contextOverheadOf(timeline)` 加法校准（真实上下文 − 当时估算），再落到档位；配了 `limits` 时按最紧一维算余量档位。
+2. 上下文使用率先经 `contextOverheadOf(timeline)` 加法校准（真实上下文 − 当时估算；函数在 core，阈值兜底调同一份，brain 转出原名），再落到档位；配了 `limits` 时按最紧一维算余量档位。
 3. `render(reading)` 渲染成英文说明；与 `lastVisiblePerceptionNote(ctx.events)` 的文字逐字比较，相同则什么都不做。
 4. 不同才 `ctx.emit` 一条 `system_note(kind=perception, meta.reading=读数)`，追加在时间线末尾、本轮即可见。永远返回 `undefined`，不碰 `systemPrompt` / `tools`。
 5. 说明文字里同时给出阈值兜底的触发点（`targetTokens / contextLimit`）与"折叠到底拿走了什么"一句；精确的校准开销只进 `meta.reading`，不进模型看到的文字。

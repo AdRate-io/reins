@@ -68,7 +68,7 @@
 | --- | --- |
 | `events/index.ts` | 汇总导出 base / core / create / id / registry |
 | `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image / **tool_reference**——工具定义引用，带 name / description / inputSchema 快照，L1）、`renderToolReference()`（引用段展开成文本的唯一写法）、各 actor 的默认信任 `DEFAULT_TRUST` |
-| `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite） |
+| `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite）与 `contextOverheadOf(timeline)`（估算不含的固定开销；阈值兜底与感知共用，2026-10-30 从 brain 搬来） |
 | `events/create.ts` | `EventDraft`（无 id/seq/at/sessionId 的草稿）与 `createEvent` / `createCoreEvent` 工厂：补齐壳字段、从注册表取 schemaVersion |
 | `events/id.ts` | 自实现 `uuidv7`（RFC 9562，只用 `crypto.getRandomValues`，不引依赖） |
 | `events/registry.ts` | `EventSchemaRegistry`：登记 type → 当前版本 + 逐级 upcaster，`read()` fail-closed（6 种 `SchemaError` code）；`CORE_SCHEMAS`（全部 v1）与 `createCoreRegistry()` |
@@ -95,7 +95,7 @@
 | `projection/fold.ts` | 策略 2 折叠：`covers` / `keptBy` / `isPinNote` / `supersededIds` 幸存判定，`foldCompactions` 把摘要插到**被覆盖区间的位置** |
 | `projection/pins.ts` | 策略 3 钉住重注入：把幸存的被覆盖事件挪到覆盖它的最新可见 compaction 之后（去掉本策略投影仍正确，只是顺序不好读） |
 | `projection/truncate.ts` | 策略 5 预算裁剪兜底：`splitTurns` 切轮、三条切点硬规则、`defaultThresholdSummary` 机械摘要（并入旧摘要 + 用户原话 + 被裁工具结果清单），新造 `compaction(decidedBy=threshold)` 经 `emitted` 交出 |
-| `projection/estimate.ts` | 零依赖 token 粗估：ASCII 4 字一 token、非 ASCII 一字一 token、图片 1600、每事件 +4 固定开销；`estimateTotal` |
+| `projection/estimate.ts` | 零依赖 token 粗估：ASCII 4 字一 token、非 ASCII 一字一 token、图片 1600、每事件 +4 固定开销；`estimateTotal`；`estimateBudgetOf(budget)`（目标 − 开销，兜底判据唯一一份） |
 | `projection/manifest.ts` | E3c 被折叠工具结果清单：`foldedToolResults` 抽取（入参从 lookup 找、外溢记 blob id）、`digestArgs` 键排序截断、`renderFoldedToolResults` 渲染成 `seq N tool(args) — 大小` |
 | `projection/project.ts` | 策略链执行器 `project()` + `defaultProjectionChain()`（四步）+ `DEFAULT_RESERVE_RATIO = 0.15`；入参校验 seq 严格升序，逐策略累计 stats 与 emitted |
 | 测试 | `projection.test.ts` 覆盖粗估、四个策略各自的规则、manifest 渲染、supersedes（B3）四种情形、默认链端到端与拒绝条件 |
@@ -183,10 +183,11 @@
 
 ### 五、投影管线（`projection/project.ts`）
 
-1. `project()` 先校验时间线按 seq 严格升序，算出 `reserveTokens`（缺省窗口 15%）、estimate、registry、now、newId。
+1. `project()` 先校验时间线按 seq 严格升序，算出 `reserveTokens`（缺省窗口 15%）、`overheadTokens`（缺省 `contextOverheadOf(timeline)`：上一请求真实上下文 − 当时估算，系统提示 / 工具表等估算不含的部分；负数或非有限数拒绝）、estimate、registry、now、newId。
 2. 逐个策略执行，每个策略拿到新构造的只读 `ProjectionContext`（含完整时间线快照与 `nextSeq()`），返回 `{ events, emitted? }`。
 3. 默认链四步：`visibilityFilter` 剔运维事件 → `foldCompactions` 按 compaction 隐藏区间并把摘要插到区间位置 → `reinjectPins` 把幸存 pin 挪到摘要之后 → `budgetTruncate` 超限时按轮裁前缀并新造阈值 compaction。
-4. 汇总 `stats`：`estimatedTokens`、`targetTokens`、`overBudget`（裁到只剩最后一轮仍超）与逐步 before/after 计数；`emitted` 交给循环 append。
+4. 汇总 `stats`：`estimatedTokens`、`targetTokens`（`contextLimit − reserveTokens`，真实上下文口径）、`overheadTokens`、`overBudget`（裁到只剩最后一轮，估算 + 开销仍超）与逐步 before/after 计数；`emitted` 交给循环 append。
+5. 兜底"要不要裁、裁到哪"与 `overBudget` 都按 `estimateBudgetOf(budget)`（= 目标 − 开销）比估算，与感知读数同一口径（2026-10-30：此前只比估算，感知报 ≥85% 兜底却不折）。
 
 ### 六、fork（`loop/fork.ts` + `store/in-memory.ts`）
 

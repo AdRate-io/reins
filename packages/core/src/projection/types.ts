@@ -14,8 +14,13 @@ import type { EventSchemaRegistry } from "../events/registry.js"
 export interface ProjectionBudget {
   /** 模型上下文窗口上限（token） */
   contextLimit: number
-  /** 为模型输出与工具定义预留的 token；裁剪目标 = contextLimit - reserveTokens */
+  /** 为模型输出预留的 token；裁剪目标 = contextLimit - reserveTokens，按真实上下文（估算 + overheadTokens）比 */
   reserveTokens: number
+  /**
+   * 估算不含的固定开销（系统提示、工具表、thinking 等），见 contextOverheadOf。project() 总会填；
+   * 自己拼上下文直接调策略时缺省按 0
+   */
+  overheadTokens?: number
 }
 
 /** 估算一条事件降级后大约占多少 token。核心包不带 tokenizer，默认是粗估，宿主可注入精确实现。 */
@@ -65,9 +70,11 @@ export interface ProjectionStepStats {
 export interface ProjectionStats {
   /** 最终可见事件的估算 token 总量 */
   estimatedTokens: number
-  /** contextLimit - reserveTokens */
+  /** contextLimit - reserveTokens，真实上下文口径：estimatedTokens + overheadTokens 超过它就兜底裁剪 */
   targetTokens: number
-  /** 裁到不能再裁仍超目标：只剩最后一轮也放不下，需要 spill 或更大的窗口。循环层据此告警 */
+  /** 本次投影用的固定开销（缺省从时间线校准，见 contextOverheadOf） */
+  overheadTokens: number
+  /** 裁到不能再裁仍超目标（估算 + 开销）：只剩最后一轮也放不下，需要 spill 或更大的窗口。循环层据此告警 */
   overBudget: boolean
   steps: ProjectionStepStats[]
 }

@@ -5,7 +5,7 @@
  * - `ctx.events`（模型本轮将看到的投影）：算"未折叠历史有多长"、"有几条外溢结果可取"—— 这些是模型视角的量；
  * - `ctx.timeline`（完整日志）：算"整理过几次"、"本会话累计花了多少 token"—— 这些是会话全局的量。
  */
-import { type CoreEvent, contextTokensOf, type Event, type TurnContext } from "@reinsjs/core"
+import { type CoreEvent, contextOverheadOf, type Event, type TurnContext } from "@reinsjs/core"
 import type { BudgetDimension, BudgetLimits } from "../budget/budget.js"
 import { compactNumber, countTier, percent, rangeTier, type Tier } from "./tiers.js"
 
@@ -75,21 +75,9 @@ export function sumSessionTokens(timeline: readonly Event[]): number {
 }
 
 /**
- * 估算与真实之间的固定开销（B8，关闭 §17 的 B2 实测发现）。
- *
- * 投影只数模型可见事件的正文，系统提示、工具表、thinking 签名块等都不在内，真实 input 可高出一倍。
- * 这些多出来的部分在一个 run 里基本是常量（系统提示与工具表整轮不变），所以用**加法**校准而不是比例：
- * 比例会随历史变长把误差放大（100k 时翻倍成 200k），加法只补那块固定的开销。
- * 数据来自日志最后一条同时带 tokens 与 contextEstimate 的 budget_usage：真实上下文 = input + cacheRead + cacheWrite。
+ * 固定开销校准函数搬到了 core（与阈值兜底共用一份，2026-10-30）；这里转出保持 brain 原有导出不变
  */
-export function contextOverheadOf(timeline: readonly Event[]): number {
-  for (let i = timeline.length - 1; i >= 0; i--) {
-    const e = timeline[i] as CoreEvent | undefined
-    if (e?.type !== "core.budget_usage" || e.payload.contextEstimate === undefined) continue
-    return Math.max(0, contextTokensOf(e.payload.tokens) - e.payload.contextEstimate)
-  }
-  return 0
-}
+export { contextOverheadOf }
 
 function remainingOf(
   budget: TurnContext["budget"],
@@ -114,7 +102,10 @@ function remainingOf(
 }
 
 export interface ReadingOptions {
-  /** 用上一请求的真实用量校准上下文估算。缺省 true；关掉则只按投影估算（偏低） */
+  /**
+   * 用上一请求的真实用量校准上下文估算。缺省 true，与 core 阈值兜底同一口径；
+   * 关掉则只按投影估算（偏低），此时读数会比兜底实际触发点低一截
+   */
   calibrate?: boolean
 }
 

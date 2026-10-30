@@ -185,7 +185,10 @@ export interface TurnContext {
   capabilities: LoweringCapabilities
   budget: {
     contextLimit: number
-    /** 投影的裁剪目标 = contextLimit - reserveTokens；估算超过它库就按阈值自动折叠最旧的轮次（感知据此提醒模型） */
+    /**
+     * 投影的裁剪目标 = contextLimit - reserveTokens，真实上下文口径：本轮估算 + 固定开销（contextOverheadOf(timeline)）
+     * 超过它库就按阈值自动折叠最旧的轮次（感知用同一函数校准、据此提醒模型）
+     */
     targetTokens: number
     /** 本轮投影的估算 token */
     used: number

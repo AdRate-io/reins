@@ -140,6 +140,25 @@ export function contextTokensOf(usage: TokenUsage): number {
 }
 
 /**
+ * 估算与真实之间的固定开销（B8）：上一次请求的真实上下文 − 当时的投影估算。
+ *
+ * 投影只数模型可见事件的正文，系统提示、工具表、thinking 签名块等都不在内，真实 input 可高出一倍。
+ * 这些多出来的部分在一个 run 里基本是常量（系统提示与工具表整轮不变），所以用**加法**校准而不是比例：
+ * 比例会随历史变长把误差放大，加法只补那块固定的开销。
+ * 数据来自日志最后一条同时带 tokens 与 contextEstimate 的 budget_usage；没有可对照的请求时为 0，不为负。
+ *
+ * 阈值兜底（投影）与感知读数**必须**都调这一个函数：两处口径一分叉，模型被告知"到 85% 自动折叠"就不成立。
+ */
+export function contextOverheadOf(timeline: readonly Event[]): number {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const e = timeline[i] as CoreEvent | undefined
+    if (e?.type !== "core.budget_usage" || e.payload.contextEstimate === undefined) continue
+    return Math.max(0, contextTokensOf(e.payload.tokens) - e.payload.contextEstimate)
+  }
+  return 0
+}
+
+/**
  * 用量是事件，宿主可按会话或用户聚合出配额（库不做配额）。
  * `contextEstimate`（B8）：这次请求投影的估算 token（= 当轮 TurnContext.budget.used），与真实用量放在同一条事件里，
  * 感知模块用"真实上下文 − 估算"得到系统提示、工具表、thinking 等估算不含的固定开销，校准下一轮的使用率读数。

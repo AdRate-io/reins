@@ -462,4 +462,31 @@ describe("perception：用上一请求的真实用量校准上下文使用率（
     ) as CoreEventOf<"core.budget_usage">[]
     expect(usages.every((u) => typeof u.payload.contextEstimate === "number")).toBe(true)
   })
+
+  it("感知报 ≥85% 的那一轮，阈值兜底同轮就折（2026-10-30 onset-pause：此前兜底只比估算，报了不折）", async () => {
+    const log = new InMemoryEventLog()
+    // 窗口 4000、兜底线 3400。第一轮真实上下文 3450：估算只有几十，校准后第二轮读数 ≥85%
+    const lowering = new ScriptedLowering(
+      [
+        { drafts: [callTool("c1", "add", { a: 2, b: 3 })], outcome: { usage: { input: 3450, output: 5 } } },
+        { drafts: [say("答案是 5")] },
+      ],
+      { capabilities: { contextWindow: 4000 } },
+    )
+    await drain(runLoop(config(lowering, log, { sockets: [perception()] })))
+    const logged = await all(log)
+    const notes = notesOf(logged)
+    expect(notes.length).toBeGreaterThanOrEqual(2)
+    const reading = (notes[1]?.payload.meta as { reading: PerceptionReading } | undefined)?.reading
+    if (!reading) throw new Error("second perception note missing its reading")
+    expect(reading.contextUsage.label).toBe("≥85%")
+    expect(reading.autoFoldAt).toBe("85%")
+    // 兜底 compaction 落在第二次请求之前（第一条模型输出之后、第二条之前）
+    const firstOutput = logged.findIndex((e) => e.type === "core.tool_call")
+    const secondOutput = logged.findIndex((e, i) => i > firstOutput && e.type === "core.model_text")
+    const folded = logged.findIndex((e) => e.type === "core.compaction")
+    expect(folded).toBeGreaterThan(firstOutput)
+    expect(folded).toBeLessThan(secondOutput)
+    expect((logged[folded] as CoreEventOf<"core.compaction">).payload.decidedBy).toBe("threshold")
+  })
 })

@@ -569,6 +569,52 @@ describe("project（默认链端到端）", () => {
   })
 })
 
+describe("阈值兜底按校准后的真实上下文判（与感知同一口径）", () => {
+  // 每条可见事件估 10；上一请求真实上下文 70、当时估算 40 → 估算不含的固定开销 30（系统提示、工具表等）
+  const usage = (seq: number, input: number, contextEstimate?: number) =>
+    ev(seq, "core.budget_usage", {
+      tokens: { input, output: 5 },
+      toolCalls: 0,
+      wallMs: 0,
+      ...(contextEstimate !== undefined ? { contextEstimate } : {}),
+    })
+  const timeline = [user(1, "a"), text(2, "b"), user(3, "c"), text(4, "d"), usage(5, 70, 40), user(6, "e")]
+  const opts = { budget: { contextLimit: 100, reserveTokens: 25 }, estimate: () => 10, now: NOW }
+
+  it("复现：估算 50 未过线 75，但加上开销 30 的真实上下文 80 已过线——必须兜底", () => {
+    const r = project({ timeline, ...opts })
+    expect(r.stats.overheadTokens).toBe(30)
+    expect(r.stats.targetTokens).toBe(75)
+    expect(r.emitted).toHaveLength(1)
+    expect((r.emitted[0] as CoreEventOf<"core.compaction">).payload.decidedBy).toBe("threshold")
+    // 切点按"估算 + 开销 ≤ 目标"选：裁两轮、补一条摘要 → 40 + 30 = 70
+    expect(seqs(r.events)).toEqual([7, 3, 4, 6])
+    expect(r.stats.estimatedTokens).toBe(40)
+    expect(r.stats.overBudget).toBe(false)
+  })
+
+  it("没有可对照的请求时开销为 0，行为与校准前一致", () => {
+    const noCalib = timeline.map((e) => (e.seq === 5 ? usage(5, 70) : e))
+    const r = project({ timeline: noCalib, ...opts })
+    expect(r.stats.overheadTokens).toBe(0)
+    expect(r.emitted).toEqual([])
+  })
+
+  it("宿主可显式给开销（0 即关掉校准）", () => {
+    const off = project({ timeline, ...opts, budget: { ...opts.budget, overheadTokens: 0 } })
+    expect(off.stats.overheadTokens).toBe(0)
+    expect(off.emitted).toEqual([])
+    expect(() => project({ timeline, ...opts, budget: { ...opts.budget, overheadTokens: -1 } })).toThrow(
+      RangeError,
+    )
+  })
+
+  it("开销大到只剩最后一轮也放不下时 overBudget 为真（不能只看估算报没超）", () => {
+    const r = project({ timeline, ...opts, budget: { ...opts.budget, overheadTokens: 70 } })
+    expect(r.stats.overBudget).toBe(true)
+  })
+})
+
 describe("supersedes：被后来说明取代的事件不再幸存（B3）", () => {
   const pinOver = (seq: number, t: string, old: number) =>
     ev(seq, "core.system_note", { kind: "pin", text: t, supersedes: [idOf(old)] })
