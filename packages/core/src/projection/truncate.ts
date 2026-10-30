@@ -4,6 +4,10 @@
  * 做法：按"轮"从最旧的开始裁掉一个前缀，追加一条 compaction(decidedBy=threshold) 放在最前面，
  * 幸存的 pin 紧随其后。新造的 compaction 通过 emitted 交给循环 append，下一轮投影由折叠策略正常处理它。
  *
+ * 触发线与回落线分开（OPT-261030-2）：过了触发线（contextLimit − reserveTokens，感知报的 autoFoldAt）才裁，
+ * 一裁就裁到回落线（缺省 contextLimit 的 60%）。只裁回触发线下会贴线磨刀——下一轮新结果一进来又过线，
+ * 几乎每轮裁一截、每裁一次缓存前缀整段作废、旧摘要再套一层。
+ *
  * 切点必须满足三条，否则降级层会产出厂商拒收的请求：
  * 1. 只在轮边界切。assistant 轮 = 连续的 model_thinking / model_text / tool_call；其余连续事件为一轮。
  * 2. 保留部分的第一轮若含 tool_result，其 tool_call 必在被裁掉的轮里 → 这种切点不合法。
@@ -51,7 +55,15 @@ export interface BudgetTruncateOptions {
   autoKeepPinNotes?: boolean
   /** 生成兜底摘要的文本；默认给模型一段英文的机械描述 */
   summarize?: ThresholdSummarizer
+  /**
+   * 回落线：一旦触发，裁到真实上下文 ≤ contextLimit × cutToRatio。取 (0, 1]，缺省 0.6；
+   * 高于触发线时按触发线算（给 1 即旧行为：只裁回触发线下）
+   */
+  cutToRatio?: number
 }
+
+/** 兜底裁剪的缺省回落线（占 contextLimit 的比例） */
+export const DEFAULT_CUT_TO_RATIO = 0.6
 
 /** 摘录文本片段，供机械摘要引用用户原话 */
 function excerpt(parts: CoreEventOf<"core.user_message">["payload"]["content"], max = 120): string {
@@ -122,6 +134,10 @@ function minSeq(events: readonly Event[]): number {
 export function budgetTruncate(opts: BudgetTruncateOptions = {}): ProjectionStrategy {
   const autoKeep = opts.autoKeepPinNotes ?? true
   const summarize = opts.summarize ?? defaultThresholdSummary
+  const cutToRatio = opts.cutToRatio ?? DEFAULT_CUT_TO_RATIO
+  if (!(cutToRatio > 0 && cutToRatio <= 1)) {
+    throw new RangeError(`cutToRatio must be a number in (0, 1], got ${cutToRatio}`)
+  }
   return {
     name: "budget-truncate",
     apply(events, ctx) {
@@ -129,6 +145,11 @@ export function budgetTruncate(opts: BudgetTruncateOptions = {}): ProjectionStra
       const target = estimateBudgetOf(ctx.budget)
       const total = estimateTotal(events, ctx.estimate)
       if (total <= target) return { events: [...events] }
+      // 回落线与触发线同一口径：真实上下文线减去估算不含的固定开销；不高于触发线
+      const cutTarget = Math.min(
+        target,
+        Math.floor(ctx.budget.contextLimit * cutToRatio) - (ctx.budget.overheadTokens ?? 0),
+      )
 
       const turns = splitTurns(events)
       // 候选：保留 turns[k..]，k 从 1 起（至少裁一轮），到 turns.length-1（至少留最后一轮）
@@ -144,12 +165,12 @@ export function budgetTruncate(opts: BudgetTruncateOptions = {}): ProjectionStra
         if (minSeq(kept) <= maxSeq(removed)) continue
         lastValid = k
         const { survivors, summaryTokens } = plan(removed, ctx, autoKeep, summarize)
-        if (total - removedTokens + summaryTokens + estimateTotal(survivors, ctx.estimate) <= target) {
+        if (total - removedTokens + summaryTokens + estimateTotal(survivors, ctx.estimate) <= cutTarget) {
           chosen = k
           break
         }
       }
-      // 没有任何满足预算的切点：能裁多少裁多少，剩下的交给上层告警（stats.overBudget）
+      // 回落线够不着：能裁多少裁多少（只剩最后一轮仍超触发线时交给上层告警，stats.overBudget）
       const k = chosen ?? lastValid
       if (k === null) return { events: [...events] }
 

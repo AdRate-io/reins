@@ -3,6 +3,7 @@ import {
   type CoreEventOf,
   createCoreEvent,
   createCoreRegistry,
+  defaultProjectionChain,
   defineTool,
   type Event,
   InMemoryEventLog,
@@ -378,16 +379,43 @@ describe("compact × runLoop：模型自决整理", () => {
 })
 
 describe("compact：阈值兜底与连续上限", () => {
-  /** 每条事件按 100 token 估算，窗口 1000 → 裁剪目标 850：视图超过 8 条就触发阈值兜底 */
+  /** 每条事件按 100 token 估算，窗口 1000 → 触发线 850：视图超过 8 条就触发阈值兜底；缺省回落线 600 */
   const tinyWindow = {
     projection: { estimate: () => 100 },
+  }
+  /** 贴线裁剪（cutToRatio: 1，只裁回触发线下）：每轮都兜底的病态情形，用来测连续上限 */
+  const tinyWindowHugging = {
+    projection: {
+      estimate: () => 100,
+      strategies: defaultProjectionChain({ truncate: { cutToRatio: 1 } }),
+    },
   }
   const filler = (n: number): ScriptedTurn[] =>
     Array.from({ length: n }, (_, i) => ({
       drafts: [say(`步骤 ${i}`), callTool(`c${i}`, "add", { a: i, b: 1 })],
     }))
 
-  it("模型不整理、视图超过裁剪目标 → core 投影链兜底折叠并记 compaction(threshold)；收尾作答的轮达到上限也不拦", async () => {
+  it("模型不整理、视图过触发线 → 兜底一次裁到回落线，管好几轮才再触发（不贴线磨刀，OPT-261030-2）", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([...filler(6), { drafts: [say("完")] }], {
+      capabilities: { contextWindow: 1000 },
+    })
+    const { result } = await drain(
+      runLoop(
+        config(lowering, log, { ...tinyWindow, sockets: [compact({ maxConsecutive: 2 })], maxTurns: 10 }),
+      ),
+    )
+    expect(result.status).toBe("done")
+    const cs = compactionsOf(await all(log))
+    expect(cs.every((c) => c.payload.decidedBy === "threshold")).toBe(true)
+    // 每轮 +3 条；过 8 条才裁、一裁回到 4 条（≤ 600）。贴线裁剪在这 7 轮里会从第 4 轮起每轮裁一次
+    expect(lowering.requests.map((r) => r.events.length)).toEqual([1, 4, 7, 4, 7, 4, 7])
+    expect(cs).toHaveLength(2)
+    expect(lowering.requests[3]?.events[0]?.id).toBe(cs[0]?.id)
+    expect(lowering.requests[5]?.events[0]?.id).toBe(cs[1]?.id)
+  })
+
+  it("贴线裁剪时每轮兜底并记 compaction(threshold)；收尾作答的轮达到上限也不拦", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([...filler(4), { drafts: [say("完")] }], {
       capabilities: { contextWindow: 1000 },
@@ -395,7 +423,11 @@ describe("compact：阈值兜底与连续上限", () => {
     // 第 4 轮视图 10 条 → 兜底；第 5 轮视图又到 10 条 → 再兜底，此时已连续 2 次 = 上限，但模型本轮直接作答（无工具调用）→ done
     const { result } = await drain(
       runLoop(
-        config(lowering, log, { ...tinyWindow, sockets: [compact({ maxConsecutive: 2 })], maxTurns: 10 }),
+        config(lowering, log, {
+          ...tinyWindowHugging,
+          sockets: [compact({ maxConsecutive: 2 })],
+          maxTurns: 10,
+        }),
       ),
     )
     expect(result.status).toBe("done")
@@ -408,12 +440,16 @@ describe("compact：阈值兜底与连续上限", () => {
     expect(lowering.requests[4]?.events[0]?.id).toBe(cs[1]?.id)
   })
 
-  it("连续阈值兜底达到上限 → paused(budget) 并说明原因；日志里正好是上限条 compaction", async () => {
+  it("贴线裁剪时连续阈值兜底达到上限 → paused(budget) 并说明原因；日志里正好是上限条 compaction", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering(filler(20), { capabilities: { contextWindow: 1000 } })
     const { result } = await drain(
       runLoop(
-        config(lowering, log, { ...tinyWindow, sockets: [compact({ maxConsecutive: 2 })], maxTurns: 50 }),
+        config(lowering, log, {
+          ...tinyWindowHugging,
+          sockets: [compact({ maxConsecutive: 2 })],
+          maxTurns: 50,
+        }),
       ),
     )
     expect(result.status).toBe("paused")

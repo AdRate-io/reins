@@ -355,6 +355,8 @@ describe("被折叠工具结果清单（manifest）", () => {
 })
 
 describe("budgetTruncate", () => {
+  // 切点合法性的用例用贴线裁剪（cutToRatio: 1，只裁回触发线下），切点更好推算；回落线另有专门用例
+  const hugging = () => budgetTruncate({ cutToRatio: 1 })
   /** 一段典型对话：用户 → 思考+调用 → 结果 → 回答 → 用户 → ... */
   const timeline = [
     user(1, "第一问"),
@@ -378,7 +380,7 @@ describe("budgetTruncate", () => {
   it("超限时裁掉最旧的整轮，摘要在最前面并通过 emitted 交出", () => {
     // 10 条各 10 token = 100；目标 60。摘要估 10。裁掉 [1] [2,3,4? ...] 看切点
     const ctx = ctxOf(timeline, { budget: { contextLimit: 60, reserveTokens: 0 } })
-    const step = budgetTruncate().apply(timeline, ctx)
+    const step = hugging().apply(timeline, ctx)
     const first = step.events[0] as CoreEventOf<"core.compaction">
     expect(first.type).toBe("core.compaction")
     expect(first.payload.decidedBy).toBe("threshold")
@@ -400,7 +402,7 @@ describe("budgetTruncate", () => {
     // 目标 80：只裁 [1] 省不出空间（摘要自己也占 10）；下一个切点在 result(4) 之前，不合法（会留下孤儿结果）；
     // 于是跳到 text(5) 之前，把 [1..4] 一起裁掉
     const ctx = ctxOf(timeline, { budget: { contextLimit: 80, reserveTokens: 0 } })
-    const step = budgetTruncate().apply(timeline, ctx)
+    const step = hugging().apply(timeline, ctx)
     expect(seqs(step.events)).toEqual([11, 5, 6, 7, 8, 9, 10])
     for (const e of step.events) {
       if (e.type === "core.tool_result") {
@@ -425,7 +427,7 @@ describe("budgetTruncate", () => {
   it("pin 幸存并写入 pinsKept，紧随摘要之后", () => {
     const tl = [user(1, "a"), pin(2, "目标"), text(3, "x"), user(4, "b"), text(5, "y"), user(6, "c")]
     const ctx = ctxOf(tl, { budget: { contextLimit: 40, reserveTokens: 0 } })
-    const step = budgetTruncate().apply(tl, ctx)
+    const step = hugging().apply(tl, ctx)
     const c = step.events[0] as CoreEventOf<"core.compaction">
     expect(c.payload.pinsKept).toEqual([idOf(2)])
     // 60 token 要压到 40：裁 [1,2] 省 20 但摘要+幸存 pin 又占 20，直到裁掉 [1..4] 才够
@@ -471,9 +473,49 @@ describe("budgetTruncate", () => {
     expect((step.events[0] as CoreEventOf<"core.compaction">).payload.coversSeq).toEqual([1, 9])
   })
 
+  it("回落线：过触发线后一次裁到 contextLimit × cutToRatio 以下，不只裁回触发线（OPT-261030-2）", () => {
+    // 10 条 × 10 = 100，触发线 90（reserve 10）。贴线：裁 [1] 不够、切在 result(4) 前不合法，裁到 seq 4 剩 70；
+    // 缺省回落线 60：再多裁一轮剩 60
+    const budget = { contextLimit: 100, reserveTokens: 10 }
+    expect(seqs(hugging().apply(timeline, ctxOf(timeline, { budget })).events)).toEqual([
+      11, 5, 6, 7, 8, 9, 10,
+    ])
+    expect(seqs(budgetTruncate().apply(timeline, ctxOf(timeline, { budget })).events)).toEqual([
+      11, 6, 7, 8, 9, 10,
+    ])
+    // 自定义回落线 0.3：要裁到 ≤ 30，只剩最后两轮
+    expect(
+      seqs(budgetTruncate({ cutToRatio: 0.3 }).apply(timeline, ctxOf(timeline, { budget })).events),
+    ).toEqual([11, 9, 10])
+    // 没过触发线就不动，哪怕高于回落线
+    const loose = { contextLimit: 120, reserveTokens: 10 }
+    expect(budgetTruncate().apply(timeline, ctxOf(timeline, { budget: loose })).emitted).toBeUndefined()
+  })
+
+  it("回落线高于触发线时按触发线算；按固定开销扣减；非法值构造时拒绝", () => {
+    // 触发线 50（reserve 50）低于 0.6 × 100：按 50 裁（按 60 会停在 [11, 6..10]）
+    const low = { contextLimit: 100, reserveTokens: 50 }
+    expect(seqs(budgetTruncate().apply(timeline, ctxOf(timeline, { budget: low })).events)).toEqual([
+      11, 7, 8, 9, 10,
+    ])
+    // 开销 20：回落线 60 − 20 = 估算可用 40；留 [8, 9, 10] 要从 result(8) 切、不合法，只能留 [9, 10]（30）
+    const withOverhead = { contextLimit: 100, reserveTokens: 0, overheadTokens: 20 }
+    expect(seqs(budgetTruncate().apply(timeline, ctxOf(timeline, { budget: withOverhead })).events)).toEqual([
+      11, 9, 10,
+    ])
+    for (const bad of [0, -0.1, 1.5, Number.NaN]) {
+      expect(() => budgetTruncate({ cutToRatio: bad })).toThrow(
+        `cutToRatio must be a number in (0, 1], got ${bad}`,
+      )
+    }
+  })
+
   it("可注入摘要函数", () => {
     const ctx = ctxOf(timeline, { budget: { contextLimit: 60, reserveTokens: 0 } })
-    const step = budgetTruncate({ summarize: (removed) => `裁了 ${removed.length} 条` }).apply(timeline, ctx)
+    const step = budgetTruncate({ cutToRatio: 1, summarize: (removed) => `裁了 ${removed.length} 条` }).apply(
+      timeline,
+      ctx,
+    )
     expect((step.events[0] as CoreEventOf<"core.compaction">).payload.summary).toBe("裁了 5 条")
   })
 })
@@ -592,9 +634,9 @@ describe("阈值兜底按校准后的真实上下文判（与感知同一口径�
     expect(r.stats.targetTokens).toBe(75)
     expect(r.emitted).toHaveLength(1)
     expect((r.emitted[0] as CoreEventOf<"core.compaction">).payload.decidedBy).toBe("threshold")
-    // 切点按"估算 + 开销 ≤ 目标"选：裁两轮、补一条摘要 → 40 + 30 = 70
-    expect(seqs(r.events)).toEqual([7, 3, 4, 6])
-    expect(r.stats.estimatedTokens).toBe(40)
+    // 切点按"估算 + 开销 ≤ 回落线"选：回落线 60 − 开销 30 = 估算可用 30，裁三轮、补一条摘要 → 30 + 30 = 60
+    expect(seqs(r.events)).toEqual([7, 4, 6])
+    expect(r.stats.estimatedTokens).toBe(30)
     expect(r.stats.overBudget).toBe(false)
   })
 

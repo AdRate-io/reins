@@ -264,7 +264,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`resolveSocketContributions` 是 async，各 Socket 依次 await 不并发** — 同名去重以先到者为准，并发会让顺序不定、configHash 抖动；MCP 的 `tools/list` 就在这里发生。
 - **每次 run 起步都 append 一条 `tools_bound`，有增删再 append 一条模型可见说明** — 断言日志开头 / seq / lastSeq 的测试都要算进去；说明缺省开（`announceToolChanges: false` 关），首次 run 与工具表不变时不出。
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
-- **阈值兜底按"估算 + 固定开销"比 `contextLimit − reserveTokens`，开销是 core `contextOverheadOf(timeline)`** — `reserveTokens` 实际只给输出留；告诉模型的阈值要有用例锁住"报过线 ⟺ 真的动作"（踩坑 40）。
+- **阈值兜底按"估算 + 固定开销"比 `contextLimit − reserveTokens`，开销是 core `contextOverheadOf(timeline)`** — `reserveTokens` 实际只给输出留；告诉模型的阈值要有用例锁住"报过线 ⟺ 真的动作"（踩坑 40）。触发后裁到回落线 `cutToRatio`（缺省 0.6）而不是触发线下，测切点合法性的用例要显式 `cutToRatio: 1`。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试；判定先看状态码（408/409/429/5xx），有状态码就只按它定，文案关键词只在没有状态码时兜底且不匹配裸数字——SDK 文案固定 "<status> <body>"，正文里的 "timeout" / "429" 不是信号。
 - **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建。
 - **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠子日志末条是否 `run_paused` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
