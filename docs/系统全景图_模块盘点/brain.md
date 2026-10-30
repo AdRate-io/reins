@@ -237,7 +237,7 @@
 
 **技能菜单进系统提示、正文走工具结果，不把 SKILL.md 全文塞 system**（S1）— 加载哪个技能是模型的判断（宪法一）：菜单只给 name + description，翻不翻、翻哪份由模型定；正文以 `tool_result` 进时间线（宪法二），compact 折叠 / `recall` 取回 / spill 外溢零改动适用。AdRate 示例 09-08 把两份 Skill 全文（约 37k 字符）塞进系统提示是反面做法，09-13 改成第一个真实样本，两族真模型都在第一轮就先 `skill_read` 两份技能再动手。边界：技能表变了只影响下一 run（菜单进 configHash，暂停中变化按配置漂移处理）。
 
-**载体接口不新造：`SkillSource = Pick<MemoryStore, "list" | "read">`**（S1）— 任何 MemoryStore 天然满足，宿主已有的记忆表直接当技能库（`/skills` 与 `/memories` 同一张表两个前缀，模型的 memory 工具够不到 `/skills`）；文件系统载体放 `@reinsjs/brain/node`，字符串预填用 `inlineSkills`。边界：AdRate `skills install` 落盘的 SKILL.md 只是存根，正文要问 CLI——所以示例用 `inlineSkills` 而不是 `fsSkillSource`（踩坑记录 2026-09-13）。
+**载体接口不新造：`SkillSource = Pick<MemoryStore, "list" | "read">`**（S1）— 任何 MemoryStore 天然满足，宿主已有的记忆表直接当技能库（`/skills` 与 `/memories` 同一张表两个前缀，模型的 memory 工具够不到 `/skills`）；文件系统载体放 `@reinsjs/brain/node`，字符串预填用 `inlineSkills`。边界：AdRate `skills install` 落盘的 SKILL.md 只是存根，正文要问 CLI——所以示例用 `inlineSkills` 而不是 `fsSkillSource`（踩坑记录 #21）。
 
 **`skill_read` 结果 trust 是 system，靠 core 新加的 `Tool.resultTrust` 落**（S1）— 技能是宿主写的说明书，视同系统提示可信，套 `<untrusted>` 会让模型把契约当数据。口子开在 Tool 上而不是模块里的 afterTool：TanStack 适配器与 runLoop 两条路都要认，且只用于成功结果，isError 与执行抛错仍缺省 untrusted。边界：第三期若允许模型写技能，模型写的必须回到 untrusted。
 

@@ -64,4 +64,5 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 - **T14 `apiKey` 必填、不读环境变量** — 沿用 T7 决策，key 由宿主决定来源；显式传 key 才能让 Workers / Deno 等没有 `process.env` 的运行时跑同一份代码。`BoundModel = { model, lowering }` 与 `Stores = { log, blobs?, memory? }` 都定义在 core，工厂 `anthropic(id, { apiKey })` / `openai(...)` 在 lowering-pi。
 - **`createAgent` 不引入新概念** — `definition` 就是 `runLoop` 的跨请求配置，`handler` 就是 `createAgentHandler`；本包只负责拆 `BoundModel` 与 `Stores`。这样"只装脑子不装底盘"的人跳过总包也不会看到两套说法。
 - **`asTool` 住在总包而不是 core** — 它要的是 `Agent`（`run` + `definition.log`），core 没有这个概念；子代理的暂停标记 `subagentPause` 与 `Interruption(kind=subagent)` 则在 core，因为循环要认得它。边界：子 run 续跑不带 `resume` 状态（子会话只有这个工具在写，签名与 pendingDigest 防的是不可信客户端与并发写者），子 state 只给宿主看。
+- **`createAgent` 不暴露租约的 `ttlMs` / `owner`**（2026-09-15 外部审查处置）— 要调就经 `handler.runs` 自传 `leasedRunRegistry(store.runLease, { … })`，现成路径已够，不为它加接口；agent README 指路。
 - **`stripUndefined` 而不是逐字段展开** — 仓库开了 `exactOptionalPropertyTypes`，把 `undefined` 传给可选字段是类型错误；`run()` 的每次参数是六个可选键，逐个写条件展开太啰嗦。

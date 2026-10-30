@@ -144,7 +144,7 @@
 | 测试 | vitest（alias 指向源码） | 测试与源码同目录 `*.test.ts` |
 | lint / 格式 | Biome 2.5.12（单一工具） | 不引 ESLint / Prettier / husky |
 | 版本 | changesets | |
-| 外部依赖（仅四处） | `@earendil-works/pi-ai@0.85.1`（lowering-pi）、`@tanstack/ai@0.53.0`（adapter，peer）、`@modelcontextprotocol/client@2.0.0`（tools-mcp）、存储驱动由宿主传入 | 全部 pin 精确版本，类型不出所在包 |
+| 运行时外部依赖（仅四处；adapter 另有只用类型的 `@standard-schema/spec`） | `@earendil-works/pi-ai@0.85.1`（lowering-pi）、`@tanstack/ai@0.53.0`（adapter，peer）、`@modelcontextprotocol/client@2.0.0`（tools-mcp）、存储驱动由宿主传入 | 全部 pin 精确版本，类型不出所在包 |
 
 ## 架构
 
@@ -167,7 +167,7 @@ docs/                # 维护者文档（中文），见文档索引
 ### 模块拆分与公开入口规范
 
 - 每个脑子模块是 `xxx(options): Socket`，可单独关闭、按模型族配置；新机制先问"能不能是一个 Socket"，不能才动 core。
-- 上游类型（pi-ai、`@tanstack/ai`、MCP SDK）只在各自包内出现，对外用本库自己的类型。
+- 上游类型（pi-ai、`@tanstack/ai`、MCP SDK）只在各自包内出现，对外用本库自己的类型。唯一书面豁免：lowering-pi 进阶导出（`draftsOf` / `consumeStream` 等）签名含 pi-ai 类型——边界是其它 `@reinsjs/*` 包不依赖它们（OPT-260910-3）。
 - 不做 MCP 动态注册（工具表 run 内不变）；不自造前端协议（AG-UI 一等输出）；多智能体只做子代理即工具与 handoff。
 
 ### 熵控基线（同一件事只有一种做法）
@@ -190,7 +190,7 @@ docs/                # 维护者文档（中文），见文档索引
 
 ## 鉴权与安全默认值
 
-- **server 两层鉴权**：`principal(request)` 解析谁在问；`authorizeSession({ sessionId, principal, method, isNew })` 在解析出 sessionId 之后、读写日志之前决定能碰哪条会话。**只有字面 `true` 放行，拒绝回 404**（不用 403）。
+- **server 两层鉴权**：`principal(request)` 解析谁在问；`authorizeSession({ sessionId, principal, request, method, isNew })` 在解析出 sessionId 之后、读写日志之前决定能碰哪条会话（此时 body 已被 handler 读完，`request` 只能读 header）。**只有字面 `true` 放行，拒绝回 404**（不用 403）。
 - **客户端输入两道类型白名单**：循环层 `inputDraft` 只收 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`；server 层只收 `user_message` 与客户端工具 pending 的 `tool_result`。审批结论只走 `decisions`（状态 HMAC 签名，宿主给 `secret`）。
 - **trust**：工具结果缺省 untrusted，降级层包 `<untrusted source="tool:<name>">…</untrusted>`；只有 `Tool.resultTrust: "system"` 的成功结果是 system（`skill_read`、`tool_find`）。
 - **越权资源一律当不存在**：未授权会话 404、未被本会话引用的 blob id "不存在"、技能路径越界"不存在"。
@@ -254,6 +254,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | skills 单份 SKILL.md 不合规 | 跳过该份、告警一次，其余技能照常进菜单 | 一份坏技能不该拖垮整个菜单 |
 | `trustMarkers: false` | 不给 untrusted 内容包标记 | 宿主自担风险（例如已在别处处理注入） |
 | handler `onEvent` 钩子抛错 | 只经 `warn` 报一次，不进日志、不影响 run | 旁路观测不能拖垮主路径（但挂住不返回会让 run 永不结束，见服务端节） |
+| 流开后的 SSE `error` 帧原样带出厂商响应体 | 不截断、不脱敏 | `HttpError` 文案与 SDK 同款是刻意的（瞬断判据靠其中状态码）；面向公网时由宿主 `encode` 或网关截断 |
 | lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限） | 价目只用于报告，不影响请求正确性 |
 
 ### 循环与时间线（core）
@@ -301,12 +302,12 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败。
 - **内置模型表是最小表，`definitionOf` 内置打底、选项覆盖，表外必须给 `baseUrl`；同一 OpenAI id 两条协议各一份，无协议解析缺省走 Responses** — 测试目标模型显式取条目，别靠无协议解析。
 - **Chat 线有损**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点。**工具结果图片缺省上浮**到同批 tool 之后的一条 user（`tool+lifted-images`，`chat.liftToolImages: false` 退回占位）——放出时机是第一个**会下发的**非 tool_result 条目，`dropped` 不算（踩坑 39）。
-- **Anthropic 线的中途 system 攒到下一条 assistant 之前或收尾再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user、后接 assistant 或收尾；说明位置比时间线晚一条 user 仍算 exact 并备注。
+- **Anthropic 线的中途 system 攒到下一条 assistant 之前或收尾再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user（含只带 tool_result 的 user）、后接 assistant 或收尾；说明位置比时间线晚一条 user 仍算 exact 并备注。
 - **Anthropic 线缓存断点由本包打：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 占一格；别把断点留在 system 消息上（几乎零命中）。
 - ⚠️ **thinking / 加密推理项 / `fc_` 项 id 的回放判据是 provider + api + model 三者一致** — 判据是签名不是正文：Fable 5.1 缺省 display omitted（正文空、签名在）照发；无签名、别家的、同家别的型号一律 dropped，不降成正文（踩坑 37）。`redacted_thinking` 存 `replay.thinkingSignature` + `redacted: true`。
 - **宿主 `requestOptions` 里的 `system` / `tools` 会被剥掉，`max_tokens` 没给取模型声明的 `maxOutputTokens`，`thinking` 不缺省设置** — Fable 5.1 对 `type:"disabled"` 400、Haiku 4.5 仍要 `budget_tokens`，代次差异由宿主定；`anthropic-beta` 只在 `anthropic.betas` 声明时带。
 - **Responses 线 `store: false` 强制、`previous_response_id` 剥掉；`call_id` 是 toolCallId，`fc_` 项 id 存 `replay.itemId`** — 正文项 id 没有就补 `msg_reins_<n>`（厂商接受）；伪造加密项厂商 400，回放的必须是原件。
-- **Anthropic 线延迟加载（L1）的厂商规矩都在 encoder 里，且 `tool_reference` 块只给 system 信任的结果** — tool_result 内引用不能与文本混放、同条 user 里 tool_result 排最前（踩坑 31）；引用指向本次 tools 里没有的名字 400 且整段历史都校验（未绑定的引用一律展开成文本）；`defer_loading` 工具不能带 `cache_control`；全表延迟 400；untrusted 结果里的引用展开成文本——不可信工具输出不能替模型点亮工具。
+- **Anthropic 线延迟加载（L1）的厂商规矩都在 encoder 里，且 `tool_reference` 块只给 system 信任的结果** — tool_result 内引用不能与文本混放、同条 user 里 tool_result 排最前（踩坑 31）；引用指向本次 tools 里没有的名字 400 且整段历史都校验（未绑定的引用一律展开成文本）；`defer_loading` 工具不能带 `cache_control`；全表延迟 400（encoder 此时不延迟）；untrusted 结果里的引用展开成文本——不可信工具输出不能替模型点亮工具。
 
 ### MCP（tools-mcp）
 
@@ -355,11 +356,11 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **量缓存的探针必须给系统提示加一次性盐，且盐落在 `cache_control` 断点之内**；同组各臂共用同一个盐——臂间能否互相命中本身就是判据（踩坑 30）。
 - **自己搭的示例 / 测试服务器至少让两个客户端先后连一遍** — 示例会被照抄，必须是生产形态。
 - **脱敏按值查全历史，不按文件查**；本地专用值一开始就走 gitignore（踩坑 24）。
-- **批量改文件用 Node 脚本，替换限定在字符串字面量**，改完用"英文词紧贴中文"正则回扫（踩坑 36）；本机 zsh 不对未加引号变量分词、`grep` 是 ugrep 别名、`git ls-files` 中文路径要 `-c core.quotepath=off`。
+- **批量改文件用 Node 脚本，替换限定在字符串字面量**，改完用"英文词紧贴中文"正则回扫（踩坑 36）；文件改名后改写引用，"换了语义"的旧名不碰快照（踩坑 41）；本机 zsh 不对未加引号变量分词、`grep` 是 ugrep 别名、`git ls-files` 中文路径要 `-c core.quotepath=off`。
 
 ### 上游行为（spikes 实测）
 
-- **官方 Anthropic / OpenAI 端点一律走 CF AI Gateway 透传路径**（`gateway.ai.cloudflare.com/v1/<account>/<gateway>/<provider>/…`，头 `cf-aig-authorization`，厂商原模型名）— REST `api.cloudflare.com/…/ai/v1/*` 认的是账户级 token，用网关令牌必 401；Anthropic 流式 `data` 多一个 `"p"` 填充字段，解析器忽略未知字段；账户级限流 429 的正文是 CF 信封；模型名打错经网关是 401 不是 404；`count_tokens` 端点不转凭证。F0 体检 43/43，可当官方靶子。
+- **官方 Anthropic / OpenAI 端点一律走 CF AI Gateway 透传路径**（`gateway.ai.cloudflare.com/v1/<account>/<gateway>/<provider>/…`，头 `cf-aig-authorization`，厂商原模型名）— REST `api.cloudflare.com/…/ai/v1/*` 认的是账户级 token，用网关令牌必 401；Anthropic 流式 `data` 多一个 `"p"` 填充字段，解析器忽略未知字段；账户级限流 429 的正文是 CF 信封；模型名打错经网关是 401 不是 404；`count_tokens` 端点不转凭证（401 要 `x-api-key`），量化 token 只能打真模型对照臂。F0 体检 43/43，可当官方靶子。
 - **OpenAI Responses 的自动前缀缓存是尽力而为** — 探针里"第二请求起 cacheRead > 0"偶发 ✗ 先重跑再怀疑换算；`prompt_cache_key` 可提高命中，宿主经 `requestOptions` 传。
 - **暗号法探中途 system 会触发 Anthropic 的 `reasoning_extraction` 拒答，`mid-conversation-output-config` beta 头抬高触发率** — 探针用感知式说明；降级层只带真用到的 beta 头。Opus 5 缺省 adaptive thinking，`max_tokens` 太小会被吃光；OpenAI 强制 `tool_choice` 时 `finish_reason` 是 `stop`。
 - **aireiter 网关的 Claude 端点会改写请求** — 最后一条 user 之后的一切都丢，中途 system 在中段被换成 "Continue"、末尾换成 "OK"；对含历史工具调用的请求回 "stream ended without a stop reason"。只能测顶层 system 与历史中段；协议接受度看 DeepSeek 直连与 CF 网关。

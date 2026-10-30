@@ -42,7 +42,7 @@
                                             └──────────────────────────────────────┘
 ```
 
-**"pi-ai 类型不出本包"在代码里的三处落地**：① 对外的 `PiLoweredPayload` 用我们自己的结构描述请求体（`{ api, context: { systemPrompt?, messages: readonly unknown[], tools? } }`），不引用 pi-ai 的 `Context`；② 宿主要用内置表以外的模型，用我们自己的 `ModelDefinition` 描述，`definitionToModel` 再补齐 pi-ai `Model` 需要的字段；③ `index.ts` 导出的类型里没有任何 pi-ai 类型，`ModelOrigin` / `ThinkingReplay` / `TextReplay` / `ToolCallReplay` 都是本包自定义。代价是 `stream()` 里有一次 `req.payload.context as Context` 的回收式断言 —— 放进 payload 的对象**就是** pi-ai 的 Context 本体，只是类型上被描述成了 `unknown[]`。
+**"pi-ai 类型不出本包"在代码里的三处落地**：① 对外的 `PiLoweredPayload` 用我们自己的结构描述请求体（`{ api, context: { systemPrompt?, messages: readonly unknown[], tools? } }`），不引用 pi-ai 的 `Context`；② 宿主要用内置表以外的模型，用我们自己的 `ModelDefinition` 描述，`definitionToModel` 再补齐 pi-ai `Model` 需要的字段；③ 主路径导出的类型里没有 pi-ai 类型，`ModelOrigin` / `ThinkingReplay` / `TextReplay` / `ToolCallReplay` 都是本包自定义。**例外（0.1 书面豁免，未收口）**：进阶导出 `draftsOf` / `consumeStream` / `eventsToContext` 等签名直接用 pi-ai 类型（如 `draftsOf(msg: AssistantMessage)`），约束边界只是"其它 `@reinsjs/*` 包不依赖 pi-ai 类型"，见 `待处理任务.md` OPT-260910-3。代价是 `stream()` 里有一次 `req.payload.context as Context` 的回收式断言 —— 放进 payload 的对象**就是** pi-ai 的 Context 本体，只是类型上被描述成了 `unknown[]`。
 
 ## 2 文件清单
 
