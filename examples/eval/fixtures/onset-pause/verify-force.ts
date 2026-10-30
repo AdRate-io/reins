@@ -10,7 +10,9 @@
  * 门禁：照做 ≥ 5/6，整理后答对率不低于未整理。
  * 补测（Boss 定）：存摘要、看预埋事实在不在摘要里；加一组"机械裁剪后再问"的对照——功能关掉时的真实反面不是不整理，
  * 而是到触发线机械裁剪。做法：问答时把窗口声明成 340k，现场 30 万出头的上下文就越过 85% 触发线、裁到回落线。
- * 运行：node examples/eval/fixtures/onset-pause/verify-force.ts [--repeats 2]
+ * OPT-261031-1 预验证：`--user-request` 在降级之前把整理请求换成 user 身份 + `<system_note>` 标签（与 lowering-fetch 关掉中途 system 时
+ * 的落点逐字相同），其余说明仍走 system——模拟"只这一条按 user 送达"；`--relay` 走公司中转站（OnSet 线路）；`--no-probes` 只跑第 ① 步。
+ * 运行：node examples/eval/fixtures/onset-pause/verify-force.ts [--repeats 2] [--relay] [--user-request] [--no-probes]
  * 结果写 examples/eval/out/onset-verify/results.jsonl（只在本地）。
  */
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs"
@@ -35,11 +37,42 @@ const i = process.argv.indexOf("--repeats")
 const repeats = i >= 0 ? Number(process.argv[i + 1]) : 2
 
 const INFO = readFileSync(new URL("../../../../模型API测试信息.md", import.meta.url), "utf8")
-const apiKey = INFO.slice(INFO.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-if (!apiKey) throw new Error("没在 模型API测试信息.md 的 deepseek官方 段找到 key")
-const model = deepseek("deepseek-flash", { apiKey, contextWindow: ONSET_CONTEXT_WINDOW, maxOutputTokens: 384_000 })
+const relayRoute = process.argv.includes("--relay")
+const userRequest = process.argv.includes("--user-request")
+const noProbes = process.argv.includes("--no-probes")
+const relaySection = INFO.slice(INFO.lastIndexOf("Claude中转"))
+const apiKey = relayRoute
+  ? relaySection.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
+  : INFO.slice(INFO.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
+const relayBase = relaySection.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
+if (!apiKey || (relayRoute && !relayBase)) throw new Error("没在 模型API测试信息.md 找到 key / baseurl")
+const modelOf = (contextWindow: number) => {
+  const m = relayRoute
+    ? deepseek("deepseek-v4.1-flash", { apiKey, baseUrl: `${relayBase}/v1`, contextWindow, maxOutputTokens: 384_000 })
+    : deepseek("deepseek-flash", { apiKey, contextWindow, maxOutputTokens: 384_000 })
+  if (!userRequest) return m
+  // 只把整理请求换成 user 身份的标签文本，其余事件原样
+  const toRequest = m.lowering.toRequest.bind(m.lowering)
+  m.lowering.toRequest = (input) =>
+    toRequest({
+      ...input,
+      events: input.events.map((e) =>
+        isCompactRequest(e)
+          ? ({
+              ...e,
+              type: "core.user_message",
+              actor: "user",
+              trust: "principal",
+              payload: { content: [{ type: "text", text: `<system_note kind="budget">\n${(e as CoreEventOf<"core.system_note">).payload.text}\n</system_note>` }] },
+            } as Event)
+          : e,
+      ),
+    })
+  return m
+}
+const model = modelOf(ONSET_CONTEXT_WINDOW)
 const NARROW_WINDOW = 340_000
-const narrowModel = deepseek("deepseek-flash", { apiKey, contextWindow: NARROW_WINDOW, maxOutputTokens: 384_000 })
+const narrowModel = modelOf(NARROW_WINDOW)
 
 const world = loadOnsetWorld()
 const tools = onsetTools(world)
@@ -117,6 +150,7 @@ async function ask(log: InMemoryEventLog, sessionId: string, atSeq: number, tag:
 
 const lastSeqOf = (events: readonly Event[]) => events.reduce((m, e) => Math.max(m, e.seq), 0)
 
+console.log(`线路 ${relayRoute ? "中转站 deepseek-v4.1-flash" : "官方 deepseek-flash"}，整理请求身份 ${userRequest ? "user 标签" : "system"}`)
 const started = Date.now()
 const jobs = SCENES.flatMap((scene) => {
   const all = parseEventsJsonl(readFileSync(new URL(`${scene.cell}.jsonl`, CELLS), "utf8"))
@@ -126,6 +160,7 @@ const jobs = SCENES.flatMap((scene) => {
 
   // 对照：未整理的现场直接问
   const control = (async () => {
+    if (noProbes) return { scene: scene.id, kind: "control" as const, facts: [] }
     const log = new InMemoryEventLog()
     await log.append(seed)
     return { scene: scene.id, kind: "control" as const, facts: await ask(log, sessionId, lastSeqOf(seed), "control") }
@@ -155,7 +190,7 @@ const jobs = SCENES.flatMap((scene) => {
         }
       : undefined
     // ③ 整理了才问（没整理的那次和对照是同一份上下文，不重复花钱）
-    const facts = c ? await ask(log, sessionId, lastSeqOf([...seed, ...fresh]), `t${r + 1}`) : undefined
+    const facts = c && !noProbes ? await ask(log, sessionId, lastSeqOf([...seed, ...fresh]), `t${r + 1}`) : undefined
     return {
       scene: scene.id,
       kind: "trial" as const,
@@ -170,6 +205,7 @@ const jobs = SCENES.flatMap((scene) => {
   })
   // 机械裁剪对照：同一现场、窄窗口问答，投影越线裁剪后再答
   const threshold = (async () => {
+    if (noProbes) return { scene: scene.id, kind: "threshold" as const, facts: [] }
     const log = new InMemoryEventLog()
     await log.append(seed)
     return { scene: scene.id, kind: "threshold" as const, facts: await ask(log, sessionId, lastSeqOf(seed), "threshold", narrowModel) }
