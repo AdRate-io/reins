@@ -8,6 +8,7 @@
  *   B  强制：P 原样 + tool_choice 指定 compact —— thinking 模式下厂商接不接受、强制本身伤不伤缓存
  *   Br 强制任一：P 原样 + tool_choice "required" —— 同上，退一步的强制
  *   C  收窄：P + 同一条说明，工具表只留 compact —— 换工具表伤不伤缓存（对照臂）
+ *   A2 感知说明 + 整理请求两条连续 system（同轮各追加一条时的真实形状）
  * 判据是产出内容不是状态码：调没调 compact、入参是否合法（summary 非空、keep 是数组）、有没有夹带别的调用；
  * 缓存看 usage.prompt_cache_hit_tokens / prompt_cache_miss_tokens。
  */
@@ -54,6 +55,15 @@ for (let round = 1; round <= ROUNDS; round++) {
   const salt = Math.floor(Math.random() * 1e9)
   const P = prefix(salt)
   const withNote = [...P, { role: "system", content: NOTE }]
+  const withPerception = [
+    ...P,
+    {
+      role: "system",
+      content:
+        "Runtime context status:\n- Context window used: 70%–85% (the harness auto-folds the oldest turns at 85%)",
+    },
+    { role: "system", content: NOTE },
+  ]
   await ask({ messages: P, tools: allTools, max_tokens: 1 }) // 写缓存
   await new Promise((r) => setTimeout(r, 2000))
   const arms = [
@@ -64,6 +74,7 @@ for (let round = 1; round <= ROUNDS; round++) {
       { messages: P, tools: allTools, tool_choice: { type: "function", function: { name: "compact" } } },
     ],
     ["Br 强制 required", { messages: P, tools: allTools, tool_choice: "required" }],
+    ["A2 连续两条 system", { messages: withPerception, tools: allTools }],
     ["C 只留 compact", { messages: withNote, tools: [compactTool] }],
   ]
   for (const [name, body] of arms) {

@@ -33,6 +33,13 @@ export const RECALL_TOOL_DESCRIPTION = [
   "Use it when you need a value that the summary only mentioned or left out; each recall costs a turn and stays in context afterwards.",
 ].join(" ")
 
+/**
+ * 规则里讲"到线会请你整理"的那一行（OPT-261030-3）。只有开着 compact({ force }) 时才成立，
+ * 所以 force: false 且没自定义 rules 时，模块用去掉这一行的版本——告诉模型的事框架必须兑现
+ */
+export const COMPACT_REQUEST_RULE =
+  "- If the window gets close to full and you have not compacted, the harness will ask you to. Compact then, before anything else: that is the point where your own summary still beats a mechanical one."
+
 export const COMPACT_RULES = `## Managing your context window
 You have a \`${COMPACT_TOOL_NAME}\` tool that folds earlier conversation into a summary you write. Status notes from the harness, if present, tell you how full the window is.
 - Compact when a sub-task is finished or the trajectory has converged and the folded details are no longer needed verbatim. Do it at a natural pause, not while acting on something.
@@ -40,4 +47,5 @@ You have a \`${COMPACT_TOOL_NAME}\` tool that folds earlier conversation into a 
 - The summary replaces everything it folds, including earlier summaries. Carry forward the user's goals and constraints, decisions made and why, the current state, and what comes next. List each fact that must survive in \`keep\`. The most recent user message and pinned notes survive verbatim on their own; check the pins still say what you need.
 - Keep exact values, not just conclusions: identifiers, status and enum fields you verified, numbers, dates, error codes. "Checked, all ENABLE" loses the field values themselves.
 - Nothing folded is lost for good: under each summary the harness lists the folded tool results as \`seq N tool(arguments)\`, and \`${RECALL_TOOL_NAME}({ seq })\` brings one back verbatim. When asked about a detail your summary did not keep, recall the result that contained it instead of guessing or saying it is gone.
+${COMPACT_REQUEST_RULE}
 - If you never compact, the harness folds the oldest turns mechanically once the window nears its limit. Its summary is worse than yours, but it lists the folded tool results the same way.`

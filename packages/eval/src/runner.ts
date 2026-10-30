@@ -428,6 +428,7 @@ export function summarize(outcomes: readonly EvalOutcome[]): Record<string, ArmS
       },
       compactions: {
         model: mean(ms.map((m) => m.compactions.model)),
+        forced: mean(ms.map((m) => m.compactions.forced)),
         threshold: mean(ms.map((m) => m.compactions.threshold)),
         maxConsecutive: mean(ms.map((m) => m.compactions.maxConsecutive)),
       },

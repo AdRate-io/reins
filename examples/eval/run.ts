@@ -242,12 +242,20 @@ const discoveryArms: Record<string, EvalArm> = {
   eager: { name: "eager", sockets: [] },
   lazy: { name: "lazy", sockets: [lazyTools()] },
 }
-/** OnSet 线上同款的四个脑子模块（顺序同 assembly.ts），只换 compact 的规则文案；memory / skills 的规则已在 fixture 的系统提示里 */
-function onsetArm(name: string, rules: string, render?: typeof nudgeRender): EvalArm {
+/**
+ * OnSet 线上同款的四个脑子模块（顺序同 assembly.ts），只换 compact 的规则文案；memory / skills 的规则已在 fixture 的系统提示里。
+ * 前三臂是 OPT-261030-3 之前的口径，显式 force: false 保持原义；`force` 臂用 compact() 缺省（到 75% 请模型整理）
+ */
+function onsetArm(name: string, rules: string | undefined, render?: typeof nudgeRender): EvalArm {
   const limits = { contextTokens: ONSET_CONTEXT_WINDOW }
   return {
     name,
-    sockets: [compact({ rules }), spill(), perception({ limits, ...(render ? { render } : {}) }), budget({ limits })],
+    sockets: [
+      rules === undefined ? compact() : compact({ rules, force: false }),
+      spill(),
+      perception({ limits, ...(render ? { render } : {}) }),
+      budget({ limits }),
+    ],
   }
 }
 const { allFixtures, armsByName } = ((): { allFixtures: readonly import("@reinsjs/eval").EvalFixture[]; armsByName: Record<string, EvalArm> } => {
@@ -260,6 +268,8 @@ const { allFixtures, armsByName } = ((): { allFixtures: readonly import("@reinsj
         "rules-candidate": onsetArm("rules-candidate", CANDIDATE_COMPACT_RULES),
         // 第二轮：规则同候选，感知说明在 ≥70% 时多一行"收尾前整理"
         "rules-candidate-nudge": onsetArm("rules-candidate-nudge", CANDIDATE_COMPACT_RULES, nudgeRender),
+        // 第三轮（OPT-261030-3）：compact() 缺省——缺省规则 + 到 75% 末尾追加整理请求
+        force: onsetArm("force", undefined),
       },
     }
   const suite = adratePatrolFixtures({ contextWindow })
@@ -359,11 +369,11 @@ const report = await runEval({
     const key = cellKey(o)
     const m = o.metrics
     log(
-      `■ ${key}  ${m.status}  完成 ${m.completed.toFixed(2)}  召回 ${m.recall?.toFixed(2) ?? "—"}  token ${m.tokens.total}（cache ${((m.cacheHitRate ?? 0) * 100).toFixed(0)}%）  轮 ${m.turns}  工具 ${m.toolCalls}（错 ${m.toolErrors}，重复 ${m.repeatedToolCalls}）  整理 ${m.compactions.model}/${m.compactions.threshold}  违规 ${m.violations.before.violations}/${m.violations.after.violations}  ${(m.wallMs / 1000).toFixed(0)}s\n`,
+      `■ ${key}  ${m.status}  完成 ${m.completed.toFixed(2)}  召回 ${m.recall?.toFixed(2) ?? "—"}  token ${m.tokens.total}（cache ${((m.cacheHitRate ?? 0) * 100).toFixed(0)}%）  轮 ${m.turns}  工具 ${m.toolCalls}（错 ${m.toolErrors}，重复 ${m.repeatedToolCalls}）  整理 ${m.compactions.model}/${m.compactions.forced}/${m.compactions.threshold}  违规 ${m.violations.before.violations}/${m.violations.after.violations}  ${(m.wallMs / 1000).toFixed(0)}s\n`,
     )
     const timing = suiteName === "onset-pause" ? compactionTiming(o.fresh, o.finalText) : undefined
     if (timing)
-      log(`    整理时机 [${timing.model.join(",") || "无"}]  兜底 ${timing.threshold}  干活调用 ${timing.workCalls}  回复 ${timing.finalChars} 字\n`)
+      log(`    整理时机 [${timing.model.join(",") || "无"}]  请求 ${timing.requests}${timing.compliedAfterRequest === undefined ? "" : timing.compliedAfterRequest ? "（照做）" : "（没理）"}  forced ${timing.forced}  兜底 ${timing.threshold}  干活调用 ${timing.workCalls}  回复 ${timing.finalChars} 字\n`)
     const { timelines: _t, timeline: _tl, fresh: _f, ...slim } = o
     writeFileSync(
       `${out}/cells/${key}.json`,

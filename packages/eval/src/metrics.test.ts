@@ -1,4 +1,5 @@
 import {
+  type CompactionPayload,
   type CoreEventPayloads,
   type CoreEventType,
   createCoreEvent,
@@ -37,7 +38,7 @@ const usage = (input: number, output: number, cacheRead?: number) =>
     toolCalls: 0,
     wallMs: 1,
   })
-const compaction = (decidedBy: "model" | "threshold", actor: Event["actor"]) =>
+const compaction = (decidedBy: CompactionPayload["decidedBy"], actor: Event["actor"]) =>
   mk("core.compaction", actor, { coversSeq: [1, 2], summary: "s", decidedBy, pinsKept: [] })
 
 describe("metrics：从时间线算指标的纯函数", () => {
@@ -74,11 +75,11 @@ describe("metrics：从时间线算指标的纯函数", () => {
       call("3", "x", {}),
       result("3", "x", "r"), // 第 3 轮：没整理，断开
       call("4", "compact", {}),
-      compaction("model", "model"),
-      result("4", "compact", "ok"), // 第 4 轮
+      compaction("forced", "model"),
+      result("4", "compact", "ok"), // 第 4 轮：框架请过、模型照做
       say("end"),
     ]
-    expect(countCompactions(tl)).toEqual({ model: 2, threshold: 1, maxConsecutive: 2 })
+    expect(countCompactions(tl)).toEqual({ model: 1, forced: 1, threshold: 1, maxConsecutive: 2 })
   })
 
   it("重复调用：同名同参第二次起每次记 1，键顺序不同视为同参", () => {
@@ -144,7 +145,7 @@ describe("metrics：从时间线算指标的纯函数", () => {
     expect(m.toolCalls).toBe(1)
     expect(m.toolErrors).toBe(1)
     expect(m.tokens.total).toBe(50)
-    expect(m.compactions).toEqual({ model: 0, threshold: 0, maxConsecutive: 0 })
+    expect(m.compactions).toEqual({ model: 0, forced: 0, threshold: 0, maxConsecutive: 0 })
     expect(finalTextOf(tl)).toBe("final\nreport")
     expect(finalTextOf([user("nothing")])).toBe("")
   })

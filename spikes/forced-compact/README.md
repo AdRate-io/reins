@@ -28,6 +28,17 @@
 
 花费：三轮合计不到 0.1 美元（Haiku 5.5 输入 0.10 / 输出 0.50 美元每百万 token）。
 
+## 连续两条中途 system（同日补，1 轮）
+
+感知说明与整理请求同轮各追加一条时，末尾是两条连续的 system（lowering-fetch Anthropic 线 `flushNotes` 每条说明各成一条 system 消息）。A2 臂按这个形状发：
+
+| 上游 | 结果 | 缓存命中率 |
+| --- | --- | --- |
+| Haiku 5.5（CF 网关，官方） | 200，先调 compact，入参合法 | 98.9% |
+| DeepSeek v4 flash（Chat） | 200，先调 compact，入参合法 | 97.5% |
+
+收口 OPT-260915-2（"Anthropic 线连续两条中途 system 未实证"）：官方接受，不用合并。
+
 ## 结论
 
 - DeepSeek thinking 模式拒绝一切强制 tool_choice；Anthropic 新一代 Fable 5.1 / Opus 5.5 / Sonnet 5.5 文档写明强制 400，Haiku 5.5 接受但缓存全失、还会夹带别的调用——"加 tool_choice 通道"这条路不值得走。

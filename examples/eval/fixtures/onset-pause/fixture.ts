@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs"
 import {
   COMPACT_RULES,
   COMPACT_TOOL_NAME,
+  isCompactRequest,
   type PerceptionReading,
   RECALL_TOOL_NAME,
   renderPerception,
@@ -249,10 +250,16 @@ export function onsetPauseFixtures(world: OnsetWorld = loadOnsetWorld()): EvalFi
 export type CompactionTiming = "start" | "end" | "mid"
 
 export interface TimingReport {
-  /** 模型自决的整理，按发生顺序 */
+  /** 模型调 compact 的整理（自决 + 被请求后照做），按发生顺序 */
   model: CompactionTiming[]
+  /** 其中被请求后照做的（decidedBy=forced）次数 */
+  forced: number
   /** 阈值兜底次数 */
   threshold: number
+  /** 本 run 里框架追加的整理请求条数（compact force，OPT-261030-3） */
+  requests: number
+  /** 第一条整理请求之后的下一个工具调用是不是 compact；没请过为 undefined */
+  compliedAfterRequest?: boolean
   /** 本 run 的干活工具调用数（不含 compact / recall） */
   workCalls: number
   /** 最后一段回复的字符数（"靠写短来省空间"的旁证） */
@@ -278,5 +285,18 @@ export function compactionTiming(fresh: readonly Event[], finalText: string): Ti
   const threshold = fresh.filter(
     (e) => e.type === "core.compaction" && (e as CoreEventOf<"core.compaction">).payload.decidedBy === "threshold",
   ).length
-  return { model, threshold, workCalls: work.length, finalChars: finalText.length }
+  const forced = fresh.filter(
+    (e) => e.type === "core.compaction" && (e as CoreEventOf<"core.compaction">).payload.decidedBy === "forced",
+  ).length
+  const firstRequest = fresh.find(isCompactRequest)
+  const nextCall = firstRequest ? calls.find((c) => c.seq > firstRequest.seq) : undefined
+  return {
+    model,
+    forced,
+    threshold,
+    requests: fresh.filter(isCompactRequest).length,
+    ...(firstRequest ? { compliedAfterRequest: nextCall?.payload.name === COMPACT_TOOL_NAME } : {}),
+    workCalls: work.length,
+    finalChars: finalText.length,
+  }
 }

@@ -29,12 +29,12 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
   )
   lines.push("")
   lines.push(
-    "| arm | finished | completion | total tokens | billable equiv. | cache hits | recall | violation rate before->after | compactions model/threshold/consecutive | turns | tool calls | repeated calls | wall clock |",
+    "| arm | finished | completion | total tokens | billable equiv. | cache hits | recall | violation rate before->after | compactions model/forced/threshold/consecutive | turns | tool calls | repeated calls | wall clock |",
   )
   lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
   for (const a of arms) {
     lines.push(
-      `| ${a.arm} | ${pct(a.finishedRate)} | ${pct(a.completion)} | ${num(a.tokens.total)} | ${num(billableTokens(a.tokens))} | ${pct(a.cacheHitRate, 1)} | ${pct(a.recall)} | ${pct(a.violations.before, 1)} → ${pct(a.violations.after, 1)} | ${a.compactions.model.toFixed(1)} / ${a.compactions.threshold.toFixed(1)} / ${a.compactions.maxConsecutive.toFixed(1)} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${secs(a.wallMs)} |`,
+      `| ${a.arm} | ${pct(a.finishedRate)} | ${pct(a.completion)} | ${num(a.tokens.total)} | ${num(billableTokens(a.tokens))} | ${pct(a.cacheHitRate, 1)} | ${pct(a.recall)} | ${pct(a.violations.before, 1)} → ${pct(a.violations.after, 1)} | ${a.compactions.model.toFixed(1)} / ${a.compactions.forced.toFixed(1)} / ${a.compactions.threshold.toFixed(1)} / ${a.compactions.maxConsecutive.toFixed(1)} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${secs(a.wallMs)} |`,
     )
   }
   lines.push("")
@@ -64,7 +64,7 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
     lines.push("## Details")
     lines.push("")
     lines.push(
-      "| fixture | arm | # | status | completion | total tokens | billable equiv. | cache hits | recall | violations before/after | compactions model/threshold/consecutive | turns | tool calls | wall clock |",
+      "| fixture | arm | # | status | completion | total tokens | billable equiv. | cache hits | recall | violations before/after | compactions model/forced/threshold/consecutive | turns | tool calls | wall clock |",
     )
     lines.push(
       "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -76,5 +76,5 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
 
 function detailRow(o: EvalOutcome): string {
   const m = o.metrics
-  return `| ${o.fixtureId} | ${o.arm} | ${o.repeat} | ${m.status} | ${pct(m.completed)} | ${num(m.tokens.total)} | ${num(billableTokens(m.tokens))} | ${pct(m.cacheHitRate, 1)} | ${pct(m.recall)} | ${m.violations.before.violations}/${m.violations.before.actions} → ${m.violations.after.violations}/${m.violations.after.actions} | ${m.compactions.model} / ${m.compactions.threshold} / ${m.compactions.maxConsecutive} | ${m.turns} | ${m.toolCalls} | ${secs(m.wallMs)} |`
+  return `| ${o.fixtureId} | ${o.arm} | ${o.repeat} | ${m.status} | ${pct(m.completed)} | ${num(m.tokens.total)} | ${num(billableTokens(m.tokens))} | ${pct(m.cacheHitRate, 1)} | ${pct(m.recall)} | ${m.violations.before.violations}/${m.violations.before.actions} → ${m.violations.after.violations}/${m.violations.after.actions} | ${m.compactions.model} / ${m.compactions.forced} / ${m.compactions.threshold} / ${m.compactions.maxConsecutive} | ${m.turns} | ${m.toolCalls} | ${secs(m.wallMs)} |`
 }

@@ -98,7 +98,7 @@ describe("runEval：对照运行器", () => {
     // 无脑子：跑完、完成、什么都没折、探针能看到工具结果
     expect(none.metrics.status).toBe("done")
     expect(none.metrics.completed).toBe(1)
-    expect(none.metrics.compactions).toEqual({ model: 0, threshold: 0, maxConsecutive: 0 })
+    expect(none.metrics.compactions).toEqual({ model: 0, forced: 0, threshold: 0, maxConsecutive: 0 })
     expect(none.metrics.recall).toBe(1)
     expect(none.facts[0]).toMatchObject({
       id: "code",
@@ -171,7 +171,7 @@ describe("runEval：对照运行器", () => {
     const o = report.outcomes[0]
     if (!o) throw new Error("unreachable")
     expect(o.metrics.status).toBe("done")
-    expect(o.metrics.compactions).toEqual({ model: 1, threshold: 0, maxConsecutive: 1 })
+    expect(o.metrics.compactions).toEqual({ model: 1, forced: 0, threshold: 0, maxConsecutive: 1 })
     expect(o.metrics.turns).toBe(3)
     // 整理摘要里带着 4711，探针（分叉会话）看得到
     expect(o.metrics.recall).toBe(1)
@@ -458,7 +458,7 @@ describe("runEval：对照运行器", () => {
         toolCalls: 0,
         toolErrors: 0,
         repeatedToolCalls: 0,
-        compactions: { model: 0, threshold: 0, maxConsecutive: 0 },
+        compactions: { model: 0, forced: 0, threshold: 0, maxConsecutive: 0 },
         violations: {
           before: { actions: 1, violations: 0, rate: 0 },
           after: { actions: 0, violations: 0, rate: 0 },

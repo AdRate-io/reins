@@ -1,7 +1,7 @@
 /**
  * compact —— 自主整理模块（技术方案 §9.2，B2）。
  *
- * 五件事：
+ * 六件事：
  * 1. **工具** `compact({ summary, keep, keepRecentTurns? })`：模型自己决定何时整理、留什么（宪法一）。
  *    工具本身是静态贡献（Socket.tools），整个 run 不变，续跑补齐 pending 时也在场。
  * 2. **规则提示**：静态 systemPrompt 片段（rules.ts），告诉模型什么时候该整理、什么时候别整理。
@@ -10,6 +10,8 @@
  *    宿主经 LoopConfig.projection.reserveTokens 调；perception 会把这个点告诉模型。
  * 4. **连续上限**：连着整理（模型自决 + 阈值兜底合计）达到 maxConsecutive 次仍没有一轮"正常"工作，
  *    说明卡死了（折叠后仍放不下、或模型在反复整理）→ onTurnEnd 返回 pause(budget) 交宿主处理。
+ * 6. **到线请整理**（OPT-261030-3）：过软线（缺省 75%）且本段没请过 → beforeModel 末尾追加一条说明请模型先整理，
+ *    照做记 decidedBy=forced；不理就留给第 3 条的机械兜底。见 request.ts。
  * 5. **取回**（E3c）：摘要下面列出被折叠的每条工具结果（seq + 工具 + 入参），`recall({ seq })` 工具逐字取回一条。
  *    整理丢细节是机制的代价（模型按自己的重要性判断留东西），清单与取回让丢掉的东西有路可回，见 recall.ts。
  *
@@ -31,6 +33,7 @@ import {
   type ToolResultDraft,
   type TurnContext,
 } from "@reinsjs/core"
+import { percent } from "../perception/tiers.js"
 import {
   type CompactPlan,
   type ManifestOptions,
@@ -39,7 +42,21 @@ import {
   trailingCompactionRun,
 } from "./plan.js"
 import { recallTool } from "./recall.js"
-import { COMPACT_RULES, COMPACT_TOOL_DESCRIPTION, COMPACT_TOOL_NAME, RECALL_TOOL_NAME } from "./rules.js"
+import {
+  compactRequestedSinceLastCompaction,
+  contextUsageRatio,
+  DEFAULT_FORCE_AT,
+  type ForceOptions,
+  renderCompactRequest,
+  timelineSoFar,
+} from "./request.js"
+import {
+  COMPACT_REQUEST_RULE,
+  COMPACT_RULES,
+  COMPACT_TOOL_DESCRIPTION,
+  COMPACT_TOOL_NAME,
+  RECALL_TOOL_NAME,
+} from "./rules.js"
 
 export interface CompactOptions {
   /**
@@ -58,6 +75,12 @@ export interface CompactOptions {
   manifest?: false | ManifestOptions
   /** 是否给模型 recall 取回工具（E3c）。缺省 true；false 时清单照列，只是模型自己取不回（宿主另有读法时用） */
   recall?: boolean
+  /**
+   * 到线请模型整理（OPT-261030-3）：真实上下文过软线（缺省 75%）、且上次整理之后还没请过时，在末尾追加一条说明
+   * 请模型先 compact 再继续；照做的整理记 decidedBy=forced。每段只请一次，不理就留给触发线的机械裁剪。
+   * 传 false 关闭；传对象调软线与措辞
+   */
+  force?: false | ForceOptions
 }
 
 export const COMPACT_SOCKET_NAME = "compact"
@@ -129,6 +152,12 @@ export function compact(opts: CompactOptions = {}): Socket {
     throw new RangeError(`compact.maxConsecutive must be an integer >= 1, got ${String(maxConsecutive)}`)
   }
   const withRecall = opts.recall ?? true
+  const force = opts.force === false ? undefined : (opts.force ?? {})
+  const forceAt = force?.at ?? DEFAULT_FORCE_AT
+  if (force && !(forceAt > 0 && forceAt < 1)) {
+    throw new RangeError(`compact.force.at must be a number in (0, 1), got ${String(forceAt)}`)
+  }
+  const renderRequest = force?.render ?? renderCompactRequest
   const records = new WeakMap<TurnContext, TurnRecord>()
   const recordOf = (ctx: TurnContext): TurnRecord => {
     let r = records.get(ctx)
@@ -152,6 +181,26 @@ export function compact(opts: CompactOptions = {}): Socket {
     name: COMPACT_SOCKET_NAME,
     tools: withRecall ? [tool, recallTool()] : [tool],
 
+    beforeModel(ctx: TurnContext) {
+      if (!force) return undefined
+      const usage = contextUsageRatio(ctx)
+      if (usage < forceAt || compactRequestedSinceLastCompaction(timelineSoFar(ctx))) return undefined
+      const info = {
+        usage: percent(usage),
+        autoFoldAt: percent(ctx.budget.targetTokens / ctx.budget.contextLimit),
+      }
+      ctx.emit({
+        type: "core.system_note",
+        actor: "system",
+        payload: {
+          kind: "budget",
+          text: renderRequest(info),
+          meta: { compactRequest: { ...info, at: forceAt } },
+        },
+      })
+      return undefined
+    },
+
     afterModel(ctx, events) {
       recordOf(ctx).hadToolCall = events.some((e) => e.type === "core.tool_call")
     },
@@ -171,7 +220,11 @@ export function compact(opts: CompactOptions = {}): Socket {
       }
       if (!plan.ok) return replaceResult(result, plan.reason, true)
 
-      const payload: CompactionPayload = plan.payload
+      // 上次整理之后请过 → 时机是框架定的（forced）；没请过 → 模型自己挑的（model）
+      const payload: CompactionPayload = {
+        ...plan.payload,
+        decidedBy: compactRequestedSinceLastCompaction(timelineSoFar(ctx)) ? "forced" : "model",
+      }
       ctx.emit({
         type: "core.compaction",
         actor: "model",
@@ -203,7 +256,10 @@ export function compact(opts: CompactOptions = {}): Socket {
       }
     },
   }
-  if (opts.rules !== false) socket.systemPrompt = opts.rules ?? COMPACT_RULES
+  if (opts.rules !== false) {
+    socket.systemPrompt =
+      opts.rules ?? (force ? COMPACT_RULES : COMPACT_RULES.replace(`${COMPACT_REQUEST_RULE}\n`, ""))
+  }
   return socket
 }
 

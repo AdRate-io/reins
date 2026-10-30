@@ -10,6 +10,7 @@ import {
   type LoopConfig,
   type RunResult,
   runLoop,
+  type TurnContext,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
@@ -25,7 +26,8 @@ import {
   trailingCompactionRun,
 } from "./plan.js"
 import { parseRecallArgs, recallResult } from "./recall.js"
-import { COMPACT_RULES } from "./rules.js"
+import { contextUsageRatio, isCompactRequest, renderCompactRequest } from "./request.js"
+import { COMPACT_REQUEST_RULE, COMPACT_RULES } from "./rules.js"
 
 const registry = createCoreRegistry()
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -827,5 +829,119 @@ describe("compact 纯函数层", () => {
     expect(trailingCompactionRun(timeline.filter((e) => e.seq !== 9 && e.seq !== 10))).toBe(3)
     expect(trailingCompactionRun([])).toBe(0)
     expect(trailingCompactionRun([user("q")])).toBe(0)
+  })
+})
+
+describe("compact：到线请模型整理（OPT-261030-3）", () => {
+  /** 每条可见事件估 100 token、窗口 1000：触发线 850、回落线 600；软线取 0.65，视图到 7 条（700）就请 */
+  const window = { projection: { estimate: () => 100 } }
+  const caps = { capabilities: { contextWindow: 1000 } }
+  const work = (n: number, tag = "w"): ScriptedTurn[] =>
+    Array.from({ length: n }, (_, i) => ({
+      drafts: [say(`${tag}${i}`), callTool(`${tag}${i}`, "add", { a: i, b: 1 })],
+    }))
+  const requestsIn = (events: readonly Event[]) =>
+    events.filter(isCompactRequest) as CoreEventOf<"core.system_note">[]
+
+  it("过软线请一次：照做记 forced；不理就留给触发线机械裁剪；整理（任何一种）之后新一段过线再请", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering(
+      [
+        ...work(2),
+        { drafts: [doCompact("k1", { summary: "S1", keep: [] })] }, // 第 3 次请求看到请求说明，照做
+        ...work(3, "x"), // 第 5 次请求又看到一条（新一段），剧本里不理 → 第 6 次过 85% 机械裁剪
+        { drafts: [doCompact("k2", { summary: "S2", keep: [] })] }, // 裁剪后又一段，第 7 次请求再请，照做
+        { drafts: [say("完")] },
+      ],
+      caps,
+    )
+    const { result } = await drain(
+      runLoop(
+        config(lowering, log, { ...window, sockets: [compact({ force: { at: 0.65 } })], maxTurns: 20 }),
+      ),
+    )
+    expect(result.status).toBe("done")
+    // 说明是本轮追加、本轮可见：出现在第 3 / 5 / 7 次请求的末尾
+    expect(lowering.requests.map((r) => requestsIn(r.events).length)).toEqual([0, 0, 1, 0, 1, 0, 1, 0])
+    for (const i of [2, 4, 6]) expect(lowering.requests[i]?.events.at(-1)).toSatisfy(isCompactRequest)
+    const logged = await all(log)
+    const reqs = requestsIn(logged)
+    expect(reqs).toHaveLength(3)
+    expect(reqs[0]?.actor).toBe("system")
+    expect(reqs[0]?.payload).toEqual({
+      kind: "budget",
+      text: renderCompactRequest({ usage: "70%", autoFoldAt: "85%" }),
+      meta: { compactRequest: { usage: "70%", autoFoldAt: "85%", at: 0.65 } },
+    })
+    expect(compactionsOf(logged).map((c) => c.payload.decidedBy)).toEqual(["forced", "threshold", "forced"])
+  })
+
+  it("同段只请一次：用量一直在软线之上、没到触发线，后面的轮不再追加", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([...work(2), { drafts: [say("完")] }], caps)
+    await drain(runLoop(config(lowering, log, { ...window, sockets: [compact({ force: { at: 0.35 } })] })))
+    // 第 2 次请求 4 条（400 ≥ 350）→ 请；第 3 次 8 条仍在线上、没到 850 → 不再请
+    expect(lowering.requests.map((r) => r.events.length)).toEqual([1, 5, 8])
+    expect(lowering.requests.map((r) => requestsIn(r.events).length)).toEqual([0, 1, 1])
+    expect(requestsIn(await all(log))).toHaveLength(1)
+    // 没请过时模型自己整理记 model
+    const log2 = new InMemoryEventLog()
+    const lowering2 = new ScriptedLowering(
+      [{ drafts: [doCompact("k", { summary: "S", keep: [] })] }, { drafts: [say("完")] }],
+      caps,
+    )
+    await drain(runLoop(config(lowering2, log2, { ...window, sockets: [compact({ force: { at: 0.35 } })] })))
+    expect(compactionsOf(await all(log2)).map((c) => c.payload.decidedBy)).toEqual(["model"])
+  })
+
+  it("force: false 不请、规则不提会请你整理；自定义 render；软线非法构造时拒绝", async () => {
+    const off = new ScriptedLowering([...work(2), { drafts: [say("完")] }], caps)
+    await drain(
+      runLoop(config(off, new InMemoryEventLog(), { ...window, sockets: [compact({ force: false })] })),
+    )
+    expect(off.requests.every((r) => requestsIn(r.events).length === 0)).toBe(true)
+    expect(off.requests[0]?.systemPrompt).not.toContain(COMPACT_REQUEST_RULE)
+    expect(COMPACT_RULES).toContain(COMPACT_REQUEST_RULE)
+
+    const zh = new ScriptedLowering([...work(2), { drafts: [say("完")] }], caps)
+    const render = (i: { usage: string; autoFoldAt: string }) =>
+      `上下文已用 ${i.usage}，${i.autoFoldAt} 会机械折叠，请先整理`
+    await drain(
+      runLoop(
+        config(zh, new InMemoryEventLog(), {
+          ...window,
+          sockets: [compact({ force: { at: 0.35, render } })],
+        }),
+      ),
+    )
+    expect(requestsIn(zh.requests[1]?.events ?? [])[0]?.payload.text).toBe(
+      "上下文已用 40%，85% 会机械折叠，请先整理",
+    )
+    expect(zh.requests[0]?.systemPrompt).toContain(COMPACT_REQUEST_RULE)
+
+    for (const at of [0, 1, -0.5, Number.NaN]) {
+      expect(() => compact({ force: { at } })).toThrow(
+        `compact.force.at must be a number in (0, 1), got ${at}`,
+      )
+    }
+  })
+
+  it("用量按校准后的真实上下文判：估算未过软线、加上固定开销过了 → 请（与感知、阈值兜底同一把尺）", () => {
+    const usage = createCoreEvent(registry, {
+      type: "core.budget_usage",
+      sessionId: SESSION,
+      seq: 1,
+      actor: "system",
+      at: 1,
+      id: "u1",
+      payload: { tokens: { input: 700, output: 5 }, toolCalls: 0, wallMs: 0, contextEstimate: 400 },
+    })
+    const ctx = {
+      timeline: [usage],
+      events: [],
+      budget: { used: 500, contextLimit: 1000 },
+    } as unknown as TurnContext
+    // 估算 500（50%）+ 开销 300 → 80%
+    expect(contextUsageRatio(ctx)).toBeCloseTo(0.8)
   })
 })

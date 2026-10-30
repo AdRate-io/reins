@@ -123,7 +123,11 @@ export interface TokenTotals {
 }
 
 export interface CompactionCounts {
+  /** 模型自己挑的时机 */
   model: number
+  /** 框架请它整理后照做的（decidedBy=forced，时机框架定、摘要模型写） */
+  forced: number
+  /** 投影链机械裁剪 */
   threshold: number
   /** 最长的一段"连续含整理的模型轮"里的整理次数（§9.2 连续上限看的就是它） */
   maxConsecutive: number

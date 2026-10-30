@@ -88,13 +88,17 @@ export interface ApprovalDecisionPayload {
 
 /**
  * 压缩不删原事件，只追加这一条：投影层看到它就用 summary 替代 coversSeq 范围内的事件。
- * decidedBy 区分模型自决（默认路径，P1）与阈值兜底。
+ * decidedBy 记"谁定的时机"：
+ * - `model`：模型自己挑的时机（默认路径，P1）；
+ * - `forced`：用量过了软线、框架请它整理后模型照做的——时机是框架定的，摘要仍是模型写的（OPT-261030-3）；
+ * - `threshold`：模型没整理、过了触发线，投影链机械裁剪。
+ * 新增取值不升 schemaVersion：注册表不校验载荷，旧日志照读。
  */
 export interface CompactionPayload {
   /** 闭区间 [from, to]，按 seq */
   coversSeq: [number, number]
   summary: string
-  decidedBy: "model" | "threshold"
+  decidedBy: "model" | "forced" | "threshold"
   /** 折叠后仍需重注入的钉住事件 id */
   pinsKept: string[]
 }

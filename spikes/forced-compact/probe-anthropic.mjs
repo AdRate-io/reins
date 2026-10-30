@@ -4,7 +4,8 @@
  * 运行：`node spikes/forced-compact/probe-anthropic.mjs [轮数]`（缺省 3 轮；配置自动从《模型API测试信息.md》读；MODEL 环境变量换型号）。
  * 与 probe.mjs 同一段对话（scenario.mjs），换算成 Messages 形状：说明是末尾一条 role:"system"（中途 system，紧跟只带
  * tool_result 的 user）；缓存用顶层 `cache_control` 自动断点；thinking 不设（Haiku 5.5 缺省 adaptive），即真实用法。
- * 各臂同 probe.mjs：W2 基线 / A 追加说明 / B tool_choice 指定 compact / Br tool_choice any / C 只留 compact。
+ * 各臂同 probe.mjs：W2 基线 / A 追加说明 / B tool_choice 指定 compact / Br tool_choice any / C 只留 compact；
+ * 另有 A2：感知说明 + 整理请求两条连续中途 system（同轮各追加一条时的真实形状）。
  * 缓存看 usage.cache_read_input_tokens 占 (read + creation + input) 的比例。
  */
 import { readFileSync } from "node:fs"
@@ -93,6 +94,18 @@ for (let round = 1; round <= ROUNDS; round++) {
   const salt = Math.floor(Math.random() * 1e9)
   const P = convert(prefix(salt))
   const withNote = { ...P, messages: [...P.messages, { role: "system", content: NOTE }] }
+  const withPerception = {
+    ...P,
+    messages: [
+      ...P.messages,
+      {
+        role: "system",
+        content:
+          "Runtime context status:\n- Context window used: 70%–85% (the harness auto-folds the oldest turns at 85%)",
+      },
+      { role: "system", content: NOTE },
+    ],
+  }
   const all = toolsOf(allTools)
   const warm = await ask({ ...P, tools: all, max_tokens: 0 }) // 写缓存
   if (warm.status !== 200) console.log(`#${round} 暖缓存失败 HTTP ${warm.status} ${warm.error}`)
@@ -101,6 +114,8 @@ for (let round = 1; round <= ROUNDS; round++) {
     ["A 追加说明", { ...withNote, tools: all }],
     ["B 强制 compact", { ...P, tools: all, tool_choice: { type: "tool", name: "compact" } }],
     ["Br 强制 any", { ...P, tools: all, tool_choice: { type: "any" } }],
+    // 感知说明与整理请求同轮各追加一条 → 末尾两条连续中途 system（OPT-260915-2：厂商是否接受、两条是否都读到）
+    ["A2 连续两条 system", { ...withPerception, tools: all }],
     ["C 只留 compact", { ...withNote, tools: toolsOf([compactTool]) }],
   ]
   for (const [name, body] of arms) {

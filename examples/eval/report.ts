@@ -119,9 +119,9 @@ const perFixture = [...byFixture.entries()]
     const s = summarize(list)
     const rows = Object.values(s).map(
       (a) =>
-        `| ${a.arm} | ${a.runs} | ${(a.finishedRate * 100).toFixed(0)}% | ${(a.completion * 100).toFixed(0)}% | ${a.recall === undefined ? "—" : `${(a.recall * 100).toFixed(0)}%`} | ${Math.round(a.tokens.total).toLocaleString("en-US")} | ${a.cacheHitRate === undefined ? "—" : `${(a.cacheHitRate * 100).toFixed(0)}%`} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${a.compactions.model.toFixed(1)}/${a.compactions.threshold.toFixed(1)} | ${(a.violations.before * 100).toFixed(1)}% → ${(a.violations.after * 100).toFixed(1)}% | ${(a.wallMs / 1000).toFixed(0)}s |`,
+        `| ${a.arm} | ${a.runs} | ${(a.finishedRate * 100).toFixed(0)}% | ${(a.completion * 100).toFixed(0)}% | ${a.recall === undefined ? "—" : `${(a.recall * 100).toFixed(0)}%`} | ${Math.round(a.tokens.total).toLocaleString("en-US")} | ${a.cacheHitRate === undefined ? "—" : `${(a.cacheHitRate * 100).toFixed(0)}%`} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${a.compactions.model.toFixed(1)}/${a.compactions.forced.toFixed(1)}/${a.compactions.threshold.toFixed(1)} | ${(a.violations.before * 100).toFixed(1)}% → ${(a.violations.after * 100).toFixed(1)}% | ${(a.wallMs / 1000).toFixed(0)}s |`,
     )
-    return `### ${fid}\n\n| 臂 | 格 | 跑完 | 完成度 | 召回 | token | cache | 轮 | 工具 | 重复 | 整理(模型/阈值) | 违规 前→后 | 墙钟 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n${rows.join("\n")}`
+    return `### ${fid}\n\n| 臂 | 格 | 跑完 | 完成度 | 召回 | token | cache | 轮 | 工具 | 重复 | 整理(模型/请求/阈值) | 违规 前→后 | 墙钟 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n${rows.join("\n")}`
   })
   .join("\n\n")
 
