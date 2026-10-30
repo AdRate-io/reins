@@ -1,5 +1,12 @@
 # @reinsjs/lowering-fetch
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [fb032c1]
+  - @reinsjs/core@0.4.0
+
 ## 0.4.0
 
 ### Minor Changes

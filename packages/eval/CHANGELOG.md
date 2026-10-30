@@ -1,5 +1,12 @@
 # @reinsjs/eval
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [fb032c1]
+  - @reinsjs/core@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

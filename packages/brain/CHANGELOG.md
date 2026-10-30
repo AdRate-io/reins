@@ -1,5 +1,17 @@
 # @reinsjs/brain
 
+## 0.4.0
+
+### Minor Changes
+
+- 6b390d0: perception: the default render no longer reports session tokens used or unfolded turns (both stay in `meta.reading` and are available to a custom `render`). Session tokens counted cache reads, so a fresh session crossed several tiers within a few steps and each crossing appended another note the model could not act on. The compactions line keeps its "what was folded" note. compact: the default rules no longer name the perception note's title, so they hold when the host renders its own status notes or does not install perception.
+
+### Patch Changes
+
+- fb032c1: core: the projection's threshold fallback now compares the calibrated context size — the estimate plus the fixed overhead the estimate cannot see (system prompt, tool definitions, thinking), measured from the last `budget_usage` — against `contextLimit - reserveTokens`. Before, it compared the raw estimate, so perception could report "≥85%, the harness auto-folds at 85%" while no fold happened, and a system prompt plus tool table larger than the reserve could overflow the window before the fallback ever fired. `contextOverheadOf` moves to core (brain still re-exports it) and returns 0 when the last usage record yields a non-finite value, so a malformed `budget_usage` cannot fail the run at start; `ProjectionStats.overheadTokens` is new; `project({ budget: { overheadTokens: 0 } })` restores the old comparison. The fallback now fires earlier by that overhead, and `reserveTokens` is effectively the output reserve.
+- Updated dependencies [fb032c1]
+  - @reinsjs/core@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
