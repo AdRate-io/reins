@@ -10,6 +10,8 @@
  * 套件（--suite）：
  * - adrate-patrol（缺省）：巡检降本三个 fixture，臂 none / threshold / brain / brain-lean / compact-only（下）
  * - tool-discovery（D1）：200 件工具找靶六个短任务，臂 eager（200 件全给）/ lazy（装 lazyTools：菜单 + tool_find）
+ * - onset-pause（OnSet 反馈 ②）：OnSet 摄影长期会话在五个 run 起点切开，臂 rules-current / rules-candidate 只差 compact 规则文案；
+ *   数据只在本地（fixtures/onset-pause/data/，先跑其 build.ts），配 REINS_PROVIDER=onset-relay（OnSet 线上同一中转站与型号）
  *
  * 臂：
  * - none：不装脑子，连 core 的阈值裁剪也拆掉（窗口装不下就报错，"不管"的真实代价）
@@ -20,15 +22,22 @@
  * 模型密钥从仓库根 `模型API测试信息.md` 读（已 gitignore），与 examples/adrate/agent.ts 同源；ANTHROPIC_API_KEY 可覆盖。
  * REINS_PROVIDER：deepseek（缺省，官方 Chat Completions 直连）| deepseek-anthropic（DeepSeek 的 Anthropic 端口 + thinking 2048，0.1 门禁的配置，作对照）
  *               | deepseek-pi（同上配置但用 pi 版降级层，把降级层实现从对照里剥出来）| cloudflare（Cloudflare AI Gateway 透传官方 Anthropic，F0 体检 43/43，见 spikes/README.md 末节）
- *               | relay（Boss 的 Claude 中转，忠实直通官方 API，见 spikes/relay-check）| aireiter（会丢中途 system，只作参考）。
+ *               | relay（Boss 的 Claude 中转，忠实直通官方 API，见 spikes/relay-check）| aireiter（会丢中途 system，只作参考）
+ *               | onset-relay（公司中转站的 DeepSeek，Chat 协议，与 OnSet 线上 createMainBrain 同配置，密钥用"Claude中转"段那把）。
  * REINS_MODEL 覆盖模型 id（cloudflare / relay 缺省 claude-sonnet-5，可用 claude-opus-5）。
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import type { BoundModel, Event } from "@reinsjs/core"
-import { approval, budget, compact, handoff, lazyTools, memory, perception, pins, spill } from "@reinsjs/brain"
+import { approval, budget, COMPACT_RULES, compact, handoff, lazyTools, memory, perception, pins, spill } from "@reinsjs/brain"
 import { type EvalArm, type EvalOutcome, noneArm, runEval, thresholdArm, toEventsJsonl } from "@reinsjs/eval"
 import { anthropic, anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
 import { adratePatrolFixtures, type PatrolWorld } from "./fixtures/adrate-patrol/fixture.ts"
+import {
+  CANDIDATE_COMPACT_RULES,
+  compactionTiming,
+  ONSET_CONTEXT_WINDOW,
+  onsetPauseFixtures,
+} from "./fixtures/onset-pause/fixture.ts"
 import { toolDiscoveryFixtures } from "./fixtures/tool-discovery/fixture.ts"
 
 // ---- 参数 ----
@@ -37,16 +46,23 @@ const flag = (name: string, dflt: string): string => {
   const i = argv.indexOf(name)
   return i >= 0 && argv[i + 1] ? (argv[i + 1] as string) : dflt
 }
-type Suite = "adrate-patrol" | "tool-discovery"
+const SUITES = ["adrate-patrol", "tool-discovery", "onset-pause"] as const
+type Suite = (typeof SUITES)[number]
 const suiteName = flag("--suite", "adrate-patrol") as Suite
-if (suiteName !== "adrate-patrol" && suiteName !== "tool-discovery") throw new Error(`未知的套件：${suiteName}`)
-const armNames = flag("--arms", suiteName === "tool-discovery" ? "eager,lazy" : "none,threshold,brain").split(",")
+if (!SUITES.includes(suiteName)) throw new Error(`未知的套件：${suiteName}`)
+const DEFAULT_ARMS: Record<Suite, string> = {
+  "adrate-patrol": "none,threshold,brain",
+  "tool-discovery": "eager,lazy",
+  "onset-pause": "rules-current,rules-candidate",
+}
+const armNames = flag("--arms", DEFAULT_ARMS[suiteName]).split(",")
 const fixtureIds = flag("--fixtures", "").split(",").filter(Boolean)
 const repeats = Number(flag("--repeats", "1"))
 /** 补跑用：重复编号从几开始（如只补第 3 次：--repeats 1 --repeat-start 3） */
 const repeatStart = Number(flag("--repeat-start", "1"))
-const contextWindow = Number(flag("--context-window", "64000"))
-type Provider = "aireiter" | "deepseek" | "deepseek-anthropic" | "deepseek-pi" | "relay" | "cloudflare"
+// onset-pause 的窗口由 fixture 定死为线上的 400K（这里只影响打印与落盘标注）
+const contextWindow = Number(flag("--context-window", suiteName === "onset-pause" ? String(ONSET_CONTEXT_WINDOW) : "64000"))
+type Provider = "aireiter" | "deepseek" | "deepseek-anthropic" | "deepseek-pi" | "relay" | "cloudflare" | "onset-relay"
 const provider = (process.env.REINS_PROVIDER ?? "deepseek") as Provider
 const DEFAULT_MODEL: Record<Provider, string> = {
   deepseek: "deepseek-v4-flash",
@@ -55,6 +71,7 @@ const DEFAULT_MODEL: Record<Provider, string> = {
   aireiter: "claude-opus-5",
   relay: "claude-sonnet-5",
   cloudflare: "claude-sonnet-5",
+  "onset-relay": "deepseek-v4.1-flash",
 }
 const modelId = process.env.REINS_MODEL ?? DEFAULT_MODEL[provider]
 const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")
@@ -66,7 +83,8 @@ const INFO = new URL("../../模型API测试信息.md", import.meta.url)
 function readKey(section: Exclude<Provider, "cloudflare" | "deepseek-anthropic" | "deepseek-pi">): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
   const info = readFileSync(INFO, "utf8")
-  if (section === "relay") {
+  // 公司中转站一把钥匙两用：Claude 与 DeepSeek 型号都认（2026-10-30 实测）
+  if (section === "relay" || section === "onset-relay") {
     // "Claude中转"段：key：sk-…  baseurl:http://…
     const block = info.slice(info.lastIndexOf("Claude中转"))
     const key = block.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
@@ -130,6 +148,14 @@ const bound = await (async (): Promise<BoundModel> => {
     }
     case "deepseek":
       return deepseek(modelId, { apiKey: readKey("deepseek") })
+    case "onset-relay":
+      // 与 OnSet assembly.ts createMainBrain 同配置：deepseek() 工厂的方言（reasoning_content 等）+ 中转站地址 + 400K 窗口 / 384K 输出
+      return deepseek(modelId, {
+        apiKey: readKey("onset-relay"),
+        baseUrl: `${relayBase()}/v1`,
+        contextWindow: ONSET_CONTEXT_WINDOW,
+        maxOutputTokens: 384_000,
+      })
     case "deepseek-anthropic":
       // 对照臂：与 0.1 门禁同一端口、同一 thinking 预算，只差降级层实现（fetch 版 Anthropic 线 vs pi 版）
       return anthropicMessages(modelId, {
@@ -215,8 +241,21 @@ const discoveryArms: Record<string, EvalArm> = {
   eager: { name: "eager", sockets: [] },
   lazy: { name: "lazy", sockets: [lazyTools()] },
 }
+/** OnSet 线上同款的四个脑子模块（顺序同 assembly.ts），只换 compact 的规则文案；memory / skills 的规则已在 fixture 的系统提示里 */
+function onsetArm(name: string, rules: string): EvalArm {
+  const limits = { contextTokens: ONSET_CONTEXT_WINDOW }
+  return { name, sockets: [compact({ rules }), spill(), perception({ limits }), budget({ limits })] }
+}
 const { allFixtures, armsByName } = ((): { allFixtures: readonly import("@reinsjs/eval").EvalFixture[]; armsByName: Record<string, EvalArm> } => {
   if (suiteName === "tool-discovery") return { allFixtures: toolDiscoveryFixtures().fixtures, armsByName: discoveryArms }
+  if (suiteName === "onset-pause")
+    return {
+      allFixtures: onsetPauseFixtures(),
+      armsByName: {
+        "rules-current": onsetArm("rules-current", COMPACT_RULES),
+        "rules-candidate": onsetArm("rules-candidate", CANDIDATE_COMPACT_RULES),
+      },
+    }
   const suite = adratePatrolFixtures({ contextWindow })
   return {
     allFixtures: suite.fixtures,
@@ -316,8 +355,14 @@ const report = await runEval({
     log(
       `■ ${key}  ${m.status}  完成 ${m.completed.toFixed(2)}  召回 ${m.recall?.toFixed(2) ?? "—"}  token ${m.tokens.total}（cache ${((m.cacheHitRate ?? 0) * 100).toFixed(0)}%）  轮 ${m.turns}  工具 ${m.toolCalls}（错 ${m.toolErrors}，重复 ${m.repeatedToolCalls}）  整理 ${m.compactions.model}/${m.compactions.threshold}  违规 ${m.violations.before.violations}/${m.violations.after.violations}  ${(m.wallMs / 1000).toFixed(0)}s\n`,
     )
+    const timing = suiteName === "onset-pause" ? compactionTiming(o.fresh, o.finalText) : undefined
+    if (timing)
+      log(`    整理时机 [${timing.model.join(",") || "无"}]  兜底 ${timing.threshold}  干活调用 ${timing.workCalls}  回复 ${timing.finalChars} 字\n`)
     const { timelines: _t, timeline: _tl, fresh: _f, ...slim } = o
-    writeFileSync(`${out}/cells/${key}.json`, JSON.stringify({ ...slim, model: bound.model, contextWindow }, null, 2))
+    writeFileSync(
+      `${out}/cells/${key}.json`,
+      JSON.stringify({ ...slim, model: bound.model, contextWindow, ...(timing ? { timing } : {}) }, null, 2),
+    )
     writeFileSync(`${out}/cells/${key}.jsonl`, toEventsJsonl(o.timeline))
     writeFileSync(`${out}/cells/${key}.probes.jsonl`, toEventsJsonl(probes.get(key) ?? []))
   },

@@ -32,3 +32,4 @@ AGENTS.md
 examples/adrate/recordings/raw/
 spikes/l1-deferred-tools/out/
 spikes/runtime-matrix/out-vercel.json
+examples/eval/fixtures/onset-pause/data/

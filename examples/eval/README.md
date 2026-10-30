@@ -49,6 +49,31 @@ pnpm vitest run examples/eval/fixtures/tool-discovery     # 世界与评分器�
 - lazy 每题多约一轮（先 `tool_find` 再动手），上下文小一半以上（200 件 schema 约 30k token）。
 - 缓存的代价单看 `spikes/d1-lazy-tools-cache/`：单题一个会话时取回一次、之后全命中，所以这里计费等价也是降的；一个会话里连续换任务、每题都要新工具时按 Claude 价目会反过来贵——那是最坏情形，README 与模块注释都写明。
 
+## fixtures/onset-pause：长期会话里"run 收尾"算不算整理的停顿（OnSet 反馈 ②）
+
+OnSet 一个"项目 × 角色"是一条长期会话，被消息唤醒一次跑一个 run。第三轮摄影会话涨到 84% 一次没整理，靠"把回答写短"扛。
+这组 fixture 把那条真实会话在五个 run 起点切开（种子 = 切点前历史，输入 = 当时那条投递，工具按录像回放），两臂只差 compact 规则文案：
+`rules-current`（现行 `COMPACT_RULES`）/ `rules-candidate`（补"run 收尾即停顿""过 70% 到停顿先整理、紧了不靠少做事"两句）。
+
+**数据不进仓库**（Boss 的内部项目内容；reins 仓库公开）：`data/` 已 gitignore，换机器先重新生成——
+
+```bash
+sqlite3 -readonly <OnSet>/data/onset.db ".backup /tmp/onset-copy.db"
+cd <OnSet> && ONSET_ROOT=$PWD npx tsx <reins>/examples/eval/fixtures/onset-pause/dump-onset.mts /tmp/onset-copy.db /tmp/world-spec.json
+node examples/eval/fixtures/onset-pause/build.ts /tmp/onset-copy.db /tmp/world-spec.json
+REINS_PROVIDER=onset-relay node examples/eval/run.ts --suite onset-pause --repeats 3 --out examples/eval/out/onset-pause
+```
+
+| 切点 | 窗口 | 当时那次 run | 期望 |
+| --- | --- | --- | --- |
+| `onset-pause-early`（seq 381） | <50% | 长任务，收尾约 66% | 两臂都不整理（对照） |
+| `onset-pause-idle`（557）/ `wrapup`（572） | 70%–85% | 没有待办，汇报即停 | 候选臂收尾前整理 |
+| `onset-pause-work`（577） | ~75% | 一次付费补拍 + 自验 | 整理在动手前或收尾，不在两步之间 |
+| `onset-pause-tight`（659） | ≥85% | 静帧当首帧重做一镜 | 同上；看阈值兜底是否抢先 |
+
+每格额外落 `timing`：模型自决整理的位置 `start` / `end` / `mid`（`mid` 即"推导半途整理"的副作用）、兜底次数、干活调用数、回复字数。
+预埋事实是种子里的账目数字（各段实付合计、补拍问题），在分叉会话里问，看整理有没有丢细节。
+
 ## fixtures/adrate-patrol：AdRate"巡检降本"（B11 真实长任务的脱敏版）
 
 来源是 `examples/adrate/recordings/patrol-disable.jsonl`（2026-09-08，DeepSeek 直连，239 事件 / 57 工具 / 29 审批）。
