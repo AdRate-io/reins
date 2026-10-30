@@ -27,9 +27,9 @@ import { assertAscending } from "./tiers.js"
 export interface PerceptionOptions {
   /** 上下文使用率档位边界（占窗口比例）。缺省 [0.5, 0.7, 0.85] → <50% / 50%–70% / 70%–85% / ≥85% */
   usageTiers?: readonly number[]
-  /** 未折叠模型轮数档位边界。缺省 [5, 15, 40] → ≤5 / 6–15 / 16–40 / >40 */
+  /** 未折叠模型轮数档位边界。缺省 [5, 15, 40] → ≤5 / 6–15 / 16–40 / >40。只进读数，缺省 render 不报 */
   turnTiers?: readonly number[]
-  /** 会话累计 token 档位边界。缺省 [1e4, 5e4, 2e5, 1e6] */
+  /** 会话累计 token 档位边界。缺省 [1e4, 5e4, 2e5, 1e6]。只进读数，缺省 render 不报 */
   tokenTiers?: readonly number[]
   /** 外溢结果条数档位边界（0 单独一档）。缺省 [3, 10] → 0 / 1–3 / 4–10 / >10 */
   spillTiers?: readonly number[]

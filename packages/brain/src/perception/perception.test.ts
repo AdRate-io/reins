@@ -15,7 +15,7 @@ import {
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { lastVisiblePerceptionNote, perception } from "./perception.js"
-import { contextOverheadOf, readPerception } from "./reading.js"
+import { contextOverheadOf, type PerceptionReading, readPerception } from "./reading.js"
 import { renderPerception } from "./render.js"
 import { compactNumber, countTier, rangeTier } from "./tiers.js"
 
@@ -101,9 +101,11 @@ describe("perception × runLoop：注入位置与 prompt cache 约束", () => {
     expect(note.payload.text).toContain("Context window used: <50%")
     expect(note.payload.text).toContain("auto-folds the oldest turns at 85%")
     expect(note.payload.text).toContain(
-      "Unfolded history: ≤5 turns; compactions so far: 0 (nothing has been folded; everything above is verbatim)",
+      "Compactions so far: 0 (nothing has been folded; everything above is verbatim)",
     )
-    expect(note.payload.text).toContain("Session tokens used: <10k")
+    // 累计 token 与未折叠轮数只进读数，缺省文字不报（2026-10-30 OnSet 反馈）
+    expect(note.payload.text).not.toContain("tokens used")
+    expect(note.payload.text).not.toContain("Unfolded")
     expect(note.payload.text).not.toContain("budget remaining")
     expect(note.payload.text).not.toContain("spilled")
     const reading = (note.payload.meta as { reading: { contextUsage: { level: number } } }).reading
@@ -131,11 +133,22 @@ describe("perception × runLoop：注入位置与 prompt cache 约束", () => {
     }
   })
 
-  it("变档才追加新的一条，旧的留在原位：轮数档位设 [0, 1] 时三轮三条，每条都在当轮请求的末尾", async () => {
+  it("累计 token 与轮数跨档不追加：缺省文字不报这两项，档位设得再密也只有一条说明", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering(THREE_TURNS)
+    // 剧本每轮用量 15 token：两项每轮都跨档，读数在变，文字不变
+    await drain(
+      runLoop(config(lowering, log, { sockets: [perception({ turnTiers: [0, 1], tokenTiers: [1, 20] })] })),
+    )
+    expect(notesOf(await all(log))).toHaveLength(1)
+  })
+
+  it("变档才追加新的一条，旧的留在原位：自定义 render 报轮数、档位设 [0, 1] 时三轮三条，每条都在当轮请求的末尾", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering(THREE_TURNS)
     // 数的是本轮之前已完成的模型轮：第 1 轮 0、第 2 轮 1、第 3 轮 2
-    await drain(runLoop(config(lowering, log, { sockets: [perception({ turnTiers: [0, 1] })] })))
+    const render = (r: PerceptionReading) => `Unfolded history: ${r.unfoldedTurns.label} turns`
+    await drain(runLoop(config(lowering, log, { sockets: [perception({ turnTiers: [0, 1], render })] })))
     const notes = notesOf(await all(log))
     expect(notes.map((n) => n.payload.text.match(/Unfolded history: (\S+) turns/)?.[1])).toEqual([
       "≤0",

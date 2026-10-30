@@ -102,7 +102,7 @@
 
 ### perception
 
-1. `beforeModel`：`readPerception(ctx, thresholds, limits)` 从 `ctx.events`（本轮视图）算未折叠模型轮数与可见外溢结果数，从 `ctx.timeline`（完整日志）算整理次数与会话累计 token（`sumSessionTokens` 累加 `budget_usage`，含缓存读写）。
+1. `beforeModel`：`readPerception(ctx, thresholds, limits)` 从 `ctx.events`（本轮视图）算未折叠模型轮数与可见外溢结果数，从 `ctx.timeline`（完整日志）算整理次数与会话累计 token（`sumSessionTokens` 累加 `budget_usage`，含缓存读写）。缺省 `renderPerception` 只报上下文使用率、整理次数（带"折叠了什么"说明）、预算余量、外溢条数；**累计 token 与未折叠轮数只进读数不进文字**（2026-10-30：两项开头连跨档、每跨一档多一条说明，对决策无用）。
 2. 上下文使用率先经 `contextOverheadOf(timeline)` 加法校准（真实上下文 − 当时估算），再落到档位；配了 `limits` 时按最紧一维算余量档位。
 3. `render(reading)` 渲染成英文说明；与 `lastVisiblePerceptionNote(ctx.events)` 的文字逐字比较，相同则什么都不做。
 4. 不同才 `ctx.emit` 一条 `system_note(kind=perception, meta.reading=读数)`，追加在时间线末尾、本轮即可见。永远返回 `undefined`，不碰 `systemPrompt` / `tools`。
