@@ -17,7 +17,13 @@
  * 预埋事实（分叉会话里问）看整理有没有把账目细节丢掉。
  */
 import { readFileSync } from "node:fs"
-import { COMPACT_RULES, COMPACT_TOOL_NAME, RECALL_TOOL_NAME } from "@reinsjs/brain"
+import {
+  COMPACT_RULES,
+  COMPACT_TOOL_NAME,
+  type PerceptionReading,
+  RECALL_TOOL_NAME,
+  renderPerception,
+} from "@reinsjs/brain"
 import type { ContentPart, CoreEventOf, Event, Tool, ToolResult } from "@reinsjs/core"
 import { type EvalFixture, type PlantedFact, parseEventsJsonl, type RecordedToolSpec, recordedTools } from "@reinsjs/eval"
 
@@ -39,6 +45,19 @@ export const CANDIDATE_COMPACT_RULES = COMPACT_RULES.replace(
 - When the window is past about 70% and you reach such a pause, compact before you stop (call \`${COMPACT_TOOL_NAME}\`, then give your reply). When it is tight, compact first rather than working less: do not skip reads, checks or explanations to save space.`,
 )
 if (CANDIDATE_COMPACT_RULES === COMPACT_RULES) throw new Error("COMPACT_RULES changed; update the candidate rules anchor")
+
+/**
+ * 第二轮第三臂：缺省感知文字 + 使用率到第 2 档（≥70%，缺省档位）时多一行"收尾前整理"。
+ * 第一轮实证系统提示里的规则在 28 万 token 上下文里不进决策（思考里从不提上下文）；这一行就在模型眼前、只在高位出现。
+ * 这是 OnSet 线上 renderPerceptionZh 的做法（建议 ② 第三点），这里测它在 reins 缺省英文措辞下有没有效。纯函数，档位不变文字不变。
+ */
+export const NUDGE_LEVEL = 2
+export function nudgeRender(r: PerceptionReading): string {
+  const base = renderPerception(r)
+  return r.contextUsage.level >= NUDGE_LEVEL
+    ? `${base}\n- The window is past 70%: if you are about to finish this run, call \`${COMPACT_TOOL_NAME}\` first, then reply.`
+    : base
+}
 
 // ---- 世界 ----
 
@@ -108,15 +127,32 @@ const isWrite = (name: string, args: unknown) =>
   WRITE_TOOLS.has(name) ||
   (name === "memory" && (args as { command?: string } | null)?.command !== "view")
 
-const accepted = (): ToolResult => ({
-  content: [{ type: "text", text: '{"ok":true,"note":"Accepted. (Replayed environment: this write has no further effect.)"}' }],
+/**
+ * 录像外的调用要回得像 OnSet 真服务（中文、"Tool execution failed: …"），不能露出"这是回放"：
+ * 第一轮回的是 "This is a replayed environment"，模型思考里会写"这是回放，那就收尾"，直接干扰了"什么时候停"的判断。
+ */
+const accepted = (): ToolResult => ({ content: [{ type: "text", text: "操作成功。" }] })
+
+const unavailable = (name: string): ToolResult => ({
+  content: [
+    {
+      type: "text",
+      text:
+        name === "generate_submit"
+          ? "Tool execution failed: 生成服务暂时不可用，本次没有提交任何任务、没有扣积分。稍后再试。"
+          : "Tool execution failed: 上游服务暂时没有响应，稍后再试。",
+    },
+  ],
+  isError: true,
 })
 
-/** 声明里的每件工具都要在：录过的按录像回放，没录过的（如 fs_list）只会回"没有数据"，但模型看到的工具表与线上一致 */
+const offRecord = (name: string, args: unknown): ToolResult => (isWrite(name, args) ? accepted() : unavailable(name))
+
+/** 声明里的每件工具都要在：录过的按录像回放，没录过的（如 fs_list）只会回"暂时失败"，但模型看到的工具表与线上一致 */
 export function onsetTools(world: OnsetWorld): Tool[] {
   const recorded = recordedTools(world.session, {
     specs: world.specs,
-    fallback: (name, args) => (isWrite(name, args) ? accepted() : undefined),
+    fallback: offRecord,
   }).tools
   const byName = new Map(recorded.map((t) => [t.name, t]))
   return Object.entries(world.specs).map(([name, spec]) => {
@@ -128,18 +164,7 @@ export function onsetTools(world: OnsetWorld): Tool[] {
       inputSchema: spec.inputSchema ?? { type: "object" },
       ...(spec.risk ? { risk: spec.risk } : {}),
       ...(spec.resultPolicy ? { resultPolicy: spec.resultPolicy } : {}),
-      async execute(args: unknown): Promise<ToolResult> {
-        if (isWrite(name, args)) return accepted()
-        return {
-          content: [
-            {
-              type: "text",
-              text: `No recorded response for ${name} with these arguments. This is a replayed environment; proceed with what you already have.`,
-            },
-          ],
-          isError: true,
-        }
-      },
+      execute: async (args: unknown) => offRecord(name, args),
     }
   })
 }

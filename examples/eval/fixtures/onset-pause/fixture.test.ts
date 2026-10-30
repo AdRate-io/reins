@@ -1,7 +1,7 @@
 /**
  * fixture 自检：整理时机的分类器（不依赖数据，始终跑）；世界、切点、回放工具与 runner 接线（依赖本地 data/，没生成就跳过）。
  */
-import { COMPACT_RULES } from "@reinsjs/brain"
+import { COMPACT_RULES, type PerceptionReading, renderPerception } from "@reinsjs/brain"
 import { type CoreEventOf, createCoreEvent, createCoreRegistry, type Event, type ToolResult } from "@reinsjs/core"
 import { ScriptedLowering, say } from "@reinsjs/core/testing"
 import { runEval } from "@reinsjs/eval"
@@ -10,6 +10,7 @@ import {
   CANDIDATE_COMPACT_RULES,
   compactionTiming,
   loadOnsetWorld,
+  nudgeRender,
   ONSET_CUTS,
   onsetDataAvailable,
   onsetPauseFixtures,
@@ -39,6 +40,21 @@ describe("compactionTiming：整理落在 run 的哪里", () => {
   it("一个干活调用都没有的 run 里整理记 end（只汇报就停的收尾）", () => {
     seq = 0
     expect(compactionTiming([call("compact")], "").model).toEqual(["end"])
+  })
+
+  it("nudgeRender：<70% 与缺省文字逐字相同，≥70% 多一行收尾前整理", () => {
+    const at = (level: number) =>
+      ({
+        contextUsage: { level, label: "x" },
+        contextOverhead: 0,
+        autoFoldAt: "85%",
+        unfoldedTurns: { level: 0, label: "≤5" },
+        compactions: 0,
+        sessionTokens: { level: 0, label: "<10k" },
+        spilledResults: { level: 0, label: "0" },
+      }) satisfies PerceptionReading
+    expect(nudgeRender(at(1))).toBe(renderPerception(at(1)))
+    expect(nudgeRender(at(2))).toBe(`${renderPerception(at(2))}\n- The window is past 70%: if you are about to finish this run, call \`compact\` first, then reply.`)
   })
 
   it("候选文案只在现行规则第一条后补两句，其余逐字相同", () => {
@@ -88,7 +104,10 @@ describe.skipIf(!onsetDataAvailable())("onset-pause 世界（本地 data/）", (
     ) as CoreEventOf<"core.tool_result">
     expect((await run("board_read", recordedCall.payload.args)).content).toEqual(recordedResult.payload.content)
     expect((await run("chat_send", { text: "never recorded" })).isError).toBeUndefined()
-    expect((await run("fs_list", { path: "/nowhere" })).isError).toBe(true)
+    const offRecord = await run("fs_list", { path: "/nowhere" })
+    expect(offRecord.isError).toBe(true)
+    // 录像外的结果不能露出"回放"（第一轮泄底干扰了停顿判断）
+    expect(JSON.stringify(offRecord.content)).not.toMatch(/replay|recorded/i)
   })
 
   it("runner 接线：只汇报就停的脚本跑 idle 切点，种子原样进日志、完成度 1", async () => {

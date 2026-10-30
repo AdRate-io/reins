@@ -35,6 +35,7 @@ import { adratePatrolFixtures, type PatrolWorld } from "./fixtures/adrate-patrol
 import {
   CANDIDATE_COMPACT_RULES,
   compactionTiming,
+  nudgeRender,
   ONSET_CONTEXT_WINDOW,
   onsetPauseFixtures,
 } from "./fixtures/onset-pause/fixture.ts"
@@ -53,7 +54,7 @@ if (!SUITES.includes(suiteName)) throw new Error(`未知的套件：${suiteName}
 const DEFAULT_ARMS: Record<Suite, string> = {
   "adrate-patrol": "none,threshold,brain",
   "tool-discovery": "eager,lazy",
-  "onset-pause": "rules-current,rules-candidate",
+  "onset-pause": "rules-current,rules-candidate,rules-candidate-nudge",
 }
 const armNames = flag("--arms", DEFAULT_ARMS[suiteName]).split(",")
 const fixtureIds = flag("--fixtures", "").split(",").filter(Boolean)
@@ -242,9 +243,12 @@ const discoveryArms: Record<string, EvalArm> = {
   lazy: { name: "lazy", sockets: [lazyTools()] },
 }
 /** OnSet 线上同款的四个脑子模块（顺序同 assembly.ts），只换 compact 的规则文案；memory / skills 的规则已在 fixture 的系统提示里 */
-function onsetArm(name: string, rules: string): EvalArm {
+function onsetArm(name: string, rules: string, render?: typeof nudgeRender): EvalArm {
   const limits = { contextTokens: ONSET_CONTEXT_WINDOW }
-  return { name, sockets: [compact({ rules }), spill(), perception({ limits }), budget({ limits })] }
+  return {
+    name,
+    sockets: [compact({ rules }), spill(), perception({ limits, ...(render ? { render } : {}) }), budget({ limits })],
+  }
 }
 const { allFixtures, armsByName } = ((): { allFixtures: readonly import("@reinsjs/eval").EvalFixture[]; armsByName: Record<string, EvalArm> } => {
   if (suiteName === "tool-discovery") return { allFixtures: toolDiscoveryFixtures().fixtures, armsByName: discoveryArms }
@@ -254,6 +258,8 @@ const { allFixtures, armsByName } = ((): { allFixtures: readonly import("@reinsj
       armsByName: {
         "rules-current": onsetArm("rules-current", COMPACT_RULES),
         "rules-candidate": onsetArm("rules-candidate", CANDIDATE_COMPACT_RULES),
+        // 第二轮：规则同候选，感知说明在 ≥70% 时多一行"收尾前整理"
+        "rules-candidate-nudge": onsetArm("rules-candidate-nudge", CANDIDATE_COMPACT_RULES, nudgeRender),
       },
     }
   const suite = adratePatrolFixtures({ contextWindow })
