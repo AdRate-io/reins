@@ -45,8 +45,10 @@
 | `packages/brain/src/node.ts` | `@reinsjs/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸；ENAMETOOLONG / ELOOP / EACCES 等当"不存在"（不让宿主绝对路径进模型上下文） |
 | `packages/brain/src/node.test.ts` | fsSkillSource 在真实临时目录上的用例（列 / 读 / 越界 / 隐藏 / 符号链接 / 接到 skills()） |
 | `packages/brain/src/redaction.recipe.test.ts` | D5 脱敏配方的可执行版本（与根 README "Redacting what reaches the log" 逐字一致）：afterTool 草稿脱敏 + `append` 包装，锁住"脱敏 Socket 须排在 spill 前否则 blob 漏原文""包装管日志与模型视图、管不到 yield 出去的对象""客户端回填结果只有包装拦得住" |
+| `packages/brain/src/resident-context.recipe.test.ts` | 常驻上下文配方（与 brain README "Resident context that survives compaction" 逐字一致）：记忆索引作快照 pin，锁住"开场一份、段内写记忆不刷新、整理后刷新且视图只有一份" |
 | `packages/brain/src/gateway-tool.recipe.test.ts` | 网关型工具（一件工具转发数百操作，如 TikTok `tool_execute`）的审批配方，与 tools-mcp README "Gateway-style servers" 逐字一致：锁住"按工具名写的 deny 放跑了删除"（反面）、"按入参里的操作名判就拦得住"、"ask 段的审批摘要带真实操作名"、"不配规则时缺省 byRisk 连只读也问人（fail-closed）" |
 | `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
+| `packages/brain/src/shared/segment.ts` | 段判据（compact 与 pins 共用）：`atSegmentStart`、`modelActedSinceLastCompaction`、`currentSegment`、`timelineSoFar`，全从时间线读 |
 | `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读；`enforceLimit` 硬上限模式给 skills：带范围也截、超长单行切开）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
 | `packages/brain/src/perception/index.ts` | perception 子模块聚合导出 |
 | `packages/brain/src/perception/perception.ts` | `perception(opts): Socket`：beforeModel 算读数、渲染、与可见的上一条说明按文字判重，不同才 emit `system_note(kind=perception)` |
@@ -57,14 +59,14 @@
 | `packages/brain/src/compact/index.ts` | compact 子模块聚合导出 |
 | `packages/brain/src/compact/compact.ts` | `compact(opts): Socket`：注册 `compact` / `recall` 工具与规则提示，afterTool 落 compaction 并换回执，onTurnEnd 查连续整理上限 |
 | `packages/brain/src/compact/plan.ts` | 纯函数 `planCompaction`：算切点、幸存者、被吸收的旧摘要、被折叠工具结果清单；另有按轮分段与连续整理计数 |
-| `packages/brain/src/compact/request.ts` | 到线请模型整理：`DEFAULT_FORCE_AT`（两级）、`renderCompactRequest`（按 attempt 换措辞）、`isCompactRequest`、`compactRequestedSinceLastCompaction` / `compactRequestsSinceLastCompaction`、`modelActedSinceLastCompaction`、`timelineSoFar`、`contextUsageRatio`（全从时间线读，无跨轮状态） |
+| `packages/brain/src/compact/request.ts` | 到线请模型整理：`DEFAULT_FORCE_AT`（两级）、`renderCompactRequest`（按 attempt 换措辞）、`isCompactRequest`、`compactRequestedSinceLastCompaction` / `compactRequestsSinceLastCompaction`、`contextUsageRatio`（全从时间线读，无跨轮状态）；`modelActedSinceLastCompaction` / `timelineSoFar` 从 shared/segment.ts 再导出 |
 | `packages/brain/src/compact/recall.ts` | `recall({ seq })` 工具：从本会话日志按 seq 逐字取回一条被折叠的工具结果 |
 | `packages/brain/src/compact/rules.ts` | compact / recall 的工具名、工具说明与规则提示 `COMPACT_RULES`（英文常量） |
 | `packages/brain/src/compact/compact.test.ts` | compact 的全部用例（自决整理、阈值兜底与连续上限、recall、纯函数层） |
 | `packages/brain/src/pins/index.ts` | pins 子模块聚合导出 |
-| `packages/brain/src/pins/pins.ts` | `pins(opts): Socket`：宿主 `PinSpec` 在 beforeModel 判重追加，模型 `pin` 工具在 afterTool 落事件；含入参解析与查找辅助 |
+| `packages/brain/src/pins/pins.ts` | `pins(opts): Socket`：宿主 `PinSpec` 在 beforeModel 判重追加（常驻快照 `snapshot` 只在段起点取，`refreshSnapshots`），模型 `pin` 工具在 afterTool 落事件；含入参解析与查找辅助、`isSnapshotPin` |
 | `packages/brain/src/pins/rules.ts` | `pin` 工具名、随上限生成的工具说明 `pinToolDescription(max)`、规则提示 `PIN_RULES` |
-| `packages/brain/src/pins/pins.test.ts` | pins 的全部用例（宿主 pin、模型 pin、与 compact 的幸存端到端、构造与纯函数） |
+| `packages/brain/src/pins/pins.test.ts` | pins 的全部用例（宿主 pin、模型 pin、与 compact 的幸存端到端、常驻快照按段刷新、构造与纯函数） |
 | `packages/brain/src/spill/index.ts` | spill 子模块聚合导出 |
 | `packages/brain/src/spill/spill.ts` | `spill(opts): Socket`：afterTool 超限外溢进 BlobStore 并替换成预览，`fetch_blob` 工具按字符偏移分段取回、按会话引用授权 |
 | `packages/brain/src/spill/preview.ts` | 纯函数：度量文本（字符 / 行 / token）、按 token 上限裁一段、首尾预览、千分位格式化 |
@@ -124,6 +126,7 @@
 2. 与 `lastHostPin(ctx.events, spec.name)` 的文字逐字比对；相同跳过，不同（首轮 / 内容变了 / 被折叠掉了）就 `ctx.emit` 一条 `system_note(kind=pin, actor=system, meta.pin={source:"host",spec})`，`supersedes` 指向该 spec 在完整时间线里的上一条。永不返回补丁。
 3. `afterTool` 见到 `pin` 调用：`parsePinArgs` 校验；带 `replaces` 时用 `findModelPin` 找模型自己钉的那条，指向宿主 pin 或找不到都以 isError 回话；同文重复钉直接回"已钉过"。
 4. 通过则 `ctx.emit` 一条 `system_note(kind=pin, actor=model, parentId=tool_call)`（替换时带 `supersedes`），并把占位结果换成回执。幸存与折叠后的重排本身在 core 投影链，本模块不重复实现。
+5. 常驻快照 spec 不走第 1～2 步，走 `refreshSnapshots`（有快照 spec 时 beforeModel 才返回 Promise）：段起点（`atSegmentStart` 且本段无本 spec 的 pin）或时间线里从没有本 spec 的 pin 时调 `snapshot(ctx)`；与视图里那份逐字相同跳过；不同则 emit（`meta.pin.snapshot: true`、`supersedes` 上一条），旧的若已被某次整理覆盖，就以 `events` 补丁从本轮视图剔除（下一轮 fold 本就隐藏它，两轮视图一致）。handoff 的 `carriedPins` 跳过快照 pin。
 
 ### spill
 

@@ -18,7 +18,7 @@ const agent = createAgent({
   sockets: [
     perception(),                       // "you have used 61% of your context" — as a note, not an action
     compact(),                          // a `compact` tool the model calls when it decides to tidy
-    pins({ host: ["Never touch prod without approval"] }),
+    pins({ pins: ["Never touch prod without approval"] }),
     spill(),                            // big tool results go to the BlobStore; the model gets a preview + fetch_blob
     memory({ namespace: () => "/roles/analyst" }),
     // a menu of SKILL.md names in the prompt; the model reads one with skill_read.
@@ -36,7 +36,7 @@ const agent = createAgent({
 | --- | --- | --- |
 | `perception()` | A `system_note` at the end of the timeline with context usage, history length and budget headroom, in coarse tiers so it does not change every turn (cache-friendly). Calibrated against the last real `budget_usage`. | nothing |
 | `compact()` | A `compact` tool: the model summarizes a range of old turns itself; the summary carries a manifest of the folded tool results and a `recall({ seq })` tool fetches any of them back verbatim. When the window passes 75% and the model has not compacted since the last fold, it appends a note asking the model to compact first, and asks once more, more bluntly, at 80% (`decidedBy: "forced"`; `force: false` turns this off, `force: { at, render, directive }` tunes it — `at` takes one ratio or an ascending list). The request is marked as a directive, so lowerings deliver it as a tagged user note even where mid-conversation system messages are accepted: some upstreams accept those but do not act on instructions inside them. If the model still does not compact, a threshold fallback at 85% folds the oldest turns down to 60%. **Recommended on** since 2026-09-10: measured on DeepSeek and Claude, recall stayed at 100% while tokens went down. | a `BlobStore` is not required |
-| `pins()` | Host-declared constraints (static text or extracted from the conversation) plus a `pin` tool. Pinned notes survive compaction and are re-injected when they scroll out. | nothing |
+| `pins()` | Host-declared constraints (static text or extracted from the conversation) plus a `pin` tool. Pinned notes survive compaction and are re-injected when they scroll out. A host spec can also be a **resident snapshot** (`{ name, snapshot }`, sync or async): taken at the start of each segment — the session's first turn and the first turn after every compaction — and appended only when it differs from the copy in view, so an index of the model's memory stays at hand without being rewritten mid-task (see below). | nothing |
 | `spill()` | Tool results above a size limit are stored whole in the `BlobStore`; the model sees head + tail + a blob id and pages through with `fetch_blob`. Without a `BlobStore` the module warns once and passes results through unchanged (no silent truncation). | a `BlobStore` |
 | `handoff()` | A `handoff` tool: the model writes a summary and next steps and moves to a fresh session; visible pins travel along. The mechanics (new session, opening note) are in the core loop. **Off by default** — turn it on when tasks routinely outlive one context window. | host must rebind the UI to the new session (`onHandoff`) |
 | `memory()` | A `memory` tool shaped like Anthropic's `memory_20250818` (view / create / str_replace / insert / delete / rename under `/memories`). Every operation leaves a `memory_op` event. Isolation is by `namespace`, invisible to the model. **Off by default.** | a `MemoryStore` |
@@ -48,6 +48,26 @@ const agent = createAgent({
 ### Skills from a database
 
 Any `MemoryStore` (in-memory, `@reinsjs/store-sqlite`, `@reinsjs/store-pg`) is also a `SkillSource`: write `/skills/<name>/SKILL.md` (frontmatter with `name` equal to `<name>` and a `description`) and, optionally, `/skills/<name>/<file>` for supporting files, then pass the same store as `source`. The model's `memory` tool only reaches `/memories`, so one table holds writable private notes and read-only shared skills at once; `memory({ namespace })` prefixes apply to memories only, skills are shared by every principal. `skills()` refuses a `root` that overlaps `/memories` — a skill the model could write itself must never be trusted like the system prompt.
+
+### Resident context that survives compaction
+
+Compaction folds the conversation, not the system prompt or the tool list, so the model keeps who it is and what it can do. What it loses is context you attached to the conversation — an index of its memory, the item it is working on. Declare that as a resident snapshot instead:
+
+```ts
+/** One line per memory file: the index, not the content. The model opens a file with its `memory` tool. */
+function memoryIndex(store: MemoryStore) {
+  return async (): Promise<string | undefined> => {
+    const paths = await store.list("/memories/")
+    if (paths.length === 0) return undefined
+    return ["Your memory files (open one with the memory tool):", ...paths.map((p) => `- ${p}`)].join("\n")
+  }
+}
+
+const residentContext = (store: MemoryStore) =>
+  pins({ pins: [{ name: "memory-index", snapshot: memoryIndex(store) }], tool: false })
+```
+
+The snapshot is taken when a segment starts: the first turn of the session, and the first turn after each compaction (the model's own, a requested one, or the threshold fallback). Within a segment it is not refreshed — whatever the model wrote to memory is already in its context; after a compaction folds that away, the index is taken again and the old copy disappears in the same turn. If nothing changed, nothing is appended. Changes made by someone else mid-segment show up after the next compaction; use `extract` if you need them live. A snapshot is a pin and occupies context permanently: keep it to an index and short status, and let the model open the details. It is not carried through `handoff` — the new session takes its own. If `snapshot` throws, the run fails; catch inside it and return `undefined` to keep the previous copy instead.
 
 ## Things that are deliberate
 

@@ -455,3 +455,196 @@ describe("pins：构造与纯函数", () => {
     expect(emitted).toHaveLength(0)
   })
 })
+
+describe("pins：常驻快照按段刷新", () => {
+  /** 按调用次序返回 values 里的值（用完停在最后一个），记下调用次数；可选异步 */
+  function source(values: readonly string[], opts: { async?: boolean } = {}) {
+    const state = { calls: 0 }
+    const snapshot = (_ctx: TurnContext) => {
+      const v = values[Math.min(state.calls, values.length - 1)]
+      state.calls++
+      return opts.async ? Promise.resolve(v) : v
+    }
+    return { state, snapshot }
+  }
+  const snapshotsOf = (events: readonly Event[]) =>
+    notesOf(events).filter((n) => pinMetaOf(n)?.snapshot === true)
+  const compactNow = (id: string) => callTool(id, "compact", { summary: "Did step one.", keep: [] })
+
+  it("开场取一份并标 snapshot；段内（同 run 多轮、跨 run 未整理）数据变了也不再取", async () => {
+    const { state, snapshot } = source(["index v1", "index v2"])
+    const sockets = [pins({ pins: [{ name: "memory", snapshot }], tool: false })]
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 2 })] },
+      { drafts: [say("好")] },
+      { drafts: [say("又好")] },
+    ])
+    await drain(runLoop(config(lowering, log, { sockets })))
+    await drain(runLoop(config(lowering, log, { sockets, input: "继续" })))
+    expect(state.calls).toBe(1)
+    const snaps = snapshotsOf(await all(log))
+    expect(snaps.map((n) => n.payload.text)).toEqual(["index v1"])
+    expect(snaps[0]?.payload.meta).toEqual({ pin: { source: "host", spec: "memory", snapshot: true } })
+    expect(snaps[0]?.actor).toBe("system")
+  })
+
+  it("整理后数据变了：下一轮追加新快照并取代旧的；本轮请求里只有新的一份、排在末尾，下一轮视图前缀与本轮一致", async () => {
+    const { state, snapshot } = source(["index v1", "index v2"], { async: true })
+    const sockets = [pins({ pins: [{ name: "memory", snapshot }], tool: false }), compact()]
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 2 })] },
+      { drafts: [compactNow("k1")] },
+      { drafts: [callTool("c2", "add", { a: 3, b: 4 })] },
+      { drafts: [say("完")] },
+    ])
+    await drain(runLoop(config(lowering, log, { sockets })))
+    expect(state.calls).toBe(2) // 开场一次、整理后一次；整理后模型动过就不再取
+    const snaps = snapshotsOf(await all(log))
+    expect(snaps.map((n) => n.payload.text)).toEqual(["index v1", "index v2"])
+    expect(snaps[1]?.payload.supersedes).toEqual([snaps[0]?.id])
+
+    const refreshed = lowering.requests[2]?.events ?? []
+    expect(snapshotsOf(refreshed).map((n) => n.id)).toEqual([snaps[1]?.id])
+    expect(refreshed.at(-1)?.id).toBe(snaps[1]?.id)
+    const next = lowering.requests[3]?.events ?? []
+    expect(next.slice(0, refreshed.length).map((e) => e.id)).toEqual(refreshed.map((e) => e.id))
+  })
+
+  it("整理后数据没变：取一次、不追加，旧快照穿越折叠排在摘要之后", async () => {
+    const { state, snapshot } = source(["index v1"])
+    const sockets = [pins({ pins: [{ name: "memory", snapshot }], tool: false }), compact()]
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 2 })] },
+      { drafts: [compactNow("k1")] },
+      { drafts: [callTool("c2", "add", { a: 3, b: 4 })] },
+      { drafts: [say("完")] },
+    ])
+    await drain(runLoop(config(lowering, log, { sockets })))
+    expect(state.calls).toBe(2)
+    const snaps = snapshotsOf(await all(log))
+    expect(snaps).toHaveLength(1)
+    const view = lowering.requests[2]?.events ?? []
+    expect(types(view).slice(0, 3)).toEqual(["compaction", "user_message", "system_note"])
+    expect(view[2]?.id).toBe(snaps[0]?.id)
+  })
+
+  it("刷新后模型调用失败、下一个 run 续上：本段已取过，不再取、不重复追加", async () => {
+    const { state, snapshot } = source(["index v1", "index v2", "index v3"])
+    const sockets = [pins({ pins: [{ name: "memory", snapshot }], tool: false }), compact()]
+    const log = new InMemoryEventLog()
+    await drain(
+      runLoop(
+        config(
+          new ScriptedLowering([
+            { drafts: [callTool("c1", "add", { a: 1, b: 2 })] },
+            { drafts: [compactNow("k1")] },
+            { drafts: [], throws: new Error("400 bad request") },
+          ]),
+          log,
+          { sockets },
+        ),
+      ),
+    )
+    expect(state.calls).toBe(2)
+    await drain(
+      runLoop(config(new ScriptedLowering([{ drafts: [say("好")] }]), log, { sockets, input: "继续" })),
+    )
+    expect(state.calls).toBe(2)
+    expect(snapshotsOf(await all(log)).map((n) => n.payload.text)).toEqual(["index v1", "index v2"])
+  })
+
+  it("阈值兜底在本轮投影里新造 compaction：同一轮即是段起点，刷新的快照进本轮请求", async () => {
+    let n = 0
+    const sockets = [pins({ pins: [{ name: "memory", snapshot: () => `index v${++n}` }], tool: false })]
+    const log = new InMemoryEventLog()
+    const filler = Array.from({ length: 6 }, (_, i) => ({
+      drafts: [say(`步骤 ${i}`), callTool(`c${i}`, "add", { a: i, b: 1 })],
+    }))
+    const lowering = new ScriptedLowering([...filler, { drafts: [say("完")] }], {
+      capabilities: { contextWindow: 1000 },
+    })
+    await drain(
+      runLoop(config(lowering, log, { sockets, projection: { estimate: () => 100 }, maxTurns: 10 })),
+    )
+    const logged = await all(log)
+    const thresholds = logged.filter((e): e is Compaction => e.type === "core.compaction")
+    expect(thresholds.length).toBeGreaterThan(0)
+    expect(thresholds.every((c) => c.payload.decidedBy === "threshold")).toBe(true)
+    expect(n).toBe(1 + thresholds.length)
+    for (const c of thresholds) {
+      const req = lowering.requests.find(
+        (r) => r.events.some((e) => e.id === c.id) && r.events[0]?.id === c.id,
+      )
+      const snaps = snapshotsOf(req?.events ?? [])
+      expect(snaps.at(-1)?.payload.text).not.toBe("index v1")
+    }
+  })
+
+  it("keepRecentTurns 也覆盖旧快照：快照总追加在某个模型轮开始之前，留下的轮从模型轮开头算，旧的必被覆盖，本轮仍只有一份", async () => {
+    const { snapshot } = source(["index v1", "index v2"])
+    const sockets = [pins({ pins: [{ name: "memory", snapshot }], tool: false }), compact()]
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 2 })] },
+      { drafts: [callTool("k1", "compact", { summary: "S", keep: [], keepRecentTurns: 1 })] },
+      { drafts: [say("完")] },
+    ])
+    await drain(runLoop(config(lowering, log, { sockets })))
+    const view = lowering.requests[2]?.events ?? []
+    expect(snapshotsOf(view).map((n) => n.payload.text)).toEqual(["index v2"])
+    expect(types(view)).toContain("tool_call") // 留下的那一轮确实还在视图里
+  })
+
+  it("返回空不追加，下一轮再取；抛错让 run 以错误结束", async () => {
+    const { state, snapshot } = source(["  ", "index v1"])
+    const sockets = [pins({ pins: [{ name: "memory", snapshot }], tool: false })]
+    const log = new InMemoryEventLog()
+    await drain(
+      runLoop(
+        config(
+          new ScriptedLowering([
+            { drafts: [callTool("c1", "add", { a: 1, b: 2 })] },
+            { drafts: [say("好")] },
+          ]),
+          log,
+          { sockets },
+        ),
+      ),
+    )
+    expect(state.calls).toBe(2)
+    expect(snapshotsOf(await all(log)).map((n) => n.payload.text)).toEqual(["index v1"])
+
+    const failing = [
+      pins({
+        pins: [
+          {
+            name: "memory",
+            snapshot: () => {
+              throw new Error("store down")
+            },
+          },
+        ],
+        tool: false,
+      }),
+    ]
+    await expect(
+      drain(
+        runLoop(
+          config(new ScriptedLowering([{ drafts: [say("x")] }]), new InMemoryEventLog(), {
+            sockets: failing,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("store down")
+  })
+
+  it("构造期：snapshot 非函数、与 extract 同给 → 拒绝；只有静态 / 抽取式时 beforeModel 仍同步", () => {
+    expect(() => pins({ pins: [{ name: "x", snapshot: "nope" as never }] })).toThrow(/snapshot/)
+    expect(() => pins({ pins: [{ name: "x", extract: () => "a", snapshot: () => "b" } as never] })).toThrow(
+      /either extract or snapshot/,
+    )
+  })
+})

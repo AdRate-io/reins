@@ -89,29 +89,8 @@ export function compactRequestsSinceLastCompaction(timeline: readonly Event[]): 
   return n
 }
 
-/**
- * 最后一次整理之后模型有没有动过（正文或工具调用）；从没整理过算动过。
- * 刚整理完、折后仍在软线以上时，先让模型干一轮活再请，免得整理一结束就被追着连请、撞上连续整理上限
- */
-export function modelActedSinceLastCompaction(timeline: readonly Event[]): boolean {
-  for (let i = timeline.length - 1; i >= 0; i--) {
-    const e = timeline[i]
-    if (!e) continue
-    if (isCompaction(e)) return false
-    if (e.type === "core.model_text" || e.type === "core.tool_call") return true
-  }
-  return true
-}
-
-/**
- * 截至此刻的时间线：本轮开始时的快照 + 本轮新增（投影新造的阈值 compaction、beforeModel 追加的说明）。
- * 后者只在 ctx.events 里、不在 ctx.timeline 里，按 seq 大于快照末尾取出
- */
-export function timelineSoFar(ctx: TurnContext): Event[] {
-  const end = ctx.timeline.at(-1)?.seq ?? 0
-  const fresh = ctx.events.filter((e) => e.seq > end).sort((a, b) => a.seq - b.seq)
-  return [...ctx.timeline, ...fresh]
-}
+// 段判据挪到 shared/segment.ts（pins 的常驻快照共用），这里原样再导出，公开导出不变
+export { modelActedSinceLastCompaction, timelineSoFar } from "../shared/segment.js"
 
 /** 本轮真实上下文占窗口的比例：投影估算 + 校准出的固定开销，与感知读数、阈值兜底同一把尺 */
 export function contextUsageRatio(ctx: TurnContext): number {

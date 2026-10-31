@@ -276,6 +276,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **模型看到"已整理过一次"会认定旧细节已丢而拒答，即使原件就在上文** — 解法是让它能取回，不是删说明（踩坑 8）。
 - **compact 缺省过 75%、80% 各请模型整理一次（`force`），照做记 `decidedBy: "forced"`** — 每段每级一次、刚整理完模型没动过不请，判据全从时间线读；请求标 `directive`，降级层一律以带标签的 user 送达（号池中转站对中途 system 里的指令不执行，踩坑 42）。消费方按 `=== "model"` 判"模型自己挑的时机"，forced 不算。
 - **pin 字数校验有两成容差** — 声明 500、601 起才拒，报错仍报 500。
+- **常驻快照（pins `snapshot`）只在段起点取，段内数据变了也不刷新** — 段起点 = 会话首轮或整理后模型动手前且本段没取过（shared/segment.ts）；刷新那轮靠视图补丁剔掉被覆盖的旧快照，别以为 supersedes 当轮生效（投影先于 beforeModel）。
 - **`fetch_blob` 按"本会话时间线引用过"授权，不按 blob 归属** — fork 会话能读父会话的 blob；未引用的 id 回"不存在"，与真不存在同一句话。
 - **spill 只有 `resultPolicy.overflow="truncate"` 才截断**，且向模型明说不可恢复。
 - **approval 放 sockets 末尾，入参先 `validate` 再判定** — 放首位会被后面的 `rewrite` 绕过按入参写的规则；校验不过的调用不问人。allow **不留任何事件**，审计放行只能看 tool_call / tool_result。缺省 byRisk 会把**未声明 risk 的进程内工具**当要问人，只读工具要明说 `risk: "low"`。

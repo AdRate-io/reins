@@ -13,19 +13,29 @@
  *    ToolContext 没有视图），emit `system_note(kind=pin, actor=model, parentId=tool_call)`，再把结果换成回执。
  *    `replaces` 只能指向模型自己钉的（meta.pin.source = "model"）：宿主钉的是宿主的约束，模型动不了。
  *
+ * 宿主声明还有第三种：**常驻快照** `{ name, snapshot }`（2026-10-31，OnSet 建议 5 改写）。给记忆索引、当前条目这类
+ * "会变、但该一直在手边"的内容一个压缩不掉的位置，口径对齐 Claude Code 的常驻记忆索引：开场取一份；段内不刷新
+ * （模型自己写记忆的过程就在上下文里）；每次整理后按当前实际再取一份（写记忆的那段被折走了）；没变不追加。
+ * 时机从时间线判（shared/segment.ts 的段起点），内容按数据判（与视图里那份逐字比）。
+ *
  * 说明的 `meta.pin` 记来源与 spec 名（不进模型上下文），判重与 supersede 靠它，回放 / eval 也靠它分辨谁钉的。
  * 没有 unpin：append-only 日志里"撤销"只能表达为"被新说明取代"，模型要撤销就钉一条当前有效的说法去替换旧的。
  */
-import type {
-  CoreEventOf,
-  Event,
-  EventDraft,
-  Socket,
-  Tool,
-  ToolCallEvent,
-  ToolResultDraft,
-  TurnContext,
+import {
+  type BeforeModelPatch,
+  type CoreEventOf,
+  covers,
+  type Event,
+  type EventDraft,
+  isCompaction,
+  type MaybePromise,
+  type Socket,
+  type Tool,
+  type ToolCallEvent,
+  type ToolResultDraft,
+  type TurnContext,
 } from "@reinsjs/core"
+import { atSegmentStart, currentSegment, timelineSoFar } from "../shared/segment.js"
 import { PIN_RULES, PIN_TOOL_NAME, pinToolDescription } from "./rules.js"
 
 /**
@@ -33,11 +43,16 @@ import { PIN_RULES, PIN_TOOL_NAME, pinToolDescription } from "./rules.js"
  * - 字符串：静态文本，名字就是文本本身
  * - `{ name, text }`：静态文本，命名（换措辞时名字不变，旧文字会被取代而不是并存）
  * - `{ name, extract }`：每轮从上下文抽取；返回 undefined / 空串表示"这轮没新说法"，上一条继续生效
+ * - `{ name, snapshot }`：常驻快照，只在段起点取（会话开头、每次整理之后模型动手之前；本段取到过就不再取），
+ *   另外时间线里从没有过本 spec 的 pin 时也取（老会话第一次装上）。可以是异步的（读记忆存储）。
+ *   与视图里那份逐字相同不追加；不同则追加并取代旧的。段内别人改了数据本段看不到，要实时用 `extract`。
+ *   它是 pin、永久占上下文：只放索引与简要状态，正文让模型按需读。抛错照常抛出，想降级就在函数里 catch 返回 undefined
  */
 export type PinSpec =
   | string
   | { name: string; text: string }
   | { name: string; extract: (ctx: TurnContext) => string | undefined }
+  | { name: string; snapshot: (ctx: TurnContext) => MaybePromise<string | undefined> }
 
 export interface PinsOptions {
   /** 宿主声明的 pin。名字必须唯一 */
@@ -60,10 +75,11 @@ export const PINS_SOCKET_NAME = "pins"
 export const DEFAULT_MAX_PIN_TEXT_LENGTH = 500
 export const DEFAULT_PIN_OVERSHOOT_TOLERANCE = 0.2
 
-/** system_note.meta.pin 的形状：谁钉的、宿主 spec 名 */
+/** system_note.meta.pin 的形状：谁钉的、宿主 spec 名；常驻快照另标 snapshot（handoff 据此不带走） */
 export interface PinMeta {
   source: "host" | "model"
   spec?: string
+  snapshot?: true
 }
 
 export type PinNote = CoreEventOf<"core.system_note">
@@ -145,7 +161,14 @@ export function pinMetaOf(e: PinNote): PinMeta | undefined {
   const source = (m as { source?: unknown }).source
   if (source !== "host" && source !== "model") return undefined
   const spec = (m as { spec?: unknown }).spec
-  return typeof spec === "string" ? { source, spec } : { source }
+  const out: PinMeta = typeof spec === "string" ? { source, spec } : { source }
+  if ((m as { snapshot?: unknown }).snapshot === true) out.snapshot = true
+  return out
+}
+
+/** 是不是常驻快照 pin（handoff 不带走它：新会话是新段，自己取当前的） */
+export function isSnapshotPin(e: Event): boolean {
+  return isPinNoteEvent(e) && pinMetaOf(e)?.snapshot === true
 }
 
 /** 某个宿主 spec 最后一条 pin（从后往前找） */
@@ -172,6 +195,7 @@ interface NormalizedSpec {
   name: string
   text?: string
   extract?: (ctx: TurnContext) => string | undefined
+  snapshot?: (ctx: TurnContext) => MaybePromise<string | undefined>
 }
 
 function normalizeSpecs(specs: readonly PinSpec[]): NormalizedSpec[] {
@@ -183,7 +207,14 @@ function normalizeSpecs(specs: readonly PinSpec[]): NormalizedSpec[] {
         ? { name: spec, text: spec }
         : "text" in spec
           ? { name: spec.name, text: spec.text }
-          : { name: spec.name, extract: spec.extract }
+          : "extract" in spec
+            ? { name: spec.name, extract: spec.extract }
+            : { name: spec.name, snapshot: spec.snapshot }
+    if (typeof spec === "object" && "extract" in spec && "snapshot" in spec) {
+      throw new RangeError(
+        `pins: spec ${JSON.stringify(n.name)} must have either extract or snapshot, not both`,
+      )
+    }
     if (n.name.trim().length === 0) throw new RangeError("pins: a spec name must not be empty")
     if (names.has(n.name)) throw new RangeError(`pins: duplicate spec name ${JSON.stringify(n.name)}`)
     if (n.text !== undefined && n.text.trim().length === 0) {
@@ -191,6 +222,9 @@ function normalizeSpecs(specs: readonly PinSpec[]): NormalizedSpec[] {
     }
     if (n.extract !== undefined && typeof n.extract !== "function") {
       throw new RangeError(`pins: extract of spec ${JSON.stringify(n.name)} must be a function`)
+    }
+    if ("snapshot" in n && typeof n.snapshot !== "function") {
+      throw new RangeError(`pins: snapshot of spec ${JSON.stringify(n.name)} must be a function`)
     }
     names.add(n.name)
     out.push(n)
@@ -217,6 +251,40 @@ function pinDraft(
   }
   if (extra.parentId !== undefined) draft.parentId = extra.parentId
   return draft
+}
+
+/**
+ * 常驻快照：时机看时间线（段起点 / 从没取到过），内容看数据（与视图里那份逐字比）。
+ *
+ * 投影先于 beforeModel：整理后这一轮，旧快照尚未被取代、仍排在摘要之后。若它已被某次整理覆盖（下一轮 fold
+ * 会因取代而隐藏它），本轮就用视图补丁把它拿掉——本轮请求与下一轮视图一致、只有一份，不为此多断一次缓存。
+ * 未被覆盖的不剔：fold 不隐藏未覆盖的事件，剔了下一轮又冒出来。快照总追加在某个模型轮开始之前，而 keepRecentTurns
+ * 从模型轮开头算，所以经 compact / 阈值兜底的整理它总被覆盖；不覆盖它的只有宿主自己追加的、区间更窄的 compaction。
+ */
+async function refreshSnapshots(
+  ctx: TurnContext,
+  specs: readonly NormalizedSpec[],
+): Promise<BeforeModelPatch | undefined> {
+  const timeline = timelineSoFar(ctx)
+  const segmentStart = atSegmentStart(timeline)
+  const segment = currentSegment(timeline)
+  const compactions = ctx.events.filter(isCompaction)
+  const drop = new Set<string>()
+  for (const spec of specs) {
+    const due = (segmentStart && !lastHostPin(segment, spec.name)) || !lastHostPin(timeline, spec.name)
+    if (!due || !spec.snapshot) continue
+    const text = (await spec.snapshot(ctx))?.trim()
+    if (!text) continue
+    const visible = lastHostPin(ctx.events, spec.name)
+    if (visible?.payload.text === text) continue
+    const previous = lastHostPin(timeline, spec.name)
+    const extra: { supersedes?: string; provenanceRef: string } = { provenanceRef: spec.name }
+    if (previous) extra.supersedes = previous.id
+    ctx.emit(pinDraft(text, { source: "host", spec: spec.name, snapshot: true }, "system", extra))
+    if (visible && compactions.some((c) => covers(c, visible))) drop.add(visible.id)
+  }
+  if (drop.size === 0) return undefined
+  return { events: ctx.events.filter((e) => !drop.has(e.id)) }
 }
 
 function replaceResult(result: ToolResultDraft, text: string, isError: boolean): ToolResultDraft {
@@ -250,11 +318,14 @@ export function pins(opts: PinsOptions = {}): Socket {
     execute: () => PLACEHOLDER,
   }
 
+  const snapshots = specs.filter((s) => s.snapshot !== undefined)
+
   const socket: Socket = {
     name: PINS_SOCKET_NAME,
 
     beforeModel(ctx: TurnContext) {
       for (const spec of specs) {
+        if (spec.snapshot) continue
         const raw = spec.text ?? spec.extract?.(ctx)
         const text = raw?.trim()
         if (!text) continue // 抽取函数这轮没新说法：上一条继续生效
@@ -266,7 +337,8 @@ export function pins(opts: PinsOptions = {}): Socket {
         if (previous) extra.supersedes = previous.id
         ctx.emit(pinDraft(text, { source: "host", spec: spec.name }, "system", extra))
       }
-      return undefined
+      // 只有声明了快照的实例走异步：静态 / 抽取式保持同步
+      return snapshots.length > 0 ? refreshSnapshots(ctx, snapshots) : undefined
     },
 
     afterTool(ctx: TurnContext, call: ToolCallEvent, result: ToolResultDraft) {

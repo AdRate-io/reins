@@ -1,0 +1,5 @@
+---
+"@reinsjs/brain": minor
+---
+
+Resident snapshots in `pins()`: a host spec can be `{ name, snapshot }`, where `snapshot(ctx)` may be async. It is taken when a segment starts — the session's first turn and the first turn after every compaction (model, forced or threshold) — and appended as a host pin only when it differs from the copy in view; within a segment it is not called again. When it changes after a compaction, the old copy is superseded and dropped from that same turn's request, so the model sees exactly one. Snapshot pins carry `meta.pin.snapshot: true` and are not carried through `handoff` (the new session takes its own). Use it for an index of the model's memory or the item it is working on, so compaction folds the work but not the context the model works from; README has a recipe. The segment helpers `modelActedSinceLastCompaction` and `timelineSoFar` moved to a shared file and are still exported from the same place. Also fixes the README example, which passed `pins({ host })` instead of `pins({ pins })`.

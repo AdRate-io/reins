@@ -33,6 +33,7 @@ import type {
   TurnContext,
 } from "@reinsjs/core"
 import { isModelOutput, supersededIds } from "@reinsjs/core"
+import { isSnapshotPin } from "../pins/pins.js"
 import { HANDOFF_RULES, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME } from "./rules.js"
 
 export interface HandoffOptions {
@@ -123,12 +124,15 @@ type PinNote = CoreEventOf<"core.system_note">
 const isPin = (e: Event): e is PinNote =>
   e.type === "core.system_note" && (e as PinNote).payload.kind === "pin"
 
-/** 模型当前可见、未被取代的 pin，按可见顺序复制成新会话的开场草稿 */
+/**
+ * 模型当前可见、未被取代的 pin，按可见顺序复制成新会话的开场草稿。
+ * 常驻快照（pins 的 `snapshot` spec）不带：新会话是新段，由它自己在段起点取一份当前的，而不是带去旧的再被取代
+ */
 export function carriedPins(ctx: TurnContext): EventDraft[] {
   const superseded = supersededIds(ctx.timeline)
   const out: EventDraft[] = []
   for (const e of ctx.events) {
-    if (!isPin(e) || superseded.has(e.id)) continue
+    if (!isPin(e) || superseded.has(e.id) || isSnapshotPin(e)) continue
     const payload: PinNote["payload"] = { kind: "pin", text: e.payload.text }
     if (e.payload.meta !== undefined) payload.meta = e.payload.meta
     out.push({

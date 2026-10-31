@@ -257,6 +257,38 @@ describe("handoff × runLoop", () => {
     ])
   })
 
+  it("常驻快照 pin 不带进新会话：新会话是新段，首轮自己取一份当前的", async () => {
+    const log = new InMemoryEventLog()
+    let version = 1
+    const sockets = [
+      handoff(),
+      pins({
+        pins: [
+          "Never touch the production database.",
+          { name: "memory", snapshot: () => `index v${version}` },
+        ],
+      }),
+    ]
+    const { result } = await drain(
+      runLoop(config(new ScriptedLowering([{ drafts: [doHandoff("h1", ARGS)] }]), log, { sockets })),
+    )
+    if (result.status !== "handoff") throw new Error(result.status)
+    expect(textOf(resultOf(await all(log), "h1"))).toContain("1 pinned note")
+    const carried = (await all(log, result.toSessionId)).filter(
+      (e): e is Note => e.type === "core.system_note" && e.payload.kind === "pin",
+    )
+    expect(carried.map((n) => n.payload.text)).toEqual(["Never touch the production database."])
+
+    version = 2
+    const lowering2 = new ScriptedLowering([{ drafts: [say("Continuing from the handoff.")] }])
+    const cfg2 = config(lowering2, log, { sessionId: result.toSessionId, sockets })
+    delete cfg2.input
+    await drain(runLoop(cfg2))
+    const seen = (lowering2.requests[0]?.events ?? []).filter((e): e is Note => e.type === "core.system_note")
+    expect(seen.map((n) => n.payload.text)).toContain("index v2")
+    expect(seen.map((n) => n.payload.text)).not.toContain("index v1")
+  })
+
   it("carryPins: false 时不带 pin", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([
