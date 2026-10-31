@@ -1,5 +1,11 @@
 # @reinsjs/brain
 
+## 0.7.0
+
+### Minor Changes
+
+- memory: new `directories` option declares standing directories (and their ancestors). An empty one views as an empty directory instead of "does not exist", and is listed when the model views its parent. Writes are unchanged: a standing directory cannot be written as a file or renamed onto, and deleting or renaming an empty one reports that it is empty.
+
 ## 0.6.0
 
 ### Minor Changes

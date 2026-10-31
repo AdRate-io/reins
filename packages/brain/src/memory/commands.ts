@@ -6,6 +6,8 @@
  * - `create` 对已存在的文件是**覆盖**（工具说明本来就写"creates or overwrites"），回执里说明替换了旧内容
  * - `view` 超长文件按字符上限截断并提示用 `view_range` 续读；写类操作有单文件大小上限
  * - 目录在 KV 式存储里是隐含的（有以它为前缀的文件就算存在），所以 `create` 到目录路径、对目录 `str_replace` 都报错
+ * - 宿主可声明常设目录（`memory({ directories })`）：下面还没有文件也算存在，`view` 返回空列表而不是"不存在"，
+ *   上级目录的列表里也列出它；删 / 改名一个空的常设目录如实说"是空的"（目录本身由宿主声明，模型删不掉）
  *
  * 全部是纯的存储操作，不知道 Socket / 事件 / 命名空间：命名空间由 memory.ts 用 `bindMemoryFs` 包一层。
  * `rename` 目录与 `delete` 目录不是原子的（MemoryStore 没有事务）；顺序都是"先写后删"，中途失败最多多出重复，不会丢。
@@ -152,14 +154,31 @@ export interface MemoryFs {
   delete(path: string): Promise<void>
   /** 目录下任意深度的全部文件路径，字典序 */
   listUnder(dir: string): Promise<string[]>
+  /** 宿主声明的常设目录（模型可见的规范路径，已含祖先、不含根）：没有文件也算存在。缺省没有 */
+  readonly directories?: ReadonlySet<string>
+}
+
+/**
+ * 常设目录展开成"自己 + 全部祖先"（不含根）：声明 `/memories/team/shared` 时 `/memories/team` 也必须是目录，
+ * 否则 view 上级说不存在、view 下级却有内容，自相矛盾。入参须是已规范的模型可见路径。
+ */
+export function expandMemoryDirectories(dirs: readonly string[]): ReadonlySet<string> {
+  const out = new Set<string>()
+  for (const d of dirs) {
+    for (let p = d; p !== MEMORY_ROOT && p.length > MEMORY_ROOT.length; p = p.slice(0, p.lastIndexOf("/"))) {
+      out.add(p)
+    }
+  }
+  return out
 }
 
 /**
  * 把 MemoryStore 绑到一个命名空间前缀上：存储里的键 = prefix + 模型可见路径。
  * 多用户宿主用它给每个 principal 一块独立的 /memories（`memory({ namespace })`）。
  */
-export function bindMemoryFs(store: MemoryStore, prefix = ""): MemoryFs {
+export function bindMemoryFs(store: MemoryStore, prefix = "", directories?: ReadonlySet<string>): MemoryFs {
   return {
+    ...(directories !== undefined && directories.size > 0 ? { directories } : {}),
     read: (path) => store.read(prefix + path),
     write: (path, content) => store.write(prefix + path, content),
     delete: (path) => store.delete(prefix + path),
@@ -216,7 +235,7 @@ const fail = (text: string): MemoryOutcome => ({ text, isError: true })
 const notFound = (path: string) => fail(`The path ${path} does not exist. Please provide a valid path.`)
 
 async function isDirectory(fs: MemoryFs, path: string): Promise<boolean> {
-  if (path === MEMORY_ROOT) return true
+  if (path === MEMORY_ROOT || fs.directories?.has(path) === true) return true
   return (await fs.listUnder(path)).length > 0
 }
 
@@ -301,6 +320,11 @@ async function listing(fs: MemoryFs, dir: string): Promise<MemoryOutcome> {
     entries.set(first, (entries.get(first) ?? 0) + size)
     const second = `${first}/${rel[1]}`
     if (rel.length >= 2) entries.set(second, (entries.get(second) ?? 0) + size)
+  }
+  // 常设目录即使还空着也列出（两层以内），让模型一眼看到记忆的分层；祖先已在集合里，不必另补
+  for (const d of fs.directories ?? []) {
+    if (isUnder(dir, d) && d.slice(dir.length + 1).split("/").length <= 2 && !entries.has(d))
+      entries.set(d, 0)
   }
   const rows = [`${humanSize(total)}\t${dir}`]
   for (const p of [...entries.keys()].sort()) rows.push(`${humanSize(entries.get(p) ?? 0)}\t${p}`)
@@ -407,7 +431,11 @@ async function remove(fs: MemoryFs, path: string): Promise<MemoryOutcome> {
     return ok(`Successfully deleted ${path}`, { op: "delete", path, bytes: byteLength(content) })
   }
   const children = await fs.listUnder(path)
-  if (children.length === 0) return fail(`Error: The path ${path} does not exist`)
+  if (children.length === 0) {
+    if (fs.directories?.has(path))
+      return fail(`Error: The directory ${path} is empty; there is nothing to delete`)
+    return fail(`Error: The path ${path} does not exist`)
+  }
   let bytes = 0
   for (const child of children) {
     bytes += byteLength((await fs.read(child)) ?? "")
@@ -438,7 +466,12 @@ async function rename(fs: MemoryFs, oldPath: string, newPath: string): Promise<M
   }
 
   const children = await fs.listUnder(oldPath)
-  if (children.length === 0) return fail(`Error: The path ${oldPath} does not exist`)
+  if (children.length === 0) {
+    if (fs.directories?.has(oldPath)) {
+      return fail(`Error: The directory ${oldPath} is empty; there is nothing to rename`)
+    }
+    return fail(`Error: The path ${oldPath} does not exist`)
+  }
   if (isUnder(oldPath, newPath)) return fail(`Error: Cannot move ${oldPath} into itself (${newPath})`)
   let bytes = 0
   for (const child of children) {

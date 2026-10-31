@@ -78,10 +78,10 @@
 | `packages/brain/src/handoff/handoff.test.ts` | handoff 的全部用例（交接流程、带 pin、同轮多工具、审批同轮的 R2 重建） |
 | `packages/brain/src/memory/index.ts` | memory 子模块聚合导出 |
 | `packages/brain/src/memory/memory.ts` | `memory(opts): Socket`：只有静态贡献；工具 execute 里执行命令、成功则 emit `memory_op`；缺 MemoryStore 则不注册并告警一次 |
-| `packages/brain/src/memory/commands.ts` | 六个 command 的入参 schema、解析与在 `MemoryFs` 上的执行（view / create / str_replace / insert / delete / rename），以及命名空间绑定 `bindMemoryFs` |
+| `packages/brain/src/memory/commands.ts` | 六个 command 的入参 schema、解析与在 `MemoryFs` 上的执行（view / create / str_replace / insert / delete / rename），命名空间与常设目录绑定 `bindMemoryFs`，常设目录补祖先 `expandMemoryDirectories` |
 | `packages/brain/src/memory/paths.ts` | `MEMORY_ROOT` 与 `resolveMemoryPath`：把 `/memories` 传给 shared 的 `resolveRootedPath`，薄包装 |
 | `packages/brain/src/memory/rules.ts` | `memory` 工具名、工具说明与规则提示 `MEMORY_RULES` |
-| `packages/brain/src/memory/memory.test.ts` | memory 的全部用例（路径限定、入参解析、六个命令、命名空间、与 runLoop 集成） |
+| `packages/brain/src/memory/memory.test.ts` | memory 的全部用例（路径限定、入参解析、六个命令、命名空间、常设目录、与 runLoop 集成） |
 | `packages/brain/src/approval/index.ts` | approval 子模块聚合导出 |
 | `packages/brain/src/approval/approval.ts` | `approval(opts): Socket`：`evaluatePolicy` 管线（未知 → deny → ask → allow → unmatched）与 beforeTool 的三种落点；`findExpiredApproval` 纯函数（D3 批准有效期） |
 | `packages/brain/src/approval/rules.ts` | 规则提示 `APPROVAL_RULES`：要等人批不是出错、被拒别换写法再试；`APPROVAL_EXPIRY_RULE`：设了 ttl 时追加，过期可再调一次 |
@@ -148,7 +148,7 @@
 
 1. run 起步：静态贡献是函数形态——`SocketSetup.memory` 存在才返回 `[memory 工具]` 与 `MEMORY_RULES`；不存在则两者都不注册并经 `warn` 告警一次。本模块没有任何钩子。
 2. 工具 `validate` 走 `parseMemoryCommand`：认出六个 command 之一，每个路径都先过 `resolveMemoryPath` 规范化（防穿越）。
-3. `execute`：`bindMemoryFs(ctx.memory, namespace(ctx))` 把命名空间前缀绑上（模型看到的路径始终是 `/memories/...`），再 `executeMemoryCommand(fs, cmd, limits)` 执行。
+3. `execute`：`bindMemoryFs(ctx.memory, namespace(ctx), directories)` 把命名空间前缀与常设目录绑上（模型看到的路径始终是 `/memories/...`；`directories` 构造期经 `resolveMemoryPath` 规范化并补齐祖先），再 `executeMemoryCommand(fs, cmd, limits)` 执行。
 4. 成功的读写 `ctx.emit` 一条 `core.memory_op(actor=model, provenance.ref=toolCallId)`，循环把它排在 `tool_result` 之前；失败不留（tool_call 入参 + isError 结果已是审计痕）。`memory_op` 被投影过滤，模型看不见。
 
 ### skills
@@ -231,6 +231,8 @@
 **memory 缺 MemoryStore 则不注册工具与规则**（B6）— 注册一个一用就报错的工具，会让被规则要求"先查记忆"的模型每轮撞墙。落地靠 core 的 `StaticContribution<T>` 函数形态（按 `SocketSetup` 算一次），比 `beforeModel` 补丁干净且不碰缓存前缀。
 
 **memory 是自定义工具而非 Anthropic 原生 `memory_20250818`**（B6）— 降级层 pi-ai 不支持 provider-defined 工具，且 reins 要跨模型族；六个 command 与字段同名同义、回执文案对齐官方参考实现，模型已有的习惯直接迁移。有意的三处差异：`create` 对已存在文件是覆盖并在回执说明；`view` 超 `maxViewChars` 按行截断并提示用 `view_range` 续读；写类操作有单文件上限。
+
+**常设目录只改"存不存在"，不放宽写**（2026-10-31，OnSet 建议 6）— KV 存储没有空目录，宿主分层挂载（个人 / 项目 / 团队）时空层一 view 就是"不存在"+ isError，模型白花一轮。`directories` 声明后：`isDirectory` 认它（及祖先），view 回空列表，上级列表列出 0B 条目；create 当文件写、rename 到它照旧被"是目录 / 已存在"拒；删 / 改名空的常设目录回"是空的"而不是"不存在"，免得与 view 自相矛盾。缺省不声明，行为与参考实现一致。
 
 **记忆路径宁严勿宽，命名空间只是一个选项**（B6）— 拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠得到唯一规范形态（同一个文件只有一个键）。隔离靠 `namespace(ctx) → 前缀`，存储层与日志都不知道"角色"这个概念。边界：`rename` / `delete` 目录不是原子的（MemoryStore 没有事务），顺序都是先写后删，中途失败最多多出重复、不会丢。
 

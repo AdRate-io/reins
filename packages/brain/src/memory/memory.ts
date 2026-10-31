@@ -19,11 +19,13 @@ import type { Socket, SocketSetup, Tool, ToolContext } from "@reinsjs/core"
 import {
   bindMemoryFs,
   executeMemoryCommand,
+  expandMemoryDirectories,
   MEMORY_INPUT_SCHEMA,
   type MemoryCommand,
   type MemoryLimits,
   parseMemoryCommand,
 } from "./commands.js"
+import { MEMORY_ROOT, resolveMemoryPath } from "./paths.js"
 import { MEMORY_RULES, MEMORY_TOOL_DESCRIPTION, MEMORY_TOOL_NAME } from "./rules.js"
 
 export interface MemoryOptions {
@@ -36,6 +38,13 @@ export interface MemoryOptions {
   maxFileBytes?: number
   /** view 单次最多返回的字符数（正文部分），超过按行截断并提示用 view_range 续读。缺省 16000（与 Anthropic 工具说明一致） */
   maxViewChars?: number
+  /**
+   * 常设目录（模型可见路径，如 `["/memories/personal", "/memories/project"]`）：宿主把记忆分层挂载时，
+   * 某层还没有文件也让模型看得见——`view` 它返回空列表而不是"不存在"，`view /memories` 也列出它；
+   * 祖先目录自动算进来。只改"存不存在"的判定，不放宽任何写操作：常设目录不能被当文件写，模型也删不掉它。
+   * 缺省没有（与参考实现一致：没有文件的目录不存在）
+   */
+  directories?: readonly string[]
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
   /** 没有 MemoryStore 时的告警出口（每个 memory() 实例只告警一次）。缺省 console.warn */
@@ -60,6 +69,7 @@ export function memory(opts: MemoryOptions = {}): Socket {
   if (opts.namespace !== undefined && typeof opts.namespace !== "function") {
     throw new RangeError("memory.namespace must be a function")
   }
+  const directories = expandMemoryDirectories(resolveDirectories(opts.directories))
   const namespace = opts.namespace ?? (() => "")
   const warn = opts.warn ?? ((message: string) => console.warn(message))
   let warned = false
@@ -80,7 +90,7 @@ export function memory(opts: MemoryOptions = {}): Socket {
           isError: true,
         }
       }
-      const fs = bindMemoryFs(ctx.memory, namespace(ctx))
+      const fs = bindMemoryFs(ctx.memory, namespace(ctx), directories)
       const outcome = await executeMemoryCommand(fs, cmd, limits)
       if (outcome.op) {
         // 留痕排在 tool_result 之前（循环保证）；模型不可见，给配额 / 回放 / eval 看
@@ -115,4 +125,27 @@ export function memory(opts: MemoryOptions = {}): Socket {
     socket.systemPrompt = (setup) => (setup.memory ? rules : undefined)
   }
   return socket
+}
+
+/** 构造期校验常设目录：与模型给的路径走同一个规范化函数（同一个值两处比对调同一个纯函数），根本身不算 */
+function resolveDirectories(dirs: unknown): string[] {
+  if (dirs === undefined) return []
+  if (!Array.isArray(dirs))
+    throw new RangeError(`memory.directories must be an array of paths, got ${typeof dirs}`)
+  return dirs.map((d, i) => {
+    let p: string
+    try {
+      p = resolveMemoryPath(d)
+    } catch {
+      throw new RangeError(
+        `memory.directories[${i}] must be a path under ${MEMORY_ROOT}, got ${JSON.stringify(d)}`,
+      )
+    }
+    if (p === MEMORY_ROOT) {
+      throw new RangeError(
+        `memory.directories[${i}] must be a path under ${MEMORY_ROOT}, not the root itself`,
+      )
+    }
+    return p
+  })
 }

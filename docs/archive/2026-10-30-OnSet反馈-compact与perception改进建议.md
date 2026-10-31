@@ -75,3 +75,17 @@ OnSet 现在的做法（只作参考，属于 OnSet 自己的本地化，不算�
 有了这个钩子，OnSet 侧的改法：压缩后当场补记忆快照，以及被折掉的条目快照；再把"已附"记录更新为当场补的内容，下一次 run 就不再整份重附。剪辑这次压缩后照常工作，没有因此出错，所以优先级不高。
 
 > **处置（reins，2026-10-31）**：不加压缩后钩子，改为 pins 的常驻快照 `{ name, snapshot }`——记忆索引、条目快照作快照 pin 压缩不掉，段起点（会话首轮、每次整理后）按当前数据刷新、没变不追加，宿主不再需要"已附"记账。方案 `docs/implementation-plans/2026-10-31-常驻快照按段刷新.md`，配方见 brain README "Resident context that survives compaction"。
+
+## 建议 6（第三、四轮工具报错盘查补充，2026-10-31）：view 还没有文件的记忆目录，返回"空"而不是报错
+
+背景：OnSet 把记忆挂成三个前缀根（`/memories/personal`、`/memories/project`、`/memories/team`），由宿主的 `MemoryStore` 路由到不同存储。新项目、新角色开工时，个人层和项目层下面还没有文件。
+
+现状：`packages/brain/src/memory/commands.ts` 的 `isDirectory` 只认 `MEMORY_ROOT`，或者 `listUnder(path)` 不为空的路径。所以角色开工先 `view /memories/project` 看看有什么，拿到的是 `The path /memories/project does not exist. Please provide a valid path.`，并且算 `isError`。第三、四轮一共 7 次（制片、策划、编剧、导演、剪辑都踩过），模型每次都多花一轮去理解"不存在"是什么意思。OnSet 这边造不出一个空目录：`MemoryStore` 只存文件。
+
+建议：
+- 宿主配置里声明的挂载前缀（或者 `MemoryStore` 能报出自己的根），以及它们的祖先目录，`view` 时一律当目录处理；下面没有文件就返回"（空目录）"之类的普通结果，不算错误。
+- 范围只限 `view`。`create` 往前缀根本身写、`delete` / `rename` 前缀根，仍由宿主或现有规则拦住，这个口径不变。
+
+优先级低：错误文案本身说得清楚，模型下一轮就能纠正，代价只是每个新会话多一轮。
+
+> **处置（reins，2026-10-31）**：照建议做，brain 0.7.0。`memory({ directories: ["/memories/personal", "/memories/project", "/memories/team"] })` 声明常设目录（祖先自动算进来）：`view` 空层返回空列表、不算错误，`view /memories` 也列出这几层（0B）。写操作口径不变：不能把常设目录当文件写、不能改名到它；删 / 改名一个空的常设目录回"is empty; there is nothing to delete / rename"。不声明的宿主行为不变。
