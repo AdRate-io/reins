@@ -1,5 +1,11 @@
 # @reinsjs/brain
 
+## 0.7.1
+
+### Patch Changes
+
+- Republish with the built output: 0.7.0 was published from a stale build and does not contain the `memory({ directories })` option.
+
 ## 0.7.0
 
 ### Minor Changes

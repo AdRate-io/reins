@@ -16,7 +16,7 @@
     "format": "biome format --write .",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "prepare": "git config core.hooksPath .githooks",
-    "check:dist": "node scripts/check-dist.mjs"
+    "check:dist": "pnpm build && node scripts/check-dist.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
