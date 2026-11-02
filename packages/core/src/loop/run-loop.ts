@@ -97,7 +97,49 @@ function classifyInputItem(item: unknown): "part" | "draft" | undefined {
   return CONTENT_PART_TYPES.has(type) ? "part" : undefined
 }
 
-/** 单条草稿过类型白名单与 actor 校验；不合规抛 RangeError */
+const NOTE_KINDS: ReadonlySet<string> = new Set(["perception", "pin", "budget", "host"])
+
+/** 内容片段的最小形状校验：坏片段一旦进日志，之后每次读到它都会崩（会话报废），所以在写之前拦 */
+function isContentPartList(x: unknown): boolean {
+  if (!Array.isArray(x)) return false
+  return x.every((p) => {
+    if (typeof p !== "object" || p === null) return false
+    const part = p as Record<string, unknown>
+    if (part.type === "text") return typeof part.text === "string"
+    if (part.type === "image") return typeof part.mime === "string" && typeof part.data === "string"
+    if (part.type === "tool_reference")
+      return (
+        typeof part.name === "string" &&
+        typeof part.description === "string" &&
+        typeof part.inputSchema === "object" &&
+        part.inputSchema !== null
+      )
+    return false
+  })
+}
+
+/** 三种 core 输入草稿的 payload 最小形状；ext.* 的形状归宿主自己的注册表 */
+function corePayloadProblem(draft: EventDraft): string | undefined {
+  const p = (typeof draft.payload === "object" && draft.payload !== null ? draft.payload : {}) as Record<
+    string,
+    unknown
+  >
+  if (draft.type === "core.user_message")
+    return isContentPartList(p.content) ? undefined : "payload.content must be an array of content parts"
+  if (draft.type === "core.tool_result") {
+    if (typeof p.toolCallId !== "string" || typeof p.name !== "string")
+      return "payload.toolCallId and payload.name must be strings"
+    return isContentPartList(p.content) ? undefined : "payload.content must be an array of content parts"
+  }
+  if (draft.type === "core.system_note") {
+    if (typeof p.kind !== "string" || !NOTE_KINDS.has(p.kind))
+      return `payload.kind must be perception, pin, budget or host, got ${String(p.kind)}`
+    return typeof p.text === "string" ? undefined : "payload.text must be a string"
+  }
+  return undefined
+}
+
+/** 单条草稿过类型白名单、actor 与 core 载荷形状校验；不合规抛 RangeError */
 function checkInputDraft(draft: EventDraft): EventDraft {
   if (
     typeof draft.type !== "string" ||
@@ -112,6 +154,8 @@ function checkInputDraft(draft: EventDraft): EventDraft {
       `input draft actor must be user, model, tool, system or host, got ${String(draft.actor)}`,
     )
   }
+  const problem = corePayloadProblem(draft)
+  if (problem !== undefined) throw new RangeError(`input draft ${draft.type}: ${problem}`)
   return draft
 }
 
@@ -132,8 +176,10 @@ export function inputDrafts(input: NonNullable<LoopConfig["input"]>): EventDraft
       )
     }
     // 空数组沿用现状当片段
-    if (!kinds.has("draft"))
+    if (!kinds.has("draft")) {
+      if (!isContentPartList(input)) throw new RangeError("input content parts are malformed")
       return [{ type: "core.user_message", actor: "user", payload: { content: input as ContentPart[] } }]
+    }
     return (input as readonly EventDraft[]).map(checkInputDraft)
   }
   return [checkInputDraft(input)]
@@ -159,6 +205,10 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   const retry = resolveRetry(cfg.retry)
   // 新输入先过类型白名单：不合规在写任何东西之前就拒绝
   const input = cfg.input !== undefined ? inputDrafts(cfg.input) : []
+  // 注册表也在写日志前查：未登记的 ext.* 若拖到 append 才失败，tools_bound / run_resumed 已经落了
+  for (const d of input) {
+    if (!registry.has(d.type)) throw new RangeError(`input draft type ${d.type} is not registered`)
+  }
   const capabilities = lowering.capabilities(model)
   const configHash = await computeConfigHash({
     model,

@@ -1849,6 +1849,28 @@ describe("input 草稿数组（OnSet 建议 7）", () => {
       /got admin/,
     ],
     ["片段带了 actor", [{ type: "text", text: "hi", actor: "user" }], /rejects event type text/],
+    [
+      "未登记的 ext.*",
+      [note("x"), { type: "ext.foo", actor: "host", payload: {} }],
+      /ext.foo is not registered/,
+    ],
+    [
+      "user_message 缺 content",
+      [{ type: "core.user_message", actor: "user", payload: {} }],
+      /payload.content/,
+    ],
+    [
+      "system_note kind 非法",
+      [{ type: "core.system_note", actor: "host", payload: { kind: "x", text: "t" } }],
+      /payload.kind/,
+    ],
+    [
+      "tool_result 缺 toolCallId",
+      [{ type: "core.tool_result", actor: "tool", payload: { name: "f", content: [] } }],
+      /toolCallId/,
+    ],
+    ["片段缺字段", [{ type: "text" }], /content parts are malformed/],
+    ["tool_reference 片段缺字段", [{ type: "tool_reference", name: "g" }], /content parts are malformed/],
   ])("%s → RangeError，一条日志都不写", async (_name, input, message) => {
     const log = new InMemoryEventLog()
     const run = runLoop(

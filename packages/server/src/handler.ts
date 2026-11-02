@@ -110,7 +110,6 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
   } else if (b.input !== undefined) {
     const okInput =
       typeof b.input === "string" ||
-      Array.isArray(b.input) ||
       (typeof b.input === "object" && b.input !== null && "type" in b.input && "payload" in b.input)
     if (!okInput)
       return { ok: false, error: "input must be a string, an array of content parts, or an event draft" }

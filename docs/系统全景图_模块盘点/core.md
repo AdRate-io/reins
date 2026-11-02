@@ -117,7 +117,7 @@
 | --- | --- |
 | `loop/index.ts` | 汇总导出 fork / retry / run-loop / state / static / tools / types |
 | `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`（含可选 `decisions` / `spend`，asTool 用）；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`；`RunResult` 四态、`SerializedRunState`、`Interruption`（五种，含 `SubagentInterruption`）、`ApprovalDecisionInput`（可选 `sessionId`）、`LoopConfig`（全部循环开关，P1 加 `announceToolChanges`）；`StaticContribution<T>` 的函数形态可返回 Promise（P1） |
-| `loop/run-loop.ts` | `runLoop` 主体（848 行）：append/pause/fail/spendInto 四个基础动作、恢复与审批校验（结论按 `sessionId` 分本会话 / 转发两路）、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`（含 `isSubagentPause` 冒泡分支）、`inputDrafts` 归一与白名单（草稿数组逐条查） |
+| `loop/run-loop.ts` | `runLoop` 主体（898 行）：append/pause/fail/spendInto 四个基础动作、恢复与审批校验（结论按 `sessionId` 分本会话 / 转发两路）、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`（含 `isSubagentPause` 冒泡分支）、`inputDrafts` 归一与白名单（草稿数组逐条查） |
 | `loop/state.ts` | run 状态：`pendingToolCalls`、`computeConfigHash` / `computePendingDigest`（SHA-256）、`serializeRunState` / `signRunState` / `verifyRunState`（HMAC-SHA256 + 常数时间比较）、`validateResume` 与 8 种 `RunStateError` |
 | `loop/static.ts` | `resolveSocketContributions`（P1 起 **async**，各 Socket 依次 await 而非并发）：宿主工具 + 各 Socket 静态工具（同名宿主优先）、系统提示按注册顺序拼接；每个 Socket 拿自己的一份 `SocketSetup`，`tools` 是到它为止已并入的工具表快照、同一 Socket 的 `tools` / `systemPrompt` 两次解析共用同一对象（2026-09-22，lazy-tools 收 MCP 工具靠它）；循环起步与 server 预校验共用，configHash 才对得上 |
 | `loop/subagent.ts` | 子代理暂停标记（§10.1）：`subagentPause(detail)` / `isSubagentPause()`，`Symbol.for` 品牌；工具 `execute` 返回它，循环不落 tool_result、run 整体 paused(kind=subagent) |
@@ -126,7 +126,7 @@
 | `loop/deferred-tools.test.ts` | L1 在 core 的用例：`renderToolReference` 写法、`normalizeToolOutput` 认引用段、估算按展开文本算、`BeforeModelPatch.deferredTools` → `ToolSpec.deferLoading` 的接线（不在表的名字忽略、后一个 Socket 整体替换、没给就沿用） |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |
-| 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 子代理冒泡 3 例（返回标记即暂停、结论按 sessionId 转发、spend 合算）/ 上线前审查修复 3 例 / R1·R2 / input 草稿数组 9 例（按序一次写入、六类拒绝不落日志、四种旧形态回归、数组里回填客户端工具结果并续跑）；`run-state.test.ts` 覆盖跨进程暂停恢复与 12 项 fail-closed 校验；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝 |
+| 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 子代理冒泡 3 例（返回标记即暂停、结论按 sessionId 转发、spend 合算）/ 上线前审查修复 3 例 / R1·R2 / input 草稿数组 15 例（按序一次写入、十二类拒绝不落日志——含未登记 ext.* 与 core 载荷畸形、四种旧形态回归、数组里回填客户端工具结果并续跑）；`run-state.test.ts` 覆盖跨进程暂停恢复与 12 项 fail-closed 校验；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝 |
 
 ### `replay/` — 回放（T15）
 
@@ -153,7 +153,7 @@
 
 ### 一、一次 `runLoop` 从起步到四态（`loop/run-loop.ts`）
 
-1. **起步（不写日志）**：`await resolveSocketContributions(cfg)`（可异步：MCP 在此 `tools/list`）把宿主工具与各 Socket 的静态工具、系统提示合成整个 run 不变的两份；`computeConfigHash` 按它们算摘要；`inputDrafts(cfg.input)` 归一成草稿列表并逐条过白名单；`readTimeline` 把整条日志过一遍注册表拿到 `lastSeq` —— 以上任一步失败都在写任何东西之前抛。
+1. **起步（不写日志）**：`await resolveSocketContributions(cfg)`（可异步：MCP 在此 `tools/list`）把宿主工具与各 Socket 的静态工具、系统提示合成整个 run 不变的两份；`computeConfigHash` 按它们算摘要；`inputDrafts(cfg.input)` 归一成草稿列表并逐条过白名单、actor、三种 core 草稿的载荷最小形状（含纯片段数组），再逐条查注册表（未登记的 ext.* 不能拖到 append 才失败）；`readTimeline` 把整条日志过一遍注册表拿到 `lastSeq` —— 以上任一步失败都在写任何东西之前抛。
 2. **恢复与审批（校验先于落笔）**：给了 `resume` 就 `validateResume`（形状→会话→签名→configHash→日志不短于状态→pending 对账），`decisions` 逐条确认指向 pending 调用，全过才 append `run_resumed` 与各条 `approval_decision`。 随后 **append 工具表快照**（P1）：一条模型不可见的 `core.tools_bound { toolNames, configHash }`；与日志里上一条比对有增删且 `announceToolChanges !== false`（缺省开）则再 append 模型可见的 `system_note(kind=host)` 列出 Added / Removed，首次 run 不出。
 3. **落新输入**：`input` 归一后的草稿一次 append（同一 `at`、连续 seq、顺序即宿主给的顺序），哪怕日志里还有未完成的 tool_call —— 顺序由降级层去满足厂商协议，日志不动。
 4. **每轮开头**：读时间线 → 若 `signal.aborted` 立即 `pause("host")`（先于补齐 pending）→ `pendingToolCalls` 非空则先 `executeToolCalls` 补齐、再走一次 `endTurn` 收尾（R2）→ 否则检查 `maxTurns` → `turns++`。
