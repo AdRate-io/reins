@@ -4,7 +4,7 @@
 
 ## 架构概览
 
-`@reinsjs/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reinsjs/core`（`workspace:*`）；主入口零 Node 内置依赖，只用 Web 标准 API，唯一的 `node:*` 在子路径 `@reinsjs/brain/node`（文件系统技能载体 `fsSkillSource`，tsup `removeNodeProtocol: false`，`pnpm check:dist` 核对）。它不含循环、不含存储实现、不含降级层，只提供十个可单独装拆的模块。
+`@reinsjs/brain` 是 reins 预装的"驾驭经验"。`package.json` 里只有一个依赖：`@reinsjs/core`（`workspace:*`）；主入口零 Node 内置依赖，只用 Web 标准 API，唯一的 `node:*` 在子路径 `@reinsjs/brain/node`（文件系统技能载体 `fsSkillSource`，tsup `removeNodeProtocol: false`，`pnpm check:dist` 核对）。它不含循环、不含存储实现、不含降级层，只提供十二个可单独装拆的模块。
 
 每个模块都是一个工厂函数 `xxx(options): Socket`，返回 core 定义的 `Socket`（`packages/core/src/loop/types.ts`）。Socket 只有五个钩子（`beforeModel` / `afterModel` / `beforeTool` / `afterTool` / `onTurnEnd`）加两项静态贡献（`tools` / `systemPrompt`，run 起步时算一次、整个 run 不变，用于满足 prompt cache 约束、续跑补齐 pending 时在场、并计入 `configHash`）。模块只依赖这份契约，不依赖 `runLoop` 的实现。
 
@@ -21,13 +21,15 @@
 | approval | beforeTool | 规则提示 `APPROVAL_RULES`（无工具） | 推荐默认 | 不依赖存储 |
 | budget | afterModel、onTurnEnd | 无 | 推荐默认 | 不依赖存储 |
 | skills | 无钩子 | 工具 `skill_read`（`resultTrust: "system"`）与规则提示 `SKILL_RULES` + 菜单，均为按 `SocketSetup` 算一次的**异步函数形态**（菜单只读载体一遍） | opt-in：给了 `source` 即开 | 无 `source`、或 `root/` 下无一份合规 SKILL.md → **工具与菜单都不注册**并告警一次；不合规的单份技能跳过、各告警一次 |
+| halt-on-failure | beforeTool | 无 | opt-in；推荐注册在最前 | 不依赖存储 |
+| stop-after | beforeModel（名单校验）、onTurnEnd | 无 | opt-in | 不依赖存储 |
 | lazy-tools | beforeModel、beforeTool | 工具 `tool_find`（`resultTrust: "system"`）与规则提示 `LAZY_TOOL_RULES` + 菜单（每件 `lazy: true` 的工具一行（宿主 + 注册在它之前的 Socket 贡献，2026-09-22 起）），按 `SocketSetup` 算一次的函数形态 | opt-in：装了即开（无 eval 不进 README 推荐，eval 见 `examples/eval/fixtures/tool-discovery`） | 宿主没有一件 `lazy: true` 的工具、或已有同名 `tool_find` → **工具与菜单都不注册**并告警一次 |
 
 缺省开关的依据：`docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 2026-09-09 **E3** 行（spill 8k → 16k；compact / memory / handoff 不默认；perception / pins / budget / approval 推荐默认）与 2026-09-10 **E3c 结论**行（compact 含清单与 recall 后改为**推荐默认**，memory / handoff 仍不默认，其余不变），以及 `docs/待处理任务.md` 的 E3 / E3c 行。
 
-注册顺序有两处敏感（`onTurnEnd` 第一个给意见的 Socket 说了算）：handoff 应排在 compact 等可能返回 `pause` 的模块**之前**（否则回执说了交接却被别人暂停，回执撒谎）；budget 应排在 handoff **之后**（模型已决定交接就让它交接）。approval 建议排在 `sockets` **末尾**（至少在会 `rewrite` 入参的钩子之后），这样判定的是真正要执行的入参。
+注册顺序有两处敏感（`onTurnEnd` 第一个给意见的 Socket 说了算）：handoff 应排在 compact 等可能返回 `pause` 的模块**之前**（否则回执说了交接却被别人暂停，回执撒谎）；budget 应排在 handoff **之后**（模型已决定交接就让它交接）。stop-after 排在 handoff 之后、compact / budget 之前（排在 handoff 前会吞掉已回执的交接）；halt-on-failure 建议排在**最前**（block 短路，后面的 Socket 看不到被拦的调用）。approval 建议排在 `sockets` **末尾**（至少在会 `rewrite` 入参的钩子之后），这样判定的是真正要执行的入参。
 
-十个模块共用的几条写法约定：
+十二个模块共用的几条写法约定：
 
 - **规则提示同一形状**：带规则提示的模块（compact / pins / spill / handoff / memory / approval）都接受 `rules?: string | false`——缺省用内置文案，传字符串替换，传 `false` 则本模块完全不碰系统提示（宿主自己把导出的常量放进去）。
 - **给模型看的文字一律英文**：进的是模型上下文而不是给人看的日志，英文 token 更省、各家模型都熟；给人看的告警与构造期错误则是中文。
@@ -41,12 +43,14 @@
 | --- | --- |
 | `packages/brain/package.json` | 包声明：`@reinsjs/brain`，唯一依赖 `@reinsjs/core`，ESM、`sideEffects: false`；exports `.` 与 `./node` 两个入口 |
 | `packages/brain/tsup.config.ts` | 两个入口（index / node）；`removeNodeProtocol: false` 保住 `node:` 前缀 |
-| `packages/brain/src/index.ts` | 门面：十个模块目录的 `export *`，文件头一句话概括每个模块 |
+| `packages/brain/src/index.ts` | 门面：十二个模块目录的 `export *`，文件头一句话概括每个模块 |
 | `packages/brain/src/node.ts` | `@reinsjs/brain/node` 入口：`fsSkillSource(dir, { root? })`，`<dir>/<name>/SKILL.md` → `${root}/<name>/SKILL.md`；隐藏项与符号链接不列，read 二次防穿越并 realpath 防链接逃逸；ENAMETOOLONG / ELOOP / EACCES 等当"不存在"（不让宿主绝对路径进模型上下文） |
 | `packages/brain/src/node.test.ts` | fsSkillSource 在真实临时目录上的用例（列 / 读 / 越界 / 隐藏 / 符号链接 / 接到 skills()） |
 | `packages/brain/src/redaction.recipe.test.ts` | D5 脱敏配方的可执行版本（与根 README "Redacting what reaches the log" 逐字一致）：afterTool 草稿脱敏 + `append` 包装，锁住"脱敏 Socket 须排在 spill 前否则 blob 漏原文""包装管日志与模型视图、管不到 yield 出去的对象""客户端回填结果只有包装拦得住" |
 | `packages/brain/src/resident-context.recipe.test.ts` | 常驻上下文配方（与 brain README "Resident context that survives compaction" 逐字一致）：记忆索引作快照 pin，锁住"开场一份、段内写记忆不刷新、整理后刷新且视图只有一份" |
 | `packages/brain/src/gateway-tool.recipe.test.ts` | 网关型工具（一件工具转发数百操作，如 TikTok `tool_execute`）的审批配方，与 tools-mcp README "Gateway-style servers" 逐字一致：锁住"按工具名写的 deny 放跑了删除"（反面）、"按入参里的操作名判就拦得住"、"ask 段的审批摘要带真实操作名"、"不配规则时缺省 byRisk 连只读也问人（fail-closed）" |
+| `packages/brain/src/act-then-announce.recipe.test.ts` | "先做再通知"配方（与 brain README "Act, then announce" 逐字一致）：锁住"同批前一个失败则通知与收尾都被拦、run 不停"与"全部成功则本轮即 done" |
+| `packages/brain/src/shared/batch.ts` | `batchOf(ctx, module)`：取 `ctx.batch`，缺失（宿主装出两份 core、旧循环不填）时抛可读错误；halt-on-failure 与 stop-after 共用 |
 | `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
 | `packages/brain/src/shared/segment.ts` | 段判据（compact 与 pins 共用）：`atSegmentStart`、`modelActedSinceLastCompaction`、`currentSegment`、`timelineSoFar`，全从时间线读 |
 | `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读；`enforceLimit` 硬上限模式给 skills：带范围也截、超长单行切开）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
@@ -89,6 +93,12 @@
 | `packages/brain/src/budget/index.ts` | budget 子模块聚合导出 |
 | `packages/brain/src/budget/budget.ts` | `budget({ limits, note? }): Socket`：五维上限定义、`checkBudget` 纯函数、onTurnEnd 触顶即 `pause(budget)` |
 | `packages/brain/src/budget/budget.test.ts` | budget 的全部用例（纯函数、五维各自触顶、收尾轮不拦、续跑再批一份） |
+| `packages/brain/src/halt-on-failure/index.ts` | halt-on-failure 子模块聚合导出 |
+| `packages/brain/src/halt-on-failure/halt-on-failure.ts` | `haltOnFailure({ counts?, applies?, warn? }): Socket`：beforeTool 按 toolCallId 在 `ctx.batch.calls` 定位，前面有算数的失败结果或挂起的调用即 block；`haltedText` 文案点名最初那个；无状态 |
+| `packages/brain/src/halt-on-failure/halt-on-failure.test.ts` | 用例：[F, A, B] 拦下与点名、抛错算失败、counts / applies、等审批被拦且批准后不补执行、中止后补跑仍拦、rewrite 后定位与排在 approval 前、batch 缺失报错 |
+| `packages/brain/src/stop-after/index.ts` | stop-after 子模块聚合导出 |
+| `packages/brain/src/stop-after/stop-after.ts` | `stopAfter({ tools, warn? }): Socket`：构造期校验名单；beforeModel 对照 `ctx.tools` 告警拼错的名字；onTurnEnd 本批名单工具成功、无失败无挂起、补跑批后无新用户消息即 `"stop"` |
+| `packages/brain/src/stop-after/stop-after.test.ts` | 用例：成功即停且先于 budget、失败 / 自身 isError / 被拦不停、审批续跑无新输入收尾、遗留收尾遇新输入不停、[handoff, end_run] 交接兑现、构造校验与告警、batch 缺失报错 |
 | `packages/brain/src/skills/index.ts` | skills 子模块聚合导出 |
 | `packages/brain/src/skills/skills.ts` | `skills(opts): Socket`：`assertSkillsRoot`（拒绝与 `/memories` 重叠）、`loadSkillMenu` 读菜单（按 setup 缓存、按 name 排序）、`parseSkillReadInput` 校验入参、`skill_read` 工具（`risk: low`、`resultTrust: system`、硬上限视图、`resultPolicy.maxTokens = 2 × maxReadChars + 256`、载体异常兜住只告警）；缺 source / 空菜单 / 宿主同名工具都不注册 |
 | `packages/brain/src/skills/constants.ts` | 零依赖字面常量：`DEFAULT_SKILLS_ROOT`、`SKILL_FILE_NAME`、`SKILL_NAME_RE`（node.ts 与 inline.ts 共用同一份） |
@@ -181,6 +191,16 @@
 2. `onTurnEnd`：本轮模型已收尾作答就不拦（循环本来就要停）。
 3. 还要继续时跑 `checkBudget(ctx.budget, limits)`：`contextTokens` 取 `contextTokensOf(lastUsage)`（input + cacheRead + cacheWrite），其余四维直接读 `tokensSpent` / `turns` / `toolCalls` / `wallMs`；**用量 ≥ 上限**即触顶。
 4. 有触顶维度就返回 `{ pause: { reason: "budget", note } }`，note（缺省 `defaultBudgetNote`）列出全部触顶维度与用量/上限，进 `Interruption` 给宿主看。上限按每次 run 计，宿主续跑即再批一份。
+
+### halt-on-failure
+
+1. `beforeTool`：`batchOf(ctx)`；按 toolCallId 在 `calls` 里找到当前调用（找不到告警一次、不表态）；`applies` 为假不表态。
+2. 从前往后看排在它前面的调用：有 isError 结果且 `counts` 为真 → block（点名它）；在 `held` 里 → block（still waiting）。同批被本模块拦下的调用自己也是 isError，但最初那个排得更前，所以点名的总是根因。
+
+### stop-after
+
+1. `beforeModel`：名单里的工具不在 `ctx.tools` 就告警一次（每个名字一次）。
+2. `onTurnEnd`：本批非空、`held` 空、每个调用都有结果、无 isError、有名单工具的结果 → 补跑批再查 `ctx.timeline` 里本批最后一个调用之后有没有 `core.user_message`，没有才 `"stop"`。
 
 ## 核心设计决策
 

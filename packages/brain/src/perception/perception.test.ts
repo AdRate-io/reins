@@ -191,6 +191,7 @@ function fakeCtx(over: {
     events: over.events ?? [],
     timeline: over.timeline ?? over.events ?? [],
     log: new InMemoryEventLog(),
+    batch: { calls: [], results: [], held: [], resumed: false },
     tools: [],
     model: MODEL,
     capabilities: {

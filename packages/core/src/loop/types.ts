@@ -115,6 +115,7 @@ export interface Tool<TInput = unknown> {
 }
 
 export type ToolCallEvent = CoreEventOf<"core.tool_call">
+export type ToolResultEvent = CoreEventOf<"core.tool_result">
 export type ToolResultDraft = EventDraft<"core.tool_result", ToolResultPayload>
 
 // ---- 插座（§7）----
@@ -205,8 +206,31 @@ export interface TurnContext {
     lastUsage?: TokenUsage
   }
   signal?: AbortSignal
+  /**
+   * 本批工具调用的活动（2026-11-02，OnSet 建议 9 / 10）：模型这次发了哪些调用、已落了哪些结果、哪些被挂起、是不是补跑。
+   * 同一个对象在本轮内由循环随落随更——beforeTool 处理第 k 个调用时只看得见它之前落下的结果；不要拿快照比较
+   */
+  batch: ToolBatch
   /** 草稿：无 id / seq / at / sessionId，循环补齐后 append。beforeModel 期间 emit 的本轮即可见 */
   emit(draft: EventDraft): void
+}
+
+/**
+ * "一批" = 一段连续模型输出里的 tool_call（与 replay 切轮 `isModelOutput` 同口径，模型不可见的运维事件不切段），
+ * 定位规则只有一份：`toolBatchOf`。Socket 只读；循环（runLoop、TanStack 适配器）负责填。
+ */
+export interface ToolBatch {
+  /** 本批调用，按执行顺序。模型输出前（beforeModel）为空；补跑时是遗留调用所在那批的全部 tool_call */
+  readonly calls: readonly ToolCallEvent[]
+  /**
+   * 本批已落日志的 tool_result（afterTool 替换之后、真正落日志的那条），按落下顺序。
+   * 补跑时预置上次已落的（含宿主经 input 回填的客户端工具结果）
+   */
+  readonly results: readonly ToolResultEvent[]
+  /** 本批已处理但被挂起、没落结果的 toolCallId（等审批 / 等客户端回填 / 子代理暂停）。TanStack 路径恒为空（defer 让整批暂停） */
+  readonly held: readonly string[]
+  /** 本批是续跑补齐上次遗留的调用（没有新的模型输出） */
+  readonly resumed: boolean
 }
 
 /**

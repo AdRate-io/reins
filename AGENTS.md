@@ -122,7 +122,7 @@
 ```
 @reinsjs/agent（createAgent / asTool，总包）─ @reinsjs/server ─ @reinsjs/ui-agui
                           │
-                     @reinsjs/core ←── @reinsjs/brain（十个 Socket；/node 有 fsSkillSource）
+                     @reinsjs/core ←── @reinsjs/brain（十二个 Socket；/node 有 fsSkillSource）
                           ↑           @reinsjs/lowering-pi（pi-ai）
                           ├── @reinsjs/lowering-fetch（零依赖；Chat / Anthropic Messages / Responses 三线；新宿主推荐）
                           ├── @reinsjs/store-sqlite / store-pg
@@ -131,7 +131,7 @@
                           └── @reinsjs/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-脑子十个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。当前版本：core 0.7.0、brain 0.7.3、lowering-fetch 0.5.2、eval / lowering-pi 0.4.2、server / agent 0.4.1、其余 0.3.4。
+脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。当前版本：core 0.7.0、brain 0.7.3、lowering-fetch 0.5.2、eval / lowering-pi 0.4.2、server / agent 0.4.1、其余 0.3.4。
 
 ## 技术栈
 
@@ -237,6 +237,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 用户消息后移 vs 说明后移 | 用户消息后移记 `lossy(user)`（改变了对话顺序）；脑子说明后移仍算 `exact`（只换位置） |
 | runLoop vs TanStack 适配器遇 `defer` | runLoop 只挡需要审批的那个调用；TanStack 在 `beforeTools` 边界暂停，整轮工具全停（引擎形状决定，不绕） |
 | asTool 子代理暂停：默认循环 vs TanStack | 默认循环 `subagentPause` 冒泡成父 paused；TanStack 路径降级为 isError（子会话保留可续跑） |
+| `ctx.batch`：默认循环 vs TanStack | 默认循环逐个判、beforeTool 看得见同批前面的结果；TanStack 整批先判，同批结果不可见、`held` 恒空、补跑批没有 onTurnEnd——`haltOnFailure` 只拦得住补跑预置的失败，`stopAfter` 兑现不了"审批后收尾" |
 | Responses reasoning：pi 版 vs fetch 版 | pi 版只在请求 effort 时带 `include: ["reasoning.encrypted_content"]`；fetch 版推理模型永远带（gpt-5 缺省开推理，不带就产出无法回放的项） |
 | `deferredTools` 能力位：Anthropic 官方 vs DeepSeek 的 Anthropic 端口 | 只对 `provider: "anthropic"` 缺省开；DeepSeek 兼容端口实测忽略 `defer_loading`；Chat / Responses / pi 版把 `deferLoading` 的工具直接不发 |
 | DeepSeek `reasoning_content`：`deepseek()` vs `openaiChat()` | 前者缺省开方言、每条历史 assistant 字段必在；后者不带 |
@@ -288,6 +289,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`skills({ root })` 拒绝与 `/memories` 相同或互为前缀；宿主工具表已有同名 `skill_read` 时整个不注册** — 否则模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能。
 - **AdRate `skills install` 落盘的 SKILL.md 是存根，正文只在 CLI 里** — 示例用 `inlineSkills` 从 CLI 的 `--json` 拼；接任何技能目录前先看一眼正文（踩坑 21）。
 - **lazy-tools 的"已取回"集合从时间线重建（`tool_find` 的 tool_call 与非 isError 的 tool_result 配对 ∩ 当前菜单），菜单按 Tool 对象同一性记** — 没取回就直接调菜单工具会被 `beforeTool` block 并指向 `tool_find`，不是"未知工具"；lazy 工具来自注册在它之后的 Socket 则不藏、告警指出顺序。
+- **`stopAfter` 排在 handoff 之后、compact / budget 之前；`haltOnFailure` 排最前** — onTurnEnd 第一个给意见的定，`[handoff, end_run]` 时排在 handoff 前会吞掉已回执的交接；`ctx.batch` 是随落随更的同一对象，别存引用当快照。
 - **lazy-tools 原生路径两条反直觉** — `beforeTool` 只看本轮被藏名单、不能以"表里找到工具"放行（全表下发时工具就在表里）；取回那轮被 compact 折出本轮视图的工具**不延迟**、定义进 tools 块（厂商只从历史里的 `tool_reference` 展开）。过滤路径下取回后约 7 个请求才回本，规则要求一次取全。
 
 ### 降级层（lowering-pi）

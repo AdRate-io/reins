@@ -65,7 +65,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | `src/schema.ts` | `reinsSchema()`：手写的 Standard Schema（同时满足 `StandardSchemaV1` 与 `StandardJSONSchemaV1`），只为 `defineInterrupt` 服务，不引 zod；附 `isRecord`。 |
 | `src/loss-matrix.ts` | `TANSTACK_LOSS_MATRIX`：本路径每种事件类型的可能落点（exact / lossy / dropped），与 lowering-pi 的矩阵同形。 |
 | `src/testing.ts` | `scriptedAdapter(script)`：脚本化 TanStack 文本适配器，按剧本吐 AG-UI chunk 并把每次 `chatStream` 收到的 `TextOptions` 记进 `calls`（断言"模型看到了什么"就看它）；配套 `say` / `think` / `callTool` 与 `SCRIPTED_MODEL` / `SCRIPTED_PROVIDER`。文本拆两段 delta、thinking 签名故意排在 END 之后，专门压拼块器。 |
-| `src/messages.test.ts`、`src/middleware.test.ts` | 单测与端到端。前者：`toModelMessages`、`importModelMessages / trailingUserMessages`（含幂等键与去重）、`BlockAssembler`、`toModelMessages：用户消息后移`；后者跑真实 `chat()` 引擎 + `scriptedAdapter`：`reinsMiddleware：基本流程`、`：脑子模块`、`：审批`（含漏登记中断的 fail-closed 用例 `withoutInterrupts`，与 `approval({ ttlMs })` 过期批准在续跑时被拦的用例）、`：能力位`（`deferredTools` 恒 false）。 |
+| `src/messages.test.ts`、`src/middleware.test.ts` | 单测与端到端。前者：`toModelMessages`、`importModelMessages / trailingUserMessages`（含幂等键与去重）、`BlockAssembler`、`toModelMessages：用户消息后移`；后者跑真实 `chat()` 引擎 + `scriptedAdapter`：`reinsMiddleware：基本流程`、`：脑子模块`、`：审批`（含漏登记中断的 fail-closed 用例 `withoutInterrupts`，与 `approval({ ttlMs })` 过期批准在续跑时被拦的用例）、`：能力位`（`deferredTools` 恒 false）、`：TurnContext.batch`（正常轮字段、haltOnFailure 不误拦整批、stopAfter 正常轮收尾、补跑批字段与"补跑批没有 onTurnEnd"现状）。 |
 
 ## 3 核心流程
 
@@ -87,7 +87,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 16. **`onInterruptResolution`**：把每条答复记成 `core.approval_decision`（取消记 `approved: false, reason: "审批被取消"`），有事件则补一条 `core.run_resumed`，返回 `{ toolResume: "continue" }`。
 17. **`onShouldContinue`**：缺省沿用 TanStack 的判断（本轮有工具调用则继续），任一 `sock.onTurnEnd` 给出决定即采纳并跳出；`continue → true`，`stop → false`，`pause → append run_paused + false`，`handoff → doHandoff（旧会话记 core.handoff，新 sessionId 下写"摘要 system_note + opening + triggerMessage"）+ false`。
 18. **`onAbort` / `onError`**：都先 `assembler.finish()` 保住半截输出，再分别落 `core.run_paused(host)` / `core.error(category: "tanstack-ai")`。
-19. 贯穿全程的 `append()`：唯一分配 `seq` 的地方（与 runLoop 同约定），`createEvent` 过注册表 → `log.append` → 回调 `onEvent` → 非正文类事件（不在 `CONTENT_TYPES` 里的）以 AG-UI `CUSTOM` chunk 推给前端（`emitCustomEvents` 缺省开）。
+19. 贯穿全程的 `append()`：唯一分配 `seq` 的地方（与 runLoop 同约定），落日志后把 `tool_call` / `tool_result` 登记进当前轮的 `ctx.batch`（2026-11-02；`held` 恒空，补跑批在 `beforeTools` 首次造轮时经 core `toolBatchOf` 预置并标 `resumed`），`createEvent` 过注册表 → `log.append` → 回调 `onEvent` → 非正文类事件（不在 `CONTENT_TYPES` 里的）以 AG-UI `CUSTOM` chunk 推给前端（`emitCustomEvents` 缺省开）。
 
 ## 4 核心设计决策
 

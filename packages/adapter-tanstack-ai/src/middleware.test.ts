@@ -6,6 +6,7 @@ import {
   approval,
   budget,
   compact,
+  haltOnFailure,
   handoff,
   inlineSkills,
   memory,
@@ -13,6 +14,7 @@ import {
   pins,
   skills,
   spill,
+  stopAfter,
 } from "@reinsjs/brain"
 import {
   type CoreEvent,
@@ -24,6 +26,7 @@ import {
   InMemoryEventLog,
   InMemoryMemoryStore,
   type Socket,
+  type ToolBatch,
 } from "@reinsjs/core"
 import {
   type AnyTool,
@@ -817,5 +820,154 @@ describe("reinsMiddleware：审批", () => {
       role: "tool",
       error: expect.stringContaining("blocked"),
     })
+  })
+})
+
+describe("reinsMiddleware：TurnContext.batch（2026-11-02）", () => {
+  interface Snap {
+    where: string
+    calls: string[]
+    results: string[]
+    resumed: boolean
+  }
+  const snapOf = (where: string, b: ToolBatch): Snap => ({
+    where,
+    calls: b.calls.map((c) => c.payload.toolCallId),
+    results: b.results.map((r) => r.payload.toolCallId),
+    resumed: b.resumed,
+  })
+  const probe = (snaps: Snap[]): Socket => ({
+    beforeTool: (ctx, call) => {
+      snaps.push(snapOf(`beforeTool:${call.payload.toolCallId}`, ctx.batch))
+      return undefined
+    },
+    onTurnEnd: (ctx) => {
+      snaps.push(snapOf("onTurnEnd", ctx.batch))
+      return undefined
+    },
+  })
+  const endRunTool = toolDefinition({
+    name: "end_run",
+    description: "收尾",
+    inputSchema: { type: "object" },
+  }).server(async () => "ended")
+  const deployTool = toolDefinition({
+    name: "deploy",
+    description: "上线",
+    inputSchema: { type: "object" },
+  }).server(async () => "deployed")
+
+  it("正常轮：beforeTools 边界整批先过 beforeTool（此时无结果），onShouldContinue 看到整批结果", async () => {
+    const snaps: Snap[] = []
+    const f = fixture(
+      [
+        { blocks: [callTool("c1", "add", { a: 1, b: 1 }), callTool("c2", "add", { a: 2, b: 2 })] },
+        { blocks: [say("ok")] },
+      ],
+      [probe(snaps)],
+    )
+    await f.run({ messages: [user("go")], tools: [addTool] })
+    expect(snaps.slice(0, 3)).toEqual([
+      { where: "beforeTool:c1", calls: ["c1", "c2"], results: [], resumed: false },
+      { where: "beforeTool:c2", calls: ["c1", "c2"], results: [], resumed: false },
+      { where: "onTurnEnd", calls: ["c1", "c2"], results: ["c1", "c2"], resumed: false },
+    ])
+  })
+
+  it("haltOnFailure 在 TanStack 路径不误拦：[A, B, C] 全正常时三个都执行（刻意不对称：同批无结果可看）", async () => {
+    let executed = 0
+    const counting = toolDefinition({ name: "add", description: "", inputSchema: { type: "object" } }).server(
+      async () => {
+        executed++
+        return "ok"
+      },
+    )
+    const f = fixture(
+      [
+        {
+          blocks: [
+            callTool("c1", "add", { a: 1 }),
+            callTool("c2", "add", { a: 2 }),
+            callTool("c3", "add", { a: 3 }),
+          ],
+        },
+        { blocks: [say("ok")] },
+      ],
+      [haltOnFailure()],
+    )
+    await f.run({ messages: [user("go")], tools: [counting] })
+    expect(executed).toBe(3)
+  })
+
+  it("stopAfter：[动作, end_run] 都成功 → 本轮结束即停，不再请求模型", async () => {
+    const f = fixture(
+      [
+        { blocks: [callTool("c1", "add", { a: 1, b: 1 }), callTool("c2", "end_run", {})] },
+        { blocks: [say("never")] },
+      ],
+      [stopAfter({ tools: ["end_run"] })],
+    )
+    await f.run({ messages: [user("go")], tools: [addTool, endRunTool] })
+    expect(f.adapter.calls).toHaveLength(1)
+  })
+
+  it("补跑轮：批准续跑后 batch.resumed 为真、calls 是原批全部；补跑批没有 onTurnEnd，stopAfter 收不了尾（刻意不对称）", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    const snaps: Snap[] = []
+    const sockets = [
+      stopAfter({ tools: ["end_run"] }),
+      probe(snaps),
+      approval({ ask: ["deploy"], allow: ["*"] }),
+    ]
+    const f = fixture(
+      [{ blocks: [callTool("c1", "deploy", {}), callTool("c2", "end_run", {})] }],
+      sockets,
+      {},
+      shared,
+    )
+    const chunks = await f.run({ messages: [user("上线")], tools: [deployTool, endRunTool], runId: "run1" })
+    const finished = chunks.find(
+      (c) => c.type === "RUN_FINISHED" && (c as { outcome?: { type: string } }).outcome?.type === "interrupt",
+    ) as { runId: string; outcome: { interrupts: Interrupt[] } } | undefined
+    const interrupt = finished?.outcome.interrupts[0]
+    if (!finished || !interrupt) throw new Error("没有暂停")
+    const continuation = genericInterruptContinuationFromDescriptor(interrupt)
+    if (!continuation) throw new Error("不是通用中断")
+
+    snaps.length = 0
+    const f2 = fixture([{ blocks: [say("never")] }], sockets, {}, shared)
+    await f2.run({
+      messages: [
+        user("上线"),
+        {
+          role: "assistant",
+          content: null,
+          toolCalls: [
+            { id: "c1", type: "function", function: { name: "deploy", arguments: "{}" } },
+            { id: "c2", type: "function", function: { name: "end_run", arguments: "{}" } },
+          ],
+        },
+      ],
+      tools: [deployTool, endRunTool],
+      parentRunId: finished.runId,
+      resume: [
+        {
+          interruptId: interrupt.id,
+          status: "resolved",
+          payload: { approved: true, by: "boss" },
+          metadata: wrapGenericInterruptContinuation(continuation),
+        },
+      ],
+    })
+    const results = (await all(shared.log)).filter((e) => e.type === "core.tool_result")
+    expect(results).toHaveLength(2)
+    // 补跑批在 beforeTools 边界看得到：resumed、原批全部
+    expect(snaps.slice(0, 2)).toEqual([
+      { where: "beforeTool:c1", calls: ["c1", "c2"], results: [], resumed: true },
+      { where: "beforeTool:c2", calls: ["c1", "c2"], results: [], resumed: true },
+    ])
+    // 刻意不对称：TanStack 续跑补完遗留调用后直接问模型，中间没有 onShouldContinue，补跑批没有 onTurnEnd；
+    // 所以"审批续跑后收尾"只在 runLoop 成立，这里模型会多被请求一轮（锁住现状，引擎形状决定）
+    expect(f2.adapter.calls).toHaveLength(1)
   })
 })

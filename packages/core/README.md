@@ -78,7 +78,7 @@ A tool can also *be* another agent: return `subagentPause(...)` from `execute` a
 
 ## Sockets
 
-A `Socket` is the seam brain modules use — five hooks (`beforeModel`, `afterModel`, `beforeTool`, `afterTool`, `onTurnEnd`) plus two static contributions (`tools`, `systemPrompt`, resolved once per run so prompt caches stay warm). Anything a socket wants the model to see is emitted as an event and lands in the log first; nothing is injected around the log.
+A `Socket` is the seam brain modules use — five hooks (`beforeModel`, `afterModel`, `beforeTool`, `afterTool`, `onTurnEnd`) plus two static contributions (`tools`, `systemPrompt`, resolved once per run so prompt caches stay warm). Anything a socket wants the model to see is emitted as an event and lands in the log first; nothing is injected around the log. Every hook gets `ctx.batch`: the tool calls of the current batch, the results logged so far (in `beforeTool`, only those of earlier calls), the ids left waiting for approval / a client result / a paused sub-agent, and `resumed` when the batch is one a previous run left unfinished. It is one object updated in place during the turn — copy what you need instead of keeping a reference. A batch is one contiguous stretch of model output (`toolBatchOf`).
 
 ## Guarantees worth knowing
 

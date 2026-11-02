@@ -426,6 +426,7 @@ describe("pins：构造与纯函数", () => {
       events: [],
       timeline: [],
       log: new InMemoryEventLog(),
+      batch: { calls: [], results: [], held: [], resumed: false },
       tools: [],
       model: MODEL,
       capabilities: {

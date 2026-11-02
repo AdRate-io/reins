@@ -12,6 +12,7 @@ import {
   type Socket,
   type Tool,
   type ToolReferencePart,
+  type ToolResultEvent,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
@@ -29,7 +30,6 @@ import { LAZY_TOOL_RULES, renderLazyToolMenu, renderLoadedTool, TOOL_FIND_TOOL_N
 
 const MODEL = { provider: "scripted", id: "scripted" }
 const SESSION = "s1"
-type ToolResultEvent = CoreEventOf<"core.tool_result">
 
 function deterministic() {
   let t = 1_800_000_000_000

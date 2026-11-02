@@ -36,6 +36,7 @@ import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../l
 import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
+import { toolBatchOf } from "./batch.js"
 import { type ModelCallFailure, resolveRetry } from "./retry.js"
 import {
   computeConfigHash,
@@ -60,6 +61,7 @@ import type {
   ToolCallEvent,
   ToolContext,
   ToolResultDraft,
+  ToolResultEvent,
   TurnContext,
   TurnDecision,
 } from "./types.js"
@@ -364,6 +366,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     }
 
     const emitted: EventDraft[] = []
+    // 本批工具活动：同一个对象随落随更，Socket 经 ctx.batch 只读
+    const batch: MutableToolBatch = { calls: [], results: [], held: [], resumed: false }
     const ctx: TurnContext = {
       session: { id: sessionId, turn: turns + 1 },
       ...(cfg.principal ? { principal: cfg.principal } : {}),
@@ -386,6 +390,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         ...(lastUsage ? { lastUsage } : {}),
       },
       ...(cfg.signal ? { signal: cfg.signal } : {}),
+      batch,
       emit: (d) => emitted.push(d),
     }
     const flush = async (): Promise<Event[]> => {
@@ -406,6 +411,11 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // ---- 先补齐日志里没结果的 tool_call（上次暂停 / 崩溃留下的），再问模型 ----
     const pending = pendingToolCalls(timeline)
     if (pending.length > 0) {
+      // 补跑：本批 = 遗留调用所在那批（含上次已落的结果），Socket 据 resumed 分辨"没有新的模型输出"
+      const located = toolBatchOf(timeline, pending)
+      batch.calls.push(...located.calls)
+      batch.results.push(...located.results)
+      batch.resumed = true
       const settled = yield* executeToolCalls(ctx, pending, timeline, {
         cfg,
         sockets,
@@ -413,6 +423,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         flush,
         forwardedDecisions,
         spend: spendInto(ctx),
+        batch,
       })
       toolCallsTotal += settled.executed
       if (settled.interruptions.length > 0) {
@@ -564,6 +575,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     if (!outcome)
       throw new Error("runLoop internal error: the model call produced neither an outcome nor a failure")
 
+    for (const e of modelEvents) if (e.type === "core.tool_call") batch.calls.push(e as ToolCallEvent)
     for (const s of sockets) await s.afterModel?.(ctx, modelEvents)
     yield* await flush()
 
@@ -587,6 +599,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         flush,
         forwardedDecisions,
         spend: spendInto(ctx),
+        batch,
       })
       toolCallsTotal += settled.executed
       ctx.budget.toolCalls = toolCallsTotal
@@ -703,6 +716,16 @@ interface ExecuteDeps {
   /** 宿主给别的会话（子代理）的审批结论，原样进 ToolContext.decisions */
   forwardedDecisions: readonly ApprovalDecisionInput[]
   spend: (usage: TokenUsage) => void
+  /** 本轮的 ctx.batch 本体：结果落日志后登记 results，挂起时登记 held */
+  batch: MutableToolBatch
+}
+
+/** ctx.batch 的可变本体（对外类型只读） */
+interface MutableToolBatch {
+  calls: ToolCallEvent[]
+  results: ToolResultEvent[]
+  held: string[]
+  resumed: boolean
 }
 
 interface ExecuteSummary {
@@ -746,7 +769,13 @@ async function* executeToolCalls(
   timeline: readonly Event[],
   deps: ExecuteDeps,
 ): AsyncGenerator<Event, ExecuteSummary> {
-  const { cfg, sockets, append, flush, forwardedDecisions, spend } = deps
+  const { cfg, sockets, flush, forwardedDecisions, spend, batch } = deps
+  /** 落日志后把 tool_result 登记进 ctx.batch.results（审批请求等其它事件不登记）；不改 flush 语义 */
+  const append = async (drafts: readonly EventDraft[]): Promise<Event[]> => {
+    const events = await deps.append(drafts)
+    for (const e of events) if (e.type === "core.tool_result") batch.results.push(e as ToolResultEvent)
+    return events
+  }
   const decisions = new Map<string, ApprovalDecisionPayload>()
   const requested = new Set<string>()
   for (const raw of timeline) {
@@ -851,12 +880,14 @@ async function* executeToolCalls(
         })
       }
       summary.interruptions.push({ kind: "approval", toolCallId, request, call: call.payload })
+      batch.held.push(toolCallId)
       continue
     }
 
     // 客户端工具：本循环不执行，等宿主回填 tool_result 后续跑
     if (!tool.execute || tool.side === "client") {
       summary.interruptions.push({ kind: "client_tool", toolCallId, call: call.payload })
+      batch.held.push(toolCallId)
       continue
     }
 
@@ -868,6 +899,7 @@ async function* executeToolCalls(
       // 补齐 pending 时工具再续跑子 run
       if (isSubagentPause(out)) {
         summary.interruptions.push({ kind: "subagent", toolCallId, call: call.payload, ...out.detail })
+        batch.held.push(toolCallId)
         if (cfg.signal?.aborted) break
         continue
       }

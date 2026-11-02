@@ -1,6 +1,5 @@
 import {
   type CoreEvent,
-  type CoreEventOf,
   type Event,
   InMemoryBlobStore,
   InMemoryEventLog,
@@ -10,6 +9,7 @@ import {
   resolveSocketContributions,
   runLoop,
   type Tool,
+  type ToolResultEvent,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
@@ -29,7 +29,6 @@ import {
 
 const MODEL = { provider: "scripted", id: "scripted" }
 const SESSION = "s1"
-type ToolResultEvent = CoreEventOf<"core.tool_result">
 
 function deterministic() {
   let t = 1_800_000_000_000

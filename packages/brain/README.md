@@ -1,6 +1,6 @@
 # @reinsjs/brain
 
-Pre-packaged driving experience for [reins](../../README.md) agents: ten `Socket` modules that make a model good at long tasks — seeing its own context, tidying it, keeping constraints, spilling large results, handing off, remembering, asking before dangerous actions, stopping at a budget, reading the host's skills when a task calls for them, and loading tools from a large table only when it needs them. Each module is optional, individually configurable, and only depends on the contracts in `@reinsjs/core`. None of them decides *for* the model; they let it see, give it means, set bounds, and leave a record.
+Pre-packaged driving experience for [reins](../../README.md) agents: twelve `Socket` modules that make a model good at long tasks — seeing its own context, tidying it, keeping constraints, spilling large results, handing off, remembering, asking before dangerous actions, stopping at a budget, reading the host's skills when a task calls for them, loading tools from a large table only when it needs them, holding back the rest of a batch when an earlier call failed, and ending a run when the model calls its wrap-up tool. Each module is optional, individually configurable, and only depends on the contracts in `@reinsjs/core`. None of them decides *for* the model; they let it see, give it means, set bounds, and leave a record.
 
 ```bash
 pnpm add @reinsjs/brain
@@ -44,6 +44,25 @@ const agent = createAgent({
 | `budget()` | Five limits — `contextTokens`, `totalTokens`, `turns`, `toolCalls`, `wallMs` — checked in `onTurnEnd`. Hitting one while the model wants to continue pauses the run with `reason: "budget"`; resuming starts a fresh run budget. `totalTokens` includes what sub-agents spent through `asTool`. | nothing |
 | `skills()` | [Agent Skills](https://agentskills.io) with progressive disclosure: the system prompt carries only a menu (each `SKILL.md`'s `name` + `description`); the model reads a skill, or one of its supporting files, with `skill_read({ name, path?, range? })`, and the text lands in the timeline as a `tool_result` — so compaction, `recall` and spill apply to it unchanged. Skills are host-authored, so `skill_read` results are trusted like the system prompt (no `<untrusted>` marker). Skills that fail the spec (bad `name`, missing `description`) are skipped with one warning; no `source`, no valid skill, or a host tool already named `skill_read` means nothing is registered (one warning). **Opt-in**: give it a `source`. | a `SkillSource` — the read-only half of any `MemoryStore` (see below), `fsSkillSource(dir)` from `@reinsjs/brain/node` for a folder of `<name>/SKILL.md`, or `inlineSkills({ "code-review": "---\nname: code-review\ndescription: How we review PRs.\n---\n\n1. …" })` for bundled strings (Workers) — the object key must equal the frontmatter `name` |
 | `lazyTools()` | Tool discovery for large tool tables — the consumer of `Tool.lazy`. Tools marked `lazy: true` appear in the system prompt only as a menu (`name: one-line summary`, first line of the description by default); the model loads the ones a task needs with `tool_find({ names })`, which returns each tool's full description and input schema, and from the next turn on those tools are in the request's tool list. Which tools are loaded is rebuilt from the timeline (the `tool_find` calls and their non-error results), so pause / resume, later runs on the same session and process restarts agree. Calling a listed-but-unloaded tool is blocked with a pointer to `tool_find`. The menu is built from the tools bound *before* this socket — the host's and those of sockets registered earlier, e.g. `mcpTools({ override: (t, info) => info.annotations?.readOnlyHint ? { ...t, lazy: true } : false })` — so register `lazyTools()` last; `lazy` tools from later sockets are never hidden, one warning names them. No `lazy` tool bound before it, or a tool already named `tool_find`: nothing registered, one warning. **Opt-in**: install it. | `summarize(tool)` to replace the default summary, `summaryChars` (160), `maxPerCall` (20), `rules`, `warn` |
+| `haltOnFailure()` | Models put several calls in one reply to save round trips, and the order is often a dependency: update the item, *then* tell the team it is ready. The model cannot make the second call conditional on the first — it does not see results inside one reply. With this module, once a call in the batch has failed (or is still waiting for approval or a client result), the calls after it are not run: each gets an error result naming the earlier call and asking the model to handle it first. Tool call ids stay one-to-one, nothing is executed, nothing counts toward the `toolCalls` budget. `counts(result)` picks which failures matter, `applies(call, tool)` which later calls to hold back (e.g. let `risk: "low"` reads run). Register it **first**. **Opt-in.** | nothing |
+| `stopAfter({ tools })` | Ends the run (`done`) at the end of a turn in which the model successfully called one of `tools` — a wrap-up tool such as `end_run({ note })` placed in the same reply as the last actions, which saves the extra request for a closing message. It does not stop if anything in that batch failed or is still pending (the model sees the failure next turn), and a call left over from a paused run does not end a resumed run that brought new user input. Register it **after `handoff()` and before `compact()` / `budget()`**: the first socket with an opinion decides the turn. **Opt-in.** | nothing |
+
+### Act, then announce
+
+`haltOnFailure` and `stopAfter` read `ctx.batch` — the calls of the current batch, the results logged so far, the calls left waiting, and whether this is a resumed batch — and work together:
+
+```ts
+const sockets = [
+  haltOnFailure({ applies: (_call, tool) => tool?.risk !== "low" }), // first: a held-back call never reaches the others
+  handoff(),
+  stopAfter({ tools: ["end_run"] }), // after handoff, before compact / budget
+  compact(),
+  budget({ limits: { turns: 30 } }),
+  approval({ ask: ["deploy"], allow: ["board_update", "chat_send", "end_run"] }), // last, as always
+]
+```
+
+If `board_update` fails in `[board_update, chat_send, end_run]`, `chat_send` and `end_run` are held back, so the run does not stop and the model sees the failure on the next turn. With TanStack AI (`@reinsjs/adapter-tanstack-ai`) the engine checks a whole batch before running any of it, so `haltOnFailure` only sees failures from earlier runs of a resumed batch; and a resumed batch gets no `onTurnEnd` there, so a wrap-up tool left waiting behind an approval costs one more model request.
 
 ### Skills from a database
 
@@ -71,7 +90,7 @@ The snapshot is taken when a segment starts: the first turn of the session, and 
 
 ## Things that are deliberate
 
-- **Sockets run in order, and order matters.** `approval()` belongs last so it judges the arguments after any `rewrite`; `perception()` appends its note at the end of the visible events so the model reads it last.
+- **Sockets run in order, and order matters.** `approval()` belongs last so it judges the arguments after any `rewrite`; `perception()` appends its note at the end of the visible events so the model reads it last; `haltOnFailure()` goes first; in `onTurnEnd` the first socket with an opinion decides, so `handoff()` → `stopAfter()` → `compact()` / `budget()`.
 - **Nothing is hidden from the log.** A note the model sees, a summary it wrote, a memory it changed — each is an event you can replay.
 - **Defaults come from measurements, not taste.** `compact` is recommended-on and `memory` / `handoff` are off because `examples/eval` says so. If you change a default, rerun the eval.
 - **Skills are read, not executed.** A skill's `scripts/` are not run by the library — a child process would break the zero-Node-builtins rule of `@reinsjs/brain` — expose what a skill needs as ordinary tools. Only `@reinsjs/brain/node` touches the file system.

@@ -60,6 +60,7 @@ import {
   type ToolResultDraft,
   type TurnContext,
   type TurnDecision,
+  toolBatchOf,
   toolResultTrust,
   toolsBoundDrafts,
   uuidv7,
@@ -162,6 +163,13 @@ type Verdict =
 
 interface TurnState {
   ctx: TurnContext
+  /** ctx.batch 的可变本体：模型输出的 tool_call、落日志的 tool_result 在这里登记（held 恒空：defer 让整批暂停） */
+  batch: {
+    calls: ToolCallEvent[]
+    results: CoreEventOf<"core.tool_result">[]
+    held: string[]
+    resumed: boolean
+  }
   /** 本轮投影估算，进 budget_usage.contextEstimate */
   estimate: number
   startedAt: number
@@ -263,6 +271,14 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     )
     await log.append(events)
     s.lastSeq += events.length
+    // 本批登记（与 runLoop 同一口径）：模型输出的 tool_call 进 calls、落日志的 tool_result 进 results
+    if (s.turn) {
+      for (const e of events) {
+        if (e.type === "core.tool_call") s.turn.batch.calls.push(e as ToolCallEvent)
+        else if (e.type === "core.tool_result")
+          s.turn.batch.results.push(e as CoreEventOf<"core.tool_result">)
+      }
+    }
     for (const e of events) {
       options.onEvent?.(e)
       if (emitCustom && !CONTENT_TYPES.has(e.type))
@@ -445,6 +461,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       }
     }
     const lastUsage = lastBudgetUsage(timeline)?.payload.tokens
+    const batch: TurnState["batch"] = { calls: [], results: [], held: [], resumed: false }
     const turnCtx: TurnContext = {
       session: { id: sessionId, turn: s.turns },
       ...(options.principal ? { principal: options.principal } : {}),
@@ -467,10 +484,12 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         ...(lastUsage ? { lastUsage } : {}),
       },
       ...(ctx.signal ? { signal: ctx.signal } : {}),
+      batch,
       emit: (d) => s.emitted.push(d),
     }
     return {
       ctx: turnCtx,
+      batch,
       estimate: projected.stats.estimatedTokens,
       startedAt: turnStartedAt,
       toolCalls: 0,
@@ -523,7 +542,14 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     const timeline = await timelineOf()
     const pending = pendingToolCalls(timeline)
     if (pending.length === 0) return undefined
-    if (!s.turn) s.turn = await buildTurn(ctx, s, timeline) // 续跑补齐：还没问过模型
+    if (!s.turn) {
+      // 续跑补齐：还没问过模型。本批 = 遗留调用所在那批（含上次已落的结果），与 runLoop 同一个 toolBatchOf
+      s.turn = await buildTurn(ctx, s, timeline)
+      const located = toolBatchOf(timeline, pending)
+      s.turn.batch.calls.push(...located.calls)
+      s.turn.batch.results.push(...located.results)
+      s.turn.batch.resumed = true
+    }
     const tctx = s.turn.ctx
     const decisions = new Map<string, CoreEventOf<"core.approval_decision">["payload"]>()
     const requested = new Set<string>()

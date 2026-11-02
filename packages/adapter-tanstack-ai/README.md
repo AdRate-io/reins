@@ -49,6 +49,7 @@ const stream = chat({
 
 - `capabilities.deferredTools` is always `false` on this path, even if you pass `true`: TanStack's adapter decides how tools reach the provider, so there is no place for `defer_loading` / `tool_reference`, and `BeforeModelPatch.deferredTools` is not read. `lazyTools()` therefore always takes its filtering path here; the cache-preserving native path is `runLoop` + `@reinsjs/lowering-fetch` on Anthropic.
 - `approval({ ttlMs })` works here exactly as in the default loop: TanStack re-enters the `beforeTools` boundary after an interrupt is resolved, so the `beforeTool` pipeline runs again and an approval that arrived too late is denied with `approval_decision(by: "approval.expired")` before the tool runs (`middleware.test.ts`, "审批").
+- `ctx.batch` is filled, but the engine checks a whole batch in `beforeTools` before running any of it, so `beforeTool` sees no results from the same batch (only those of a resumed batch logged by an earlier run) and `held` stays empty — a `defer` pauses the whole batch anyway. `haltOnFailure()` therefore never holds back calls of a fresh batch here. A resumed batch also gets no `onTurnEnd`: after the leftover calls run, the engine asks the model straight away, so `stopAfter()` cannot end a run on a wrap-up call that waited behind an approval (`middleware.test.ts`, "TurnContext.batch").
 
 ## Documentation
 

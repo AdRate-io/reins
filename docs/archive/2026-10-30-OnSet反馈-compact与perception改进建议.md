@@ -125,3 +125,40 @@ OnSet 这边已做的（宿主能管的部分）：字段级二次编码（对�
 优先级中：不影响正确性（模型下一轮会改），但每次都多一轮往返，还会诱发上面那种试探。
 
 > **处置（reins，2026-11-02）**：照做，并且判为 reins 的 bug 而不只是优化：fetch 版写侧（Chat / Responses 的 `argumentsOf`）把字符串入参当原始 JSON 文本送回，历史里模型看到自己写对了对象，工具却报"收到字符串"，记录与执行说法不一，正是诱发"以为工具坏了去试"的根子。做法：core 新增 `unwrapToolArguments`，fetch 三条线（含 Anthropic）与 pi 版读侧都调它（pi-ai 的 `parseStreamingJson` 也只解一层，同一个毛病）；规则同建议，只多解一层、只换成普通对象。与原提议一处不同：标记不是可选——库替模型多解了一层要留在时间线上，`tool_call.payload.meta.argumentsUnwrapped: true`。TanStack 适配器刻意不做（它的历史按 `JSON.stringify(args)` 送回，模型看到的就是自己的二次编码，与执行一致，只多一轮往返；OPT-261102-2）。实施审查补正：首版只覆盖了解成对象的情况，没解成对象的字符串（`"[1,2]"`、`"hello"`、内层欠转义换行）仍是"历史里被替它解了一层、工具拿到字符串"；已改为不变式"`args` 是字符串 ⟺ 线上原文"，并在多解那层容忍裸换行。core minor、lowering-fetch / lowering-pi patch，随下次发版；用例锁住"二次编码读侧解开后，写侧送回的历史与工具拿到的是同一份"。字段级二次编码（对象里某个字段写成 JSON 文本）仍归宿主 `validate`：库不知道哪个字段本该是字符串。
+
+## 建议 9（效率盘查补充，2026-11-02）：同一轮里前一个调用失败时，可选拦下后面的调用
+
+背景：OnSet 第五轮试拍盘查下来，每轮模型请求有约 14 秒固定开销，415 轮里 303 轮只调了一个工具，于是协作规则改为"互不依赖的动作放在同一次回复里调"，比如先 `board_update` 把条目置为待确认，再 `chat_send` 说"已交，请看"。问题在于：置待确认失败了（rev 过期、必填字段没填），后面的"已交"照样发出去，并且会唤醒对方，对方来了看到的还是旧状态。
+
+现状：`packages/core/src/loop/run-loop.ts` 的 `executeToolCalls` 按模型给出的顺序逐个执行，某个调用失败（被拦截、未知工具、入参不合法、执行抛错）只是写一条 isError 结果然后 `continue`，后面的照常执行。这对互不相干的并列调用是对的，对有先后关系的就不对，而模型在一次回复里排出的顺序往往就是先后关系。
+
+OnSet 这边已做的（宿主能管的部分）：协作规则写明"先改状态、后发消息；改成功了才该说的话分两次回复"。这条规则把能省的轮次又让回去一部分，而且靠模型自觉，九成照做，剩下一成是"状态没改成、通知已发出"。
+
+建议：
+- `LoopConfig`（或按工具）加一个可选项，比如 `toolCallFailure: "continue" | "skipRest"`，缺省 `continue`，行为与现在一致。
+- 设为 `skipRest` 时，同一轮里某个调用失败后，排在它后面的调用不再执行，各写一条 isError 结果，文案如"同一轮前面的调用失败，这条没有执行；处理完再重新调用"，toolCallId 一一对应，历史仍然完整。
+- 被跳过的调用不走 `beforeTool` / `afterTool`，也不计入 toolCalls 预算。
+
+优先级中：不影响正确性（消息发错了下一轮能纠正），但它决定宿主敢不敢放心让模型一次回复里做多件事，而这正是省轮次的主要办法。reins 支持后，OnSet 会删掉"分两次回复"那条规则。
+
+> **处置（reins，2026-11-02）**：照做，形状不同。根因与建议 10 的坑 1～3 是同一个：Socket 看不到"本批"。core `TurnContext` 加 `batch`（本批调用 / 已落结果 / 挂起的 / 是否补跑，随落随更），brain 新增 opt-in Socket `haltOnFailure({ counts?, applies? })`：同批前面有失败、**或还挂着（等审批 / 客户端回填 / 子代理）**就 block 后面的，isError 结果点名最初那个，不执行、不计 `ctx.budget.toolCalls`；推荐注册在最前。没有照提议加 `LoopConfig.toolCallFailure`：runLoop 要保持无行为分支、可整个复制。TanStack 适配器整批先判，该路径只拦得住补跑时上次已落的失败（刻意不对称）。实施方案 `docs/implementation-plans/2026-11-02-本轮可见与同轮收口.md`。OnSet 可删"分两次回复"规则、改装 `haltOnFailure()`。
+
+## 建议 10（效率盘查补充，2026-11-02）：通用的"调了某个工具，本轮结束即停"
+
+背景：OnSet 现在有两处同一模式。一处是分支的 `fork_done`：交了总结，本轮结束就停。另一处是这次新加的 `end_run`：主会话把最后一批动作和 `end_run({ note })` 放在同一次回复里，本轮结束即停，省掉"做完再请求一轮写收尾文字"那一轮（第五轮 47 次 run 里 45 次有这一轮，合计 14 分钟模型时间）。
+
+现状：两处都是宿主自己写"工具 + onTurnEnd Socket"。`end_run` 做的时候，独立审查查出几处不读 reins 源码就会踩的坑：
+1. `onTurnEnd` 拿到的 `ctx.events` / `timeline` 是本轮开始前的快照，看不到本轮的调用和结果，判断不了"本轮有没有失败"。
+2. `afterTool` 也不全：被拦截、未知工具、入参不合法的结果直接写入，不经过它。
+3. 起 run 时补跑遗留调用后也会走一次 `endTurn`，按"本轮出现过某工具"判断，会让上次遗留的调用把新 run 在处理新输入前就停掉。
+4. `endTurn` 里第一个给出意见的 Socket 说了算，compact 请求 / budget 也会在这时返回暂停，收尾 Socket 必须排在它们前面，否则这一轮以暂停收场。
+
+OnSet 最后的做法：状态挂在宿主自己的 run 对象上，在包住 runLoop 的观测点按事件流维护"本轮"（新一轮模型输出开始时清空、见 isError 置位），Socket 只读这个状态，并且排在最前。能用，但每个想要这个模式的宿主都得重新发现这四点。
+
+建议（两种做法任选，或都做）：
+- **小改动**：`TurnContext` 带上本轮的调用与结果（比如 `turn: { calls, results }`，补跑遗留调用的那次 `endTurn` 里标明 `resumed: true`），宿主写 Socket 时不用再自己维护事件流。
+- **大一点**：`Tool` 定义上加一个 `endsTurn: true`（或循环配置里的工具名单）：本轮这个工具执行成功、且同轮没有失败结果时，循环直接以 `done` 结束，优先于所有 Socket 的 onTurnEnd；遗留补跑里的不算。`fork_done` 和 `end_run` 都能直接用它，OnSet 只保留"把 note 当最后发言"这一层。
+
+优先级低：OnSet 已经有可用实现（`src/server/services/agent-runtime/end-run.ts`，调度器 `trackTurn`），这条是为了让后来的宿主少踩坑，并删掉 OnSet 的两份重复。
+
+> **处置（reins，2026-11-02）**：照做"小改动"那一版并多走一步。core `TurnContext.batch` 消掉坑 1～3（本批调用与结果随落随更，补跑批标 `resumed`）；brain 新增 opt-in Socket `stopAfter({ tools })`：本批名单工具成功、同批无失败无挂起才 `"stop"`。没做 `Tool.endsTurn`：它要压过所有 onTurnEnd，打破"第一个给意见的定"。两处与原提议不同：① 补跑批不是一律不算——`[action 需审批, end_run]` 批准续跑、批后没有新用户消息时照样收尾（坑 3 的真判据是"遗留收尾别吞掉新输入"），与 handoff 从日志重建意图同理；② 坑 4 更正：compact 的到线请求在 beforeModel 发，不在 onTurnEnd，真正要排序的是 handoff → stopAfter → compact / budget——排在 handoff 前会吞掉已回执的交接。TanStack 路径补跑批没有 onTurnEnd，"审批后收尾"在那里不成立（刻意不对称）。OnSet 的 `end_run` / `fork_done` 改用 `stopAfter()` 按推荐顺序注册后，可删 `trackTurn`。
