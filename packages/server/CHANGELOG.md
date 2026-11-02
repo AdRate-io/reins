@@ -1,5 +1,12 @@
 # @reinsjs/server
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [2569456]
+  - @reinsjs/core@0.7.0
+
 ## 0.4.0
 
 ### Minor Changes
