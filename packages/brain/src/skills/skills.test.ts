@@ -81,7 +81,7 @@ function sampleSource() {
 }
 
 /** 直接调用工具（不经循环） */
-function tool(socket: ReturnType<typeof skills>, setup: Parameters<typeof resolveSocketContributions>[0]) {
+function tool(setup: Parameters<typeof resolveSocketContributions>[0]) {
   return async () => {
     const { tools } = await resolveSocketContributions(setup)
     return tools.find((t) => t.name === SKILL_READ_TOOL_NAME) as Tool<SkillReadInput> | undefined
@@ -408,7 +408,7 @@ describe("skills(): 静态贡献", () => {
 
 describe("skill_read 执行", () => {
   const socket = skills({ source: sampleSource(), maxReadChars: 200, warn: () => {} })
-  const getTool = tool(socket, setupWith(socket))
+  const getTool = tool(setupWith(socket))
   const run = async (input: Record<string, unknown>) => {
     const t = await getTool()
     if (!t?.execute || !t.validate) throw new Error("skill_read 未注册")
@@ -463,7 +463,7 @@ describe("skill_read 执行", () => {
       maxReadChars: 200,
       warn: () => {},
     })
-    const t = await tool(longLine, setupWith(longLine))()
+    const t = await tool(setupWith(longLine))()
     if (!t?.execute || !t.validate) throw new Error("未注册")
     const r = (await t.execute(t.validate({ name: "one", range: [6, 6] }), ctx)) as {
       content: { text: string }[]
@@ -482,7 +482,7 @@ describe("skill_read 执行", () => {
       },
     }
     const socket = skills({ source: broken, warn: (m) => warnings.push(m) })
-    const t = await tool(socket, setupWith(socket))()
+    const t = await tool(setupWith(socket))()
     if (!t?.execute || !t.validate) throw new Error("未注册")
     const r = (await t.execute(t.validate({ name: "a", path: "attach.md" }), ctx)) as {
       content: { text: string }[]
