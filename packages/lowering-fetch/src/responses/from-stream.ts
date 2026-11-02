@@ -17,11 +17,11 @@
  */
 import {
   type CoreEventDraft,
+  decodeToolArgumentsText,
   type LoweringOutcome,
   type LoweringStreamContext,
   type TokenUsage,
   toolCallArgumentsMeta,
-  unwrapToolArguments,
 } from "@reinsjs/core"
 import type { ModelOrigin } from "../ir.js"
 import type { SseMessage } from "../sse.js"
@@ -86,16 +86,6 @@ function str(v: unknown): string | undefined {
 }
 function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined
-}
-
-/** 入参 JSON 解析不了就原样存字符串（写侧原样送回），空串按 {}；二次编码由调用方再交 unwrapToolArguments */
-function parseArguments(raw: string): unknown {
-  if (raw.trim() === "") return {}
-  try {
-    return JSON.parse(raw) as unknown
-  } catch {
-    return raw
-  }
 }
 
 /** reasoning 项的可见正文：summary 各段以空行拼接；没有 summary 的上游可能给 content（原文推理） */
@@ -218,7 +208,7 @@ class ResponsesAssembly {
           break
         case "function_call": {
           if (s.id) replay.itemId = s.id
-          const decoded = unwrapToolArguments(parseArguments(s.args))
+          const decoded = decodeToolArgumentsText(s.args)
           out.push({
             type: "core.tool_call",
             actor: "model",

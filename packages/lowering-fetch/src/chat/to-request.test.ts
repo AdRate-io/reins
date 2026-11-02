@@ -297,43 +297,48 @@ describe("encodeChatRequest", () => {
     expect(calls.map((c) => c.function.arguments)).toEqual(["{not json", '{"x":[1]}'])
   })
 
-  it("二次编码的入参读侧解开后，写侧送回的历史与工具拿到的是同一份对象（OnSet 建议 8：记录与执行说法一致）", async () => {
-    seq = 0
+  it("读写往返：写侧送回的历史与工具拿到的入参是同一份——二次编码的对象、欠转义换行、没解成对象的字符串都成立（OnSet 建议 8）", async () => {
     const sent = { candidate_for: "s1", prompt: '雨夜，"别走"' }
-    const gen = consumeChatStream({
-      messages: (async function* () {
-        yield {
-          data: JSON.stringify({
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: "a",
-                      function: { name: "t", arguments: JSON.stringify(JSON.stringify(sent)) },
-                    },
-                  ],
+    const wires = [
+      JSON.stringify(JSON.stringify(sent)),
+      // 内层字符串值里的换行被写成真换行（外层只转义一次）
+      JSON.stringify('{"prompt":"第一行\n第二行"}'),
+      JSON.stringify("[1,2]"),
+      JSON.stringify("hello"),
+      JSON.stringify("42"),
+      "{broken",
+      JSON.stringify({ a: [1] }),
+    ]
+    for (const wire of wires) {
+      seq = 0
+      const gen = consumeChatStream({
+        messages: (async function* () {
+          yield {
+            data: JSON.stringify({
+              choices: [
+                {
+                  index: 0,
+                  delta: { tool_calls: [{ index: 0, id: "a", function: { name: "t", arguments: wire } }] },
+                  finish_reason: "tool_calls",
                 },
-                finish_reason: "tool_calls",
-              },
-            ],
-          }),
-        }
-        yield { data: "[DONE]" }
-      })(),
-      origin,
-    })
-    let r = await gen.next()
-    if (r.done || r.value.type !== "core.tool_call") throw new Error("expected a tool_call draft")
-    const call = r.value
-    r = await gen.next()
-    expect(r.done).toBe(true)
-    expect(call.payload.args).toEqual(sent)
-    const { body } = encode(deepseek, [ev("core.tool_call", "model", call.payload, origin)])
-    const calls = (body.messages[0] as { tool_calls: { function: { arguments: string } }[] }).tool_calls
-    expect(JSON.parse(calls[0]?.function.arguments ?? "")).toEqual(call.payload.args)
+              ],
+            }),
+          }
+          yield { data: "[DONE]" }
+        })(),
+        origin,
+      })
+      const r = await gen.next()
+      if (r.done || r.value.type !== "core.tool_call") throw new Error("expected a tool_call draft")
+      const call = r.value
+      expect((await gen.next()).done).toBe(true)
+      const { body } = encode(deepseek, [ev("core.tool_call", "model", call.payload, origin)])
+      const sentBack = (body.messages[0] as { tool_calls: { function: { arguments: string } }[] })
+        .tool_calls[0]?.function.arguments
+      // 工具拿到的 args 与模型在历史里看到的文本必须说同一件事：字符串入参送回原文，其余送回其 JSON
+      if (typeof call.payload.args === "string") expect(sentBack).toBe(wire)
+      else expect(JSON.parse(sentBack ?? "")).toEqual(call.payload.args)
+    }
   })
 })
 

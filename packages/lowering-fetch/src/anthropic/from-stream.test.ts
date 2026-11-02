@@ -188,6 +188,27 @@ describe("consumeAnthropicStream", () => {
     })
   })
 
+  it("没有 input_json_delta 而 content_block_start 的 input 是字符串（兼容端口）：能解成对象就解并标 meta，否则原样保留、不再静默换成 {}", async () => {
+    const { drafts } = await collect(
+      consumeAnthropicStream({
+        messages: feed([
+          start(),
+          bstart(0, { type: "tool_use", id: "t1", name: "f", input: JSON.stringify({ a: 1 }) }),
+          bstop(0),
+          bstart(1, { type: "tool_use", id: "t2", name: "g", input: "plain" }),
+          bstop(1),
+          mdelta("tool_use", 3),
+          mstop,
+        ]),
+        origin,
+      }),
+    )
+    expect(drafts.map((d) => d.payload)).toEqual([
+      { toolCallId: "t1", name: "f", args: { a: 1 }, meta: { argumentsUnwrapped: true } },
+      { toolCallId: "t2", name: "g", args: "plain" },
+    ])
+  })
+
   it("stop_reason 映射：max_tokens / model_context_window_exceeded → length；refusal → error 带 stop_details；pause_turn → stop", async () => {
     const run = (reason: string, extra: Record<string, unknown> = {}) =>
       collect(consumeAnthropicStream({ messages: feed([start(), mdelta(reason, 1, extra), mstop]), origin }))

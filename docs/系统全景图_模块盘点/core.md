@@ -109,8 +109,8 @@
 | `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`（含 `deferLoading?`：向厂商声明但不载入上下文，L1）、`LoweringCapabilities`（含 `deferredTools`：有无 `defer_loading` / `tool_reference` 的原生落点）、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
 | `lowering/errors.ts` | `LoweringError` 与 4 种 code（unsupported_model / unsupported_api / missing_api_key / invalid_request） |
 | `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
-| `lowering/tool-arguments.ts` | 工具入参二次编码解码（OnSet 建议 8）：`unwrapToolArguments(parsed)` 读侧已解一次的值是字符串且能再解成普通对象时换成对象、报 `unwrapped`，其余原样；`toolCallArgumentsMeta` 据此给 `tool_call.payload` 拼 `meta.argumentsUnwrapped: true`。fetch 三条线与 lowering-pi 读侧都调这里 |
-| 测试 | `tool-arguments.test.ts` 覆盖只多解一层与原样返回的各种值；`trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reinsjs/lowering-pi` 的 T8 矩阵测试覆盖 |
+| `lowering/tool-arguments.ts` | 工具入参二次编码解码（OnSet 建议 8）：`decodeToolArgumentsText(raw)` 收线上原文，空白 → `{}`、解成非字符串就用、解成字符串再交下一个函数、没解成对象一律存原文（不变式：`args` 是字符串 ⟺ 线上原文）；`unwrapToolArguments(parsed)` 收已解析值，字符串能再解成普通对象（容忍字面量里的裸控制字符）时换成对象、报 `unwrapped`，其余原样；`toolCallArgumentsMeta` 据此给 `tool_call.payload` 拼 `meta.argumentsUnwrapped: true`。fetch 三条线与 lowering-pi 读侧都调这里 |
+| 测试 | `tool-arguments.test.ts` 覆盖只多解一层、欠转义换行、没解成对象存原文与原样返回的各种值；`trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reinsjs/lowering-pi` 的 T8 矩阵测试覆盖 |
 
 ### `loop/` — 循环与插座（T9~T11）
 

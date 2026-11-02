@@ -11,11 +11,11 @@
  */
 import {
   type CoreEventDraft,
+  decodeToolArgumentsText,
   type LoweringOutcome,
   type LoweringStreamContext,
   type TokenUsage,
   toolCallArgumentsMeta,
-  unwrapToolArguments,
 } from "@reinsjs/core"
 import type { ModelOrigin } from "../ir.js"
 import type { SseMessage } from "../sse.js"
@@ -80,7 +80,7 @@ class ChatAssembly {
     if (this.text.length > 0)
       out.push({ type: "core.model_text", actor: "model", payload: { text: this.text }, replay })
     for (const [, c] of [...this.calls.entries()].sort((a, b) => a[0] - b[0])) {
-      const decoded = unwrapToolArguments(parseArguments(c.args))
+      const decoded = decodeToolArgumentsText(c.args)
       out.push({
         type: "core.tool_call",
         actor: "model",
@@ -89,16 +89,6 @@ class ChatAssembly {
       })
     }
     return out
-  }
-}
-
-/** 入参 JSON 解析不了就原样存字符串：工具校验会把错误告诉模型，写侧再原样送回（to-request.ts argumentsOf）；二次编码由调用方再交 unwrapToolArguments */
-function parseArguments(raw: string): unknown {
-  if (raw.trim() === "") return {}
-  try {
-    return JSON.parse(raw) as unknown
-  } catch {
-    return raw
   }
 }
 

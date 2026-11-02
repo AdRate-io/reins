@@ -15,6 +15,8 @@
  */
 import {
   type CoreEventDraft,
+  type DecodedToolArguments,
+  decodeToolArgumentsText,
   type LoweringOutcome,
   type LoweringStreamContext,
   type TokenUsage,
@@ -86,14 +88,14 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined
 }
 
-/** 入参 JSON 解析不了就原样存字符串（写侧会包成 { value }），空串按 {}；二次编码由调用方再交 unwrapToolArguments */
-function parseInput(json: string, fallback: unknown): unknown {
-  if (json.trim() === "") return typeof fallback === "object" && fallback !== null ? fallback : {}
-  try {
-    return JSON.parse(json) as unknown
-  } catch {
-    return json
-  }
+/**
+ * 有 input_json_delta 拼出的文本就按线上原文解码；没有就用 content_block_start 的 input（已是解析过的值：
+ * 对象原样，字符串交 unwrapToolArguments 试多解一层，其余按 {}）。存下的非对象入参写侧会包成 { value }（声明 lossy）。
+ */
+function decodeInput(json: string, fallback: unknown): DecodedToolArguments {
+  if (json.trim() !== "") return decodeToolArgumentsText(json)
+  if (typeof fallback === "string") return unwrapToolArguments(fallback)
+  return { args: typeof fallback === "object" && fallback !== null ? fallback : {}, unwrapped: false }
 }
 
 class AnthropicAssembly {
@@ -132,7 +134,7 @@ class AnthropicAssembly {
             out.push({ type: "core.model_text", actor: "model", payload: { text: b.text }, replay })
           break
         case "tool_use": {
-          const decoded = unwrapToolArguments(parseInput(b.json, b.input))
+          const decoded = decodeInput(b.json, b.input)
           out.push({
             type: "core.tool_call",
             actor: "model",

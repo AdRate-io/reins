@@ -217,7 +217,8 @@ describe("consumeChatStream", () => {
         args: { candidate_for: "s1", prompt: '雨夜，"别走"' },
         meta: { argumentsUnwrapped: true },
       },
-      { toolCallId: "b", name: "g", args: "[1,2]" },
+      // 没解成对象：存线上原文（不是解过一层的 "[1,2]"），写侧原样送回才与模型写的一致
+      { toolCallId: "b", name: "g", args: JSON.stringify("[1,2]") },
       { toolCallId: "c", name: "h", args: { candidate_for: "s1", prompt: '雨夜，"别走"' } },
     ])
   })

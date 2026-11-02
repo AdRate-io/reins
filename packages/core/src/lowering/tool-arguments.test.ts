@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { toolCallArgumentsMeta, unwrapToolArguments } from "./tool-arguments.js"
+import { decodeToolArgumentsText, toolCallArgumentsMeta, unwrapToolArguments } from "./tool-arguments.js"
 
 describe("工具入参二次编码（core/lowering/tool-arguments.ts，OnSet 建议 8）", () => {
-  it("解一次得字符串、该字符串能解成对象 → 换成对象并标 unwrapped", () => {
+  it("unwrapToolArguments：字符串能解成对象 → 换成对象并标 unwrapped", () => {
     const once = JSON.parse(
       JSON.stringify(JSON.stringify({ candidate_for: "a", prompt: '他说："走"' })),
     ) as unknown
@@ -12,16 +12,36 @@ describe("工具入参二次编码（core/lowering/tool-arguments.ts，OnSet 建
     expect(toolCallArgumentsMeta(d)).toEqual({ meta: { argumentsUnwrapped: true } })
   })
 
-  it("只多解一层：三次编码解两层后仍是字符串，原样返回", () => {
-    const twice = JSON.stringify(JSON.stringify({ a: 1 }))
-    expect(unwrapToolArguments(twice)).toEqual({ args: twice, unwrapped: false })
+  it("unwrapToolArguments：内层字符串里的裸换行 / 制表符照样解开（模型二次编码时常欠转义）；字面量外的换行不动", () => {
+    const d = unwrapToolArguments('{\n  "prompt": "第一行\n第二行\t尾",\n  "n": 1\n}')
+    expect(d).toEqual({ args: { prompt: "第一行\n第二行\t尾", n: 1 }, unwrapped: true })
   })
 
-  it("对象、解析不了的原始文本、数组 / 数字 / null 文本一律原样，不带 meta", () => {
+  it("unwrapToolArguments：对象、解析不了的文本、数组 / 数字 / null 文本一律原样，不带 meta", () => {
     for (const v of [{ a: 1 }, {}, "{broken", "plain text", "[1,2]", "42", "null", '"x"', 7, null]) {
       const d = unwrapToolArguments(v)
       expect(d).toEqual({ args: v, unwrapped: false })
       expect(toolCallArgumentsMeta(d)).toEqual({})
     }
+  })
+
+  it("decodeToolArgumentsText：只多解一层；没解成对象的字符串一律存线上原文（args 是字符串 ⟺ 原文）", () => {
+    const wire = (v: unknown) => JSON.stringify(v)
+    expect(decodeToolArgumentsText(wire({ a: 1 }))).toEqual({ args: { a: 1 }, unwrapped: false })
+    expect(decodeToolArgumentsText(wire(wire({ a: 1 })))).toEqual({ args: { a: 1 }, unwrapped: true })
+    for (const raw of [
+      wire(wire(wire({ a: 1 }))),
+      wire("[1,2]"),
+      wire("hello"),
+      wire("42"),
+      "{broken",
+      "  ",
+    ]) {
+      const d = decodeToolArgumentsText(raw)
+      expect(d.unwrapped).toBe(false)
+      expect(d.args).toEqual(raw.trim() === "" ? {} : raw)
+    }
+    expect(decodeToolArgumentsText("[1,2]")).toEqual({ args: [1, 2], unwrapped: false })
+    expect(decodeToolArgumentsText("42")).toEqual({ args: 42, unwrapped: false })
   })
 })
