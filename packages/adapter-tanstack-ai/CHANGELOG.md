@@ -1,5 +1,12 @@
 # @reinsjs/adapter-tanstack-ai
 
+## 0.3.3
+
+### Patch Changes
+
+- Updated dependencies [a2ee718]
+  - @reinsjs/core@0.6.0
+
 ## 0.3.2
 
 ### Patch Changes

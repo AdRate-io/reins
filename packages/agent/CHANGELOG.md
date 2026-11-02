@@ -1,5 +1,19 @@
 # @reinsjs/agent
 
+## 0.4.0
+
+### Minor Changes
+
+- a2ee718: `agent.run({ input })` takes the same input type as `runLoop`, including arrays of event drafts.
+
+### Patch Changes
+
+- Updated dependencies [a2ee718]
+- Updated dependencies [a2ee718]
+  - @reinsjs/core@0.6.0
+  - @reinsjs/server@0.4.0
+  - @reinsjs/ui-agui@0.3.3
+
 ## 0.3.2
 
 ### Patch Changes

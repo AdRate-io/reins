@@ -1,5 +1,12 @@
 # @reinsjs/brain
 
+## 0.7.2
+
+### Patch Changes
+
+- Updated dependencies [a2ee718]
+  - @reinsjs/core@0.6.0
+
 ## 0.7.1
 
 ### Patch Changes
