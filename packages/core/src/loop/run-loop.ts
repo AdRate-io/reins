@@ -21,7 +21,7 @@
  * 决策权在模型（宪法一）：循环自己不判断"该不该继续"以外的任何事。它只在两处兜底 ——
  * 工具声明 needsApproval 而没有 Socket 做主时转审批；轮数超过 maxTurns 时暂停。
  */
-import type { ContentPart, Event, Trust } from "../events/base.js"
+import type { Actor, ContentPart, Event, Trust } from "../events/base.js"
 import type {
   ApprovalDecisionPayload,
   CoreEvent,
@@ -81,21 +81,69 @@ export const INPUT_DRAFT_TYPES: ReadonlySet<string> = new Set([
   "core.system_note",
 ])
 
-/** 把 `input` 归一成草稿；不合规的草稿在写任何日志之前就抛 RangeError（fail-closed） */
-export function inputDraft(input: NonNullable<LoopConfig["input"]>): EventDraft {
-  if (typeof input === "string")
-    return { type: "core.user_message", actor: "user", payload: { content: [{ type: "text", text: input }] } }
-  if (Array.isArray(input))
-    return { type: "core.user_message", actor: "user", payload: { content: input as ContentPart[] } }
+const INPUT_ACTORS: ReadonlySet<string> = new Set<Actor>(["user", "model", "tool", "system", "host"])
+const CONTENT_PART_TYPES: ReadonlySet<string> = new Set(["text", "image", "tool_reference"])
+
+/**
+ * 数组元素归类：片段（ContentPart，无 actor）还是草稿（带 actor，或 type 为 core.* / ext.*）。
+ * 漏写 actor 的 core.* 元素也归草稿，好在白名单那步被拒，而不是静默变成一条怪异的用户消息
+ */
+function classifyInputItem(item: unknown): "part" | "draft" | undefined {
+  if (typeof item !== "object" || item === null) return undefined
+  const { type, actor } = item as { type?: unknown; actor?: unknown }
+  if (actor !== undefined) return "draft"
+  if (typeof type !== "string") return undefined
+  if (type.startsWith("core.") || type.startsWith("ext.")) return "draft"
+  return CONTENT_PART_TYPES.has(type) ? "part" : undefined
+}
+
+/** 单条草稿过类型白名单与 actor 校验；不合规抛 RangeError */
+function checkInputDraft(draft: EventDraft): EventDraft {
   if (
-    typeof input.type !== "string" ||
-    (!INPUT_DRAFT_TYPES.has(input.type) && !input.type.startsWith("ext."))
+    typeof draft.type !== "string" ||
+    (!INPUT_DRAFT_TYPES.has(draft.type) && !draft.type.startsWith("ext."))
   ) {
     throw new RangeError(
-      `input draft rejects event type ${String(input.type)}: only core.user_message, core.tool_result, core.system_note or ext.* are accepted`,
+      `input draft rejects event type ${String(draft.type)}: only core.user_message, core.tool_result, core.system_note or ext.* are accepted`,
     )
   }
-  return input
+  if (typeof draft.actor !== "string" || !INPUT_ACTORS.has(draft.actor)) {
+    throw new RangeError(
+      `input draft actor must be user, model, tool, system or host, got ${String(draft.actor)}`,
+    )
+  }
+  return draft
+}
+
+/**
+ * 把 `input` 归一成草稿列表：字符串 / 内容片段 → 一条 user_message；单条草稿 → 一条；草稿数组 → 按序多条。
+ * 全部校验完才返回，任一不合规在写任何日志之前就抛 RangeError（fail-closed）。片段与草稿混排、无法归类的元素一律拒绝
+ */
+export function inputDrafts(input: NonNullable<LoopConfig["input"]>): EventDraft[] {
+  if (typeof input === "string")
+    return [
+      { type: "core.user_message", actor: "user", payload: { content: [{ type: "text", text: input }] } },
+    ]
+  if (isInputArray(input)) {
+    const kinds = new Set(input.map(classifyInputItem))
+    if (kinds.has(undefined) || kinds.size > 1) {
+      throw new RangeError(
+        `input must be content parts or event drafts, got ${kinds.size > 1 && !kinds.has(undefined) ? "a mix of both" : "an element that is neither"}`,
+      )
+    }
+    // 空数组沿用现状当片段
+    if (!kinds.has("draft"))
+      return [{ type: "core.user_message", actor: "user", payload: { content: input as ContentPart[] } }]
+    return (input as readonly EventDraft[]).map(checkInputDraft)
+  }
+  return [checkInputDraft(input)]
+}
+
+/** Array.isArray 对 readonly 数组收窄不够，单独写一个守卫 */
+function isInputArray(
+  input: NonNullable<LoopConfig["input"]>,
+): input is ContentPart[] | readonly EventDraft[] {
+  return Array.isArray(input)
 }
 
 export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult> {
@@ -110,7 +158,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS
   const retry = resolveRetry(cfg.retry)
   // 新输入先过类型白名单：不合规在写任何东西之前就拒绝
-  const input = cfg.input !== undefined ? inputDraft(cfg.input) : undefined
+  const input = cfg.input !== undefined ? inputDrafts(cfg.input) : []
   const capabilities = lowering.capabilities(model)
   const configHash = await computeConfigHash({
     model,
@@ -234,7 +282,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   // ---- 新输入 ----
   // 日志里还有没结果的 tool_call 时，新输入照样追加在此（时间线如实记录"用户此时插话"，宪法二）；
   // 工具结果随后补齐、排在它之后，"tool_result 必须紧跟 tool_use"由降级层把用户消息后移来满足，不改日志顺序
-  if (input !== undefined) yield* await append([withResultTrust(input, baseTools)])
+  // 草稿数组一次 append：同一 at、连续 seq，顺序由宿主定（推荐背景在前，与 handoff 开场同一写法）
+  yield* await append(input.map((d) => withResultTrust(d, baseTools)))
 
   while (true) {
     const turnStartedAt = now()

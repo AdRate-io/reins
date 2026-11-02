@@ -39,6 +39,24 @@ type RunResult =
 
 Pausing is a return value, not a blocking callback. `state` is small (ids and hashes, HMAC-signed when you pass `secret`) and enough to resume in another process: `runLoop({ ...config, resume: state, decisions: [...] })` re-validates it against the log (config drift, pending-call digest) before writing anything.
 
+## Input: background and task in one run
+
+`input` takes a string, content parts, one event draft, or an array of drafts appended in order in one write. Use the array when a run brings both something to do and something to know, so the model can tell a colleague's request from the host's briefing:
+
+```ts
+/** Host briefing as a system note, then the actual request. One user message per batch. */
+function briefedInput(background: string, request: string): EventDraft[] {
+  return [
+    { type: "core.system_note", actor: "host", payload: { kind: "host", text: background } },
+    { type: "core.user_message", actor: "user", payload: { content: [{ type: "text", text: request }] } },
+  ]
+}
+
+runLoop({ ...config, input: briefedInput("Ticket #12 was edited by Ana an hour ago.", "Review ticket #12.") })
+```
+
+Every draft goes through the same type whitelist (`core.user_message`, `core.tool_result`, `core.system_note`, `ext.*`); one bad draft rejects the whole batch before anything is written, and content parts cannot be mixed with drafts. Keep one user message per batch: compaction keeps only the most recent one verbatim, while background notes fold like any other note (put what must stay in a pin). Lowering keeps the order on Chat and Responses; on Anthropic models that accept mid-conversation system messages the note lands right after the user message, because a system message may not follow an assistant one. The HTTP handler in `@reinsjs/server` does not accept draft arrays — this is for in-process hosts.
+
 ## Tools
 
 ```ts

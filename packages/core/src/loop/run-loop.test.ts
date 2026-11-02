@@ -1792,3 +1792,138 @@ describe("子代理暂停冒泡（§10.1，asTool 的机制）", () => {
     ])
   })
 })
+
+describe("input 草稿数组（OnSet 建议 7）", () => {
+  const note = (text: string) => ({
+    type: "core.system_note" as const,
+    actor: "host" as const,
+    payload: { kind: "host" as const, text },
+  })
+  const userMsg = (text: string) => ({
+    type: "core.user_message" as const,
+    actor: "user" as const,
+    payload: { content: [{ type: "text" as const, text }] },
+  })
+
+  it("[背景说明, 任务] 一次 append：按序、连续 seq、同一 at，排在 tools_bound 之后；模型看到的顺序一致", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([{ drafts: [say("好")] }])
+    const { result } = await drain(
+      runLoop(baseConfig(lowering, log, { input: [note("待办：A"), userMsg("处理 A")] as const })),
+    )
+    expect(result.status).toBe("done")
+    const events = await all(log)
+    expect(types(events).slice(0, 3)).toEqual(["tools_bound", "system_note", "user_message"])
+    const [, bg, task] = events
+    expect(bg?.actor).toBe("host")
+    expect(bg?.trust).toBe("system")
+    expect(task?.seq).toBe((bg?.seq ?? 0) + 1)
+    expect(task?.at).toBe(bg?.at)
+    const seen = lowering.requests[0]?.events.map((e) => e.type) ?? []
+    expect(seen.indexOf("core.system_note")).toBeLessThan(seen.indexOf("core.user_message"))
+  })
+
+  it.each([
+    [
+      "含 approval_decision",
+      [
+        note("x"),
+        {
+          type: "core.approval_decision",
+          actor: "host",
+          payload: { toolCallId: "c1", approved: true, by: "x" },
+        },
+      ],
+      /rejects event type core.approval_decision/,
+    ],
+    ["片段与草稿混排", [{ type: "text", text: "hi" }, note("x")], /got a mix of both/],
+    ["无法归类的元素", [note("x"), { type: "weird" }], /an element that is neither/],
+    [
+      "core.* 漏写 actor",
+      [{ type: "core.system_note", payload: { kind: "host", text: "x" } }],
+      /actor must be/,
+    ],
+    [
+      "非法 actor",
+      [{ type: "core.system_note", actor: "admin", payload: { kind: "host", text: "x" } }],
+      /got admin/,
+    ],
+    ["片段带了 actor", [{ type: "text", text: "hi", actor: "user" }], /rejects event type text/],
+  ])("%s → RangeError，一条日志都不写", async (_name, input, message) => {
+    const log = new InMemoryEventLog()
+    const run = runLoop(
+      baseConfig(new ScriptedLowering([{ drafts: [say("不该到这")] }]), log, {
+        input: input as unknown as NonNullable<LoopConfig["input"]>,
+      }),
+    )
+    await expect(drain(run)).rejects.toThrow(RangeError)
+    await expect(
+      drain(
+        runLoop(
+          baseConfig(new ScriptedLowering([]), log, {
+            input: input as unknown as NonNullable<LoopConfig["input"]>,
+          }),
+        ),
+      ),
+    ).rejects.toThrow(message)
+    expect(await all(log)).toHaveLength(0)
+  })
+
+  it("回归：字符串 / 内容片段 / 单条草稿 / 空数组与改动前同样落一条", async () => {
+    const cases: [NonNullable<LoopConfig["input"]>, string, unknown][] = [
+      ["hi", "core.user_message", { content: [{ type: "text", text: "hi" }] }],
+      [[{ type: "text", text: "hi" }], "core.user_message", { content: [{ type: "text", text: "hi" }] }],
+      [note("n"), "core.system_note", { kind: "host", text: "n" }],
+      [[], "core.user_message", { content: [] }],
+    ]
+    for (const [input, type, payload] of cases) {
+      const log = new InMemoryEventLog()
+      await drain(runLoop(baseConfig(new ScriptedLowering([{ drafts: [say("ok")] }]), log, { input })))
+      const added = (await all(log)).filter((e) => e.actor === "user" || e.actor === "host")
+      expect(added.map((e) => [e.type, e.payload])).toEqual([[type, payload]])
+    }
+  })
+
+  it("数组里的客户端 tool_result 按工具表落 trust；日志有 pending 时与续跑结论同批也照序追加", async () => {
+    const pick = defineTool<Record<string, never>>({
+      name: "pick_policy",
+      description: "",
+      inputSchema: {},
+      side: "client",
+      resultTrust: "system",
+    })
+    const log = new InMemoryEventLog()
+    const cfg = baseConfig(new ScriptedLowering([{ drafts: [callTool("c1", "pick_policy", {})] }]), log, {
+      tools: [pick],
+    })
+    const paused = await drain(runLoop({ ...cfg, input: "选" }))
+    expect(paused.result.status).toBe("paused")
+    if (paused.result.status !== "paused") return
+    const before = (await all(log)).length
+
+    const { result } = await drain(
+      runLoop({
+        ...cfg,
+        lowering: new ScriptedLowering([{ drafts: [say("done")] }]),
+        resume: paused.result.state,
+        input: [
+          note("背景"),
+          {
+            type: "core.tool_result",
+            actor: "tool",
+            payload: {
+              toolCallId: "c1",
+              name: "pick_policy",
+              content: [{ type: "text", text: "p" }],
+              isError: false,
+            },
+          },
+        ],
+      }),
+    )
+    expect(result.status).toBe("done")
+    const added = (await all(log)).slice(before)
+    expect(types(added).slice(0, 4)).toEqual(["run_resumed", "tools_bound", "system_note", "tool_result"])
+    expect(added[3]?.trust).toBe("system")
+  })
+})

@@ -125,6 +125,25 @@ describe("createAgent", () => {
     expect(agent.definition.memory).toBe(store.memory)
   })
 
+  it("run() 收草稿数组（as const 也行）：背景说明与任务按序落日志", async () => {
+    const store = memoryStore()
+    const agent = createAgent({ model: scripted(), tools: [add], store })
+    const input = [
+      { type: "core.system_note", actor: "host", payload: { kind: "host", text: "背景：只用 add" } },
+      { type: "core.user_message", actor: "user", payload: { content: [{ type: "text", text: "2+3" }] } },
+    ] as const
+    const gen = agent.run({ input })
+    let result = await gen.next()
+    while (!result.done) result = await gen.next()
+    expect(result.value.status).toBe("done")
+    const logged = await store.log.tail(result.value.sessionId, 10)
+    expect(logged.map((e) => e.type).slice(0, 3)).toEqual([
+      "core.tools_bound",
+      "core.system_note",
+      "core.user_message",
+    ])
+  })
+
   it("store 带 runLease 时自动装租约登记表：run 起步占租约、结束释放；宿主自传 handler.runs 则以宿主为准", async () => {
     const runLease = new InMemoryRunLease()
     const post = (sessionId: string) =>

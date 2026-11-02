@@ -390,3 +390,19 @@ describe("延迟加载（L1）：Responses 没有原生落点", () => {
     })
   })
 })
+
+describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿方案）", () => {
+  it("按原序：背景说明项排在任务之前", () => {
+    const r = encode([
+      user("q"),
+      text("a"),
+      ev("core.system_note", "host", { kind: "host", text: "背景" }),
+      user("任务"),
+    ])
+    const flat = JSON.stringify(r.body.input)
+    expect(flat.indexOf("背景")).toBeGreaterThan(flat.indexOf('"a"'))
+    expect(flat.indexOf("背景")).toBeLessThan(flat.indexOf("任务"))
+    const roles = (r.body.input as ResponsesInputItem[]).map((i) => ("role" in i ? i.role : i.type))
+    expect(roles.slice(-2)).toEqual([expect.stringMatching(/^(system|developer)$/), "user"])
+  })
+})

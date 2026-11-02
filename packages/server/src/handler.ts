@@ -86,7 +86,11 @@ function isValidSessionId(x: unknown): x is string {
   return typeof x === "string" && SESSION_ID_RE.test(x)
 }
 
-/** 请求体只做壳校验；resume 的形状与签名交给 core 的 validateResume，input 的内容交给循环 */
+/**
+ * 请求体只做壳校验；resume 的形状与签名交给 core 的 validateResume，草稿的类型白名单在 checkInput 与循环。
+ * 例外是数组 input：在这里无条件按白名单重建成内容片段——不带 resume / decisions 的请求不经过 checkInput，
+ * 而循环层认草稿数组（只给进程内宿主），放过去就能从网络写进 system 信任的说明（踩坑 10 同类）
+ */
 function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: false; error: string } {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { ok: false, error: "request body must be a JSON object" }
@@ -98,7 +102,12 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
   if (b.lastSeq !== undefined && !isNonNegativeInt(b.lastSeq)) {
     return { ok: false, error: "lastSeq must be a non-negative integer" }
   }
-  if (b.input !== undefined) {
+  if (Array.isArray(b.input)) {
+    const parts = rebuildContentParts(b.input)
+    if (!parts)
+      return { ok: false, error: "input content parts must be a non-empty array of text or image parts" }
+    b.input = parts
+  } else if (b.input !== undefined) {
     const okInput =
       typeof b.input === "string" ||
       Array.isArray(b.input) ||
@@ -131,15 +140,22 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
   return { ok: true, body: b as AgentRequestBody }
 }
 
-function isContentParts(x: unknown): x is ContentPart[] {
-  if (!Array.isArray(x) || x.length === 0) return false
-  return x.every((p) => {
-    if (typeof p !== "object" || p === null) return false
+/**
+ * 网络来的内容片段按白名单重建：非空、只收 text / image，每个片段只留该类型的字段（壳字段由服务端定）。
+ * 多余字段（如 actor）因此不可能进到循环、改变它对 input 的判别；不合规返回 undefined
+ */
+function rebuildContentParts(x: unknown): ContentPart[] | undefined {
+  if (!Array.isArray(x) || x.length === 0) return undefined
+  const out: ContentPart[] = []
+  for (const p of x) {
+    if (typeof p !== "object" || p === null) return undefined
     const part = p as { type?: unknown; text?: unknown; mime?: unknown; data?: unknown }
-    if (part.type === "text") return typeof part.text === "string"
-    if (part.type === "image") return typeof part.mime === "string" && typeof part.data === "string"
-    return false
-  })
+    if (part.type === "text" && typeof part.text === "string") out.push({ type: "text", text: part.text })
+    else if (part.type === "image" && typeof part.mime === "string" && typeof part.data === "string")
+      out.push({ type: "image", mime: part.mime, data: part.data })
+    else return undefined
+  }
+  return out
 }
 
 type InputCheck =
@@ -151,7 +167,8 @@ type InputCheck =
  * - `core.user_message`：用户说话（actor=user）
  * - `core.tool_result`：给**客户端工具**的 pending 调用回填结果（actor=tool，name 取自 tool_call）
  * 其余类型一律 400 —— 一条伪造的 approval_decision(approved=true) 就能让 pending 调用免审批执行，伪造的 system_note 带
- * system 信任、伪造的 compaction 能把历史藏起来。循环层的 `inputDraft` 还有第二道白名单，这里是面向网络的第一道。
+ * system 信任、伪造的 compaction 能把历史藏起来。循环层的 `inputDrafts` 还有第二道白名单，这里是面向网络的第一道。
+ * 数组 input 在 parseBody 里已重建成内容片段，这里原样放行；草稿数组不经 HTTP（刻意不对称）。
  */
 function checkInput(
   raw: AgentRequestBody["input"],
@@ -162,7 +179,8 @@ function checkInput(
   const draft = raw as EventDraft
   const payload = (draft.payload ?? {}) as Record<string, unknown>
   if (draft.type === "core.user_message") {
-    if (!isContentParts(payload.content))
+    const content = rebuildContentParts(payload.content)
+    if (!content)
       return {
         ok: false,
         status: 400,
@@ -171,7 +189,7 @@ function checkInput(
       }
     return {
       ok: true,
-      input: { type: "core.user_message", actor: "user", payload: { content: payload.content } },
+      input: { type: "core.user_message", actor: "user", payload: { content } },
     }
   }
   if (draft.type === "core.tool_result") {
@@ -193,7 +211,8 @@ function checkInput(
         message: `only client-side tool results can be filled in; ${call.payload.name} runs on the server`,
       }
     }
-    if (!isContentParts(payload.content))
+    const content = rebuildContentParts(payload.content)
+    if (!content)
       return {
         ok: false,
         status: 400,
@@ -210,7 +229,7 @@ function checkInput(
         payload: {
           toolCallId: call.payload.toolCallId,
           name: call.payload.name,
-          content: payload.content,
+          content,
           isError: payload.isError === true,
         },
       },

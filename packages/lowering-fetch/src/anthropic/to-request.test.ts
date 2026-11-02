@@ -540,3 +540,27 @@ describe("延迟加载（L1，spikes/l1-deferred-tools 实测的厂商规矩）"
     })
   })
 })
+
+describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿方案）", () => {
+  it("中途 system 开：厂商不许 system 紧跟 assistant，背景归位到任务之后——assistant → user(任务) → system(背景)，exact + moved", () => {
+    const bg = ev("core.system_note", "host", { kind: "host", text: "背景" })
+    const r = encode([user("q"), text("a"), bg, user("任务")])
+    expect(roles(r.body.messages)).toEqual(["user", "assistant", "user", "system"])
+    expect((r.body.messages[2]?.content[0] as { text: string } | undefined)?.text).toBe("任务")
+    expect((r.body.messages[3]?.content[0] as { text: string } | undefined)?.text).toBe("背景")
+    expect(landingOf(r, bg)).toMatchObject({ kind: "exact", landing: "system" })
+    expect(landingOf(r, bg)?.note).toContain("moved to just after the next user message")
+  })
+
+  it("中途 system 关：背景以带标签 user 文本与任务并进同一条 user，标签在前", () => {
+    const bg = ev("core.system_note", "host", { kind: "host", text: "背景" })
+    const r = encode([user("q"), text("a"), bg, user("任务")], haiku)
+    expect(roles(r.body.messages)).toEqual(["user", "assistant", "user"])
+    const texts = r.body.messages[2]?.content.map((b) => (b as { text: string }).text) ?? []
+    expect(texts).toHaveLength(2)
+    expect(texts[0]).toContain('<system_note kind="host">')
+    expect(texts[0]).toContain("背景")
+    expect(texts[1]).toBe("任务")
+    expect(landingOf(r, bg)).toMatchObject({ kind: "lossy", landing: "user-role" })
+  })
+})

@@ -501,3 +501,24 @@ describe("工具结果图片上浮（2026-10-27，OnSet）", () => {
     expect(JSON.stringify(encode(deepseek, history).body.messages)).toBe(JSON.stringify(first))
   })
 })
+
+describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿方案）", () => {
+  it("按原序：assistant → system(背景) → user(任务)；关中途 system 时背景以带标签 user 排在任务前", () => {
+    const batch = () => [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "q" }] }),
+      ev("core.model_text", "model", { text: "a" }, { replay: origin }),
+      ev("core.system_note", "host", { kind: "host", text: "背景" }),
+      ev("core.user_message", "user", { content: [{ type: "text", text: "任务" }] }),
+    ]
+    const on = encode(deepseek, batch())
+    expect(roles(on.body.messages)).toEqual(["user", "assistant", "system", "user"])
+    expect(JSON.stringify(on.body.messages[2])).toContain("背景")
+    expect(JSON.stringify(on.body.messages[3])).toContain("任务")
+
+    const off = encode(plain, batch())
+    const flat = JSON.stringify(off.body.messages.slice(2))
+    expect(off.body.messages.slice(2).every((m) => m.role === "user")).toBe(true)
+    expect(flat).toContain('<system_note kind=\\"host\\">')
+    expect(flat.indexOf("背景")).toBeLessThan(flat.indexOf("任务"))
+  })
+})

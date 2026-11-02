@@ -239,3 +239,23 @@ describe("延迟加载（L1）：pi 版没有原生落点", () => {
     expect(JSON.stringify(context.messages)).toContain('### g\\ndg\\nInput schema: {\\"type\\":\\"object\\"}')
   })
 })
+
+describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿方案）", () => {
+  it("context 里背景在任务前；中途 system 开时发出前由 rewriteAnthropicPayload 归位到任务之后（见 pi-lowering.test「system_note 后面紧跟 user」）", () => {
+    for (const mid of [true, false]) {
+      seq = 0
+      const events = [
+        ev("core.user_message", "user", { content: [{ type: "text", text: "q" }] }),
+        ev("core.model_text", "model", { text: "a" }),
+        ev("core.system_note", "host", { kind: "host", text: "背景" }),
+        ev("core.user_message", "user", { content: [{ type: "text", text: "任务" }] }),
+      ]
+      const { context, landings } = eventsToContext({ events, model, capabilities: caps(mid) })
+      expect(context.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "user"])
+      const flat = JSON.stringify(context.messages.slice(2))
+      expect(flat.indexOf("背景")).toBeLessThan(flat.indexOf("任务"))
+      const bg = landings.find((l) => l.type === "core.system_note")
+      expect(bg?.kind).toBe(mid ? "exact" : "lossy")
+    }
+  })
+})

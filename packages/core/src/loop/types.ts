@@ -365,10 +365,13 @@ export interface LoopConfig {
   sockets?: readonly Socket[]
   systemPrompt?: string
   /**
-   * 本次 run 要追加的新输入：字符串 / 内容片段 → user_message；也可直接给草稿（如宿主注入 system_note）。
+   * 本次 run 要追加的新输入：字符串 / 内容片段 → user_message；也可直接给草稿（如宿主注入 system_note），
+   * 或草稿数组——一次 append、按给定顺序写入，适合"背景 + 任务"：`[system_note(kind: "host"), user_message]`，
+   * 每批只放一条 user_message（compact 只保最后一条）。片段与草稿不能混排；任一草稿不合规整批拒绝、日志不写。
+   * 草稿数组只给进程内宿主，HTTP 入口只收文本 / 内容片段与两种重建过的草稿（刻意不对称）。
    * 缺省不追加（续跑：日志里有未完成的工具调用就先补齐，再问模型）。
    */
-  input?: string | ContentPart[] | EventDraft
+  input?: string | ContentPart[] | EventDraft | readonly EventDraft[]
   principal?: Principal
   projection?: {
     strategies?: readonly ProjectionStrategy[]

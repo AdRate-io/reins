@@ -8,9 +8,8 @@
 import {
   type ApprovalDecisionInput,
   type BoundModel,
-  type ContentPart,
   type Event,
-  type EventDraft,
+  type LoopConfig,
   type LoweringDelta,
   type Principal,
   type RunResult,
@@ -45,7 +44,8 @@ export interface CreateAgentOptions
 export interface RunOptions {
   /** 缺省新建会话；结果的 sessionId 告诉你它是什么 */
   sessionId?: string
-  input?: string | ContentPart[] | EventDraft
+  /** 与 `runLoop` 同一类型：进程内可传草稿数组（如 `[system_note(kind: "host"), user_message]`）；HTTP 请求体不收草稿数组 */
+  input?: NonNullable<LoopConfig["input"]>
   resume?: SerializedRunState
   decisions?: readonly ApprovalDecisionInput[]
   principal?: Principal

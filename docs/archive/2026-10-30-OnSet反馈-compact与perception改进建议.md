@@ -89,3 +89,22 @@ OnSet 现在的做法（只作参考，属于 OnSet 自己的本地化，不算�
 优先级低：错误文案本身说得清楚，模型下一轮就能纠正，代价只是每个新会话多一轮。
 
 > **处置（reins，2026-10-31）**：照建议做，brain 0.7.1（0.7.0 误发旧产物，见踩坑 43）。`memory({ directories: ["/memories/personal", "/memories/project", "/memories/team"] })` 声明常设目录（祖先自动算进来）：`view` 空层返回空列表、不算错误，`view /memories` 也列出这几层（0B）。写操作口径不变：不能把常设目录当文件写、不能改名到它；删 / 改名一个空的常设目录回"is empty; there is nothing to delete / rename"。不声明的宿主行为不变。
+
+## 建议 7（会话盘点补充，2026-11-02）：run 的 input 允许多条草稿，宿主背景能以 system_note 和本次任务一起进来
+
+背景：OnSet 每次 run 的输入由宿主组装，一部分是"要你做什么"（同事 / Boss 的新消息、条目快照），一部分是框架给的背景（待办清单、相关条目被别人改了什么、团队经验库有更新）。现在全部拼成一条 `core.user_message`。盘点（「EP1 第3场对比测试」80 次 run）里背景约占 15%，它们以 user 身份出现，模型分不清哪些是同事在要求、哪些是系统在告知。
+
+现状：`LoopConfig.input` 是 `string | ContentPart[] | EventDraft`，一次只能是一条。宿主要么全给 user_message，要么给一条 system_note，没法两样都给。
+
+可行的绕法与问题：宿主自建 Socket，在本次 run 第一次 `beforeModel` 里 `ctx.emit` 一条 system_note（compact 的整理请求就是这么发的）。但笔记会落在 user 消息之后，而背景应该在任务之前；宿主还要自己记"本次 run 发过没有"。凡是有"背景 + 任务"结构的宿主都得重写一遍。
+
+建议：
+- `input` 接受草稿数组（`EventDraft[]`，或 `string | ContentPart[]` 与草稿混排），按顺序写进时间线，校验口径同现在：任一不合规就整体在写日志前抛 RangeError。
+- 压缩时"最近一条用户消息原样幸存"的规则不变，只认 user_message，同批的 system_note 照普通笔记折叠。OnSet 里背景过时就没用了，折掉正合适；需要常驻的已经走 pins。
+- 中途 system 的降级照现有规则：上游不支持就包 `<system_note>` 走 user，宿主不用管。
+
+顺带一个观察，供 reins 判断要不要验：OnSet 之前记过"中转站上中途 system 消息模型只看到、不照做"，后来整理请求改成 user 身份 + 命令语气就有效了。但那次身份和语气是一起换的，分不开是哪个起了作用。确定的是中途 system 模型看得到：演示里 50%–70% 的运行状态以 system 送达，角色的思考里提到了它。若要区分，可以用 examples/eval 做个小对照：同一句命令分别以中途 system 和 user 发，看照做率。
+
+优先级中：不影响正确性。OnSet 的分层（背景走 system_note、任务留 user）等这项落地再做，期间不写兼容层。
+
+> **处置（reins，2026-11-02）**：照建议做，方案 `docs/implementation-plans/2026-11-02-输入多条草稿.md`；core / server / agent 下一个 minor。`input` 收草稿数组，按序一次写入，推荐 `[{ type: "core.system_note", actor: "host", payload: { kind: "host", text: 背景 } }, user_message]`，每批一条 user_message。两处与原提议不同：① 不收字符串与草稿混排（user_message 自己写成草稿）；② HTTP 入口不收草稿数组（进程内专用，网络上能写 system 信任说明就是漏洞）。降级层不改：Chat / Responses 与 DeepSeek 背景在任务前；Anthropic 官方能开中途 system 的型号，厂商不许 system 紧跟 assistant，背景排到任务之后，角色区分不变。顺带的观察不用另做对照：踩坑 42 / OPT-261031-1 已在同一中转站拆开身份与语气（同措辞中途 system 0/54、带标签 user 3/3），结论是要模型去做的指令标 `directive`，背景这类陈述用普通 system_note 即可。

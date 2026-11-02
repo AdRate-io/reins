@@ -191,7 +191,7 @@ docs/                # 维护者文档（中文），见文档索引
 ## 鉴权与安全默认值
 
 - **server 两层鉴权**：`principal(request)` 解析谁在问；`authorizeSession({ sessionId, principal, request, method, isNew })` 在解析出 sessionId 之后、读写日志之前决定能碰哪条会话（此时 body 已被 handler 读完，`request` 只能读 header）。**只有字面 `true` 放行，拒绝回 404**（不用 403）。
-- **客户端输入两道类型白名单**：循环层 `inputDraft` 只收 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`；server 层只收 `user_message` 与客户端工具 pending 的 `tool_result`。审批结论只走 `decisions`（状态 HMAC 签名，宿主给 `secret`）。
+- **客户端输入两道类型白名单**：循环层 `inputDrafts` 只收 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`（数组逐条查、任一不合规整批拒）；server 层只收 `user_message` 与客户端工具 pending 的 `tool_result`，数组 input 在 `parseBody` 无条件重建成内容片段——不带 resume / decisions 的请求不经 `checkInput`，放在那里就漏。审批结论只走 `decisions`（状态 HMAC 签名，宿主给 `secret`）。
 - **trust**：工具结果缺省 untrusted，降级层包 `<untrusted source="tool:<name>">…</untrusted>`；只有 `Tool.resultTrust: "system"` 的成功结果是 system（`skill_read`、`tool_find`）。
 - **越权资源一律当不存在**：未授权会话 404、未被本会话引用的 blob id "不存在"、技能路径越界"不存在"。
 
@@ -241,6 +241,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | `deferredTools` 能力位：Anthropic 官方 vs DeepSeek 的 Anthropic 端口 | 只对 `provider: "anthropic"` 缺省开；DeepSeek 兼容端口实测忽略 `defer_loading`；Chat / Responses / pi 版把 `deferLoading` 的工具直接不发 |
 | DeepSeek `reasoning_content`：`deepseek()` vs `openaiChat()` | 前者缺省开方言、每条历史 assistant 字段必在；后者不带 |
 | 阈值兜底口径 vs `targetTokens` | 兜底比"估算 + 固定开销"；`targetTokens` 仍是真实上下文口径（感知 `autoFoldAt` 按它算），别把开销减进它 |
+| 进程内 `input`（`runLoop` / `agent.run()`）vs HTTP `AgentRequestBody.input` | 进程内收草稿数组（宿主背景可带 system 信任）；HTTP 数组只收重建过的内容片段，草稿只收重建过的两种——网络边界不能写 system 信任的说明 |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表

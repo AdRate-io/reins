@@ -766,6 +766,20 @@ describe("compact 纯函数层", () => {
     expect(plan.folded).toEqual([pin, t1, u])
   })
 
+  it("planCompaction：run 输入批 [宿主背景说明, 用户任务] 被覆盖时，任务幸存、同批背景照普通说明折掉（输入多条草稿方案）", () => {
+    seq = 0
+    const bg = ev("core.system_note", { kind: "host", text: "背景" }, "host") // e1
+    const task = user("任务") // e2
+    const t1 = text("a") // e3
+    const u2 = usage() // e4
+    const t2 = text("b") // e5
+    const plan = planCompaction([bg, task, t1, u2, t2], { summary: "S", keep: [], keepRecentTurns: 1 })
+    expect(plan.ok).toBe(true)
+    if (!plan.ok) return
+    expect(plan.folded).toContain(bg)
+    expect(plan.payload.pinsKept).toEqual(["e2"])
+  })
+
   it("planCompaction 清单：入参在时间线里找、幸存者不列、超过 maxItems 折成一行、manifest:false 不列", () => {
     seq = 0
     const call = (id: string, name: string, args: unknown) =>
