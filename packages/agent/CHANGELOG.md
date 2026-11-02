@@ -1,5 +1,14 @@
 # @reinsjs/agent
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [54fed37]
+  - @reinsjs/core@0.8.0
+  - @reinsjs/server@0.4.2
+  - @reinsjs/ui-agui@0.3.5
+
 ## 0.4.1
 
 ### Patch Changes

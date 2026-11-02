@@ -56,7 +56,12 @@ async function trial(scenario) {
       execute: (a) => {
         if (a.rev !== rev) {
           record("board_update", false, a)
-          return { content: [{ type: "text", text: `Rejected: rev ${a.rev} is stale, the item's current rev is ${rev}.` }], isError: true }
+          return {
+            content: [
+              { type: "text", text: `Rejected: rev ${a.rev} is stale, the item's current rev is ${rev}.` },
+            ],
+            isError: true,
+          }
         }
         rev++
         record("board_update", true, a)
@@ -120,7 +125,9 @@ async function trial(scenario) {
       ...common,
       ...model,
       maxTurns: 3,
-      ...(scenario === "waiting" ? { decisions: [{ sessionId, toolCallId: "c1", approved: true, by: "boss" }] } : {}),
+      ...(scenario === "waiting"
+        ? { decisions: [{ sessionId, toolCallId: "c1", approved: true, by: "boss" }] }
+        : {}),
     }),
   )
   const firstChat = live.findIndex((c) => c.name === "chat_send")
@@ -129,13 +136,22 @@ async function trial(scenario) {
     scenario === "failed"
       ? firstChat >= 0 && firstGoodUpdate >= 0 && firstGoodUpdate < firstChat
       : live[0]?.name === "deploy" && firstChat > 0
-  return { scenario, pass, status: result.status, calls: live.map((c) => `${c.name}${c.ok ? "" : "✗"}`).join(" → ") }
+  return {
+    scenario,
+    pass,
+    status: result.status,
+    calls: live.map((c) => `${c.name}${c.ok ? "" : "✗"}`).join(" → "),
+  }
 }
 
 const jobs = []
 for (const s of ["failed", "waiting"]) for (let r = 0; r < repeats; r++) jobs.push(trial(s))
 const rows = await Promise.allSettled(jobs)
-const out = rows.map((r) => (r.status === "fulfilled" ? r.value : { scenario: "?", pass: false, status: "threw", calls: String(r.reason) }))
+const out = rows.map((r) =>
+  r.status === "fulfilled"
+    ? r.value
+    : { scenario: "?", pass: false, status: "threw", calls: String(r.reason) },
+)
 console.table(out)
 for (const s of ["failed", "waiting"]) {
   const mine = out.filter((r) => r.scenario === s)
