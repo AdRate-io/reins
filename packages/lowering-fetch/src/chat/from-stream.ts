@@ -9,7 +9,14 @@
  *   choices[0].finish_reason 在末块；usage 在带 stream_options.include_usage 的最后一个 chunk（choices 可能为空数组）
  *   `data: [DONE]` 收尾。未知字段一律忽略（CF 网关会多个 "p"，OpenAI 常带 system_fingerprint / obfuscation）。
  */
-import type { CoreEventDraft, LoweringOutcome, LoweringStreamContext, TokenUsage } from "@reinsjs/core"
+import {
+  type CoreEventDraft,
+  type LoweringOutcome,
+  type LoweringStreamContext,
+  type TokenUsage,
+  toolCallArgumentsMeta,
+  unwrapToolArguments,
+} from "@reinsjs/core"
 import type { ModelOrigin } from "../ir.js"
 import type { SseMessage } from "../sse.js"
 import { costOf, type ModelCost } from "../usage.js"
@@ -73,10 +80,11 @@ class ChatAssembly {
     if (this.text.length > 0)
       out.push({ type: "core.model_text", actor: "model", payload: { text: this.text }, replay })
     for (const [, c] of [...this.calls.entries()].sort((a, b) => a[0] - b[0])) {
+      const decoded = unwrapToolArguments(parseArguments(c.args))
       out.push({
         type: "core.tool_call",
         actor: "model",
-        payload: { toolCallId: c.id, name: c.name, args: parseArguments(c.args) },
+        payload: { toolCallId: c.id, name: c.name, args: decoded.args, ...toolCallArgumentsMeta(decoded) },
         replay,
       })
     }
@@ -84,7 +92,7 @@ class ChatAssembly {
   }
 }
 
-/** 入参 JSON 解析不了就原样存字符串：工具校验会把错误告诉模型，写侧再原样送回（to-request.ts argumentsOf） */
+/** 入参 JSON 解析不了就原样存字符串：工具校验会把错误告诉模型，写侧再原样送回（to-request.ts argumentsOf）；二次编码由调用方再交 unwrapToolArguments */
 function parseArguments(raw: string): unknown {
   if (raw.trim() === "") return {}
   try {

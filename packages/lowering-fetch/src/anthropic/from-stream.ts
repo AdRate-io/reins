@@ -13,7 +13,14 @@
  *   message_stop / ping / error{ error: { type, message } }
  * 未知字段一律忽略（厂商自带 "p" 填充；CF 网关原样透传）。
  */
-import type { CoreEventDraft, LoweringOutcome, LoweringStreamContext, TokenUsage } from "@reinsjs/core"
+import {
+  type CoreEventDraft,
+  type LoweringOutcome,
+  type LoweringStreamContext,
+  type TokenUsage,
+  toolCallArgumentsMeta,
+  unwrapToolArguments,
+} from "@reinsjs/core"
 import type { ModelOrigin } from "../ir.js"
 import type { SseMessage } from "../sse.js"
 import { costOf, type ModelCost } from "../usage.js"
@@ -79,7 +86,7 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined
 }
 
-/** 入参 JSON 解析不了就原样存字符串（写侧会包成 { value }），空串按 {} */
+/** 入参 JSON 解析不了就原样存字符串（写侧会包成 { value }），空串按 {}；二次编码由调用方再交 unwrapToolArguments */
 function parseInput(json: string, fallback: unknown): unknown {
   if (json.trim() === "") return typeof fallback === "object" && fallback !== null ? fallback : {}
   try {
@@ -124,14 +131,21 @@ class AnthropicAssembly {
           if (b.text.length > 0)
             out.push({ type: "core.model_text", actor: "model", payload: { text: b.text }, replay })
           break
-        case "tool_use":
+        case "tool_use": {
+          const decoded = unwrapToolArguments(parseInput(b.json, b.input))
           out.push({
             type: "core.tool_call",
             actor: "model",
-            payload: { toolCallId: b.id, name: b.name, args: parseInput(b.json, b.input) },
+            payload: {
+              toolCallId: b.id,
+              name: b.name,
+              args: decoded.args,
+              ...toolCallArgumentsMeta(decoded),
+            },
             replay,
           })
           break
+        }
         case "other":
           break
       }

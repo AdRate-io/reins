@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest"
 import { capabilitiesOf } from "../capabilities.js"
 import { eventsToIr } from "../ir.js"
 import type { FetchModel } from "../models.js"
+import { consumeChatStream } from "./from-stream.js"
 import { type ChatMessage, encodeChatRequest } from "./to-request.js"
 
 const registry = createCoreRegistry()
@@ -294,6 +295,45 @@ describe("encodeChatRequest", () => {
     ])
     const calls = (body.messages[0] as { tool_calls: { function: { arguments: string } }[] }).tool_calls
     expect(calls.map((c) => c.function.arguments)).toEqual(["{not json", '{"x":[1]}'])
+  })
+
+  it("二次编码的入参读侧解开后，写侧送回的历史与工具拿到的是同一份对象（OnSet 建议 8：记录与执行说法一致）", async () => {
+    seq = 0
+    const sent = { candidate_for: "s1", prompt: '雨夜，"别走"' }
+    const gen = consumeChatStream({
+      messages: (async function* () {
+        yield {
+          data: JSON.stringify({
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "a",
+                      function: { name: "t", arguments: JSON.stringify(JSON.stringify(sent)) },
+                    },
+                  ],
+                },
+                finish_reason: "tool_calls",
+              },
+            ],
+          }),
+        }
+        yield { data: "[DONE]" }
+      })(),
+      origin,
+    })
+    let r = await gen.next()
+    if (r.done || r.value.type !== "core.tool_call") throw new Error("expected a tool_call draft")
+    const call = r.value
+    r = await gen.next()
+    expect(r.done).toBe(true)
+    expect(call.payload.args).toEqual(sent)
+    const { body } = encode(deepseek, [ev("core.tool_call", "model", call.payload, origin)])
+    const calls = (body.messages[0] as { tool_calls: { function: { arguments: string } }[] }).tool_calls
+    expect(JSON.parse(calls[0]?.function.arguments ?? "")).toEqual(call.payload.args)
   })
 })
 

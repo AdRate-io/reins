@@ -387,4 +387,29 @@ describe("consumeResponsesStream", () => {
     ])
     expect(outcome).toMatchObject({ stopReason: "toolUse" })
   })
+
+  it("function_call 入参被二次编码：多解一层得对象并标 meta（OnSet 建议 8）", async () => {
+    const { drafts } = await collect(
+      consumeResponsesStream({
+        messages: feed([
+          created,
+          done(0, {
+            id: "fc_1",
+            type: "function_call",
+            call_id: "call_1",
+            name: "f",
+            arguments: JSON.stringify(JSON.stringify({ a: [1] })),
+          }),
+          completed({ input_tokens: 1, output_tokens: 1 }),
+        ]),
+        origin,
+      }),
+    )
+    expect(drafts[0]?.payload).toEqual({
+      toolCallId: "call_1",
+      name: "f",
+      args: { a: [1] },
+      meta: { argumentsUnwrapped: true },
+    })
+  })
 })

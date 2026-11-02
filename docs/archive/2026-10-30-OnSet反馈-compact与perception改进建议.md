@@ -108,3 +108,20 @@ OnSet 现在的做法（只作参考，属于 OnSet 自己的本地化，不算�
 优先级中：不影响正确性。OnSet 的分层（背景走 system_note、任务留 user）等这项落地再做，期间不写兼容层。
 
 > **处置（reins，2026-11-02）**：照建议做，方案 `docs/implementation-plans/2026-11-02-输入多条草稿.md`；core / server / agent 下一个 minor。`input` 收草稿数组，按序一次写入，推荐 `[{ type: "core.system_note", actor: "host", payload: { kind: "host", text: 背景 } }, user_message]`，每批一条 user_message。两处与原提议不同：① 不收字符串与草稿混排（user_message 自己写成草稿）；② HTTP 入口不收草稿数组（进程内专用，网络上能写 system 信任说明就是漏洞）。降级层不改：Chat / Responses 与 DeepSeek 背景在任务前；Anthropic 官方能开中途 system 的型号，厂商不许 system 紧跟 assistant，背景排到任务之后，角色区分不变。顺带的观察不用另做对照：踩坑 42 / OPT-261031-1 已在同一中转站拆开身份与语气（同措辞中途 system 0/54、带标签 user 3/3），结论是要模型去做的指令标 `directive`，背景这类陈述用普通 system_note 即可。
+
+## 建议 8（第五轮试拍补充，2026-11-02）：工具入参被二次编码成 JSON 字符串时，降级层再解一层
+
+背景：OnSet「房间场景动态演练」里，摄影师调用 `generate_submit`，第一次就被拒：`expected object, received string`。模型把整个入参写成了一段 JSON 文本：`arguments` 解析一次后得到的不是对象，而是字符串 `{"candidate_for": …}`，也就是被编码了两次。全库盘点 111 次工具硬报错，6 次是整个入参被二次编码（`generate_submit` 3、`board_update` 2、`batch` 1），都出在入参长、文本里引号多的调用上。这次的连带代价：模型以为工具坏了，用占位提示词真提交了一条视频去试，花了 70 积分。
+
+现状：`packages/lowering-fetch/src/chat/from-stream.ts` 的 `parseArguments` 只解一次，解出来是字符串就原样交给宿主，宿主的 `validate` 只能报"要对象却收到字符串"。Responses 路径（`responses/from-stream.ts`）应该是同样的情况，没逐行核。
+
+OnSet 这边已做的（宿主能管的部分）：字段级二次编码（对象里某个数组字段写成了 JSON 文本）在 `validate` 里先解析再校验；报错里去掉了类型不符时 zod 多报的长度噪音，并提示"多半是写成了 JSON 文本"。整个入参是字符串这一种，按约定不在 OnSet 写兼容，交给降级层。
+
+建议：
+- `parseArguments` 解析结果是字符串、并且这个字符串本身能解析成对象时，用解析出来的对象；只多解这一层，结果不是对象（数字、数组、普通文本）就照现在原样返回。
+- 这样多解一层不会误伤：工具入参的顶层按约定一定是对象，字符串顶层本来就不合法。
+- 可以在 `tool_call` 事件上带个标记（比如 `meta.argumentsUnwrapped: true`），宿主统计时能看出是哪家模型、哪种调用容易这样写；不带也行。
+
+优先级中：不影响正确性（模型下一轮会改），但每次都多一轮往返，还会诱发上面那种试探。
+
+> **处置（reins，2026-11-02）**：照做，并且判为 reins 的 bug 而不只是优化：fetch 版写侧（Chat / Responses 的 `argumentsOf`）把字符串入参当原始 JSON 文本送回，历史里模型看到自己写对了对象，工具却报"收到字符串"，记录与执行说法不一，正是诱发"以为工具坏了去试"的根子。做法：core 新增 `unwrapToolArguments`，fetch 三条线（含 Anthropic）与 pi 版读侧都调它（pi-ai 的 `parseStreamingJson` 也只解一层，同一个毛病）；规则同建议，只多解一层、只换成普通对象。与原提议一处不同：标记不是可选——库替模型多解了一层要留在时间线上，`tool_call.payload.meta.argumentsUnwrapped: true`。TanStack 适配器刻意不做（工具由引擎按它自己解析的入参执行，日志单方面解开会与执行不一致）。core minor、lowering-fetch / lowering-pi patch，随下次发版；用例锁住"二次编码读侧解开后，写侧送回的历史与工具拿到的是同一份"。字段级二次编码（对象里某个字段写成 JSON 文本）仍归宿主 `validate`：库不知道哪个字段本该是字符串。

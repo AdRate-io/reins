@@ -33,6 +33,11 @@ export interface ToolCallPayload {
   name: string
   /** 模型给的原始入参（已解析为 JSON 值）；校验在工具执行前做，事件里存原样 */
   args: unknown
+  /**
+   * 降级层附带的读侧记录，**不进模型上下文**。目前只有 `argumentsUnwrapped: true`：模型把整个入参二次编码成了
+   * JSON 文本，降级层多解了一层（core/lowering/tool-arguments.ts）。可选字段，不升版本。
+   */
+  meta?: Record<string, unknown>
 }
 
 export interface ToolResultPayload {

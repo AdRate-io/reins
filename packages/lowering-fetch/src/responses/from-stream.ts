@@ -15,7 +15,14 @@
  *   response.failed { response: { error: { code, message } } } / error { code, message }
  * 未知字段一律忽略（CF 网关会多个 "p"）。
  */
-import type { CoreEventDraft, LoweringOutcome, LoweringStreamContext, TokenUsage } from "@reinsjs/core"
+import {
+  type CoreEventDraft,
+  type LoweringOutcome,
+  type LoweringStreamContext,
+  type TokenUsage,
+  toolCallArgumentsMeta,
+  unwrapToolArguments,
+} from "@reinsjs/core"
 import type { ModelOrigin } from "../ir.js"
 import type { SseMessage } from "../sse.js"
 import { costOf, type ModelCost } from "../usage.js"
@@ -81,7 +88,7 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined
 }
 
-/** 入参 JSON 解析不了就原样存字符串（写侧原样送回），空串按 {} */
+/** 入参 JSON 解析不了就原样存字符串（写侧原样送回），空串按 {}；二次编码由调用方再交 unwrapToolArguments */
 function parseArguments(raw: string): unknown {
   if (raw.trim() === "") return {}
   try {
@@ -209,15 +216,22 @@ class ResponsesAssembly {
           if (s.phase) replay.phase = s.phase
           out.push({ type: "core.model_text", actor: "model", payload: { text: s.text }, replay })
           break
-        case "function_call":
+        case "function_call": {
           if (s.id) replay.itemId = s.id
+          const decoded = unwrapToolArguments(parseArguments(s.args))
           out.push({
             type: "core.tool_call",
             actor: "model",
-            payload: { toolCallId: s.callId, name: s.name, args: parseArguments(s.args) },
+            payload: {
+              toolCallId: s.callId,
+              name: s.name,
+              args: decoded.args,
+              ...toolCallArgumentsMeta(decoded),
+            },
             replay,
           })
           break
+        }
         case "other":
           break
       }

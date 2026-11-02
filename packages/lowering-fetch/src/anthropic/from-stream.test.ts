@@ -166,6 +166,28 @@ describe("consumeAnthropicStream", () => {
     expect(drafts[1]).toMatchObject({ payload: { toolCallId: "t2", args: '{"broken' } })
   })
 
+  it("input_json_delta 拼出的是 JSON 字符串字面量（二次编码）：多解一层得对象并标 meta（OnSet 建议 8）", async () => {
+    const { drafts } = await collect(
+      consumeAnthropicStream({
+        messages: feed([
+          start(),
+          bstart(0, { type: "tool_use", id: "t1", name: "f", input: {} }),
+          bdelta(0, { type: "input_json_delta", partial_json: JSON.stringify(JSON.stringify({ a: 1 })) }),
+          bstop(0),
+          mdelta("tool_use", 3),
+          mstop,
+        ]),
+        origin,
+      }),
+    )
+    expect(drafts[0]?.payload).toEqual({
+      toolCallId: "t1",
+      name: "f",
+      args: { a: 1 },
+      meta: { argumentsUnwrapped: true },
+    })
+  })
+
   it("stop_reason 映射：max_tokens / model_context_window_exceeded → length；refusal → error 带 stop_details；pause_turn → stop", async () => {
     const run = (reason: string, extra: Record<string, unknown> = {}) =>
       collect(consumeAnthropicStream({ messages: feed([start(), mdelta(reason, 1, extra), mstop]), origin }))

@@ -242,6 +242,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | DeepSeek `reasoning_content`：`deepseek()` vs `openaiChat()` | 前者缺省开方言、每条历史 assistant 字段必在；后者不带 |
 | 阈值兜底口径 vs `targetTokens` | 兜底比"估算 + 固定开销"；`targetTokens` 仍是真实上下文口径（感知 `autoFoldAt` 按它算），别把开销减进它 |
 | 进程内 `input`（`runLoop` / `agent.run()`）vs HTTP `AgentRequestBody.input` | 进程内收草稿数组（宿主背景可带 system 信任）；HTTP 数组只收重建过的内容片段，草稿只收重建过的两种——网络边界不能写 system 信任的说明 |
+| 工具入参二次编码：fetch / pi 降级层 vs TanStack 适配器 | 前者读侧多解一层并标 `meta.argumentsUnwrapped`；后者不解——工具由 TanStack 引擎按它自己解析的入参执行，日志单方面解开就与执行不一致 |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表
@@ -301,6 +302,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`payload.body` 就是发出去的请求体，没有第二跳** — 鉴权头与 URL 在 `stream` 时才拼，不进 payload。
 - ⚠️ **DeepSeek 带 `tools` 时每条历史 assistant 都必须带 `reasoning_content`，缺了 400、空串可过** — DeepSeek 缺省就是 thinking 模式，宿主不配 `thinking` 也会撞（踩坑 29）。
 - **共用层 `eventsToIr` 只记事实（分组 / deferred / escaped / 来源），exact 还是 lossy 由协议 encoder 判；落点记完要 `orderLandings` 排回输入顺序** — 矩阵测试断言 `landings[i].eventId === events[i].id`。运维事件 dropped 不打断 assistant 分组。
+- **`tool_call.args` 不一定是线上原文：整个入参被二次编码成 JSON 文本时读侧多解一层，`payload.meta.argumentsUnwrapped: true`** — 只多解一层、只换成普通对象（core `unwrapToolArguments`）；写侧送回的是解开后的对象，模型看到的历史与工具拿到的是同一份（OnSet 建议 8）。
 - **`HttpError` 文案是 SDK 同款 `"<status> <body>"`、对象带 `status` / `headers`** — 别在本包里再判重试；超时走 `AbortSignal.timeout`（可重试），宿主中止 AbortError 不重试，两者都发生算宿主中止。
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败。
 - **内置模型表是最小表，`definitionOf` 内置打底、选项覆盖，表外必须给 `baseUrl`；同一 OpenAI id 两条协议各一份，无协议解析缺省走 Responses** — 测试目标模型显式取条目，别靠无协议解析。

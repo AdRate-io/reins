@@ -6,7 +6,13 @@
  * 中断或出错时把已产出的部分内容也交出去 —— 日志要记录"发生过什么"，是否继续由循环决定。
  */
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai"
-import type { CoreEventDraft, LoweringOutcome, LoweringStreamContext } from "@reinsjs/core"
+import {
+  type CoreEventDraft,
+  type LoweringOutcome,
+  type LoweringStreamContext,
+  toolCallArgumentsMeta,
+  unwrapToolArguments,
+} from "@reinsjs/core"
 import type { ModelOrigin } from "./to-request.js"
 
 export function draftsOf(msg: AssistantMessage): CoreEventDraft[] {
@@ -27,10 +33,17 @@ export function draftsOf(msg: AssistantMessage): CoreEventDraft[] {
       const replay: Record<string, unknown> = { ...origin }
       if (block.thoughtSignature) replay.thoughtSignature = block.thoughtSignature
       if (block.namespace !== undefined) replay.namespace = block.namespace
+      // pi-ai 的 parseStreamingJson 对二次编码的入参同样只解一层、交出字符串，与 fetch 版同一规则再解一层
+      const decoded = unwrapToolArguments(block.arguments)
       drafts.push({
         type: "core.tool_call",
         actor: "model",
-        payload: { toolCallId: block.id, name: block.name, args: block.arguments },
+        payload: {
+          toolCallId: block.id,
+          name: block.name,
+          args: decoded.args,
+          ...toolCallArgumentsMeta(decoded),
+        },
         replay,
       })
     }

@@ -197,6 +197,31 @@ describe("consumeChatStream", () => {
     expect(drafts.map((d) => (d.type === "core.tool_call" ? d.payload.args : null))).toEqual(["{broken", {}])
   })
 
+  it("整个入参被二次编码成 JSON 文本：多解一层得对象，payload.meta 标 argumentsUnwrapped；只有字符串顶层才解（OnSet 建议 8）", async () => {
+    const inner = JSON.stringify({ candidate_for: "s1", prompt: '雨夜，"别走"' })
+    const { drafts } = await run([
+      chunk({
+        tool_calls: [
+          { index: 0, id: "a", function: { name: "generate_submit", arguments: JSON.stringify(inner) } },
+          { index: 1, id: "b", function: { name: "g", arguments: JSON.stringify("[1,2]") } },
+          { index: 2, id: "c", function: { name: "h", arguments: inner } },
+        ],
+      }),
+      finish("tool_calls"),
+      { data: "[DONE]" },
+    ])
+    expect(drafts.map((d) => d.payload)).toEqual([
+      {
+        toolCallId: "a",
+        name: "generate_submit",
+        args: { candidate_for: "s1", prompt: '雨夜，"别走"' },
+        meta: { argumentsUnwrapped: true },
+      },
+      { toolCallId: "b", name: "g", args: "[1,2]" },
+      { toolCallId: "c", name: "h", args: { candidate_for: "s1", prompt: '雨夜，"别走"' } },
+    ])
+  })
+
   it("读流中途出错：先交出部分草稿，宿主中止判 aborted、超时判 error(timed out)、其它按错误文案（带 cause.code）", async () => {
     const msgs = [chunk({ content: "半" }), chunk({ content: "截" }), finish("stop")]
     // 宿主中止：fetch 的流读取会以 AbortError 拒绝，这里用抛错模拟
