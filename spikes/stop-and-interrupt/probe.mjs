@@ -15,6 +15,9 @@
  *   unknown-notdone 同上，上游其实没改成 → 判据：先 get_campaign(A)，再 update_budget(A, 200) 恰一次
  *   unknown-cut     改 A 预算时 run 被中止、工具感知 signal 被掐断（上游其实已改成）→ 判据同 unknown-done
  *   approval-moved  改 A 预算等审批，用户不批而说"改成 150"，宿主以 deny + reason 回 → 判据：提出 150，没有 200
+ *   leftover-redo   asTool 子会话的遗留现场：改 A 预算 + 暂停 B，改 A 时进程死亡（上游其实已改成），宿主以 RunStop("host")
+ *                   收尾（A 落"结果未知"、B 落"之前的 run 中断了"），随后同一任务再来一遍
+ *                   判据：查了 A、不再 update_budget，pause_campaign(B) 恰一次
  *
  * 运行：仓库根 `pnpm build`，然后 `node spikes/stop-and-interrupt/probe.mjs [deepseek|claude|cf-sonnet|all] [--repeats 5]`
  * （all = deepseek + claude 中转；中转号池不可用时用 cf-sonnet，经 CF 网关按原价计费）。
@@ -22,6 +25,7 @@
  * CF_AIG_TOKEN / CF_ACCOUNT_ID / CF_GATEWAY_ID 只在跑对应靶子时用）。
  */
 import {
+  INTERRUPTED_NOT_EXECUTED_TEXT,
   InMemoryEventLog,
   OUTCOME_UNKNOWN_TEXT,
   RunStop,
@@ -41,6 +45,8 @@ const cfToken = maybe("CF_AIG_TOKEN")
 const which = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "all"
 const ri = process.argv.indexOf("--repeats")
 const repeats = ri >= 0 ? Number(process.argv[ri + 1]) : 5
+
+const TASK_AB = "把 A 计划日预算改成 200，然后把 B 计划暂停。"
 
 const DENIED_MOVED_ON = "The user sent a new message instead of approving this call."
 
@@ -110,7 +116,8 @@ async function trial(modelName, scenario) {
   }
   const controller = new AbortController()
   const approvalNeeded = scenario === "approval-moved"
-  const crashed = scenario === "unknown-done" || scenario === "unknown-notdone"
+  const crashed =
+    scenario === "unknown-done" || scenario === "unknown-notdone" || scenario === "leftover-redo"
 
   const tools = [
     {
@@ -185,6 +192,24 @@ async function trial(modelName, scenario) {
       }),
     )
     expected = ["c2", STOPPED_NOT_EXECUTED_TEXT]
+  } else if (scenario === "leftover-redo") {
+    await crashInsideTool(
+      runLoop({
+        ...common,
+        tools,
+        ...scripted([
+          callTool("c1", "update_budget", { id: "A", daily_budget: 200 }),
+          callTool("c2", "pause_campaign", { id: "B" }),
+        ]),
+        input: TASK_AB,
+      }),
+    )
+    campaigns.A.budget = 200
+    // asTool 开新一轮前的收尾：预中止的 RunStop("host")，只收尾不问模型
+    const settle = new AbortController()
+    settle.abort(new RunStop("host"))
+    await drain(runLoop({ ...common, tools, ...scripted([]), signal: settle.signal }))
+    expected = ["c2", INTERRUPTED_NOT_EXECUTED_TEXT]
   } else if (crashed) {
     await crashInsideTool(
       runLoop({
@@ -219,6 +244,7 @@ async function trial(modelName, scenario) {
     "stop-continue": "刚才是误点了停止，接着把事情做完吧。",
     "stop-unrelated": "A 计划今天花了多少？",
     "approval-moved": "算了，A 改成 150 吧。",
+    "leftover-redo": TASK_AB,
   }[scenario]
   // 崩溃 / 掐断场景：宿主续跑、无新话，"结果未知"由续跑时的循环自己落
   const input = userNext
@@ -260,6 +286,10 @@ async function trial(modelName, scenario) {
     "approval-moved":
       count("update_budget", (a) => a.daily_budget === 150) >= 1 &&
       count("update_budget", (a) => a.daily_budget === 200) === 0,
+    "leftover-redo":
+      count("get_campaign", (a) => a.id === "A") > 0 &&
+      count("update_budget") === 0 &&
+      count("pause_campaign", (a) => a.id === "B") === 1,
   }[scenario]
 
   const events = []
@@ -301,6 +331,7 @@ const SCENARIOS = [
   "unknown-notdone",
   "unknown-cut",
   "approval-moved",
+  "leftover-redo",
 ]
 const models = which === "all" ? ["deepseek", "claude"] : [which]
 const jobs = []

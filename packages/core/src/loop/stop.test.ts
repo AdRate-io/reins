@@ -11,16 +11,20 @@ import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { InMemoryEventLog } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "../testing/scripted-lowering.js"
 import { toolBatchOf } from "./batch.js"
-import { runLoop, STOPPED_NOTE } from "./run-loop.js"
+import { runLoop } from "./run-loop.js"
 import { pendingToolCalls } from "./state.js"
 import {
+  INTERRUPTED_IN_PROGRESS_TEXT,
+  INTERRUPTED_NOT_EXECUTED_TEXT,
   isReplayable,
   isStopReason,
   OUTCOME_UNKNOWN_TEXT,
   RunStop,
   STOPPED_IN_PROGRESS_TEXT,
   STOPPED_NOT_EXECUTED_TEXT,
+  STOPPED_NOTE,
   startedToolCallIds,
+  stopTextsOf,
 } from "./stop.js"
 import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
@@ -106,6 +110,26 @@ describe("RunStop / isStopReason / isReplayable", () => {
     expect(isStopReason("RunStop")).toBe(false)
   })
 
+  it("stopTextsOf：只有 RunStop(\"host\") 换'中断'口径，其余（含别的 core 副本、没有 by 的）按用户停止", () => {
+    expect(stopTextsOf(new RunStop())).toEqual({
+      notExecuted: STOPPED_NOT_EXECUTED_TEXT,
+      inProgress: STOPPED_IN_PROGRESS_TEXT,
+      note: STOPPED_NOTE,
+    })
+    expect(stopTextsOf(new RunStop("host"))).toMatchObject({
+      notExecuted: INTERRUPTED_NOT_EXECUTED_TEXT,
+      inProgress: INTERRUPTED_IN_PROGRESS_TEXT,
+    })
+    expect(stopTextsOf(Object.assign(new Error("x"), { name: "RunStop", by: "host" })).notExecuted).toBe(
+      INTERRUPTED_NOT_EXECUTED_TEXT,
+    )
+    expect(stopTextsOf(Object.assign(new Error("x"), { name: "RunStop" })).notExecuted).toBe(
+      STOPPED_NOT_EXECUTED_TEXT,
+    )
+    for (const t of [INTERRUPTED_NOT_EXECUTED_TEXT, INTERRUPTED_IN_PROGRESS_TEXT])
+      expect(t).not.toMatch(/user/)
+  })
+
   it("缺省只有 risk: low 可重放；replayable 显式覆盖", () => {
     const base = { name: "t", description: "", inputSchema: {} }
     expect(isReplayable(base)).toBe(false)
@@ -155,6 +179,73 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
     expect(third.result.status).toBe("done")
     expect(executed).toEqual(["a:1"])
     expect(lowering.requests).toHaveLength(2)
+  })
+
+  it("起步已停止的收尾 run 只收尾：不写 tools_bound、工具变了也不出说明；下一个真 run 照样告诉模型工具变了", async () => {
+    const log = new InMemoryEventLog()
+    const executed: string[] = []
+    const gated: Tool = { ...writeTool("gated", executed), needsApproval: true }
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "gated", { x: 1 })] },
+      { drafts: [say("好")] },
+    ])
+    await drain(runLoop(cfgOf(lowering, log, { tools: [gated], input: "go" })))
+    const before = (await all(log)).length
+
+    // 工具表变了（多了 b），空闲停止起的收尾 run：日志只多"收尾结果 + run_paused"
+    const changed = [gated, writeTool("b", executed)]
+    const stop = new AbortController()
+    stop.abort(new RunStop())
+    await drain(runLoop(cfgOf(lowering, log, { tools: changed, signal: stop.signal })))
+    expect(types((await all(log)).slice(before))).toEqual(["tool_result", "run_paused"])
+
+    // 下一个真 run：快照比对仍看得出多了 b，模型可见的说明照出
+    await drain(runLoop(cfgOf(lowering, log, { tools: changed, input: "继续" })))
+    const notes = (await all(log)).filter(
+      (e): e is CoreEventOf<"core.system_note"> =>
+        e.type === "core.system_note" && e.payload.meta?.toolsChanged !== undefined,
+    )
+    expect(notes).toHaveLength(1)
+  })
+
+  it("RunStop(\"host\")（宿主收尾遗留调用）：没开始的落'之前的 run 中断了'、做了一半的落 Interrupted 中断版，note 不说用户", async () => {
+    const log = new InMemoryEventLog()
+    const executed: string[] = []
+    const gated: Tool = { ...writeTool("gated", executed), needsApproval: true }
+    const expertTool: Tool = {
+      ...writeTool("expert", executed),
+      replayable: true,
+      execute: () =>
+        subagentPause({
+          childSessionId: "x",
+          reason: "approval",
+          interruptions: [],
+          state: {
+            v: 1,
+            sessionId: "x",
+            lastSeq: 1,
+            pendingToolCallIds: [],
+            configHash: "h",
+            pendingDigest: "d",
+          },
+        }),
+    }
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "gated", { x: 1 }), callTool("c2", "expert", { x: 2 })] },
+    ])
+    await drain(runLoop(cfgOf(lowering, log, { tools: [gated, expertTool], input: "go" })))
+    const stop = new AbortController()
+    stop.abort(new RunStop("host"))
+    const { result } = await drain(
+      runLoop(cfgOf(lowering, log, { tools: [gated, expertTool], signal: stop.signal })),
+    )
+    expect(result).toMatchObject({ status: "paused", reason: "host" })
+    if (result.status !== "paused") return
+    expect(result.interruptions[0]?.kind === "host" && result.interruptions[0].note).not.toMatch(/user/)
+    expect(await resultTexts(log)).toEqual({
+      c1: INTERRUPTED_NOT_EXECUTED_TEXT,
+      c2: INTERRUPTED_IN_PROGRESS_TEXT,
+    })
   })
 
   it("重试等待时：停止收尾并 paused(host, stopped by the user)；非停止仍是 'host aborted while waiting to retry'", async () => {

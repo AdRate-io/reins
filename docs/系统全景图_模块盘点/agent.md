@@ -52,7 +52,7 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 
 **子代理即工具**（`asTool`，§10.1）
 
-1. `execute({ task }, ctx)`：子会话 id = `opts.childSessionId?.(ctx, input) ?? \`${ctx.sessionId}:${ctx.toolCallId}\``；父日志里本调用已有 `core.tool_started` 即**续跑**（不带 input；循环在 `subagentPause` 后必补写这条），否则**新一轮**（`input: task`）——新一轮前若子会话还有遗留 pending，先用预中止的 `RunStop` 跑一次子会话只收尾（2026-11-05，原判据"子日志末条是 run_paused"会在停止后吞掉同一专家的新任务）。工具显式 `replayable: true`，宿主把 risk 提高也不会被判"结果未知"。
+1. `execute({ task }, ctx)`：子会话 id = `opts.childSessionId?.(ctx, input) ?? \`${ctx.sessionId}:${ctx.toolCallId}\``；父日志里本调用已有 `core.tool_started` 即**续跑**（不带 input；循环在 `subagentPause` 后必补写这条），否则**新一轮**（`input: task`）——新一轮前若子会话还有遗留 pending，先用预中止的 `RunStop("host")` 跑一次子会话只收尾（遗留调用落"之前的 run 中断了"，不说用户停止；2026-11-05，原判据"子日志末条是 run_paused"会在停止后吞掉同一专家的新任务）。工具显式 `replayable: true`，宿主把 risk 提高也不会被判"结果未知"。
 2. `agent.run({ sessionId, input?, decisions: ctx.decisions（宿主给别的会话的结论，原样下传）, principal, signal（abort=linked 才传）})`，逐条消费：`budget_usage` → `ctx.spend?.(tokens)`；`tool_call` 清空答案；`model_text` 累积答案。
 3. 子 `paused` → 返回 `subagentPause({ childSessionId, reason, interruptions, state })`，循环不落 tool_result、父整体 paused；宿主处理子的审批后带 `sessionId: childSessionId` 的结论续跑父，父补齐这条 pending 时回到第 1 步续跑子。
 4. 子 `done` / `handoff` / `error` → `SubagentOutcome` JSON（用量按子时间线 `usageOf` 汇总，含续跑前的部分），error 记 isError。

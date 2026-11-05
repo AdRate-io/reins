@@ -12,6 +12,7 @@ import {
   createAgent,
   defineTool,
   type Event,
+  INTERRUPTED_NOT_EXECUTED_TEXT,
   isReplayable,
   memoryStore,
   type RunResult,
@@ -327,7 +328,7 @@ describe("asTool：停止（2026-11-05 停止语义）", () => {
     expect(textOf(await all(store, r.result.sessionId), "p1")).toBe(STOPPED_IN_PROGRESS_TEXT)
   })
 
-  it("子在等审批时父被空闲停止（子收不到 signal）：下一轮新任务照常开跑，子的遗留调用先落'没执行'", async () => {
+  it("子在等审批时父被空闲停止（子收不到 signal）：下一轮新任务照常开跑，子的遗留调用先按'之前的 run 中断了'收尾（不说用户停止）", async () => {
     const store = memoryStore()
     const child = expert(store, [turn(callTool("c1", "deploy", { env: "prod" })), turn(say("答二"))])
     const l = lead(
@@ -351,7 +352,7 @@ describe("asTool：停止（2026-11-05 停止语义）", () => {
     const third = await drain(l.run({ sessionId: sid, input: "改主意了" }))
     expect(third.result.status).toBe("done")
     const childEvents = await all(store, "expert-1")
-    expect(textOf(childEvents, "c1")).toBe(STOPPED_NOT_EXECUTED_TEXT)
+    expect(textOf(childEvents, "c1")).toBe(INTERRUPTED_NOT_EXECUTED_TEXT)
     expect(types(childEvents).filter((t) => t === "user_message")).toHaveLength(2)
     expect(types(childEvents)).not.toContain("approval_decision")
     const outcomes = subagentOutcomesOf(third.events, new Set(["ask_expert"]))

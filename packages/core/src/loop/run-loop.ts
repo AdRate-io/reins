@@ -50,9 +50,9 @@ import {
   isReplayable,
   isStopped,
   OUTCOME_UNKNOWN_TEXT,
-  STOPPED_IN_PROGRESS_TEXT,
-  STOPPED_NOT_EXECUTED_TEXT,
+  type StopTexts,
   startedToolCallIds,
+  stopTextsOf,
 } from "./stop.js"
 import { isSubagentPause } from "./subagent.js"
 import {
@@ -84,9 +84,6 @@ export const DEFAULT_MAX_TURNS = 100
 
 /** 循环内置的审批策略标识：工具自己声明 needsApproval 且没有 Socket 做主 */
 export const BUILTIN_APPROVAL_POLICY = "tool.needsApproval"
-
-/** 用户停止时 paused(host) 的 interruption note */
-export const STOPPED_NOTE = "stopped by the user"
 
 /**
  * 宿主经 `input` 能直接追加的草稿类型：用户说话、给客户端工具回填结果、宿主说明、宿主自己的 ext.* 事件。
@@ -243,9 +240,10 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   /**
    * 用户停止时的收尾（D1）：日志里每个 pending 调用落一条 isError 的 tool_result，按"有没有动过手"分三句——
    * 没 started 的"没执行"；started 且不可重放的"结果未知"（上一个进程执行中死掉的）；started 且可重放的"做了一半"（子代理）。
-   * 等审批的、客户端工具的一并收尾：停止就是不做了，下一个 run 直接问模型，由它结合用户的新话决定
+   * 等审批的、客户端工具的一并收尾：停止就是不做了，下一个 run 直接问模型，由它结合用户的新话决定。
+   * "没执行 / 做了一半"的口径随停止原因（`stopTextsOf`：用户停止 vs 宿主收尾遗留调用）
    */
-  const settleStopped = async (): Promise<Event[]> => {
+  const settleStopped = async (texts: StopTexts): Promise<Event[]> => {
     const timeline = await readTimeline(log, sessionId, { registry })
     const pending = pendingToolCalls(timeline)
     if (pending.length === 0) return []
@@ -255,9 +253,9 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         const { toolCallId, name } = call.payload
         const tool = baseTools.find((t) => t.name === name)
         const text = !started.has(toolCallId)
-          ? STOPPED_NOT_EXECUTED_TEXT
+          ? texts.notExecuted
           : tool !== undefined && isReplayable(tool)
-            ? STOPPED_IN_PROGRESS_TEXT
+            ? texts.inProgress
             : OUTCOME_UNKNOWN_TEXT
         return {
           type: "core.tool_result",
@@ -272,18 +270,19 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
 
   /**
    * 写 run_paused、返回可序列化状态。所有暂停出口都经这里，所以用户停止（`signal.reason` 是 RunStop）的收尾也挂在这里一次覆盖：
-   * 先 settleStopped 再暂停，返回 paused(host)、note "stopped by the user"，日志里不再有 pending
+   * 先 settleStopped 再暂停，返回 paused(host)、note 随停止原因（缺省 "stopped by the user"），日志里不再有 pending
    */
   const pause = async (
     requested: PauseReason,
     requestedInterruptions: Interruption[],
   ): Promise<{ events: Event[]; result: RunResult }> => {
     const stopped = isStopped(cfg.signal)
-    const reason: PauseReason = stopped ? "host" : requested
-    const interruptions: Interruption[] = stopped
-      ? [{ kind: "host", note: STOPPED_NOTE }]
+    const texts = stopped ? stopTextsOf(cfg.signal?.reason) : undefined
+    const reason: PauseReason = texts ? "host" : requested
+    const interruptions: Interruption[] = texts
+      ? [{ kind: "host", note: texts.note }]
       : requestedInterruptions
-    const settled = stopped ? await settleStopped() : []
+    const settled = texts ? await settleStopped(texts) : []
     const events = [
       ...settled,
       ...(await append([{ type: "core.run_paused", actor: "system", payload: { reason } }])),
@@ -371,15 +370,19 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   }
 
   // ---- 工具表快照（P1）：每次 run 起步一条模型不可见的 tools_bound；与上一条比对有增删则再追加模型可见的说明 ----
-  // 放在校验之后（校验不过一条日志都不写）、新输入之前（说明先于用户这次的话，模型读到问题时已知道手里的工具变了）
-  yield* await append(
-    toolsBoundDrafts({
-      timeline: await readTimeline(log, sessionId, { registry }),
-      toolNames: baseTools.map((t) => t.name),
-      configHash,
-      announce: cfg.announceToolChanges ?? true,
-    }),
-  )
+  // 放在校验之后（校验不过一条日志都不写）、新输入之前（说明先于用户这次的话，模型读到问题时已知道手里的工具变了）。
+  // 起步时已中止的 run（server 空闲停止、asTool 收尾子会话）不问模型，快照与说明一起跳过：只跳说明的话，
+  // 下一个真 run 与这条快照比对不出变化，模型就永远收不到"工具变了"
+  if (!cfg.signal?.aborted) {
+    yield* await append(
+      toolsBoundDrafts({
+        timeline: await readTimeline(log, sessionId, { registry }),
+        toolNames: baseTools.map((t) => t.name),
+        configHash,
+        announce: cfg.announceToolChanges ?? true,
+      }),
+    )
+  }
 
   // ---- 新输入 ----
   // 日志里还有没结果的 tool_call 时，新输入照样追加在此（时间线如实记录"用户此时插话"，宪法二）；
@@ -388,6 +391,16 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   yield* await append(input.map((d) => withResultTrust(d, baseTools)))
 
   while (true) {
+    // 宿主中止：先于投影与"补齐 pending"检查。先于补齐：否则上一轮在工具批中途被中止时，余下的调用会在这里被当成 pending
+    // 继续执行，一轮一个直到跑完才暂停 —— 中止就成了空话；没执行的调用留作 pending，恢复时再补。
+    // 先于投影：不问模型的 run 不该触发阈值整理、往日志里写 compaction
+    if (cfg.signal?.aborted) {
+      const { events, result } = await pause("host", [
+        { kind: "host", note: "host aborted before this turn started" },
+      ])
+      yield* events
+      return result
+    }
     const turnStartedAt = now()
     const timeline = await readTimeline(log, sessionId, { registry })
     // 上一次模型请求的真实用量：日志最后一条 budget_usage（续跑时上次 run 的也算）。感知用它校准估算，预算用它算上下文大小
@@ -446,16 +459,6 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     const flush = async (): Promise<Event[]> => {
       const events = await append(emitted.splice(0))
       return events
-    }
-
-    // 宿主中止：先于"补齐 pending"检查。否则上一轮在工具批中途被中止时，余下的调用会在这里被当成 pending 继续执行，
-    // 一轮一个直到跑完才暂停 —— 中止就成了空话。没执行的调用留作 pending，恢复时再补
-    if (cfg.signal?.aborted) {
-      const { events, result } = await pause("host", [
-        { kind: "host", note: "host aborted before this turn started" },
-      ])
-      yield* events
-      return result
     }
 
     // ---- 先补齐日志里没结果的 tool_call（上次暂停 / 崩溃留下的），再问模型 ----

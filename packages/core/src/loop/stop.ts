@@ -9,11 +9,14 @@
  * - `isReplayable`：调用开始动手后中断了，能不能再跑一遍。缺省口径与 approval 的 byRisk 一致：只有 `risk: "low"` 的算可重放。
  * - `startedToolCallIds`：时间线里已经开始动手的调用（`core.tool_started`）。
  *
- * 三句模型可见的文案在 2026-11-05 用 DeepSeek 与 Claude 实测过（spikes/stop-and-interrupt），改字前先复跑。
+ * 模型可见的文案在 2026-11-05 用 DeepSeek 与 Claude 实测过（spikes/stop-and-interrupt；"中断"口径两句同日 DeepSeek 补测），改字前先复跑。
  */
 import type { Event } from "../events/base.js"
 import type { CoreEvent } from "../events/core.js"
 import type { Tool } from "./types.js"
+
+/** 用户停止时 paused(host) 的 interruption note */
+export const STOPPED_NOTE = "stopped by the user"
 
 /** 用户停止：调用还没开始 */
 export const STOPPED_NOT_EXECUTED_TEXT =
@@ -23,19 +26,55 @@ export const STOPPED_NOT_EXECUTED_TEXT =
 export const STOPPED_IN_PROGRESS_TEXT =
   "Interrupted: the run was stopped by the user while this call was in progress; it may have partly taken effect."
 
+/** 宿主收尾遗留调用（`RunStop("host")`，如 asTool 开新一轮前）：调用还没开始。不说"用户停止"——多半是进程中途死亡留下的 */
+export const INTERRUPTED_NOT_EXECUTED_TEXT =
+  "Not executed: an earlier run was interrupted before this call started."
+
+/** 宿主收尾遗留调用：可重放的调用（子代理）做了一半 */
+export const INTERRUPTED_IN_PROGRESS_TEXT =
+  "Interrupted: an earlier run was interrupted while this call was in progress; it may have partly taken effect."
+
 /** 不可重放的调用开始动手后中断，没留下结果：上游可能已经生效 */
 export const OUTCOME_UNKNOWN_TEXT =
   "Execution was interrupted before a result was recorded; the outcome is unknown. Check the current state before retrying."
 
 /**
- * 用户停止。作为 `AbortController.abort(reason)` 的 reason 传入：`controller.abort(new RunStop())`。
- * 判据只看 `name`（`isStopReason`），宿主装了两份 core 时 `instanceof` 会失效
+ * 停止。作为 `AbortController.abort(reason)` 的 reason 传入：`controller.abort(new RunStop())`。
+ * 判据只看 `name`（`isStopReason`），宿主装了两份 core 时 `instanceof` 会失效。
+ *
+ * `by` 决定模型读到的收尾文案（`stopTextsOf`）：缺省 `"user"`，用户点了停止；`"host"` 是宿主替自己收尾遗留调用
+ * （asTool 开新一轮前清理子会话），多半是进程中途死亡留下的，不能对模型说"用户停止"
  */
 export class RunStop extends Error {
-  constructor(message = "the run was stopped by the user") {
-    super(message)
+  readonly by: "user" | "host"
+  constructor(by: "user" | "host" = "user") {
+    super(
+      by === "user" ? "the run was stopped by the user" : "the host closed calls left by an interrupted run",
+    )
     this.name = "RunStop"
+    this.by = by
   }
+}
+
+/** 停止收尾的三处模型 / 宿主可见文字：pending 没开始、可重放的做了一半、paused 的 interruption note */
+export interface StopTexts {
+  notExecuted: string
+  inProgress: string
+  note: string
+}
+
+/**
+ * 按停止原因取收尾文字（真源索引）。只有 `by === "host"` 换成"中断"口径，其余（含别的 core 副本造的、没有 `by` 的）一律按用户停止。
+ * "结果未知"（`OUTCOME_UNKNOWN_TEXT`）两种口径通用，不在这里
+ */
+export function stopTextsOf(reason: unknown): StopTexts {
+  return (reason as { by?: unknown } | null)?.by === "host"
+    ? {
+        notExecuted: INTERRUPTED_NOT_EXECUTED_TEXT,
+        inProgress: INTERRUPTED_IN_PROGRESS_TEXT,
+        note: "closed calls left by an interrupted run",
+      }
+    : { notExecuted: STOPPED_NOT_EXECUTED_TEXT, inProgress: STOPPED_IN_PROGRESS_TEXT, note: STOPPED_NOTE }
 }
 
 /** 这个中止原因是不是用户停止（`signal.reason`）。按 name 判，跨 core 副本成立 */

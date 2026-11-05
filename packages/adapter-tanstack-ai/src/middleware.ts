@@ -201,6 +201,8 @@ interface RunState {
   /** Socket / 工具经 emit 留的草稿，flush 时落日志 */
   emitted: EventDraft[]
   verdicts: Map<string, Verdict>
+  /** 判过 verdict 的调用 toolCallId → 其 tool_call 事件 id：onBeforeToolCall 写 tool_started 时做 parentId，不必再整读时间线 */
+  callEventIds: Map<string, string>
   assembler: BlockAssembler
   turn?: TurnState
   /** 已包装成 TanStack 工具的 reins 工具（按名字缓存，保持引用稳定） */
@@ -379,6 +381,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       },
       emitted: [],
       verdicts: new Map(),
+      callEventIds: new Map(),
       assembler: new BlockAssembler({ provider: model.provider, api: TANSTACK_API, model: model.id }),
       wrapped: new Map(),
       approvalInterruptRegistered: approvalInterruptRegistered(ctx),
@@ -568,6 +571,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     const interrupts: ReturnType<ReinsApprovalInterrupt["interrupt"]>[] = []
     for (const call of pending) {
       const { toolCallId, name } = call.payload
+      s.callEventIds.set(toolCallId, call.id)
       const tool = tctx.tools.find((t) => t.name === name)
       // 中断不重放（与 runLoop 同一判据）：工具不在表里按不可重放处理
       if (started.has(toolCallId) && (tool === undefined || !isReplayable(tool))) {
@@ -923,15 +927,12 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       // TanStack 宿主工具的视图不带 risk，按缺省口径一律算写工具）
       const tool = toolNamed(s, hookCtx.toolName)
       if (v.kind !== "await" && (tool === undefined || !isReplayable(tool))) {
-        const call = (await timelineOf()).find(
-          (e) =>
-            e.type === "core.tool_call" && (e as ToolCallEvent).payload.toolCallId === hookCtx.toolCallId,
-        )
+        const parentId = s.callEventIds.get(hookCtx.toolCallId)
         await append(ctx, s, [
           {
             type: "core.tool_started",
             actor: "system",
-            ...(call ? { parentId: call.id } : {}),
+            ...(parentId !== undefined ? { parentId } : {}),
             payload: { toolCallId: hookCtx.toolCallId },
           },
         ])

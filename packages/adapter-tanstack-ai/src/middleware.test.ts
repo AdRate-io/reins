@@ -181,6 +181,8 @@ describe("reinsMiddleware：基本流程", () => {
       isError: false,
     })
     expect(result.parentId).toBe(events[3]?.id)
+    // tool_started 的 parentId 取自判 verdict 时记下的调用事件 id（不再整读时间线）
+    expect(events[5]?.parentId).toBe(events[3]?.id)
     expect((events[2] as CoreEventOf<"core.model_thinking">).replay).toEqual({
       provider: "scripted",
       api: "tanstack-ai",
