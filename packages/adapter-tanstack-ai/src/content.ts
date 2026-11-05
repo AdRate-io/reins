@@ -7,7 +7,7 @@
  * `durationSec`、导入没有时长，估算走字节折算）；对不上的（文档、URL 源、mime 前缀与类型不符）以占位文本代替并在返回值里
  * 声明丢了什么（P7：有损必声明）。
  */
-import { type ContentPart as ReinsPart, renderToolReference } from "@reinsjs/core"
+import { isContentPart, type ContentPart as ReinsPart, renderToolReference } from "@reinsjs/core"
 import type { ContentPart as TanstackPart } from "@tanstack/ai"
 
 export interface ImportedContent {
@@ -66,6 +66,36 @@ export function toTanstackContent(parts: readonly ReinsPart[]): string | Tanstac
   return toTanstackParts(parts)
 }
 
+/**
+ * 单个 TanStack 片段 → reins 片段；翻不动返回 undefined。
+ * 客户端数据只有静态类型、运行时什么都可能来（缺 mimeType、value 不是字符串），而导入的草稿直接 append、
+ * 不经 runLoop 的白名单——所以造出来的片段必须过 core `isContentPart`（片段形状唯一真源），坏片段一旦进日志整条会话报废
+ */
+function importPart(p: TanstackPart): ReinsPart | undefined {
+  const raw = p as {
+    type?: unknown
+    content?: unknown
+    source?: { type?: unknown; value?: unknown; mimeType?: unknown }
+  }
+  let candidate: unknown
+  if (raw.type === "text") candidate = { type: "text", text: raw.content }
+  else if (
+    (raw.type === "image" || raw.type === "video" || raw.type === "audio") &&
+    raw.source?.type === "data"
+  )
+    candidate = { type: raw.type, mime: raw.source.mimeType, data: raw.source.value }
+  return isContentPart(candidate) ? candidate : undefined
+}
+
+/** 翻不动的片段在 `dropped` 里的写法：媒体带来源（`video(url)`）或 mime（`audio(application/octet-stream)`），读不出就只写类型 */
+function droppedLabel(p: TanstackPart): string {
+  const raw = p as { type?: unknown; source?: { type?: unknown; mimeType?: unknown } }
+  const type = typeof raw.type === "string" ? raw.type : "unknown"
+  if (type !== "image" && type !== "video" && type !== "audio") return type
+  if (raw.source?.type === "url") return `${type}(url)`
+  return typeof raw.source?.mimeType === "string" ? `${type}(${raw.source.mimeType})` : type
+}
+
 /** TanStack → reins：导入客户端发来的消息与 TanStack 记录的工具结果 */
 export function fromTanstackContent(
   content: string | null | readonly TanstackPart[] | undefined,
@@ -75,29 +105,12 @@ export function fromTanstackContent(
   const parts: ReinsPart[] = []
   const dropped: string[] = []
   for (const p of content) {
-    if (p.type === "text") {
-      parts.push({ type: "text", text: p.content })
+    const part = importPart(p)
+    if (part) {
+      parts.push(part)
       continue
     }
-    if (p.type === "image" && p.source.type === "data") {
-      parts.push({ type: "image", mime: p.source.mimeType, data: p.source.value })
-      continue
-    }
-    // 视频 / 音频：data 源且 mime 前缀与类型一致才收（与 core isContentPart 同规则，否则进日志后整条会话读不回）
-    if (
-      (p.type === "video" || p.type === "audio") &&
-      p.source.type === "data" &&
-      p.source.mimeType.startsWith(`${p.type}/`)
-    ) {
-      parts.push({ type: p.type, mime: p.source.mimeType, data: p.source.value })
-      continue
-    }
-    const what =
-      p.type === "image" || p.type === "video" || p.type === "audio"
-        ? p.source.type === "url"
-          ? `${p.type}(url)`
-          : `${p.type}(${p.source.mimeType})`
-        : p.type
+    const what = droppedLabel(p)
     dropped.push(what)
     parts.push({ type: "text", text: `[${what} part could not be imported into the reins timeline]` })
   }

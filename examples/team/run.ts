@@ -42,7 +42,7 @@ function preview(e: Event): string {
       return oneLine(`${p.name} ${JSON.stringify(p.args)}`)
     case "core.tool_result":
       return oneLine(
-        `${p.name} → ${p.isError ? "❌ " : ""}${(p.content as { text?: string }[]).map((c) => c.text ?? "[image]").join(" ")}`,
+        `${p.name} → ${p.isError ? "❌ " : ""}${(p.content as { type: string; text?: string }[]).map((c) => c.text ?? `[${c.type}]`).join(" ")}`,
       )
     case "core.system_note":
       return oneLine(`[${p.kind}] ${p.text}`)

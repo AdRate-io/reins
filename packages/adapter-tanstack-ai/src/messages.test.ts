@@ -508,4 +508,18 @@ describe("视频 / 音频片段互译（2026-11-05 方案）", () => {
     ])
     expect(imported.dropped).toEqual(["video(url)", "audio(application/octet-stream)"])
   })
+  it("客户端坏片段（缺 mimeType、value 不是字符串、mime 前缀不符）落占位并声明，不抛错、不让坏片段进日志", () => {
+    const imported = fromTanstackContent([
+      { type: "video", source: { type: "data", value: "AA" } },
+      { type: "audio", source: { type: "data", value: 123, mimeType: "audio/wav" } },
+      { type: "image", source: { type: "data", value: "AA" } },
+      { type: "text", content: 5 },
+    ] as unknown as Parameters<typeof fromTanstackContent>[0])
+    expect(imported.dropped).toEqual(["video", "audio(audio/wav)", "image", "text"])
+    expect(
+      imported.parts.every(
+        (p) => p.type === "text" && p.text.endsWith("could not be imported into the reins timeline]"),
+      ),
+    ).toBe(true)
+  })
 })
