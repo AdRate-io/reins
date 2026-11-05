@@ -68,7 +68,10 @@ function tools(executed: string[]): Tool[] {
       description: "",
       inputSchema: {},
       needsApproval: true,
-      execute: () => (executed.push("deploy"), "ok"),
+      execute: () => {
+        executed.push("deploy")
+        return "ok"
+      },
     },
   ]
 }

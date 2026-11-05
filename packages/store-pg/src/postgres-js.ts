@@ -25,7 +25,7 @@ export interface PostgresJsSql {
 }
 
 /**
- * 把一个 postgres.js 顶层实例接成 `PgClient`：`pgStores(postgresJsClient(sql))`。可以直接用宿主现有的实例（Drizzle 包过的也行），
+ * 把一个 postgres.js 顶层实例接成 `PgClient`：`pgStores(postgresJsClient(sql))`。可以直接用宿主现有的实例（Drizzle 包过的也行，pg.test.ts 有对应列），
  * 不必另开连接池。
  *
  * 原始 SQL 走 `sql.unsafe(text, params)`，它返回的就是行数组，这里补成 `{ rows }`。`unsafe` 从不建命名预备语句，

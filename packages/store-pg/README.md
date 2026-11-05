@@ -23,7 +23,7 @@ const perRole = await pgStores(pool, { memoryTable: "analyst_memory" })
 import { pgStores, postgresJsClient } from "@reinsjs/store-pg"
 import postgres from "postgres"
 
-const sql = postgres(process.env.DATABASE_URL)            // the instance you already hand to Drizzle is fine
+const sql = postgres(process.env.DATABASE_URL)            // the instance you already hand to Drizzle is fine (tested)
 const store = await pgStores(postgresJsClient(sql))
 ```
 
@@ -48,7 +48,7 @@ Writing your own wrapper for another driver: bind parameters as given and return
 
 Table names are validated against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL is assembled; an invalid name throws `invalid_argument` and touches nothing. Only the memory table is renamable.
 
-Passes the conformance suite in `@reinsjs/core/testing` — in CI against PGlite directly and against postgres.js 3 and 4 over the wire (PGlite behind `@electric-sql/pglite-socket`); with `REINS_PG_URL` set, also against a real server through `pg` and both postgres.js versions.
+Passes the conformance suite in `@reinsjs/core/testing` against PGlite directly and, in CI, against a PostgreSQL 16 server through `pg`, postgres.js 3 and 4, and the same two postgres.js versions after `drizzle(sql)` has rewritten their parsers and serializers. Locally the server columns run when `REINS_PG_URL` is set.
 
 ## Documentation
 

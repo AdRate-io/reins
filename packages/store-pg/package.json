@@ -39,10 +39,10 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
-    "@electric-sql/pglite-socket": "0.2.11",
     "@reinsjs/server": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.23.0",
+    "drizzle-orm": "0.45.4",
     "pg": "^8.23.0",
     "postgres": "3.4.9",
     "postgres-v4": "npm:postgres@4.0.0"

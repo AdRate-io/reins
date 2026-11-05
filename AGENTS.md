@@ -71,7 +71,7 @@
 
 **提交**：`type: 摘要`（`.githooks/commit-msg` 校验，见 `CONTRIBUTING.md`），正文写根因与取向和对应编号（OPT / BUG / 方案名）；结尾 `Co-Authored-By: Claude <当前模型名> <noreply@anthropic.com>`。只在 Boss 要求或发布时推远程。
 
-**发布**（Boss 在真终端操作，要 OTP）：`pnpm changeset version` →（core 升版时手改 `packages/core/src/index.ts` 的 `REINS_VERSION`，否则 `check:dist` 拦下）→ `pnpm check` + `pnpm check:dist` → 提交 → 仓库根 `pnpm -r publish --access public --no-git-checks`（**不能用 `npm publish`**，不重写 `workspace:*`）→ 打 tag / Release → 空目录从官方源真实安装冒烟。examples 是私有包不参与版本。
+**发布**（Boss 在真终端操作，要 OTP）：`pnpm changeset version` →（core 升版时手改 `packages/core/src/index.ts` 的 `REINS_VERSION`，否则 `check:dist` 拦下）→ 设 `REINS_PG_URL` 后 `pnpm check` + `pnpm check:dist` → 提交 → 仓库根 `pnpm -r publish --access public --no-git-checks`（**不能用 `npm publish`**，不重写 `workspace:*`）→ 打 tag / Release → 空目录从官方源真实安装冒烟。examples 是私有包不参与版本。
 
 ---
 
@@ -345,7 +345,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 ### 存储
 
 - ⚠️ **pg 的 `data` 列必须是 `json` 不能是 `jsonb`** — jsonb 重排键序，`pendingDigest` / `configHash` 按 `JSON.stringify` 算，一续跑就误报篡改。
-- ⚠️ **pg 事件只按文本过库：写 `$n::text[]` 再在 SQL 里 `::json`，读 `data::text`，绝不绑 `json[]`** — postgres.js 会按服务端报的类型把已序列化的字符串再编码一次；验证要直接查库内 `json_typeof`，只比读回会被字符串标量旧行的兼容分支盖住（踩坑 47）。`postgresJsClient` 拒绝带结果 transform 的实例（camel 改列名）与没有 `options` 的 tx / reserve 连接（看不见 transform）；经 pglite-socket 的测试列只能 `max: 1`、不放会触发 SQL 报错的用例（踩坑 48）。
+- ⚠️ **pg 事件只按文本过库：写 `$n::text[]` 再在 SQL 里 `::json`，读 `data::text`，绝不绑 `json[]`** — postgres.js 会按服务端报的类型把已序列化的字符串再编码一次；验证要直接查库内 `json_typeof`，只比读回会被字符串标量旧行的兼容分支盖住（踩坑 47）。`postgresJsClient` 拒绝带结果 transform 的实例（camel 改列名）与没有 `options` 的 tx / reserve 连接（看不见 transform）。
+- **store-pg 的 pg / postgres.js / Drizzle 列只对真服务端测：CI 起 `postgres:16.13-alpine`（AdRate 生产同版本）并设 `REINS_PG_URL`，CI 里没设 `pg.test.ts` 直接失败** — 本地没设只跑 PGlite 直连；不要再用 pglite-socket 之类进程内服务端代替（多连接交错、报错后返回空结果，踩坑 48）。Drizzle 列挡不住二次编码回归（它把 json serializer 换成透传），挡这个的是普通 postgres.js 列。
 - **含 `node:*` 的包 tsup 必须 `removeNodeProtocol: false`** — tsup 8 缺省剥 `node:` 前缀，源码与 vitest 全绿、只有跑 dist 才炸；新 `/node` 入口登记进 `check:dist` 的 `NODE_ALLOWED`（踩坑 5）。
 - **`memoryTable` / `table` 是字面拼进 SQL 的，`assertTableName` 白名单是唯一防注入闸，两包各一份同一正则** — 标识符绑不了参数。
 - **pg 侧刻意不开事务，每个写是单条语句** — 传连接池就是对的；任何"先查后写"两步逻辑都破坏这个前提。run 租约过期只比数据库 `now()`、`acquire` 对同一 owner 幂等；不用 advisory lock（会话级锁绑连接，池里解不了）。
@@ -367,6 +368,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 ### 工作方法
 
+- **新测试设施先体检再进矩阵**：至少测多连接并发发不同 SQL、报错之后能否恢复两项，并与真服务端对照；文档与回复只写实测过的范围，没测的写"未测"（踩坑 48）。
 - **行为正确性只能用真模型验，机制正确性才用假模型** — "最近一条用户消息被折进摘要""模型数不准自己的字数"这类缺陷 ScriptedLowering 永远暴露不了。
 - **第三方兼容端点先做忠实度体检再用**（暗号法 + 让模型逐条复述看到的对话）；**探测脚本的通过判据永远不是状态码**，逐项核对产出内容；200 + 空内容先看 `stop_reason` / `stop_details`（踩坑 4 / 16 / 28）。
 - **写探针期望值前先查该模型 / 该协议的官方数字** — 最小缓存长度按模型不同（Haiku 4.5 是 4096）、参数校验顺序、强制工具的 `finish_reason`；反向项拿到 400 还要核对 400 的理由（踩坑 27）。

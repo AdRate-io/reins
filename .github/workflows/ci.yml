@@ -6,6 +6,23 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # store-pg 的 pg / postgres.js / Drizzle 列只对真服务端测（postgres.js 的参数序列化在线协议层）。
+    # 版本与 AdRate 生产对齐（16.13，Alpine）；pg.test.ts 在 CI 里没拿到 REINS_PG_URL 会直接失败，不会静默跳过。
+    services:
+      postgres:
+        image: postgres:16.13-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: reins_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      REINS_PG_URL: postgres://postgres:postgres@localhost:5432/reins_test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
