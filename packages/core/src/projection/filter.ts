@@ -14,6 +14,7 @@ import type { ProjectionStrategy } from "./types.js"
  * - handoff：交接后当前会话结束，新会话首条 user 消息承载 triggerMessage
  * - error：provider 级错误由循环层处理；工具错误已在 tool_result.isError
  * - tools_bound：每次 run 起步的工具表快照（P1）；工具表本身在请求里，增删由循环以 system_note(kind=host) 告知模型
+ * - tool_started：调用已开始动手的标记，只给续跑与停止判断用；模型从 tool_result 得知结果
  */
 export const DEFAULT_MODEL_INVISIBLE_TYPES: ReadonlySet<string> = new Set([
   "core.approval_request",
@@ -25,6 +26,7 @@ export const DEFAULT_MODEL_INVISIBLE_TYPES: ReadonlySet<string> = new Set([
   "core.handoff",
   "core.error",
   "core.tools_bound",
+  "core.tool_started",
 ])
 
 export interface VisibilityFilterOptions {

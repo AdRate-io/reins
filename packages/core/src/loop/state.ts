@@ -50,6 +50,31 @@ export async function computeConfigHash(input: {
   )
 }
 
+/** 模型引用的摘要（D4）：续跑时模型换了要能察觉 */
+export async function computeModelDigest(model: ModelRef): Promise<string> {
+  return sha256(JSON.stringify(model))
+}
+
+/**
+ * pending 调用涉及的工具定义摘要（D4）：按名去重排序，每件取 `[name, description, inputSchema]`，不在表里记 `[name, null]`。
+ * 取数口径是**基础工具表**（runLoop 的 baseTools = server 预校验的 `contributions.tools`），不取 beforeModel 补丁改过的本轮工具表。
+ * 守的是"被批准的那次调用，执行时还是同一个工具"
+ */
+export async function computePendingToolsDigest(
+  calls: readonly ToolCallEvent[],
+  tools: readonly Tool[],
+): Promise<string> {
+  const names = [...new Set(calls.map((c) => c.payload.name))].sort()
+  return sha256(
+    JSON.stringify(
+      names.map((name) => {
+        const t = tools.find((x) => x.name === name)
+        return t ? [name, t.description, t.inputSchema] : [name, null]
+      }),
+    ),
+  )
+}
+
 /** pending 调用的入参摘要：恢复时重算比对，保证批下去的就是当时看到的那次调用 */
 export async function computePendingDigest(calls: readonly ToolCallEvent[]): Promise<string> {
   return sha256(
@@ -62,6 +87,9 @@ export async function serializeRunState(input: {
   lastSeq: number
   pending: readonly ToolCallEvent[]
   configHash: string
+  /** 给了 model 与 tools（基础工具表）才写 D4 两个摘要，续跑只比对模型与 pending 工具；缺了退回只比 configHash */
+  model?: ModelRef
+  tools?: readonly Tool[]
   secret?: string
 }): Promise<SerializedRunState> {
   const state: SerializedRunState = {
@@ -71,22 +99,35 @@ export async function serializeRunState(input: {
     pendingToolCallIds: input.pending.map((c) => c.payload.toolCallId),
     configHash: input.configHash,
     pendingDigest: await computePendingDigest(input.pending),
+    ...(input.model !== undefined && input.tools !== undefined
+      ? {
+          modelDigest: await computeModelDigest(input.model),
+          pendingToolsDigest: await computePendingToolsDigest(input.pending, input.tools),
+        }
+      : {}),
   }
   return input.secret === undefined ? state : signRunState(state, input.secret)
 }
 
 // ---- 签名 ----
 
-/** 签名材料：除 sig 外的全部字段，键序固定 */
+/**
+ * 签名材料：除 sig 外的全部字段，键序固定。D4 两个摘要在场时**追加**在末尾（任一在场即两个都进，缺的记 null），
+ * 旧状态的材料保持不变、旧签名照样验得过；给旧状态塞新字段或从新状态删掉它们，材料都变、验签失败——
+ * 否则伪造 `pendingToolsDigest` 就能绕开 configHash 校验
+ */
 function signingMaterial(state: SerializedRunState): string {
-  return JSON.stringify([
+  const fields: unknown[] = [
     state.v,
     state.sessionId,
     state.lastSeq,
     state.pendingToolCallIds,
     state.configHash,
     state.pendingDigest,
-  ])
+  ]
+  if (state.modelDigest !== undefined || state.pendingToolsDigest !== undefined)
+    fields.push(state.modelDigest ?? null, state.pendingToolsDigest ?? null)
+  return JSON.stringify(fields)
 }
 
 async function hmac(secret: string, material: string): Promise<string> {
@@ -154,6 +195,8 @@ export function assertRunStateShape(raw: unknown): asserts raw is SerializedRunS
     s.pendingToolCallIds.every((id) => typeof id === "string") &&
     typeof s.configHash === "string" &&
     typeof s.pendingDigest === "string" &&
+    (s.modelDigest === undefined || typeof s.modelDigest === "string") &&
+    (s.pendingToolsDigest === undefined || typeof s.pendingToolsDigest === "string") &&
     (s.sig === undefined || typeof s.sig === "string")
   if (!ok) throw new RunStateError("malformed", "run state is not in the v1 shape")
 }
@@ -161,12 +204,20 @@ export function assertRunStateShape(raw: unknown): asserts raw is SerializedRunS
 /**
  * 恢复前的全部校验。顺序有讲究：先看形状与会话，再验签名（防伪造），最后与日志对账（防篡改与错连）。
  * 通过后返回日志里的 pending 调用，供循环继续处理。
+ *
+ * 配置比对两条路（D4）：状态带 `modelDigest` / `pendingToolsDigest` 且调用方给了 `model` 与 `tools`（基础工具表）时，
+ * 只比模型与 pending 调用涉及的工具定义——其余变化（加减别的工具、改系统提示）放行，模型会从工具变化说明里得知；
+ * 否则（旧状态、调用方没给）仍按 configHash 整体比对。`allowConfigDrift` 两条路都放行。
  */
 export async function validateResume(input: {
   state: unknown
   sessionId: string
   timeline: readonly Event[]
   configHash: string
+  /** 与 `tools` 一起给才走 D4 收窄的比对 */
+  model?: ModelRef
+  /** 基础工具表（runLoop 的 baseTools、server 的 `contributions.tools`） */
+  tools?: readonly Tool[]
   secret?: string
   allowConfigDrift?: boolean
 }): Promise<ToolCallEvent[]> {
@@ -195,7 +246,18 @@ export async function validateResume(input: {
       )
     }
   }
-  if (state.configHash !== input.configHash && !input.allowConfigDrift) {
+  const narrowed =
+    state.modelDigest !== undefined &&
+    state.pendingToolsDigest !== undefined &&
+    input.model !== undefined &&
+    input.tools !== undefined
+  if (narrowed && !input.allowConfigDrift) {
+    if ((await computeModelDigest(input.model as ModelRef)) !== state.modelDigest) {
+      throw new RunStateError("config_mismatch", "the model differs from when the run paused", {
+        part: "model",
+      })
+    }
+  } else if (state.configHash !== input.configHash && !input.allowConfigDrift) {
     throw new RunStateError(
       "config_mismatch",
       "model, tool set or system prompt differs from when the run paused; pass allowConfigDrift if this is intended",
@@ -226,6 +288,19 @@ export async function validateResume(input: {
       expected: state.pendingToolCallIds,
       got: ids,
     })
+  }
+  // pending 工具定义放在对账之后比：摘要按日志里的 pending 算，日志与状态对得上才有意义
+  if (
+    narrowed &&
+    !input.allowConfigDrift &&
+    (await computePendingToolsDigest(pending, input.tools as readonly Tool[])) !== state.pendingToolsDigest
+  ) {
+    const names = [...new Set(pending.map((c) => c.payload.name))].sort()
+    throw new RunStateError(
+      "config_mismatch",
+      `the definition of pending tool ${names.join(", ")} differs from when the run paused; pass allowConfigDrift if this is intended`,
+      { part: "pendingTools", tools: names },
+    )
   }
   return pending
 }

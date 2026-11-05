@@ -13,6 +13,8 @@ const MODEL = { provider: "scripted", id: "scripted" }
 let executions = 0
 const addTool = defineTool<{ a: number; b: number }>({
   name: "add",
+  // 纯计算、只读：可重放，不写 tool_started
+  risk: "low",
   description: "两数相加",
   inputSchema: { type: "object" },
   execute: ({ a, b }) => {

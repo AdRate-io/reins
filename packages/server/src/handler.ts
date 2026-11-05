@@ -3,6 +3,7 @@
  *
  *   POST  body: { sessionId?, input?, lastSeq?, resume?, decisions? }
  *         → 补发 (lastSeq, 末尾] 的事件 → 起一个 run → 实时推每条刚 append 的事件 → result 帧 → 关闭
+ *   POST  body: { sessionId, stop: true } → 停止（JSON 应答，不开流；见 AgentRequestBody.stop）
  *   GET   ?sessionId=…&lastSeq=N   （或 Last-Event-ID 头，EventSource 重连时自动带）
  *         → 补发 (N, 末尾] → 若本进程正有该会话的 run 在跑则继续实时推到 result；否则 end 帧 → 关闭
  *
@@ -22,6 +23,7 @@ import {
   pendingToolCalls,
   type RunResult,
   RunStateError,
+  RunStop,
   readEvents,
   readTimeline,
   resolveSocketContributions,
@@ -48,6 +50,7 @@ import type {
   HandlerContext,
   HandlerOptions,
   SessionAuthzInput,
+  StopResponse,
   StreamEncoder,
   StreamEncoderFactory,
   StreamItem,
@@ -138,6 +141,12 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
   }
   if (b.resume !== undefined && (typeof b.resume !== "object" || b.resume === null)) {
     return { ok: false, error: "resume must be an object" }
+  }
+  if (b.stop !== undefined) {
+    if (b.stop !== true) return { ok: false, error: "stop must be true" }
+    if (b.sessionId === undefined) return { ok: false, error: "stop requires a sessionId" }
+    if (b.input !== undefined || b.resume !== undefined || b.decisions !== undefined)
+      return { ok: false, error: "stop cannot be combined with input, resume or decisions" }
   }
   return { ok: true, body: b as AgentRequestBody }
 }
@@ -520,6 +529,8 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
     const parsed = parseBody(raw)
     if (!parsed.ok) return json(400, { error: "bad_request", message: parsed.error })
     const body = parsed.body
+    if (body.stop === true && body.sessionId !== undefined)
+      return handleStop(request, ctx, principal, body.sessionId)
     const sessionId = body.sessionId ?? newSessionId()
     // 归属判定放在 readTimeline / validateResume 之前：那些已经在读这条会话的日志了
     const denied = await denyBySessionAuthz({
@@ -551,6 +562,9 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
             timeline,
             // 与 runLoop 起步同一份算法：并入各 Socket 的静态贡献（否则装了 compact / memory 等模块就会误判配置漂移）
             configHash: await computeConfigHash({ model: agent.model, ...contributions }),
+            // D4：与 runLoop 同口径——只比模型与 pending 调用的工具定义，取基础工具表
+            model: agent.model,
+            tools: contributions.tools,
             ...(agent.secret !== undefined ? { secret: agent.secret } : {}),
             ...(agent.allowConfigDrift !== undefined ? { allowConfigDrift: agent.allowConfigDrift } : {}),
           })
@@ -604,13 +618,64 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
         ...(principal !== undefined ? { principal } : {}),
         ...(deltas ? { onDelta: (delta) => run.broadcast({ kind: "delta", delta }) } : {}),
       })
-      // 旁路观测只包 live 的 run，补发走 readEvents 不经这里
-      const onEvent = options.onEvent
-      void run.drive(
-        onEvent !== undefined ? observed(gen, onEvent, { sessionId, principal, request }, warn) : gen,
-      )
+      drive(run, gen, { sessionId, principal, request })
     }
     return openStream({ sessionId, fromSeq, log, run, begin, starter: true })
+  }
+
+  /** 驱动 run 消费生成器；旁路观测只包 live 的 run，补发走 readEvents 不经这里 */
+  function drive(run: ActiveRun, gen: AsyncGenerator<Event, RunResult>, input: EventObserverInput): void {
+    const onEvent = options.onEvent
+    void run.drive(onEvent !== undefined ? observed(gen, onEvent, input, warn) : gen)
+  }
+
+  /**
+   * 停止请求（D3）：不等 run 结束，立即回 JSON。正在跑的 run 以 RunStop 中止（循环在暂停时把 pending 收尾成"没执行"等结果）；
+   * 空闲但有 pending 的会话起一个 signal 预先停止的 run，它在一轮开头就进入暂停、只收尾不问模型——没有流驱动它，
+   * 所以这里自己 drive，并 waitUntil(run.done)，否则 Workers 上收尾 run 可能被回收
+   */
+  async function handleStop(
+    request: Request,
+    ctx: HandlerContext | undefined,
+    principal: Principal | undefined,
+    sessionId: string,
+  ): Promise<Response> {
+    const denied = await denyBySessionAuthz({ sessionId, principal, request, method: "STOP", isNew: false })
+    if (denied !== undefined) return denied
+    const stopping: StopResponse = { status: "stopping", sessionId }
+    const active = runs.get(sessionId)
+    if (active !== undefined) {
+      active.controller.abort(new RunStop())
+      return json(200, stopping)
+    }
+    const timeline = await readTimeline(log, sessionId, { registry })
+    if (pendingToolCalls(timeline).length === 0) {
+      const idle: StopResponse = { status: "idle", sessionId }
+      return json(200, idle)
+    }
+    const controller = new AbortController()
+    controller.abort(new RunStop())
+    let run: ActiveRun
+    try {
+      run = await runs.create(sessionId, controller)
+    } catch (err) {
+      if (err instanceof RunConflictError) {
+        return json(409, { error: err.code, message: err.message }, { [SESSION_HEADER]: sessionId })
+      }
+      throw err
+    }
+    ctx?.waitUntil?.(run.done)
+    drive(
+      run,
+      runLoop({
+        ...agent,
+        sessionId,
+        signal: controller.signal,
+        ...(principal !== undefined ? { principal } : {}),
+      }),
+      { sessionId, principal, request },
+    )
+    return json(200, stopping)
   }
 
   return async (request, ctx) => {

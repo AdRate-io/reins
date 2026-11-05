@@ -185,6 +185,7 @@ export const CORE_SCHEMAS: readonly EventSchema[] = (
     "core.model_thinking",
     "core.tool_call",
     "core.tool_result",
+    "core.tool_started",
     "core.system_note",
     "core.approval_request",
     "core.approval_decision",

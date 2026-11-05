@@ -13,6 +13,8 @@ import {
 const add = defineTool<{ a: number; b: number }>({
   name: "add",
   description: "两数相加",
+  // 纯计算、只读：可重放，不写 tool_started
+  risk: "low",
   inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
   execute: ({ a, b }) => a + b,
 })

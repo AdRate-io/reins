@@ -54,7 +54,7 @@ const lead = createAgent({
 })
 ```
 
-Whether to call an expert, what to ask, and whether to trust the answer are the parent model's decisions; there is no orchestrator. `asTool` handles what a hand-rolled wrapper gets wrong: when the child pauses for approval the **parent pauses too** (`Interruption { kind: "subagent" }` carries the child's interruptions), the host answers with `decisions: [{ toolCallId, sessionId: childSessionId, approved, by }]`, and the child's tokens count against the parent's budget. `examples/team` in the repository is a complete three-role setup on Postgres.
+Whether to call an expert, what to ask, and whether to trust the answer are the parent model's decisions; there is no orchestrator. `asTool` handles what a hand-rolled wrapper gets wrong: when the child pauses for approval the **parent pauses too** (`Interruption { kind: "subagent" }` carries the child's interruptions), the host answers with `decisions: [{ toolCallId, sessionId: childSessionId, approved, by }]`, and the child's tokens count against the parent's budget. With the default `abort: "linked"`, stopping the parent (`abort(new RunStop())`) stops the child too and closes its pending calls; a later call to the same expert starts a fresh task instead of resuming the stopped one. `examples/team` in the repository is a complete three-role setup on Postgres.
 
 ## What you get for free
 

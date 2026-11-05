@@ -240,6 +240,7 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       events: [user(), mk("core.handoff", { toSessionId: "s2", summary: "s", reason: "r" })],
     },
     { label: "tools_bound", events: [user(), mk("core.tools_bound", { toolNames: ["f"], configHash: "h" })] },
+    { label: "tool_started", events: [user(), mk("core.tool_started", { toolCallId: "c" })] },
     {
       label: "error",
       events: [user(), mk("core.error", { category: "provider", message: "m", retryable: false })],

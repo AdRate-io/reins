@@ -50,6 +50,16 @@ export interface ToolResultPayload {
   spilled?: { blobId: string; summary: string }
 }
 
+/**
+ * 这次工具调用**已经开始动手**（2026-11-05，停止语义与中断不重放），模型不可见。循环在两种时候写：
+ * - 不可重放的工具（`isReplayable(tool)` 为假，缺省即没声明 `risk: "low"` 的写工具）在 `execute` 之前写；
+ * - 任何工具返回 `subagentPause` 之后补写（子代理已经动过手了）。
+ * 有它、没有 tool_result 的调用，续跑时不可重放的落"结果未知"、不再执行；停止时按它分辨"没执行"与"做了一半"。
+ */
+export interface ToolStartedPayload {
+  toolCallId: string
+}
+
 // ---- 脑子注入 ----
 
 /**
@@ -230,6 +240,7 @@ export interface CoreEventPayloads {
   "core.model_thinking": ModelThinkingPayload
   "core.tool_call": ToolCallPayload
   "core.tool_result": ToolResultPayload
+  "core.tool_started": ToolStartedPayload
   "core.system_note": SystemNotePayload
   "core.approval_request": ApprovalRequestPayload
   "core.approval_decision": ApprovalDecisionPayload

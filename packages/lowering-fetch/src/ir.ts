@@ -235,6 +235,7 @@ export function eventsToIr(input: IrInput): IrItem[] {
       case "core.memory_op":
       case "core.handoff":
       case "core.tools_bound":
+      case "core.tool_started":
       case "core.error":
         // 不下发的事件也不打断 assistant 分组：模型看不见它，它就不该切开模型的一轮输出
         items.push({ kind: "dropped", event: e, note: NOT_SENT_NOTE })

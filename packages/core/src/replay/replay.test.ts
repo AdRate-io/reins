@@ -28,6 +28,8 @@ function deterministic() {
 
 const addTool = defineTool<{ a: number; b: number }>({
   name: "add",
+  // 纯计算、只读：可重放，不写 tool_started
+  risk: "low",
   description: "两数相加",
   inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
   execute: ({ a, b }) => a + b,
@@ -133,6 +135,7 @@ describe("replayTurns：只凭日志重算每轮模型看到了什么", () => {
       "approval_decision",
       // 续跑起步的工具表快照排在 approval_decision 之后、补齐 pending 之前
       "tools_bound",
+      "tool_started",
       "tool_result",
     ])
     // 第二轮模型看到的里有审批相关事件吗？由投影的可见性规则决定，回放只是如实重算

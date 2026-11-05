@@ -24,6 +24,7 @@ function waiting() {
   const g = gate()
   const tool = defineTool<Record<string, never>>({
     name: "wait",
+    risk: "low",
     description: "等闸门",
     inputSchema: { type: "object" },
     execute: async () => {

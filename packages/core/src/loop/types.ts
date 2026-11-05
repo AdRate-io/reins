@@ -100,6 +100,12 @@ export interface Tool<TInput = unknown> {
   needsApproval?: boolean | ((input: TInput, ctx: ToolContext) => Promise<boolean> | boolean)
   risk?: "low" | "medium" | "high"
   /**
+   * 开始动手后中断（进程死亡、执行中被掐断）、没留下结果时，续跑能不能再执行一遍。缺省按 risk：只有 `"low"` 可重放（`isReplayable`）。
+   * 不可重放的调用在 execute 之前落一条 `core.tool_started`，续跑时见到它就落"结果未知"让模型先查再定，不再执行——写工具重复执行
+   * 就是重复改用户的东西。幂等的写工具可以显式 `true`；asTool 子代理显式 `true`（子会话自己能续跑）
+   */
+  replayable?: boolean
+  /**
    * 这个工具**成功**结果事件（tool_result）的 trust；缺省 `DEFAULT_TRUST.tool`（untrusted：翻译给模型时包 `<untrusted>` 标记）。
    * 只有输出等同宿主配置的工具才声明 `"system"`——如 brain 的 `skill_read`（技能是宿主写的说明书，视同系统提示）。
    * 刻意只开 system / untrusted 两档：principal 是用户本人的权威、model 是模型自己的话，工具输出冒充哪一个都不对。
@@ -344,6 +350,13 @@ export interface SerializedRunState {
   configHash: string
   /** pending 调用（id、名、入参）的 SHA-256；批下去的必须是当时看到的那次调用 */
   pendingDigest: string
+  /**
+   * 模型引用的摘要（D4，可选、不升 v）。与 `pendingToolsDigest` 同时在场时，续跑只比对模型与 pending 工具定义，
+   * 不再整体比 configHash（加减别的工具不再拒续跑）；在场即进签名材料
+   */
+  modelDigest?: string
+  /** pending 调用涉及的工具定义（名、描述、入参 schema）摘要，取基础工具表（D4） */
+  pendingToolsDigest?: string
   sig?: string
 }
 

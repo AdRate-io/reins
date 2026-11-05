@@ -14,7 +14,7 @@ import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/cor
 import { afterEach, describe, expect, it } from "vitest"
 import { createAgentHandler, SESSION_HEADER } from "./handler.js"
 import { nodeListener } from "./node.js"
-import { InMemoryRunRegistry } from "./runs.js"
+import { InMemoryRunRegistry, RunConflictError, type RunRegistry } from "./runs.js"
 import {
   eventFrames,
   eventsOf,
@@ -33,6 +33,8 @@ const MODEL = { provider: "scripted", id: "scripted" }
 
 const addTool = defineTool<{ a: number; b: number }>({
   name: "add",
+  // 纯计算、只读：可重放，不写 tool_started
+  risk: "low",
   description: "两数相加",
   inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
   execute: ({ a, b }) => a + b,
@@ -188,6 +190,7 @@ describe("GET：重连补发", () => {
     const waitTool = defineTool<Record<string, never>>({
       name: "wait",
       description: "等闸门",
+      risk: "low",
       inputSchema: { type: "object" },
       execute: async () => {
         await g.wait()
@@ -222,6 +225,7 @@ describe("并发与断开", () => {
     const waitTool = defineTool<Record<string, never>>({
       name: "wait",
       description: "等闸门",
+      risk: "low",
       inputSchema: { type: "object" },
       execute: async () => {
         await g.wait()
@@ -255,6 +259,7 @@ describe("并发与断开", () => {
       const waitTool = defineTool<Record<string, never>>({
         name: "wait",
         description: "等闸门",
+        risk: "low",
         inputSchema: { type: "object" },
         execute: async () => {
           await g.wait()
@@ -342,6 +347,50 @@ describe("审批暂停与跨请求恢复", () => {
     expect(typesOf(frames)).toContain("model_text")
   })
 
+  it("D4 续跑校验收窄（与 runLoop 同一个 validateResume）：加了别的工具 → 200 续跑；pending 工具 schema 变了 → 409 config_mismatch 且日志不写", async () => {
+    const shared = setup(SCRIPT, [deployTool], { secret: "k" })
+    const { result } = await pauseFirst(shared.handler)
+    const before = (await logged(shared.log, "s1")).length
+    const body = {
+      sessionId: "s1",
+      resume: result.state,
+      decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+    }
+    const changed: Tool = { ...deployTool, inputSchema: { type: "object", required: ["env"] } }
+    const strict = createAgentHandler(
+      {
+        log: shared.log,
+        lowering: new ScriptedLowering(SCRIPT.slice(1)),
+        model: MODEL,
+        tools: [changed],
+        secret: "k",
+      },
+      { heartbeatMs: 0 },
+    )
+    const rejected = await strict(postRequest(body))
+    expect(rejected.status).toBe(409)
+    expect(await rejected.json()).toMatchObject({
+      error: "config_mismatch",
+      message: expect.stringContaining("deploy"),
+    })
+    expect(await logged(shared.log, "s1")).toHaveLength(before)
+
+    const rollback: Tool = { name: "rollback", description: "回滚", inputSchema: {}, execute: () => "" }
+    const widened = createAgentHandler(
+      {
+        log: shared.log,
+        lowering: new ScriptedLowering(SCRIPT.slice(1)),
+        model: MODEL,
+        tools: [deployTool, rollback],
+        secret: "k",
+      },
+      { heartbeatMs: 0 },
+    )
+    const ok = await widened(postRequest(body))
+    expect(ok.status).toBe(200)
+    expect(resultOf(parseFrames(await ok.text()))?.status).toBe("done")
+  })
+
   it("需要审批的工具：result 帧是 paused，带 interruptions 与已签名的 state", async () => {
     const { handler } = setup(SCRIPT, [deployTool], { secret: "k" })
     const { frames, result } = await pauseFirst(handler)
@@ -358,7 +407,7 @@ describe("审批暂停与跨请求恢复", () => {
     expect(result.interruptions[0]).toMatchObject({ kind: "approval", toolCallId: "c1" })
     expect(result.state.sig).toMatch(/^[0-9a-f]{64}$/)
     // 状态足够小，能放 URL
-    expect(JSON.stringify(result.state).length).toBeLessThan(400)
+    expect(JSON.stringify(result.state).length).toBeLessThan(600)
   })
 
   it("回传 state + decisions 批准：续跑到 done，日志接上", async () => {
@@ -382,11 +431,12 @@ describe("审批暂停与跨请求恢复", () => {
       "run_resumed",
       "approval_decision",
       "tools_bound",
+      "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
     ])
-    expect(resultOf(frames)).toEqual({ status: "done", sessionId: "s1", lastSeq: 12 })
+    expect(resultOf(frames)).toEqual({ status: "done", sessionId: "s1", lastSeq: 13 })
     const res = (await logged(log, "s1")).find(
       (e) => e.type === "core.tool_result",
     ) as CoreEventOf<"core.tool_result">
@@ -530,6 +580,7 @@ describe("真实 Node HTTP 服务：经 TCP 用 fetch 读 SSE", () => {
     const waitTool = defineTool<Record<string, never>>({
       name: "wait",
       description: "等闸门",
+      risk: "low",
       inputSchema: { type: "object" },
       execute: async () => {
         await g.wait()
@@ -1204,5 +1255,180 @@ describe("D2 旁路观测：onEvent", () => {
     // run.done 在观测链之后才 resolve，名额随之释放
     await new Promise((r) => setTimeout(r, 0))
     expect(runs.get("fresh")).toBeUndefined()
+  })
+})
+
+describe("D3 停止请求：POST { sessionId, stop: true }", () => {
+  const stopRequest = (body: Record<string, unknown>) => postRequest({ stop: true, ...body })
+  const textOf = (events: CoreEvent[], toolCallId: string) => {
+    const r = events.find((e) => e.type === "core.tool_result" && e.payload.toolCallId === toolCallId) as
+      | CoreEventOf<"core.tool_result">
+      | undefined
+    const first = r?.payload.content[0]
+    return first?.type === "text" ? first.text : undefined
+  }
+  const deployTool = defineTool<{ env: string }>({
+    name: "deploy",
+    description: "上线",
+    inputSchema: { type: "object", properties: { env: { type: "string" } } },
+    needsApproval: true,
+    execute: ({ env }) => `已上线 ${env}`,
+  })
+
+  it("请求形状：缺 sessionId、stop 不是字面 true、与 input / resume / decisions 混用 → 400，日志不变", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    const bad = [
+      { stop: true },
+      { sessionId: "s1", stop: "yes" },
+      { sessionId: "s1", stop: false },
+      { sessionId: "s1", stop: true, input: "继续" },
+      { sessionId: "s1", stop: true, resume: {} },
+      { sessionId: "s1", stop: true, decisions: [] },
+    ]
+    for (const body of bad) {
+      const res = await handler(postRequest(body))
+      expect(res.status, JSON.stringify(body)).toBe(400)
+      expect(await res.json()).toMatchObject({ error: "bad_request" })
+    }
+    expect(await logged(log, "s1")).toHaveLength(0)
+  })
+
+  it("鉴权：method 是 STOP、isNew 为 false；钩子不放行 → 404，日志一次都没碰；只认 POST 的宿主因此拒掉 STOP（fail-closed）", async () => {
+    const seen: { method: string; isNew: boolean }[] = []
+    const { handler, log } = setup(
+      TWO_TURNS,
+      [addTool],
+      {},
+      {
+        authorizeSession: ({ method, isNew }) => {
+          seen.push({ method, isNew })
+          return method === "POST"
+        },
+      },
+    )
+    const res = await handler(stopRequest({ sessionId: "s1" }))
+    expect(res.status).toBe(404)
+    expect(seen).toEqual([{ method: "STOP", isNew: false }])
+    expect(await logged(log, "s1")).toHaveLength(0)
+  })
+
+  it("没有正在跑的 run、也没有 pending → idle，重复按也安全", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    for (let i = 0; i < 2; i++) {
+      const res = await handler(stopRequest({ sessionId: "s1" }))
+      expect(res.status).toBe(200)
+      expect(res.headers.get("content-type")).toContain("application/json")
+      expect(await res.json()).toEqual({ status: "idle", sessionId: "s1" })
+    }
+    expect(await logged(log, "s1")).toHaveLength(0)
+  })
+
+  it("有正在跑的 run：立即回 stopping（不等 run 结束）；原流照常推出 result，等着的调用落'没执行'", async () => {
+    const g = gate()
+    const executed: string[] = []
+    const wait = defineTool<Record<string, never>>({
+      name: "wait",
+      description: "改预算（等闸门）",
+      inputSchema: { type: "object" },
+      execute: async () => {
+        executed.push("wait")
+        await g.wait()
+        return "改好了"
+      },
+    })
+    const pause = defineTool<Record<string, never>>({
+      name: "pause_ad",
+      description: "暂停",
+      inputSchema: { type: "object" },
+      execute: () => {
+        executed.push("pause_ad")
+        return "已暂停"
+      },
+    })
+    const { handler, log, runs } = setup(
+      [{ drafts: [callTool("c1", "wait", {}), callTool("c2", "pause_ad", {})] }],
+      [wait, pause],
+    )
+    const reader = await openReader(handler(postRequest({ sessionId: "s1", input: "改 A 停 B" })))
+    await reader.until((f) => (f.data as { type?: string } | undefined)?.type === "core.tool_started")
+    const run = runs.get("s1")
+
+    const res = await handler(stopRequest({ sessionId: "s1" }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: "stopping", sessionId: "s1" })
+    expect(run?.finished).toBe(false) // 没等 run 结束就回了
+
+    g.open()
+    const frames = await reader.rest()
+    expect(resultOf(frames)).toMatchObject({
+      status: "paused",
+      reason: "host",
+      interruptions: [{ kind: "host", note: "stopped by the user" }],
+    })
+    expect(executed).toEqual(["wait"])
+    const events = await logged(log, "s1")
+    expect(textOf(events, "c1")).toBe("改好了")
+    expect(textOf(events, "c2")).toBe(
+      "Not executed: the run was stopped by the user before this call started.",
+    )
+  })
+
+  it("空闲但有 pending（等审批）：起收尾 run 只收尾不问模型、经 waitUntil 挂上、onEvent 照常观测；之后再按是 idle", async () => {
+    const observed: string[] = []
+    const { handler, log, lowering } = setup(
+      [{ drafts: [callTool("c1", "deploy", { env: "prod" })] }, { drafts: [say("好的，不上线了")] }],
+      [deployTool],
+      {},
+      { onEvent: (e) => void observed.push(e.type) },
+    )
+    const first = resultOf(
+      parseFrames(await (await handler(postRequest({ sessionId: "s1", input: "上线" }))).text()),
+    )
+    expect(first?.status).toBe("paused")
+    const before = lowering.requests.length
+    observed.length = 0
+
+    const waits: Promise<unknown>[] = []
+    const res = await handler(stopRequest({ sessionId: "s1" }), { waitUntil: (p) => void waits.push(p) })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: "stopping", sessionId: "s1" })
+    expect(waits).toHaveLength(1)
+    await Promise.all(waits)
+
+    const events = await logged(log, "s1")
+    expect(textOf(events, "c1")).toBe(
+      "Not executed: the run was stopped by the user before this call started.",
+    )
+    expect(events.at(-1)?.type).toBe("core.run_paused")
+    expect(observed).toContain("core.tool_result")
+    expect(lowering.requests).toHaveLength(before) // 没问模型
+
+    const again = await handler(stopRequest({ sessionId: "s1" }))
+    expect(await again.json()).toEqual({ status: "idle", sessionId: "s1" })
+    // 用户接着说话：直接问模型，c1 不再补跑也不再挂审批
+    const next = resultOf(
+      parseFrames(await (await handler(postRequest({ sessionId: "s1", input: "算了" }))).text()),
+    )
+    expect(next?.status).toBe("done")
+  })
+
+  it("空闲收尾撞上别的实例正占着会话 → 409 run_in_progress（带会话头）", async () => {
+    const { log, handler } = setup([{ drafts: [callTool("c1", "deploy", { env: "prod" })] }], [deployTool])
+    await (await handler(postRequest({ sessionId: "s1", input: "上线" }))).text()
+    // 别的实例持有租约：本进程 get 看不到 run，create 抛冲突
+    const elsewhere: RunRegistry = {
+      get: () => undefined,
+      create: async (sessionId) => {
+        throw new RunConflictError(sessionId, "lease")
+      },
+    }
+    const blocked = createAgentHandler(
+      { log, lowering: new ScriptedLowering([]), model: MODEL, tools: [deployTool] },
+      { heartbeatMs: 0, runs: elsewhere },
+    )
+    const res = await blocked(stopRequest({ sessionId: "s1" }))
+    expect(res.status).toBe(409)
+    expect(res.headers.get(SESSION_HEADER)).toBe("s1")
+    expect(await res.json()).toMatchObject({ error: "run_in_progress" })
   })
 })

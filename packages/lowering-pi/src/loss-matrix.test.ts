@@ -158,6 +158,7 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       events: [user(), mk("core.budget_usage", { tokens: { input: 1, output: 1 }, toolCalls: 0, wallMs: 0 })],
     },
     { label: "memory_op", events: [user(), mk("core.memory_op", { op: "view", path: "/memories/a" })] },
+    { label: "tool_started", events: [user(), mk("core.tool_started", { toolCallId: "c" })] },
     {
       label: "handoff",
       events: [user(), mk("core.handoff", { toSessionId: "s2", summary: "s", reason: "r" })],

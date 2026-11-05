@@ -46,6 +46,14 @@ import {
   validateResume,
 } from "./state.js"
 import { resolveSocketContributions } from "./static.js"
+import {
+  isReplayable,
+  isStopped,
+  OUTCOME_UNKNOWN_TEXT,
+  STOPPED_IN_PROGRESS_TEXT,
+  STOPPED_NOT_EXECUTED_TEXT,
+  startedToolCallIds,
+} from "./stop.js"
 import { isSubagentPause } from "./subagent.js"
 import {
   deferredToolSpecOf,
@@ -76,6 +84,9 @@ export const DEFAULT_MAX_TURNS = 100
 
 /** 循环内置的审批策略标识：工具自己声明 needsApproval 且没有 Socket 做主 */
 export const BUILTIN_APPROVAL_POLICY = "tool.needsApproval"
+
+/** 用户停止时 paused(host) 的 interruption note */
+export const STOPPED_NOTE = "stopped by the user"
 
 /**
  * 宿主经 `input` 能直接追加的草稿类型：用户说话、给客户端工具回填结果、宿主说明、宿主自己的 ext.* 事件。
@@ -229,11 +240,54 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     return events
   }
 
+  /**
+   * 用户停止时的收尾（D1）：日志里每个 pending 调用落一条 isError 的 tool_result，按"有没有动过手"分三句——
+   * 没 started 的"没执行"；started 且不可重放的"结果未知"（上一个进程执行中死掉的）；started 且可重放的"做了一半"（子代理）。
+   * 等审批的、客户端工具的一并收尾：停止就是不做了，下一个 run 直接问模型，由它结合用户的新话决定
+   */
+  const settleStopped = async (): Promise<Event[]> => {
+    const timeline = await readTimeline(log, sessionId, { registry })
+    const pending = pendingToolCalls(timeline)
+    if (pending.length === 0) return []
+    const started = startedToolCallIds(timeline)
+    return append(
+      pending.map((call): ToolResultDraft => {
+        const { toolCallId, name } = call.payload
+        const tool = baseTools.find((t) => t.name === name)
+        const text = !started.has(toolCallId)
+          ? STOPPED_NOT_EXECUTED_TEXT
+          : tool !== undefined && isReplayable(tool)
+            ? STOPPED_IN_PROGRESS_TEXT
+            : OUTCOME_UNKNOWN_TEXT
+        return {
+          type: "core.tool_result",
+          actor: "tool",
+          parentId: call.id,
+          provenance: { source: name },
+          payload: { toolCallId, name, content: [{ type: "text", text }], isError: true },
+        }
+      }),
+    )
+  }
+
+  /**
+   * 写 run_paused、返回可序列化状态。所有暂停出口都经这里，所以用户停止（`signal.reason` 是 RunStop）的收尾也挂在这里一次覆盖：
+   * 先 settleStopped 再暂停，返回 paused(host)、note "stopped by the user"，日志里不再有 pending
+   */
   const pause = async (
-    reason: PauseReason,
-    interruptions: Interruption[],
+    requested: PauseReason,
+    requestedInterruptions: Interruption[],
   ): Promise<{ events: Event[]; result: RunResult }> => {
-    const events = await append([{ type: "core.run_paused", actor: "system", payload: { reason } }])
+    const stopped = isStopped(cfg.signal)
+    const reason: PauseReason = stopped ? "host" : requested
+    const interruptions: Interruption[] = stopped
+      ? [{ kind: "host", note: STOPPED_NOTE }]
+      : requestedInterruptions
+    const settled = stopped ? await settleStopped() : []
+    const events = [
+      ...settled,
+      ...(await append([{ type: "core.run_paused", actor: "system", payload: { reason } }])),
+    ]
     // pending 以日志为准（而不是本轮内存里的列表），恢复时对账的也是日志
     const pending = pendingToolCalls(await readTimeline(log, sessionId, { registry }))
     const state = await serializeRunState({
@@ -241,6 +295,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       lastSeq,
       pending,
       configHash,
+      model,
+      tools: baseTools,
       ...(cfg.secret !== undefined ? { secret: cfg.secret } : {}),
     })
     return { events, result: { status: "paused", sessionId, lastSeq, reason, interruptions, state } }
@@ -274,6 +330,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         sessionId,
         timeline,
         configHash,
+        model,
+        tools: baseTools,
         ...(cfg.secret !== undefined ? { secret: cfg.secret } : {}),
         ...(cfg.allowConfigDrift !== undefined ? { allowConfigDrift: cfg.allowConfigDrift } : {}),
       })
@@ -418,7 +476,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         batch,
       })
       toolCallsTotal += settled.executed
-      if (settled.interruptions.length > 0) {
+      // 用户停止时不进 onTurnEnd：余下的调用还 pending，Socket 判出 handoff / done 就会把它们带进一个不是 paused 的结局
+      if (settled.interruptions.length > 0 || isStopped(cfg.signal)) {
         const reason = pauseReasonOf(settled.interruptions)
         const { events, result } = await pause(reason, settled.interruptions)
         yield* events
@@ -528,6 +587,14 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
               message: failure.message,
               detail: { usage: outcome?.usage } as Record<string, unknown>,
             }
+      // 宿主中止导致的失败（连接阶段被掐：fetch 抛出的是 signal.reason，不一定是 AbortError）是暂停不是错误
+      if (!canRetry && cfg.signal?.aborted) {
+        const { events, result } = await pause("host", [
+          { kind: "host", note: "host aborted the model request" },
+        ])
+        yield* events
+        return result
+      }
       if (!canRetry) {
         const { events, result } = await fail({
           ...base,
@@ -611,7 +678,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       },
     ])
 
-    if (interruptions.length > 0) {
+    // 用户停止在工具批中途：余下调用还 pending，同样不进 onTurnEnd（见续跑处）
+    if (interruptions.length > 0 || (calls.length > 0 && isStopped(cfg.signal))) {
       const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
       yield* events
       return result
@@ -770,6 +838,8 @@ async function* executeToolCalls(
   }
   const decisions = new Map<string, ApprovalDecisionPayload>()
   const requested = new Set<string>()
+  /** 已开始动手的调用（D2）：续跑时据它判"结果未知"，本批写下 started 也登记进来，避免重复写 */
+  const started = startedToolCallIds(timeline)
   for (const raw of timeline) {
     const e = raw as CoreEvent
     if (e.type === "core.approval_decision") decisions.set(e.payload.toolCallId, e.payload)
@@ -793,6 +863,13 @@ async function* executeToolCalls(
       provenance: { source: name },
       payload: { toolCallId, name, content: [{ type: "text", text }], isError: true },
     })
+
+    // 中断不重放（D2）：开始动手后中断、没留下结果的不可重放调用，不再执行，落"结果未知"让模型先查再定。
+    // 工具不在表里时判不出能不能重放，按不可重放处理（fail-closed）
+    if (started.has(toolCallId) && (tool === undefined || !isReplayable(tool))) {
+      yield* await settle(errorResult(OUTCOME_UNKNOWN_TEXT))
+      continue
+    }
 
     const decided = decisions.get(toolCallId)
     if (decided && !decided.approved) {
@@ -883,6 +960,18 @@ async function* executeToolCalls(
       continue
     }
 
+    // 不可重放的工具先记"开始动手"：execute 途中进程死亡，续跑见到它就不再执行（D2）
+    const replayable = isReplayable(tool)
+    const markStarted = async function* (): AsyncGenerator<Event, void> {
+      if (started.has(toolCallId)) return
+      started.add(toolCallId)
+      yield* await flush()
+      yield* await append([
+        { type: "core.tool_started", actor: "system", parentId: call.id, payload: { toolCallId } },
+      ])
+    }
+    if (!replayable) yield* markStarted()
+
     let result: ToolResultDraft
     try {
       summary.executed++
@@ -890,6 +979,8 @@ async function* executeToolCalls(
       // 子代理暂停冒泡（§10.1）：不落 tool_result，这次调用留作 pending；父 run 整体暂停，宿主处理完子的中断后续跑父，
       // 补齐 pending 时工具再续跑子 run
       if (isSubagentPause(out)) {
+        // 子代理已经动过手了：补写 started。不靠它防重放（asTool 可重放），而是让停止时认出"做了一半"、asTool 认出"父在补跑同一个调用"
+        yield* markStarted()
         summary.interruptions.push({ kind: "subagent", toolCallId, call: call.payload, ...out.detail })
         batch.held.push(toolCallId)
         if (cfg.signal?.aborted) break
@@ -906,7 +997,12 @@ async function* executeToolCalls(
         payload: { toolCallId, name, content: normalized.content, isError: normalized.isError ?? false },
       }
     } catch (err) {
-      result = errorResult(`Tool execution failed: ${errorMessageOf(err)}`)
+      // 感知 signal 的不可重放工具被中止掐断（如 MCP 把 ctx.signal 传给 callTool）：写请求可能已经到了上游，落"结果未知"而不是"失败"
+      result = errorResult(
+        !replayable && cfg.signal?.aborted
+          ? OUTCOME_UNKNOWN_TEXT
+          : `Tool execution failed: ${errorMessageOf(err)}`,
+      )
     }
 
     // afterTool：脑子可替换结果（外溢、截断），此时尚未 append

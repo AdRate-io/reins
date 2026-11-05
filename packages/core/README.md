@@ -37,7 +37,11 @@ type RunResult =
   | { status: "error"; sessionId; lastSeq; error }
 ```
 
-Pausing is a return value, not a blocking callback. `state` is small (ids and hashes, HMAC-signed when you pass `secret`) and enough to resume in another process: `runLoop({ ...config, resume: state, decisions: [...] })` re-validates it against the log (config drift, pending-call digest) before writing anything.
+Pausing is a return value, not a blocking callback. `state` is small (ids and hashes, HMAC-signed when you pass `secret`) and enough to resume in another process: `runLoop({ ...config, resume: state, decisions: [...] })` re-validates it against the log (signature, pending-call digest, and that the model and the definitions of the tools behind the pending calls are unchanged — adding or removing other tools no longer blocks a resume; the model is told about the change instead) before writing anything.
+
+**Stopping vs. aborting.** Aborting `signal` for any reason pauses the run and leaves unanswered tool calls pending, so the next run executes them first — right for a lost lease or a dropped connection. When the *user* pressed stop, abort with `controller.abort(new RunStop())` instead: every pending call (including ones waiting for approval or for a client result) is closed with an error result saying it was not executed, and the next run asks the model directly, so it can follow whatever the user says next. The result is still `paused` with reason `host` and the note `stopped by the user`.
+
+**Approval and a change of mind.** If the user sends a new message instead of approving a pending call, resume with `decisions: [{ toolCallId, approved: false, by, reason }]` (or stop); otherwise the call is held for approval again before the model reads the new message.
 
 ## Input: background and task in one run
 
@@ -74,6 +78,8 @@ const deploy = defineTool<{ env: "staging" | "prod" }>({
 
 `validate` runs before the approval check so the approver sees exactly the input that will execute. Tools without `execute` (or with `side: "client"`) pause the run until the host appends the `tool_result`. Tool output is `untrusted` by default and is wrapped in `<untrusted source="tool:…">` when lowered to the model. A tool may declare `resultTrust: "system"` to opt its **successful** results out of that wrapper — reserve it for content the host itself authored (this is how `@reinsjs/brain`'s `skill_read` works); error results and thrown exceptions stay `untrusted` regardless, and the same rule applies to client-tool results the host appends.
 
+**Interrupted writes are not replayed.** A tool that is not replayable — by default any tool not declared `risk: "low"`; override with `replayable: true | false` — gets a model-invisible `core.tool_started` event right before `execute`. If the process dies mid-call (or a signal-aware tool is cut off by an abort), resuming does not run it again: the call is closed with "the outcome is unknown, check the current state before retrying", and the model decides whether to look first. Read-only tools are simply re-run. Declare `risk: "low"` on tools that only read; `replayable: true` on writes that are idempotent.
+
 A tool can also *be* another agent: return `subagentPause(...)` from `execute` and the run pauses with `Interruption { kind: "subagent" }`, carrying the child session's own interruptions and state. `@reinsjs/agent` ships `asTool(agent, opts)` on top of this.
 
 ## Media: images, video and audio
@@ -93,6 +99,7 @@ A `Socket` is the seam brain modules use — five hooks (`beforeModel`, `afterMo
 - **Append-only.** Compaction, spill and handoff are all expressed as appended events. Forking a session copies a prefix verbatim (ids and `seq` kept), so references such as `recall({ seq })` survive.
 - **Fail-closed reads.** An event type the registry does not know, or a version it cannot upgrade, is rejected before anything is written.
 - **Bounded retry only on zero output.** A transient failure (network, 5xx, 429 — decided from the status code first, keywords only as a fallback) is retried up to 3 times, but never after a partial response has been appended: the log must not contain two half answers.
+- **Rollback caveat (0.10).** Sessions that contain a `core.tool_started` event cannot be read by `@reinsjs/core` 0.9 or earlier (unknown event types are rejected).
 - **Deterministic given the log.** Time and ids are injected (`now`, `newId`), so a recorded session replays byte-for-byte in tests.
 
 ## Documentation

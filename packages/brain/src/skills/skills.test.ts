@@ -510,6 +510,7 @@ describe("skills() 与 runLoop 集成", () => {
   it("模型先翻书再动手：skill_read 的 tool_result 进日志、trust=system（不套 untrusted）；调用 add 的结果仍是 untrusted", async () => {
     const add: Tool = {
       name: "add",
+      risk: "low",
       description: "两数相加",
       inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
       execute: (input) => {

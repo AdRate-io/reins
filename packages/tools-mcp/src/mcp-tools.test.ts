@@ -288,7 +288,7 @@ describe("mcpTools：工具表按 run 绑定", () => {
     await socket.close()
   })
 
-  it("暂停等审批期间服务器换了工具表：带 state 续跑被判 config_mismatch；allowConfigDrift 放行且照样出增删说明", async () => {
+  it("暂停等审批期间服务器加了别的工具：带 state 续跑照常放行（D4 只守 pending 调用的工具），模型从增删说明得知", async () => {
     const fx = fixtureServer()
     const socket = mcpTools({ transport: fx.transport })
     const log = new InMemoryEventLog()
@@ -305,7 +305,7 @@ describe("mcpTools：工具表按 run 绑定", () => {
     const state = first.result.state
     const decisions = [{ toolCallId: "c1", approved: true, by: "boss" }]
 
-    // 暂停期间服务器加了一个工具 → 工具表（configHash）变了
+    // 暂停期间服务器加了一个工具 → configHash 变了，但等审批的 drop_table 定义没变
     fx.server.registerTool("late", { description: "late", inputSchema: {} }, async () => ({ content: [] }))
 
     const resume = (extra: Partial<LoopConfig>) =>
@@ -320,21 +320,19 @@ describe("mcpTools：工具表按 run 绑定", () => {
           }),
         ),
       )
-    await expect(resume({})).rejects.toMatchObject({ name: "RunStateError", code: "config_mismatch" })
-    // 拒绝发生在写任何日志之前
-    expect(types(await all(log)).at(-1)).toBe("run_paused")
-
-    const { events, result } = await resume({ allowConfigDrift: true })
+    const { events, result } = await resume({})
     expect(result.status).toBe("done")
-    expect(types(events).slice(0, 5)).toEqual([
+    // drop_table 没声明 readOnlyHint，是写工具：执行前先记 tool_started
+    expect(types(events).slice(0, 6)).toEqual([
       "run_resumed",
       "approval_decision",
       "tools_bound",
       "system_note",
+      "tool_started",
       "tool_result",
     ])
     expect((events[3] as CoreEventOf<"core.system_note">).payload.text).toContain("Added: late")
-    expect(textOf(events[4] as CoreEventOf<"core.tool_result">)).toBe("dropped users")
+    expect(textOf(events[5] as CoreEventOf<"core.tool_result">)).toBe("dropped users")
     await socket.close()
   })
 })

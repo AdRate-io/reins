@@ -9,6 +9,7 @@ import { createAgentHandler } from "./index.js"
 
 const add = defineTool<{ a: number; b: number }>({
   name: "add",
+  risk: "low",
   description: "两数相加",
   inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
   execute: ({ a, b }) => a + b,

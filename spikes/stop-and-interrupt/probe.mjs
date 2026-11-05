@@ -1,8 +1,10 @@
 /**
- * 停止语义与中断不重放：真模型行为验证（2026-11-05，AdRate 建议 1 / 2 前置）。
+ * 停止语义与中断不重放：真模型端到端验证（2026-11-05，AdRate 建议 1 / 2）。
  *
- * 要看的是"拿到我们打算落的那条结果之后，模型下一步做什么"。实现还没写，所以第一段用脚本化降级层造出现场，
- * 再由宿主把打算落的结果当 tool_result 草稿写进日志（与将来循环自己落的同一形状、同一位置），之后换真模型接着跑。
+ * 第一段用脚本化降级层造现场，但现场由**真实现**落下：停止是真 `abort(new RunStop())`、由循环自己把余下调用收尾成"没执行"；
+ * "结果未知"是真进程死亡（写工具挂住后丢掉生成器，日志里只剩 tool_started），续跑时由循环自己判出；
+ * unknown-cut 模拟 MCP 式感知 signal 的写工具被中止掐断（丢租约那类普通中止），循环落"结果未知"后暂停。之后换真模型接着跑。
+ * （实现之前的第一版由宿主手写打算落的结果，结论见实施方案"真模型验证"一节。）
  *
  *   stop-redirect   改 A 预算 + 暂停 B，改 A 时用户点停止 → B 落 "Not executed"；用户新话"B 先别停，看看花了多少"
  *                   判据：没有 pause_campaign，查了 B
@@ -11,6 +13,7 @@
  *   unknown-done    改 A 预算执行中进程死亡，宿主续跑（无新话），落 "outcome unknown"；上游其实已改成
  *                   判据：先 get_campaign(A)，且不再 update_budget
  *   unknown-notdone 同上，上游其实没改成 → 判据：先 get_campaign(A)，再 update_budget(A, 200) 恰一次
+ *   unknown-cut     改 A 预算时 run 被中止、工具感知 signal 被掐断（上游其实已改成）→ 判据同 unknown-done
  *   approval-moved  改 A 预算等审批，用户不批而说"改成 150"，宿主以 deny + reason 回 → 判据：提出 150，没有 200
  *
  * 运行：仓库根 `pnpm build`，然后 `node spikes/stop-and-interrupt/probe.mjs [deepseek|claude|cf-sonnet|all] [--repeats 5]`
@@ -18,7 +21,13 @@
  * 密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs：DEEPSEEK_API_KEY 必需；RELAY_CLAUDE_API_KEY / RELAY_BASE_URL、
  * CF_AIG_TOKEN / CF_ACCOUNT_ID / CF_GATEWAY_ID 只在跑对应靶子时用）。
  */
-import { InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
+import {
+  InMemoryEventLog,
+  OUTCOME_UNKNOWN_TEXT,
+  RunStop,
+  runLoop,
+  STOPPED_NOT_EXECUTED_TEXT,
+} from "../../packages/core/dist/index.js"
 import { callTool, ScriptedLowering } from "../../packages/core/dist/testing/index.js"
 import { anthropicMessages, deepseek } from "../../packages/lowering-fetch/dist/index.js"
 import { cfGatewayBase, maybe, need } from "../../scripts/local-env.mjs"
@@ -33,10 +42,6 @@ const which = process.argv[2] && !process.argv[2].startsWith("--") ? process.arg
 const ri = process.argv.indexOf("--repeats")
 const repeats = ri >= 0 ? Number(process.argv[ri + 1]) : 5
 
-/** 将来落进日志的两句文案：本次验证的对象 */
-export const NOT_EXECUTED = "Not executed: the run was stopped by the user before this call started."
-export const OUTCOME_UNKNOWN =
-  "Execution was interrupted before a result was recorded; the outcome is unknown. Check the current state before retrying."
 const DENIED_MOVED_ON = "The user sent a new message instead of approving this call."
 
 const SYSTEM =
@@ -72,12 +77,26 @@ async function drain(gen) {
   }
 }
 
-const toolResult = (toolCallId, name, text) => ({
-  type: "core.tool_result",
-  actor: "tool",
-  provenance: { source: name },
-  payload: { toolCallId, name, content: [{ type: "text", text }], isError: true },
-})
+/** 真进程死亡：驱动到 tool_started，再推一步让它进到挂住的工具里，然后丢掉生成器 */
+async function crashInsideTool(gen) {
+  while (true) {
+    const step = await gen.next()
+    if (step.done) throw new Error("expected the run to hang inside the tool")
+    if (step.value.type === "core.tool_started") {
+      void gen.next()
+      await new Promise((r) => setTimeout(r, 0))
+      return
+    }
+  }
+}
+
+/** 日志里某次调用的结果文本（核对现场是不是真实现落的） */
+async function resultText(log, sessionId, toolCallId) {
+  for await (const e of log.read(sessionId))
+    if (e.type === "core.tool_result" && e.payload.toolCallId === toolCallId)
+      return e.payload.content[0]?.text
+  return undefined
+}
 
 async function trial(modelName, scenario) {
   const log = new InMemoryEventLog()
@@ -91,7 +110,7 @@ async function trial(modelName, scenario) {
   }
   const controller = new AbortController()
   const approvalNeeded = scenario === "approval-moved"
-  const crashed = scenario.startsWith("unknown")
+  const crashed = scenario === "unknown-done" || scenario === "unknown-notdone"
 
   const tools = [
     {
@@ -117,11 +136,18 @@ async function trial(modelName, scenario) {
         required: ["id", "daily_budget"],
       },
       ...(approvalNeeded ? { needsApproval: true } : {}),
-      execute: (a) => {
+      execute: (a, ctx) => {
         record("update_budget", a)
+        // 第一段的崩溃场景：写请求发出后进程死了（done 版上游已生效）
+        if (!liveStage && crashed) return new Promise(() => {})
         campaigns[a.id].budget = a.daily_budget
+        // 第一段的掐断场景：MCP 式工具把 ctx.signal 传给上游，被中止时抛出（上游其实已改成）
+        if (!liveStage && scenario === "unknown-cut") {
+          controller.abort()
+          throw ctx.signal.reason
+        }
         // 停止场景：执行这一个时用户点了停止（正在执行的这个照常跑完）
-        if (scenario.startsWith("stop")) controller.abort()
+        if (!liveStage && scenario.startsWith("stop")) controller.abort(new RunStop())
         return `Campaign ${a.id} daily budget is now ${a.daily_budget}.`
       },
     },
@@ -143,7 +169,8 @@ async function trial(modelName, scenario) {
     model: { provider: "scripted", id: "scripted" },
   })
 
-  // ---- 第一段：脚本化造现场 ----
+  // ---- 第一段：脚本化造现场，现场由真实现落下 ----
+  let expected
   if (scenario.startsWith("stop")) {
     await drain(
       runLoop({
@@ -155,32 +182,34 @@ async function trial(modelName, scenario) {
         ]),
         input: "把 A 计划日预算改成 200，然后把 B 计划暂停。",
         signal: controller.signal,
-        maxTurns: 1,
       }),
     )
-    // 停止时循环会为余下未执行的调用落的那条结果
+    expected = ["c2", STOPPED_NOT_EXECUTED_TEXT]
+  } else if (crashed) {
+    await crashInsideTool(
+      runLoop({
+        ...common,
+        tools,
+        ...scripted([callTool("c1", "update_budget", { id: "A", daily_budget: 200 })]),
+        input: "把 A 计划日预算改成 200。",
+      }),
+    )
+    if (scenario === "unknown-done") campaigns.A.budget = 200
+  } else {
     await drain(
       runLoop({
         ...common,
         tools,
-        ...scripted([]),
-        input: [toolResult("c2", "pause_campaign", NOT_EXECUTED)],
-        maxTurns: 0,
-      }),
-    )
-  } else {
-    const firstTools = crashed
-      ? tools.map((t) => (t.name === "update_budget" ? { ...t, side: "client" } : t))
-      : tools
-    await drain(
-      runLoop({
-        ...common,
-        tools: firstTools,
         ...scripted([callTool("c1", "update_budget", { id: "A", daily_budget: 200 })]),
         input: "把 A 计划日预算改成 200。",
-        maxTurns: 1,
+        ...(scenario === "unknown-cut" ? { signal: controller.signal } : { maxTurns: 1 }),
       }),
     )
+    if (scenario === "unknown-cut") expected = ["c1", OUTCOME_UNKNOWN_TEXT]
+  }
+  if (expected) {
+    const got = await resultText(log, sessionId, expected[0])
+    if (got !== expected[1]) throw new Error(`stage 1 landed ${JSON.stringify(got)} for ${expected[0]}`)
   }
 
   // ---- 第二段：真模型接着跑 ----
@@ -191,9 +220,8 @@ async function trial(modelName, scenario) {
     "stop-unrelated": "A 计划今天花了多少？",
     "approval-moved": "算了，A 改成 150 吧。",
   }[scenario]
-  const input = crashed
-    ? [toolResult("c1", "update_budget", OUTCOME_UNKNOWN)] // 宿主续跑、无新话：补跑时循环落的那条结果
-    : userNext
+  // 崩溃 / 掐断场景：宿主续跑、无新话，"结果未知"由续跑时的循环自己落
+  const input = userNext
   const result = await drain(
     runLoop({
       ...common,
@@ -206,6 +234,9 @@ async function trial(modelName, scenario) {
         : {}),
     }),
   )
+  // 崩溃场景：核对"结果未知"确是续跑时循环自己落的
+  if (crashed && (await resultText(log, sessionId, "c1")) !== OUTCOME_UNKNOWN_TEXT)
+    throw new Error("resume did not land the outcome-unknown result for c1")
   // 审批场景：新的改预算会再次挂起审批，挂起的调用也算"提出了"
   if (result.status === "paused")
     for (const i of result.interruptions)
@@ -220,6 +251,7 @@ async function trial(modelName, scenario) {
     "stop-continue": count("pause_campaign", (a) => a.id === "B") === 1 && count("update_budget") === 0,
     "stop-unrelated": count("pause_campaign") === 0,
     "unknown-done": firstGet === 0 && live[0].args.id === "A" && count("update_budget") === 0,
+    "unknown-cut": firstGet === 0 && live[0].args.id === "A" && count("update_budget") === 0,
     "unknown-notdone":
       firstGet === 0 &&
       live[0].args.id === "A" &&
@@ -267,6 +299,7 @@ const SCENARIOS = [
   "stop-unrelated",
   "unknown-done",
   "unknown-notdone",
+  "unknown-cut",
   "approval-moved",
 ]
 const models = which === "all" ? ["deepseek", "claude"] : [which]

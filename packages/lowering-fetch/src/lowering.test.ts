@@ -347,6 +347,8 @@ describe("FetchLowering", () => {
     })
     const add = defineTool<{ a: number; b: number }>({
       name: "add",
+      // 纯计算、只读：可重放，不写 tool_started
+      risk: "low",
       description: "两数相加",
       inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
       execute: ({ a, b }) => a + b,
@@ -533,6 +535,8 @@ describe("FetchLowering", () => {
     const lowering = new FetchLowering({ apiKey: () => "k", fetch })
     const add = defineTool<{ a: number; b: number }>({
       name: "add",
+      // 纯计算、只读：可重放，不写 tool_started
+      risk: "low",
       description: "两数相加",
       inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
       execute: ({ a, b }) => a + b,
@@ -619,6 +623,8 @@ describe("FetchLowering", () => {
     const lowering = new FetchLowering({ apiKey: () => "k", fetch })
     const add = defineTool<{ a: number; b: number }>({
       name: "add",
+      // 纯计算、只读：可重放，不写 tool_started
+      risk: "low",
       description: "两数相加",
       inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
       execute: ({ a, b }) => a + b,

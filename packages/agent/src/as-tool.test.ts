@@ -12,10 +12,15 @@ import {
   createAgent,
   defineTool,
   type Event,
+  isReplayable,
   memoryStore,
   type RunResult,
+  RunStop,
   rawEncoder,
   type Socket,
+  STOPPED_IN_PROGRESS_TEXT,
+  STOPPED_NOT_EXECUTED_TEXT,
+  STOPPED_NOTE,
   type Stores,
   type SubagentOutcome,
   subagentOutcomesOf,
@@ -113,10 +118,12 @@ describe("asTool：审批冒泡", () => {
     expect(sub.state.sessionId).toBe(childId)
     expect(sub.state.pendingToolCallIds).toEqual(["c1"])
     // 父：调用留作 pending；子：等审批
+    // subagentPause 之后循环补写 tool_started：父续跑时 asTool 凭它认出"在补跑同一个调用"
     expect(types(await all(store, sid))).toEqual([
       "tools_bound",
       "user_message",
       "tool_call",
+      "tool_started",
       "budget_usage",
       "run_paused",
     ])
@@ -148,6 +155,7 @@ describe("asTool：审批冒泡", () => {
     expect(types(await all(store, childId)).slice(6)).toEqual([
       "approval_decision",
       "tools_bound",
+      "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
@@ -156,7 +164,7 @@ describe("asTool：审批冒泡", () => {
     expect(childDecision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
     // 父：run_resumed → 补齐 p1（拿到子的最终结果）→ 汇报；父日志里没有子的 approval_decision
     const parent = await all(store, sid)
-    expect(types(parent).slice(5)).toEqual([
+    expect(types(parent).slice(6)).toEqual([
       "run_resumed",
       "tools_bound",
       "tool_result",
@@ -266,6 +274,130 @@ describe("asTool：预算合算与多轮", () => {
       ["expert-1", "答一"],
       ["expert-1", "答二"],
     ])
+  })
+})
+
+describe("asTool：停止（2026-11-05 停止语义）", () => {
+  const stopped = () => {
+    const ac = new AbortController()
+    ac.abort(new RunStop())
+    return ac.signal
+  }
+  const textOf = (events: readonly Event[], toolCallId: string): string | undefined => {
+    const r = events.find(
+      (e) => e.type === "core.tool_result" && (e.payload as { toolCallId: string }).toolCallId === toolCallId,
+    ) as CoreEventOf<"core.tool_result"> | undefined
+    const first = r?.payload.content[0]
+    return first?.type === "text" ? first.text : undefined
+  }
+
+  it("linked：父被停止，子拿到同一个停止原因、收尾自己的 pending；父这条调用落'做了一半'", async () => {
+    const store = memoryStore()
+    const ac = new AbortController()
+    const executed: string[] = []
+    const write = (name: string, onRun?: () => void) =>
+      defineTool<Record<string, never>>({
+        name,
+        description: "",
+        inputSchema: { type: "object" },
+        execute: () => {
+          executed.push(name)
+          onRun?.()
+          return `${name} ok`
+        },
+      })
+    const child = expert(
+      store,
+      [turn(callTool("c1", "w1", {}), callTool("c2", "w2", {}))],
+      [write("w1", () => ac.abort(new RunStop())), write("w2")],
+    )
+    const l = lead(store, [turn(callTool("p1", "ask_expert", { task: "改两处" }))], child)
+    const r = await drain(l.run({ input: "去", signal: ac.signal }))
+    expect(r.result).toMatchObject({
+      status: "paused",
+      reason: "host",
+      interruptions: [{ note: STOPPED_NOTE }],
+    })
+    if (r.result.status !== "paused") return
+    expect(r.result.state.pendingToolCallIds).toEqual([])
+    expect(executed).toEqual(["w1"])
+    const childEvents = await all(store, `${r.result.sessionId}:p1`)
+    expect(textOf(childEvents, "c1")).toBe("w1 ok")
+    expect(textOf(childEvents, "c2")).toBe(STOPPED_NOT_EXECUTED_TEXT)
+    expect(textOf(await all(store, r.result.sessionId), "p1")).toBe(STOPPED_IN_PROGRESS_TEXT)
+  })
+
+  it("子在等审批时父被空闲停止（子收不到 signal）：下一轮新任务照常开跑，子的遗留调用先落'没执行'", async () => {
+    const store = memoryStore()
+    const child = expert(store, [turn(callTool("c1", "deploy", { env: "prod" })), turn(say("答二"))])
+    const l = lead(
+      store,
+      [
+        turn(callTool("p1", "ask_expert", { task: "上线" })),
+        turn(callTool("p2", "ask_expert", { task: "先别上线，看看状态" })),
+        turn(say("汇报")),
+      ],
+      child,
+      { childSessionId: () => "expert-1" },
+    )
+    const first = await drain(l.run({ input: "上线" }))
+    expect(first.result).toMatchObject({ status: "paused", reason: "approval" })
+    const sid = first.result.sessionId
+    // 空闲 STOP：父起一个预中止的收尾 run，子会话没被碰
+    await drain(l.run({ sessionId: sid, signal: stopped() }))
+    expect(textOf(await all(store, sid), "p1")).toBe(STOPPED_IN_PROGRESS_TEXT)
+    expect(textOf(await all(store, "expert-1"), "c1")).toBeUndefined()
+
+    const third = await drain(l.run({ sessionId: sid, input: "改主意了" }))
+    expect(third.result.status).toBe("done")
+    const childEvents = await all(store, "expert-1")
+    expect(textOf(childEvents, "c1")).toBe(STOPPED_NOT_EXECUTED_TEXT)
+    expect(types(childEvents).filter((t) => t === "user_message")).toHaveLength(2)
+    expect(types(childEvents)).not.toContain("approval_decision")
+    const outcomes = subagentOutcomesOf(third.events, new Set(["ask_expert"]))
+    expect(outcomes.map((o) => o.answer)).toEqual(["答二"])
+  })
+
+  it("停止后同一位专家的下一轮新任务不被吞（旧判据见子日志末条 run_paused 就当续跑）", async () => {
+    const store = memoryStore()
+    const ac = new AbortController()
+    const slow = defineTool<Record<string, never>>({
+      name: "slow",
+      description: "",
+      inputSchema: { type: "object" },
+      risk: "low",
+      execute: () => {
+        ac.abort(new RunStop())
+        return "partial"
+      },
+    })
+    const child = expert(store, [turn(callTool("c1", "slow", {})), turn(say("答二"))], [slow])
+    const l = lead(
+      store,
+      [
+        turn(callTool("p1", "ask_expert", { task: "第一问" })),
+        turn(callTool("p2", "ask_expert", { task: "第二问" })),
+        turn(say("汇报")),
+      ],
+      child,
+      { childSessionId: () => "expert-1" },
+    )
+    const first = await drain(l.run({ input: "去", signal: ac.signal }))
+    expect(first.result.status).toBe("paused")
+    expect(types(await all(store, "expert-1")).at(-1)).toBe("run_paused")
+
+    const second = await drain(l.run({ sessionId: first.result.sessionId, input: "继续，问第二个" }))
+    expect(second.result.status).toBe("done")
+    const childEvents = await all(store, "expert-1")
+    expect(types(childEvents).filter((t) => t === "user_message")).toHaveLength(2)
+    expect(subagentOutcomesOf(second.events, new Set(["ask_expert"])).map((o) => o.answer)).toEqual(["答二"])
+  })
+
+  it("asTool 显式 replayable：宿主把 risk 提到 high，子代理审批冒泡的续跑也不会被判成'结果未知'", () => {
+    const store = memoryStore()
+    const t = asTool(expert(store, []), { name: "ask", description: "", risk: "high" })
+    expect(t.replayable).toBe(true)
+    expect(isReplayable(t)).toBe(true)
   })
 })
 

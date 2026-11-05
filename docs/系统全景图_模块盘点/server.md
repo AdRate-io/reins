@@ -64,15 +64,15 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 **入口分发**（`createAgentHandler` 返回的闭包）
 
 1. `await options.principal?.(request)` —— 在读 body **之前**跑，所以钩子里不能读 body（会把流抢走）。抛出的 `Response` 原样返回，其它异常照常冒泡。
-2. `request.method` 分发到 `handleGet` / `handlePost`，其余方法 405 并带 `allow: GET, POST`。
+2. `request.method` 分发到 `handleGet` / `handlePost`，其余方法 405 并带 `allow: GET, POST`。`POST { sessionId, stop: true }` 在 `handlePost` 里解析后转 `handleStop`（见下）。
 
 **POST：起一个 run**（`handlePost`）
 
 1. `request.json()` 失败 → 400 `bad_request`。
-2. `parseBody` 只做壳校验：请求体必须是非数组对象；`sessionId` 过 `isValidSessionId`；`lastSeq` 非负整数；`input` 是字符串 / 数组 / 带 `type`+`payload` 的对象；`decisions` 每项含 `toolCallId`+`approved`+`by`（`sessionId` 可选，给子代理会话的结论，见 core `SubagentInterruption`；同样过 `isValidSessionId`）；`resume` 是对象。`resume` 的形状与签名留给 core 的 `validateResume`。
+2. `parseBody` 只做壳校验：请求体必须是非数组对象；`sessionId` 过 `isValidSessionId`；`lastSeq` 非负整数；`input` 是字符串 / 数组 / 带 `type`+`payload` 的对象；`decisions` 每项含 `toolCallId`+`approved`+`by`（`sessionId` 可选，给子代理会话的结论，见 core `SubagentInterruption`；同样过 `isValidSessionId`）；`resume` 是对象；`stop` 只能是字面 `true`、必须带 `sessionId`、不能与 input / resume / decisions 同时出现。`resume` 的形状与签名留给 core 的 `validateResume`。
 3. `sessionId = body.sessionId ?? newSessionId()`（缺省 `uuidv7()`）。
 4. `denyBySessionAuthz({ sessionId, principal, request, method:"POST", isNew: body.sessionId === undefined })` —— 排在 `readTimeline` / `validateResume` 之前，因为那两步已经在读这条会话的日志了。
-5. 预校验分支：只有 `body.resume !== undefined`、`decisions` 非空、或 `input` 是草稿三者之一成立时才进。里面依次 `readTimeline(log, sessionId, { registry })` → （有 resume 时）`validateResume`，其 `configHash` 用 `computeConfigHash({ model, ...(await resolveSocketContributions(agent)) })` 算（P1 起 async），与 `runLoop` 起步同一份算法 → `decisions` 按 `sessionId` 分流（与 runLoop §10.1 同口径，2026-09-10 审查修）：没带或等于本会话的必须指向 `pendingToolCalls(timeline)` 里的调用，否则抛 `RunStateError("unknown_tool_call")`；带别的会话 id（子代理）的不校验、原样下传给 asTool → `checkInput(body.input, pending, contributions.tools)`。`RunStateError` 一律翻成 409 + 其 `code`。
+5. 预校验分支：只有 `body.resume !== undefined`、`decisions` 非空、或 `input` 是草稿三者之一成立时才进。里面依次 `readTimeline(log, sessionId, { registry })` → （有 resume 时）`validateResume`，其 `configHash` 用 `computeConfigHash({ model, ...(await resolveSocketContributions(agent)) })` 算（P1 起 async），与 `runLoop` 起步同一份算法，并传 `model` 与 `contributions.tools` 走 D4 收窄比对 → `decisions` 按 `sessionId` 分流（与 runLoop §10.1 同口径，2026-09-10 审查修）：没带或等于本会话的必须指向 `pendingToolCalls(timeline)` 里的调用，否则抛 `RunStateError("unknown_tool_call")`；带别的会话 id（子代理）的不校验、原样下传给 asTool → `checkInput(body.input, pending, contributions.tools)`。`RunStateError` 一律翻成 409 + 其 `code`。
 6. `checkInput` 是面向网络的第一道白名单（循环层 `inputDrafts` 是第二道）：字符串 / `undefined` 直接放行；数组已在 `parseBody` 里无条件经 `rebuildContentParts` 重建成内容片段（非空、只 text / image / video / audio、只留该类型字段，视频音频的 mime 前缀与 `durationSec` 与 core `isContentPart` 同口径、跨包用例锁住，不合规 400），草稿数组不经 HTTP；草稿只放行两种，且壳字段一律由服务端定 ——
    - `core.user_message`：只取 `payload.content`（须过 `isContentParts`），`actor` 固定 `user`；
    - `core.tool_result`：`toolCallId` 必须在 pending 里（否则 409 `unknown_tool_call`），对应工具必须是客户端工具（`!tool.execute` 或 `tool.side === "client"`，否则 400），`name` / `parentId` / `provenance` 取自 tool_call，客户端只能决定 `content` 与 `isError`；
@@ -117,6 +117,12 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 | 409 | `run_in_progress` | 同一会话已有 run 在本进程跑，或（`leasedRunRegistry`）租约被别的实例持有且未过期；EventLog 的 `seq_conflict` 仍是最后一道闸 |
 | 200 + `error` 帧 | — | 流已经开了才出的错（补发读日志失败、run 在写第一条日志前失败）。日志里已有的 `core.error` 仍以 `event` 帧推出 |
 | 抛出的 `Response` | 宿主自定 | `principal` 与 `authorizeSession` 抛 `Response` 一律原样返回 |
+
+**停止**（`handleStop`，2026-11-05）
+
+1. `denyBySessionAuthz(..., method:"STOP", isNew:false)`；只认 "POST" 放行写的宿主因此拒掉停止（fail-closed）。
+2. 本进程有 run（`runs.get`）→ `controller.abort(new RunStop())`，立即回 200 `{ status: "stopping", sessionId }`，不等 `run.done`；结果帧照常从原流推出。
+3. 没有 run：日志无 pending → 200 `{ status: "idle" }`；有 pending → 用预先 abort(RunStop) 的 controller `runs.create`（409 照常）→ `waitUntil(run.done)` → 自己 `drive(runLoop(...))`（同样经 `observed` 包 onEvent）→ 200 `stopping`。收尾 run 在一轮开头即暂停，只收尾不问模型。
 
 ## 4 核心设计决策
 

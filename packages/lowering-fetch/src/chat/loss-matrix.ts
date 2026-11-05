@@ -44,6 +44,12 @@ export const NOT_SENT: Readonly<Record<string, readonly LandingSpec[]>> = {
       "a snapshot of the tool table; the loop announces changes to it in a separate system_note",
     ),
   ],
+  "core.tool_started": [
+    dropped(
+      "none",
+      "marks that a call began executing, for resume and stop handling; the model learns the outcome from tool_result",
+    ),
+  ],
   "core.error": [
     dropped(
       "none",

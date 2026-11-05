@@ -10,8 +10,11 @@
  * childSessionId 写进结果 JSON（模型可见，回放顺着它找子会话）。
  *
  * 子会话 id 缺省 `${父 sessionId}:${toolCallId}`：确定性派生，续跑时不靠内存、不靠宿主传回就能找回子会话。
- * 子日志末条是 run_paused 即续跑（不带 input，宿主给子会话的结论从 `ctx.decisions` 原样下传，多层嵌套逐层传）；
- * 否则当这个专家的新一轮（带 input）——传自己的 `childSessionId` 就能跟同一个专家多轮对话。
+ * **父日志里本次调用已有 `core.tool_started`** 即父在补跑同一个调用 → 续跑子 run（不带 input，宿主给子会话的结论从 `ctx.decisions`
+ * 原样下传，多层嵌套逐层传）；循环在本工具返回 `subagentPause` 后必补写这条，所以识别得出。否则当这个专家的新一轮（带 input）——
+ * 传自己的 `childSessionId` 就能跟同一个专家多轮对话。新一轮遇到子会话还有遗留 pending（子在等审批时父被停止，子收不到 signal），
+ * 先用预中止的 `RunStop` 跑一次子会话收尾（只收尾、不问模型），再带新任务开跑。
+ * （2026-11-05 起；之前按"子日志末条是 run_paused"判，停止后同一专家的新任务会被吞掉。）
  * 深度守卫仍靠工具表：专家 agent 的工具表里不放 asTool 类工具。
  */
 import {
@@ -19,7 +22,10 @@ import {
   createCoreRegistry,
   defineTool,
   type Event,
+  type EventLog,
+  pendingToolCalls,
   type RunResult,
+  RunStop,
   readTimeline,
   subagentPause,
   type Tool,
@@ -100,6 +106,8 @@ export function asTool(agent: Agent, opts: AsToolOptions): Tool {
     description: opts.description,
     inputSchema: SUBAGENT_TASK_SCHEMA,
     risk: opts.risk ?? "low",
+    // 子会话自己能续跑：父中断后补跑同一个调用就是续跑子 run，不能因宿主把 risk 提到 medium / high 就被判成"结果未知"
+    replayable: true,
     validate(input) {
       const task = (input as { task?: unknown } | null)?.task
       if (typeof task !== "string" || task.trim() === "") throw new Error("task must be a non-empty string")
@@ -107,9 +115,19 @@ export function asTool(agent: Agent, opts: AsToolOptions): Tool {
     },
     async execute(input, ctx) {
       const childSessionId = (opts.childSessionId ?? defaultChildSessionId)(ctx, input)
-      // 子日志末条是 run_paused → 这是父续跑补齐 pending：续跑子 run，不再追加 input
-      const last = (await log.tail(childSessionId, 1))[0]
-      const resuming = last?.type === "core.run_paused"
+      // 父日志里本调用已开始动手 → 父在补跑同一个调用：续跑子 run，不再追加 input
+      const resuming = await hasStarted(ctx.log, ctx.sessionId, ctx.toolCallId)
+      if (!resuming && pendingToolCalls(await readTimeline(log, childSessionId, { registry })).length > 0) {
+        // 新一轮，但子会话还有遗留 pending：先按停止收尾，否则带新任务开跑时会先补跑 / 再挂起那些旧调用
+        const stop = new AbortController()
+        stop.abort(new RunStop())
+        const settle = agent.run({
+          sessionId: childSessionId,
+          signal: stop.signal,
+          ...(ctx.principal ? { principal: ctx.principal } : {}),
+        })
+        while (!(await settle.next()).done) {}
+      }
 
       const run = agent.run({
         sessionId: childSessionId,
@@ -177,6 +195,15 @@ export function asTool(agent: Agent, opts: AsToolOptions): Tool {
       return res
     },
   })
+}
+
+/** 父会话里这次调用是否已有 `core.tool_started`（只看 type 与 toolCallId，不经注册表：父可能有子不认识的 ext.* 事件） */
+async function hasStarted(parentLog: EventLog, sessionId: string, toolCallId: string): Promise<boolean> {
+  for await (const e of parentLog.read(sessionId)) {
+    if (e.type === "core.tool_started" && (e.payload as { toolCallId?: unknown }).toolCallId === toolCallId)
+      return true
+  }
+  return false
 }
 
 /** 子会话时间线里的用量合计：每条 budget_usage 一次请求，tool_call 计工具次数 */

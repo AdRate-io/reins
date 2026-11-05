@@ -11,6 +11,7 @@
  * - 每次将要重试的失败都记一条 `core.error`（retryable=true、detail.willRetry），模型看不见（运维事件），宿主与 eval 看得见。
  */
 import { LoweringError } from "../lowering/errors.js"
+import { isStopReason } from "./stop.js"
 
 export interface RetryOptions {
   /** 最多尝试几次（含第一次）。缺省 3；1 = 不重试 */
@@ -87,11 +88,14 @@ const CONNECTION_ERROR_NAMES: ReadonlySet<string> = new Set([
   "APIConnectionTimeoutError",
 ])
 
-/** 明确不该重试的：宿主中止、降级层配置错 */
+/**
+ * 明确不该重试的：宿主中止、降级层配置错。用户停止（`RunStop`）也算——fetch 被中止时抛出的就是 `signal.reason` 本身，
+ * 不一定是 AbortError
+ */
 function isDefinitelyPermanent(err: unknown): boolean {
   if (err instanceof LoweringError) return true
   const name = (err as { name?: unknown } | null)?.name
-  return name === "AbortError" || name === "APIUserAbortError"
+  return name === "AbortError" || name === "APIUserAbortError" || isStopReason(err)
 }
 
 /**

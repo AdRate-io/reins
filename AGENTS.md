@@ -244,6 +244,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 阈值兜底口径 vs `targetTokens` | 兜底比"估算 + 固定开销"；`targetTokens` 仍是真实上下文口径（感知 `autoFoldAt` 按它算），别把开销减进它 |
 | 进程内 `input`（`runLoop` / `agent.run()`）vs HTTP `AgentRequestBody.input` | 进程内收草稿数组（宿主背景可带 system 信任）；HTTP 数组只收重建过的内容片段，草稿只收重建过的两种——网络边界不能写 system 信任的说明 |
 | 工具入参二次编码：fetch / pi 降级层 vs TanStack 适配器 | 前者读侧多解一层并标 `meta.argumentsUnwrapped`；后者不解——它的历史按 `JSON.stringify(args)` 送回，模型看到的就是自己写的二次编码，与执行一致，没有"说法不一"，代价只是多一轮往返（要补走 `transformArgs`，OPT-261102-2） |
+| 用户停止：runLoop vs TanStack 适配器 | runLoop 在所有暂停出口把 pending 收尾成"没执行"等结果；TanStack 引擎自己处理中止，适配器在它的边界上做不到对等，停止后 pending 照旧留着 |
+| 续跑校验：runLoop / server vs TanStack 适配器 | 前两者调同一个 `validateResume`（D4 收窄）；TanStack 路径本来就不做续跑校验，只为 `tools_bound` 算 configHash |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表
@@ -269,7 +271,10 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
 - **阈值兜底按"估算 + 固定开销"比 `contextLimit − reserveTokens`，开销是 core `contextOverheadOf(timeline)`** — `reserveTokens` 实际只给输出留；告诉模型的阈值要有用例锁住"报过线 ⟺ 真的动作"（踩坑 40）。触发后裁到回落线 `cutToRatio`（缺省 0.6）而不是触发线下，测切点合法性的用例要显式 `cutToRatio: 1`。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试；判定先看状态码（408/409/429/5xx），有状态码就只按它定，文案关键词只在没有状态码时兜底且不匹配裸数字——SDK 文案固定 "<status> <body>"，正文里的 "timeout" / "429" 不是信号。
-- **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建。
+- **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建。例外：补跑或工具批中途被用户停止时不调（否则 Socket 判出 handoff / done 会把 pending 带进非 paused 结局）。
+- **用户停止的收尾挂在 `pause()` 里，判据是 `signal.reason` 的 `name === "RunStop"`** — 新增任何暂停出口都必须走 `pause()`，否则停止留下 pending、下一个 run 照样补跑；停止原因只认第一个 abort，已因丢租约中止的 run 再 `abort(new RunStop())` 无效。连接阶段被掐时 fetch 抛的是 `signal.reason` 本身（踩坑 46），宿主已中止的失败一律暂停不记 error。
+- **没声明 `risk` 的工具缺省不可重放：execute 前多落一条 `core.tool_started`** — 断言日志长度 / seq 的用例要算进去（纯计算的测试工具标 `risk: "low"`）；TanStack 宿主工具视图不带 risk，每次执行都会写。续跑见到"有 started 无结果"落"结果未知"不执行；任何工具返回 `subagentPause` 后补写 started，asTool 靠它判"父在补跑同一个调用"。
+- **`validateResume` 只有在状态带 `modelDigest` / `pendingToolsDigest` 且调用方传了 `model` 与基础工具表时才走收窄比对** — 漏传就退回 configHash 整体比对（更严，不会放过）；两个摘要在场即进签名材料，旧状态材料不变。工具摘要取基础工具表，别传 beforeModel 补丁改过的本轮工具表。
 - **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠子日志末条是否 `run_paused` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
 - **工具返回 `subagentPause` 是暂停不是失败，`ctx.spend` 只加 `tokensSpent` 不追加 `budget_usage`** — 抛错会被 execute 的 catch 吞成 isError；父的 budget_usage 是感知校准上下文的依据，掺入子用量会污染。
 
@@ -332,6 +337,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **POST 不读 `Last-Event-ID`，只认 `body.lastSeq`；409 `run_in_progress` 是唯一带 `X-Reins-Session` 的错误响应** — 客户端别统一从错误头取会话 id。
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
 - **handler 对 `decisions` 的预校验必须与 runLoop 同一口径** — 只有本会话的结论对照本会话 pending，带子会话 id 的原样下传；两处不是同一函数，靠跨包用例锁住（踩坑 20）。
+- **停止请求 `POST { sessionId, stop: true }` 回 JSON 不开流、不等 run 结束；鉴权 `method` 是 "STOP"** — 空闲但有 pending 时起的收尾 run 没有流驱动，handler 自己 drive 并 `waitUntil(run.done)`；只认本进程的 run（跨实例 OPT-261105-5）。
 - **`onEvent` 只观测 live 事件（补发不调），先广播再调；但 run 的 result 帧与 `run.done` 等整条观测链结束** — 异步钩子挂住不返回，run 就永不结束、会话永久 409。
 - **`RunRegistry.create` 是异步的、`ActiveRun.done` 在收尾钩子（删项、租约释放）之后才 resolve，但删项在结束那一刻同步生效** — Workers 的 `waitUntil(run.done)` 靠此覆盖 release；"run 结束后立刻再 POST"的断言等 result 帧即可。多实例部署必须共用 `store.runLease`（pg 有，`createAgent` 自动装），否则两实例同时起 run、第二个浪费一次模型调用后撞 `seq_conflict`；跨实例 GET 只补发不接实时。
 - **续跑带新 `input` 时只接受白名单事件草稿** — 伪造 `approval_decision` 曾可绕过审批，循环层与 server 层两道白名单都不能删（踩坑 10）。

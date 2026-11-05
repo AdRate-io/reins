@@ -35,11 +35,12 @@ export type AgentDefinition = Omit<
 // ---- 请求 ----
 
 /**
- * POST 请求体。四种用法都是同一个形状：
+ * POST 请求体。五种用法都是同一个形状：
  * - 新会话：只给 input（sessionId 缺省由服务端生成，回在 start 帧与 `X-Reins-Session` 头里）
  * - 续聊：sessionId + input
  * - 审批后续跑：sessionId + resume（上次 result 帧里的 state）+ decisions（子代理的审批带 `sessionId: childSessionId`，见 Interruption(kind=subagent)）
  * - 补发缺口：任何一种加 lastSeq —— 先把 (lastSeq, 当前末尾] 的事件补给客户端，再开始新的 run
+ * - 停止：`{ sessionId, stop: true }`（2026-11-05）——回 JSON（`StopResponse`）而不是 SSE，见 `stop` 字段
  */
 export interface AgentRequestBody {
   sessionId?: string
@@ -48,6 +49,23 @@ export interface AgentRequestBody {
   lastSeq?: number
   resume?: SerializedRunState
   decisions?: ApprovalDecisionInput[]
+  /**
+   * 用户点了停止。必须带 `sessionId`、只能是字面 `true`、不能与 input / resume / decisions 同时出现（否则 400）。
+   * 鉴权走 `authorizeSession`，`method: "STOP"`。三种处理，都**不等 run 结束**、立即回 200 `StopResponse`：
+   * - 本进程有正在跑的 run：`abort(new RunStop())`，回 `stopping`；它的结果帧照常从原来那条流推出。
+   *   该 run 若已先因别的原因中止（停止原因只认第一个），pending 不会被收尾——再按一次停止会走下一条路。
+   * - 没有正在跑的 run、日志里有 pending（等审批、丢租约留下的）：起一个预先停止的 run 只收尾、不问模型，回 `stopping`；
+   *   撞上别的实例正占着会话照常 409 `run_in_progress`。
+   * - 都没有：回 `idle`，重复按也安全。
+   * 只认本进程的 run（`runs.get`）；跨实例停止未做（OPT-261105-5）。
+   */
+  stop?: true
+}
+
+/** 停止请求的应答。`stopping`：已发出停止 / 已起收尾 run；`idle`：没有可停的东西 */
+export interface StopResponse {
+  status: "stopping" | "idle"
+  sessionId: string
 }
 
 // ---- 流内容 ----
@@ -109,8 +127,11 @@ export interface SessionAuthzInput {
    * 读 body **之前**，在那里读会把流抢走；这个钩子跑在**之后**，读不到东西。
    */
   request: Request
-  /** GET 是重连读流，POST 是起 run。宿主可以只对写放行给部分人 */
-  method: "GET" | "POST"
+  /**
+   * GET 是重连读流，POST 是起 run，STOP 是停止请求（`POST { sessionId, stop: true }`）。宿主可以只对写放行给部分人。
+   * 按 `method === "POST"` 放行写操作的宿主会拒掉 STOP——fail-closed，要放行停止就显式认 "STOP"
+   */
+  method: "GET" | "POST" | "STOP"
   /**
    * 这次是不是要新建会话（POST 没带 sessionId，id 是服务端刚生成的）。
    * 新会话还没有归属，宿主通常一律放行、并在返回前自行把 sessionId 记到自己的归属表里。

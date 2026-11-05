@@ -285,6 +285,8 @@ describe("run 结束的三种翻译", () => {
 describe("接上 @reinsjs/server", () => {
   const addTool = defineTool<{ a: number; b: number }>({
     name: "add",
+    // 纯计算、只读：可重放，不写 tool_started
+    risk: "low",
     description: "两数相加",
     inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
     execute: ({ a, b }) => a + b,

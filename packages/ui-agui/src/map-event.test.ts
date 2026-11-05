@@ -50,6 +50,7 @@ const SAMPLES: { [T in CoreEventType]: CoreEventPayloads[T] } = {
   "core.run_paused": { reason: "approval" },
   "core.run_resumed": { by: "boss" },
   "core.tools_bound": { toolNames: ["add", "compact"], configHash: "abc" },
+  "core.tool_started": { toolCallId: "c1" },
   "core.error": { category: "provider", message: "超时", retryable: true },
 }
 

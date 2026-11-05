@@ -37,6 +37,12 @@ const NOT_SENT: Readonly<Record<string, readonly LandingSpec[]>> = {
       "this session ends at the handoff; the new session's first user message carries the triggerMessage",
     ),
   ],
+  "core.tool_started": [
+    dropped(
+      "none",
+      "marks that a call began executing, for resume and stop handling; the model learns the outcome from tool_result",
+    ),
+  ],
   "core.error": [
     dropped(
       "none",

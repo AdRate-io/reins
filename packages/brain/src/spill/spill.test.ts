@@ -39,6 +39,7 @@ const lines = (n: number, prefix = "line") =>
 const echoTool = (extra: Partial<Tool> = {}): Tool =>
   defineTool<{ text: string; isError?: boolean }>({
     name: "echo",
+    risk: "low",
     description: "原样返回",
     inputSchema: { type: "object", properties: { text: { type: "string" } } },
     execute: ({ text, isError }) => (isError ? { content: [{ type: "text", text }], isError: true } : text),

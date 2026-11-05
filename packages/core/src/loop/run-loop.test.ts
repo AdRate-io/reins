@@ -34,6 +34,8 @@ function deterministic() {
 
 const addTool = defineTool<{ a: number; b: number }>({
   name: "add",
+  // 纯计算、只读：可重放，不写 tool_started
+  risk: "low",
   description: "两数相加",
   inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
   execute: ({ a, b }) => a + b,
@@ -1093,8 +1095,13 @@ describe("runLoop：工具的各种失败与客户端工具", () => {
       { drafts: [say("完")] },
     ])
     await drain(runLoop(baseConfig(lowering, log, { input: "记", tools: [remember] })))
-    // 日志开头是 tools_bound + user_message，从第 3 条起看这一批
-    expect(types(await all(log)).slice(2, 5)).toEqual(["tool_call", "memory_op", "tool_result"])
+    // 日志开头是 tools_bound + user_message，从第 3 条起看这一批；写工具执行前先记 tool_started，执行中留的痕排在它之后
+    expect(types(await all(log)).slice(2, 6)).toEqual([
+      "tool_call",
+      "tool_started",
+      "memory_op",
+      "tool_result",
+    ])
   })
 })
 
@@ -1512,6 +1519,7 @@ describe("上线前审查修复（2026-09-10）", () => {
       "user_message",
       "tool_call",
       "tool_call",
+      "tool_started",
       "tool_result",
       "budget_usage",
       "run_paused",
@@ -1635,6 +1643,7 @@ describe("审查遗留 R1 / R2", () => {
       "approval_decision",
       // 第二次起步的工具表快照：排在 approval_decision 之后、补齐 pending 之前
       "tools_bound",
+      "tool_started",
       "tool_result",
     ])
   })
@@ -1662,6 +1671,8 @@ describe("子代理暂停冒泡（§10.1，asTool 的机制）", () => {
       name: "ask_expert",
       description: "",
       inputSchema: {},
+      // 与 asTool 一致：子代理可续跑，tool_started 在 subagentPause 之后才补写
+      replayable: true,
       execute: (_input, ctx) => {
         seen.push(ctx.decisions)
         if (ctx.decisions?.some((d) => d.sessionId === "child" && d.approved)) return "expert: done"
@@ -1701,6 +1712,7 @@ describe("子代理暂停冒泡（§10.1，asTool 的机制）", () => {
       "tools_bound",
       "user_message",
       "tool_call",
+      "tool_started",
       "budget_usage",
       "run_paused",
     ])
@@ -1717,7 +1729,7 @@ describe("子代理暂停冒泡（§10.1，asTool 的机制）", () => {
     expect(second.result.status).toBe("done")
     expect(seen[1]).toEqual([decision])
     const events = await all(log)
-    expect(types(events).slice(5)).toEqual([
+    expect(types(events).slice(6)).toEqual([
       "run_resumed",
       "tools_bound",
       "tool_result",

@@ -116,11 +116,12 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `loop/index.ts` | 汇总导出 batch / fork / retry / run-loop / state / static / tools / types |
+| `loop/index.ts` | 汇总导出 batch / fork / retry / run-loop / state / static / stop / tools / types |
 | `loop/batch.ts` | `toolBatchOf(timeline, pending)`（2026-11-02）：补跑时定位遗留调用所在那批（以第一条 pending 为锚、前后扩到非模型输出且模型可见的事件为止），并收这批已落的结果；pending 跨批只取第一批。runLoop 与 TanStack 适配器共用 |
 | `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`（含可选 `decisions` / `spend`，asTool 用）；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`（含 `batch: ToolBatch`，2026-11-02）；`ToolCallEvent` / `ToolResultEvent`；`RunResult` 四态、`SerializedRunState`、`Interruption`（五种，含 `SubagentInterruption`）、`ApprovalDecisionInput`（可选 `sessionId`）、`LoopConfig`（全部循环开关，P1 加 `announceToolChanges`）；`StaticContribution<T>` 的函数形态可返回 Promise（P1） |
 | `loop/run-loop.ts` | `runLoop` 主体（898 行）：append/pause/fail/spendInto 四个基础动作、恢复与审批校验（结论按 `sessionId` 分本会话 / 转发两路）、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`（含 `isSubagentPause` 冒泡分支；包一层 append 把落日志的 tool_result 登记进 `ctx.batch.results`，三处挂起登记 `held`）、`inputDrafts` 归一与白名单（草稿数组逐条查） |
-| `loop/state.ts` | run 状态：`pendingToolCalls`、`computeConfigHash` / `computePendingDigest`（SHA-256）、`serializeRunState` / `signRunState` / `verifyRunState`（HMAC-SHA256 + 常数时间比较）、`validateResume` 与 8 种 `RunStateError` |
+| `loop/stop.ts` | 停止与重放判据（2026-11-05）：`RunStop`（停止原因，`name` 判据）/ `isStopReason` / `isStopped`、`isReplayable(tool)`（`replayable ?? risk === "low"`）、`startedToolCallIds(timeline)`，以及三句模型可见文案 `STOPPED_NOT_EXECUTED_TEXT` / `STOPPED_IN_PROGRESS_TEXT` / `OUTCOME_UNKNOWN_TEXT`；runLoop、TanStack 适配器、asTool 共用 |
+| `loop/state.ts` | run 状态：`pendingToolCalls`、`computeConfigHash` / `computePendingDigest` / D4 的 `computeModelDigest` / `computePendingToolsDigest`（SHA-256）、`serializeRunState` / `signRunState` / `verifyRunState`（HMAC-SHA256 + 常数时间比较）、`validateResume`（状态带两个 D4 摘要且调用方给了 model / tools 时只比模型与 pending 工具定义，否则按 configHash）与 8 种 `RunStateError`；两个摘要在场即追加进签名材料 |
 | `loop/static.ts` | `resolveSocketContributions`（P1 起 **async**，各 Socket 依次 await 而非并发）：宿主工具 + 各 Socket 静态工具（同名宿主优先）、系统提示按注册顺序拼接；每个 Socket 拿自己的一份 `SocketSetup`，`tools` 是到它为止已并入的工具表快照、同一 Socket 的 `tools` / `systemPrompt` 两次解析共用同一对象（2026-09-22，lazy-tools 收 MCP 工具靠它）；循环起步与 server 预校验共用，configHash 才对得上 |
 | `loop/subagent.ts` | 子代理暂停标记（§10.1）：`subagentPause(detail)` / `isSubagentPause()`，`Symbol.for` 品牌；工具 `execute` 返回它，循环不落 tool_result、run 整体 paused(kind=subagent) |
 | `loop/tools-bound.ts` | P1 纯函数：`lastToolsBound`、`diffToolNames`、`renderToolChangeNote`（给模型的英文文案）、`toolsBoundDrafts`（起步要 append 的 `tools_bound` + 有增删时的 `system_note(kind=host, meta.toolsChanged)`）；runLoop 与 TanStack 适配器共用，两处文案与判定不分叉 |
@@ -129,7 +130,7 @@
 | `loop/deferred-tools.test.ts` | L1 在 core 的用例：`renderToolReference` 写法、`normalizeToolOutput` 认引用段、估算按展开文本算、`BeforeModelPatch.deferredTools` → `ToolSpec.deferLoading` 的接线（不在表的名字忽略、后一个 Socket 整体替换、没给就沿用） |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |
-| 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 子代理冒泡 3 例（返回标记即暂停、结论按 sessionId 转发、spend 合算）/ 上线前审查修复 3 例 / R1·R2 / input 草稿数组 15 例（按序一次写入、十二类拒绝不落日志——含未登记 ext.* 与 core 载荷畸形、四种旧形态回归、数组里回填客户端工具结果并续跑）；`batch.test.ts` 覆盖 `ctx.batch`：六种结果路径都登记、beforeTool 只见前面的、审批 / 客户端挂起进 held、补跑批预置上次结果与宿主回填、批中途中止，及 `toolBatchOf` 纯函数（运维事件夹在输出中间不切段、跨批取第一批）；`run-state.test.ts` 覆盖跨进程暂停恢复与 12 项 fail-closed 校验；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝 |
+| 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 子代理冒泡 3 例（返回标记即暂停、结论按 sessionId 转发、spend 合算）/ 上线前审查修复 3 例 / R1·R2 / input 草稿数组 15 例（按序一次写入、十二类拒绝不落日志——含未登记 ext.* 与 core 载荷畸形、四种旧形态回归、数组里回填客户端工具结果并续跑）；`batch.test.ts` 覆盖 `ctx.batch`：六种结果路径都登记、beforeTool 只见前面的、审批 / 客户端挂起进 held、补跑批预置上次结果与宿主回填、批中途中止，及 `toolBatchOf` 纯函数（运维事件夹在输出中间不切段、跨批取第一批）；`run-state.test.ts` 覆盖跨进程暂停恢复与 fail-closed 校验（含 D4：加别的工具 / 改提示放行、pending 工具或模型变了拒、旧状态兼容、伪造或剥掉新摘要验签失败）；`stop.test.ts` 覆盖停止收尾（五个暂停出口 × 停止 / 非停止、等审批与客户端工具也收尾、started 的落结果未知、子代理落做了一半、批中途停止不进 onTurnEnd、连接阶段中止暂停）与不重放（真进程死亡后续跑不执行、只读与 `replayable` 照旧重放、工具不在表、感知 signal 的写工具被掐断、started 不切批）；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝 |
 
 ### `replay/` — 回放（T15）
 
@@ -159,20 +160,20 @@
 1. **起步（不写日志）**：`await resolveSocketContributions(cfg)`（可异步：MCP 在此 `tools/list`）把宿主工具与各 Socket 的静态工具、系统提示合成整个 run 不变的两份；`computeConfigHash` 按它们算摘要；`inputDrafts(cfg.input)` 归一成草稿列表并逐条过白名单、actor、三种 core 草稿的载荷最小形状（含纯片段数组），再逐条查注册表（未登记的 ext.* 不能拖到 append 才失败）；`readTimeline` 把整条日志过一遍注册表拿到 `lastSeq` —— 以上任一步失败都在写任何东西之前抛。
 2. **恢复与审批（校验先于落笔）**：给了 `resume` 就 `validateResume`（形状→会话→签名→configHash→日志不短于状态→pending 对账），`decisions` 逐条确认指向 pending 调用，全过才 append `run_resumed` 与各条 `approval_decision`。 随后 **append 工具表快照**（P1）：一条模型不可见的 `core.tools_bound { toolNames, configHash }`；与日志里上一条比对有增删且 `announceToolChanges !== false`（缺省开）则再 append 模型可见的 `system_note(kind=host)` 列出 Added / Removed，首次 run 不出。
 3. **落新输入**：`input` 归一后的草稿一次 append（同一 `at`、连续 seq、顺序即宿主给的顺序），哪怕日志里还有未完成的 tool_call —— 顺序由降级层去满足厂商协议，日志不动。
-4. **每轮开头**：读时间线 → 若 `signal.aborted` 立即 `pause("host")`（先于补齐 pending）→ `pendingToolCalls` 非空则先 `executeToolCalls` 补齐、再走一次 `endTurn` 收尾（R2）→ 否则检查 `maxTurns` → `turns++`。
+4. **每轮开头**：读时间线 → 若 `signal.aborted` 立即 `pause("host")`（先于补齐 pending；`pause` 内若中止原因是 `RunStop` 先把 pending 收尾成 isError 结果，所有暂停出口同一处）→ `pendingToolCalls` 非空则先 `executeToolCalls` 补齐、再走一次 `endTurn` 收尾（R2）→ 否则检查 `maxTurns` → `turns++`。
 5. **投影与钩子**：`project(timeline)` 得到 view 与 `emitted`；emitted 先 `log.append` 再问模型（模型可见 ⟺ 已记录）；各 Socket 的 `beforeModel` 顺序合并补丁，其间 `ctx.emit` 的草稿 `flush` 落库并（非运维类型）并进本轮视图。
-6. **问模型（重试循环）**：每次尝试重新 `toRequest` + `stream`，草稿逐块 append 并 yield；失败时按 `retry.isTransient` 与"本次尝试 `attemptOutput === 0`"共同决定是否重试，要重试就先记一条 `core.error(willRetry)` 再退避；不重试则 `fail()` 返回 error 态。
-7. **收尾**：`afterModel` → `executeToolCalls` 处理本轮 tool_call → append `budget_usage`（带 `contextEstimate`）→ 有中断则按 `pauseReasonOf`（审批 > 预算 > 宿主）暂停 → 否则 `endTurn`：第一个给意见的 Socket 决定 continue / stop / pause / handoff，handoff 时旧会话记 `core.handoff`、新会话写入 `system_note(摘要) + intent.opening + user_message(triggerMessage)` 三段开场并回调 `onHandoff`。
+6. **问模型（重试循环）**：每次尝试重新 `toRequest` + `stream`，草稿逐块 append 并 yield；失败时按 `retry.isTransient` 与"本次尝试 `attemptOutput === 0`"共同决定是否重试，要重试就先记一条 `core.error(willRetry)` 再退避；不重试则 `fail()` 返回 error 态——但宿主已中止的（连接阶段被掐，fetch 抛的是 `signal.reason`）走 `pause("host")`。
+7. **收尾**：`afterModel` → `executeToolCalls` 处理本轮 tool_call → append `budget_usage`（带 `contextEstimate`）→ 有中断、或工具批中途被用户停止，则按 `pauseReasonOf`（审批 > 预算 > 宿主）暂停（停止时跳过 onTurnEnd，补跑路径同理）→ 否则 `endTurn`：第一个给意见的 Socket 决定 continue / stop / pause / handoff，handoff 时旧会话记 `core.handoff`、新会话写入 `system_note(摘要) + intent.opening + user_message(triggerMessage)` 三段开场并回调 `onHandoff`。
 
 ### 二、单次工具调用的处置顺序（`executeToolCalls`）
 
-1. 从时间线预扫 `approval_decision` 与 `approval_request`（已批的按批的办，已问过的不重复问）。
+1. 从时间线预扫 `approval_decision` 与 `approval_request`（已批的按批的办，已问过的不重复问）与 `tool_started`；有 started 无结果、工具不可重放（或不在表里）的直接落"结果未知"，不再执行（D2）。
 2. 已有"拒绝"决定 → 直接 `tool_result(isError)`。
 3. `beforeTool` 链：`rewrite` 替换入参后继续问下一个（后续钩子看到改写后的 args），`block` / `defer` 即定；已批准的调用遇到 `defer` 只是略过，后面的钩子仍可 `block`。
 4. 未知工具 → isError；**`tool.validate` 在审批之前**（R1），校验不过直接 isError，不惊动审批人。
 5. 审批判定：Socket 的 `defer`，或工具自己 `needsApproval` 且无 Socket 做主（`BUILTIN_APPROVAL_POLICY`）→ append `approval_request`（若没问过）并记一条 approval 中断。
 6. 无 `execute` 或 `side: "client"` → 记 `client_tool` 中断等宿主回填。
-7. `execute` → `toModelOutput` 或 `normalizeToolOutput` → `afterTool` 可整条替换 → `settle()` 先 flush 钩子留痕再 append 结果（每条结果路径都走 settle，留痕永远在结果之前）→ 若宿主已中止则跳出，余下调用留作 pending。
+7. 不可重放的工具先 append `tool_started`；`execute`（返回 `subagentPause` 的补写 started；不可重放工具在中止后抛错落"结果未知"）→ `toModelOutput` 或 `normalizeToolOutput` → `afterTool` 可整条替换 → `settle()` 先 flush 钩子留痕再 append 结果（每条结果路径都走 settle，留痕永远在结果之前）→ 若宿主已中止则跳出，余下调用留作 pending。
 
 ### 三、append 与 seq 乐观并发（`loop/run-loop.ts` 的 `append` + `store/in-memory.ts`）
 

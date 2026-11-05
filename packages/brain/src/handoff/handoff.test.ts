@@ -30,6 +30,7 @@ function deterministic() {
 
 const addTool = defineTool<{ a: number; b: number }>({
   name: "add",
+  risk: "low",
   description: "两数相加",
   inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } } },
   execute: ({ a, b }) => a + b,
@@ -422,10 +423,11 @@ describe("handoff × 审批同轮（R2）", () => {
     expect(handoffs).toEqual([[SESSION, second.result.toSessionId]])
     expect(lowering.requests).toHaveLength(1)
     const old = await all(log)
-    expect(types(old).slice(-5)).toEqual([
+    expect(types(old).slice(-6)).toEqual([
       "run_resumed",
       "approval_decision",
       "tools_bound", // 续跑起步同样留快照：排在回执之后、补齐的工具结果之前
+      "tool_started", // deploy 是写工具：执行前先记开始动手
       "tool_result",
       "handoff",
     ])

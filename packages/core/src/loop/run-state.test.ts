@@ -77,11 +77,14 @@ function processB(log: InMemoryEventLog, overrides: Partial<LoopConfig> = {}): L
 describe("RunState：进程 A 暂停、进程 B 恢复", () => {
   it("状态小、可放 URL、已签名", async () => {
     const { stateString, result } = await processA()
-    expect(stateString.length).toBeLessThan(400)
+    // D4 加了 modelDigest / pendingToolsDigest 两个摘要，仍远小于 URL 参数的常见上限
+    expect(stateString.length).toBeLessThan(600)
     const state = JSON.parse(stateString) as SerializedRunState
     expect(state).toMatchObject({ v: 1, sessionId: SESSION, lastSeq: 6, pendingToolCallIds: ["c1"] })
     expect(state.sig).toMatch(/^[0-9a-f]{64}$/)
     expect(state.pendingDigest).toMatch(/^[0-9a-f]{64}$/)
+    expect(state.modelDigest).toMatch(/^[0-9a-f]{64}$/)
+    expect(state.pendingToolsDigest).toMatch(/^[0-9a-f]{64}$/)
     expect(await verifyRunState(state, SECRET)).toBe(true)
     expect(await verifyRunState(state, "别的密钥")).toBe(false)
     expect(result.status === "paused" && result.reason).toBe("approval")
@@ -96,7 +99,7 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
       decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
     })
     const { events, result } = await drain(runLoop(cfgB))
-    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 12 })
+    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 13 })
 
     const logged = await all(log)
     expect(types(logged.slice(before))).toEqual([
@@ -104,6 +107,8 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
       "approval_decision",
       // 续跑起步的工具表快照：在 run_resumed / approval_decision 之后、补齐 pending 之前
       "tools_bound",
+      // deploy 是写工具（没声明 risk）：执行前先记"开始动手"
+      "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
@@ -113,13 +118,13 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
     expect(resumed.actor).toBe("host")
     const decision = logged[before + 1] as CoreEventOf<"core.approval_decision">
     expect(decision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
-    const res = logged[before + 3] as CoreEventOf<"core.tool_result">
+    const res = logged[before + 4] as CoreEventOf<"core.tool_result">
     expect(res.payload).toMatchObject({
       isError: false,
       content: [{ type: "text", text: '已上线 {"env":"prod"}' }],
     })
     // 进程 B 也把新事件逐条 yield 出来了
-    expect(events.map((e) => e.seq)).toEqual([7, 8, 9, 10, 11, 12])
+    expect(events.map((e) => e.seq)).toEqual([7, 8, 9, 10, 11, 12, 13])
     // 模型看到的是干净的对话：审批与暂停/恢复事件不可见
     const b = cfgB.lowering as ScriptedLowering
     expect(types(b.requests[0]?.events ?? [])).toEqual(["user_message", "tool_call", "tool_result"])
@@ -206,18 +211,45 @@ describe("RunState：恢复校验 fail-closed，拒绝发生在写日志之前",
     await expectReject(processB(log, { resume: { ...state, sessionId: "s2" } }), "session_mismatch")
   })
 
-  it("工具集变了 → config_mismatch；allowConfigDrift 放行", async () => {
+  it("D4：加了别的工具、改了系统提示 → 放行（只守 pending 调用的工具与模型；工具增删由工具变化说明告诉模型）", async () => {
     const { log, stateString } = await processA()
     const extra: Tool = { name: "rollback", description: "", inputSchema: {}, execute: () => "" }
-    await expectReject(
-      processB(log, { resume: JSON.parse(stateString), tools: [deployTool, extra] }),
-      "config_mismatch",
-    )
     const { result } = await drain(
       runLoop(
         processB(log, {
           resume: JSON.parse(stateString),
           tools: [deployTool, extra],
+          systemPrompt: "你是财务",
+          decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+        }),
+      ),
+    )
+    expect(result.status).toBe("done")
+    // 模型被告知多了 rollback
+    const notes = (await all(log)).filter((e) => e.type === "core.system_note")
+    expect(notes.some((e) => JSON.stringify(e.payload).includes("rollback"))).toBe(true)
+  })
+
+  it("D4：pending 调用的工具定义变了（schema / 描述 / 不在表里）→ config_mismatch 点名该工具；allowConfigDrift 放行", async () => {
+    const { log, stateString } = await processA()
+    const changed: Tool = { ...deployTool, inputSchema: { type: "object", required: ["env"] } }
+    await expectReject(
+      processB(log, { resume: JSON.parse(stateString), tools: [changed] }),
+      "config_mismatch",
+    )
+    await expect(
+      drain(runLoop(processB(log, { resume: JSON.parse(stateString), tools: [changed] }))),
+    ).rejects.toThrow(/pending tool deploy/)
+    await expectReject(
+      processB(log, { resume: JSON.parse(stateString), tools: [{ ...deployTool, description: "下线" }] }),
+      "config_mismatch",
+    )
+    await expectReject(processB(log, { resume: JSON.parse(stateString), tools: [] }), "config_mismatch")
+    const { result } = await drain(
+      runLoop(
+        processB(log, {
+          resume: JSON.parse(stateString),
+          tools: [changed],
           allowConfigDrift: true,
           decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
         }),
@@ -226,11 +258,57 @@ describe("RunState：恢复校验 fail-closed，拒绝发生在写日志之前",
     expect(result.status).toBe("done")
   })
 
-  it("系统提示变了也算配置变了 → config_mismatch", async () => {
+  it("D4：模型变了 → config_mismatch", async () => {
     const { log, stateString } = await processA()
+    await expect(
+      drain(
+        runLoop(
+          processB(log, { resume: JSON.parse(stateString), model: { provider: "scripted", id: "other" } }),
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "config_mismatch", message: expect.stringMatching(/model differs/) })
+  })
+
+  it("D4：没有两个新摘要的旧状态仍按 configHash 整体比对（兼容不破）", async () => {
+    const { log, stateString } = await processA()
+    const {
+      sig: _s,
+      modelDigest: _m,
+      pendingToolsDigest: _p,
+      ...old
+    } = JSON.parse(stateString) as SerializedRunState
+    const legacy = await signRunState(old as SerializedRunState, SECRET)
+    const extra: Tool = { name: "rollback", description: "", inputSchema: {}, execute: () => "" }
+    await expectReject(processB(log, { resume: legacy, tools: [deployTool, extra] }), "config_mismatch")
+    await expectReject(processB(log, { resume: legacy, systemPrompt: "你是财务" }), "config_mismatch")
+    const { result } = await drain(
+      runLoop(
+        processB(log, { resume: legacy, decisions: [{ toolCallId: "c1", approved: true, by: "boss" }] }),
+      ),
+    )
+    expect(result.status).toBe("done")
+  })
+
+  it("D4：新摘要进签名材料——给合法旧状态塞新字段、从新状态删掉新字段或改其一，验签都失败", async () => {
+    const { log, stateString } = await processA()
+    const signed = JSON.parse(stateString) as SerializedRunState
+    const { sig: _s, modelDigest: _m, pendingToolsDigest: _p, ...old } = signed
+    const legacy = await signRunState(old as SerializedRunState, SECRET)
+    expect(await verifyRunState(legacy, SECRET)).toBe(true)
+    // 伪造：旧状态塞入新字段（想把校验从 configHash 换成更松的那条路）
+    const forged = { ...legacy, modelDigest: signed.modelDigest, pendingToolsDigest: "0".repeat(64) }
+    await expectReject(processB(log, { resume: forged as SerializedRunState }), "bad_signature")
+    // 降级：从新状态删掉新字段，签名仍是新材料的
+    const stripped = { ...old, sig: signed.sig }
+    await expectReject(processB(log, { resume: stripped as SerializedRunState }), "bad_signature")
     await expectReject(
-      processB(log, { resume: JSON.parse(stateString), systemPrompt: "你是财务" }),
-      "config_mismatch",
+      processB(log, { resume: { ...signed, pendingToolsDigest: "1".repeat(64) } }),
+      "bad_signature",
+    )
+    // 新字段类型不对 → malformed
+    await expectReject(
+      processB(log, { resume: { ...signed, modelDigest: 1 } as unknown as SerializedRunState }),
+      "malformed",
     )
   })
 

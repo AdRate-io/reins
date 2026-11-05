@@ -25,6 +25,7 @@ import {
   InMemoryBlobStore,
   InMemoryEventLog,
   InMemoryMemoryStore,
+  OUTCOME_UNKNOWN_TEXT,
   type Socket,
   type ToolBatch,
 } from "@reinsjs/core"
@@ -160,17 +161,19 @@ describe("reinsMiddleware：基本流程", () => {
 
     const events = await all(f.log)
     // 每次请求 initRun 先落一条工具表快照 tools_bound（模型不可见），再导入客户端新消息
+    // TanStack 宿主工具的视图不带 risk，按缺省口径算写工具：执行前（onBeforeToolCall）先记 tool_started
     expect(types(events)).toEqual([
       "tools_bound",
       "user_message",
       "model_thinking",
       "tool_call",
       "budget_usage",
+      "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
     ])
-    const result = events[5] as CoreEventOf<"core.tool_result">
+    const result = events[6] as CoreEventOf<"core.tool_result">
     expect(result.payload).toEqual({
       toolCallId: "c1",
       name: "add",
@@ -212,7 +215,7 @@ describe("reinsMiddleware：基本流程", () => {
     expect(f.adapter.calls[0]?.systemPrompts).toEqual(["你是计算器"])
     expect(f.adapter.calls[0]?.tools?.map((t) => t.name)).toEqual(["add"])
     // onEvent 拿到每一条
-    expect(f.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(f.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
   })
 
   it("第二次请求只导入末尾新用户消息，历史以日志为准", async () => {
@@ -642,16 +645,62 @@ describe("reinsMiddleware：审批", () => {
       "tools_bound",
       "approval_decision",
       "run_resumed",
+      "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
     ])
     const decision = events[7] as CoreEventOf<"core.approval_decision">
     expect(decision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
-    const result = events[9] as CoreEventOf<"core.tool_result">
+    const result = events[10] as CoreEventOf<"core.tool_result">
     expect(result.payload).toMatchObject({ isError: false, content: [{ type: "text", text: "deployed" }] })
     // 续跑那次模型看到的仍是日志投影：用户 → 工具调用 → 结果
     expect(f2.adapter.calls[0]?.messages?.map((m) => m.role)).toEqual(["user", "assistant", "tool"])
+  })
+
+  it("中断不重放（与 runLoop 同一判据）：批准后执行途中进程死亡（日志有 tool_started 无结果），续跑不再执行、落'结果未知'", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    const sockets = [approval({ ask: ["deploy"] })]
+    let executed = 0
+    const counted = toolDefinition({
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object", properties: { env: { type: "string" } } },
+    }).server(async () => {
+      executed++
+      return "deployed"
+    })
+    const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "prod" })] }], sockets, {}, shared)
+    const chunks = await f.run({ messages: [user("上线")], tools: [counted], runId: "run1" })
+    // 模拟：另一个进程批准后已开始执行、没落结果就死了
+    const tail = (await shared.log.tail(SESSION, 1))[0]?.seq ?? 0
+    await shared.log.append([
+      createCoreEvent(registry, {
+        type: "core.tool_started",
+        actor: "system",
+        sessionId: SESSION,
+        seq: tail + 1,
+        payload: { toolCallId: "c1" },
+      }),
+    ])
+    const { interrupt, runId } = interruptOf(chunks)
+    const f2 = fixture([{ blocks: [say("我先查一下线上状态")] }], sockets, {}, shared)
+    await f2.run({
+      messages: history(),
+      tools: [counted],
+      parentRunId: runId,
+      resume: [resumeItem(interrupt, { approved: true, by: "boss" })],
+    })
+    expect(executed).toBe(0)
+    const result = (await all(shared.log)).find((e) => e.type === "core.tool_result") as
+      | CoreEventOf<"core.tool_result">
+      | undefined
+    expect(result?.payload).toMatchObject({
+      toolCallId: "c1",
+      isError: true,
+      content: [{ type: "text", text: OUTCOME_UNKNOWN_TEXT }],
+    })
+    expect(types(await all(shared.log)).filter((t) => t === "tool_started")).toHaveLength(1)
   })
 
   it("拒绝：approval_decision(false) + 结果记为审批被拒绝，工具未执行", async () => {
