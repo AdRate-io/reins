@@ -1,6 +1,6 @@
 # 模块盘点：@reinsjs/store-sqlite / @reinsjs/store-pg
 
-> 对应技术方案 §5、任务 B9（S3 为 SQLite 驱动选型 spike）、D4（pg run 租约）。以代码为准，写于 2026-09-10，2026-09-14 D4 更新。
+> 对应技术方案 §5、任务 B9（S3 为 SQLite 驱动选型 spike）、D4（pg run 租约）。以代码为准，写于 2026-09-10，2026-09-14 D4 更新，2026-11-05 postgres.js 适配与文本过库更新。
 
 ## 1 架构概览
 
@@ -13,7 +13,7 @@
         ▲                                  ▲
         │ dependencies: workspace:*        │
 @reinsjs/store-sqlite                 @reinsjs/store-pg
-   └ /node 子路径 → node:sqlite        └ devDep: pg / @electric-sql/pglite（仅测试）
+   └ /node 子路径 → node:sqlite        └ devDep: pg / @electric-sql/pglite / pglite-socket / postgres 3 + 4（仅测试）
 ```
 
 - 两个 store 包**互不依赖**，也不被 core 依赖；core 不知道它们存在。
@@ -35,14 +35,16 @@
 | `packages/store-sqlite/src/node.ts` | `/node` 子路径：`openSqlite(path, opts)` 用 `node:sqlite` 开库，文件库缺省 WAL + busy_timeout |
 | `packages/store-pg/src/index.ts` | 桶文件；文件头说明"只认 query，不开事务，连接池友好" |
 | `packages/store-pg/src/client.ts` | 客户端最小形状 `PgClient = { query(text, params) → { rows } }`、`isUniqueViolation()`（SQLSTATE 23505） |
+| `packages/store-pg/src/postgres-js.ts` | `postgresJsClient(sql)`：结构类型 `PostgresJsSql`（只用 `unsafe` 与 `options.transform`），`unsafe` 结果补成 `{ rows }`、参数复制一份；构造期拒绝 `transform.column/value/row.from` 任一设了的实例（`invalid_argument`） |
 | `packages/store-pg/src/schema.ts` | `pgSchemaStatements({ memoryTable })` 逐条 DDL（`PG_SCHEMA_STATEMENTS` / `PG_SCHEMA_SQL` 是缺省表名版）+ 幂等 `migratePg(client, opts)`；`assertTableName`、`DEFAULT_MEMORY_TABLE` |
-| `packages/store-pg/src/event-log.ts` | `PgEventLog`：append / fork 各是一条语句，read 分页，tail 倒排 |
+| `packages/store-pg/src/event-log.ts` | `PgEventLog`：append / fork 各是一条语句（事件绑 `text[]`、SQL 内 `::json`），read 分页、tail 倒排（取 `data::text`，`eventOf` 自己解析，字符串标量旧行再解一层） |
 | `packages/store-pg/src/blob-store.ts` | `PgBlobStore`：`bytea` 列，`slice` 用 `substring(... FROM ... FOR ...)` |
 | `packages/store-pg/src/memory-store.ts` | `PgMemoryStore(client, { table?, now? })`：`left()` 前缀匹配，`ORDER BY path COLLATE "C"`，表名构造期过白名单 |
 | `packages/store-pg/src/run-lease.ts` | D4 `PgRunLease(client)`：`reins_runs` 上三条单语句（acquire = `INSERT … ON CONFLICT DO UPDATE … WHERE 已过期 OR owner 相同 RETURNING`、renew = 条件 UPDATE、release = 按 owner DELETE），过期比的是 `(extract(epoch from now()) * 1000)::bigint` 库时钟 |
 | `packages/store-pg/src/stores.ts` | `pgStores(client, { migrate?, memoryTable?, now? })` 组装 `Stores`（异步，因为建表要 await），含 `runLease` |
 | `packages/store-pg/src/run-lease.cross.test.ts` | 跨包用例：两个 `@reinsjs/server` handler 各一个 `leasedRunRegistry`，共用 PGlite 里的租约与日志——第二个 POST 409、第一个跑完 `reins_runs` 清空、第二个再起成功、两个 run 的 seq 连续 |
-| `sqlite.test.ts` / `pg.test.ts` | 各自挂一致性套件（pg 多一份 `runLeaseConformance`），再加特有行为：持久化与 WAL、`migrate:false`、与内存实现 deepEqual、千级事件分页、并发写 `seq_conflict`、前缀含 `%` `_` 的字面匹配、`memoryTable` 两表隔离 + 非法表名在建表前拒绝且不发语句、pg 租约（两实例同时 acquire 恰一个成功、过期后接手行被改写、`pgStores` 带 `runLease`）；pg 缺省跑 PGlite，设 `REINS_PG_URL` 再对真库跑一遍 |
+| `sqlite.test.ts` / `pg.test.ts` | 各自挂一致性套件（pg 多一份 `runLeaseConformance`），再加特有行为：持久化与 WAL、`migrate:false`、与内存实现 deepEqual、千级事件分页、并发写 `seq_conflict`、前缀含 `%` `_` 的字面匹配、`memoryTable` 两表隔离 + 非法表名在建表前拒绝且不发语句、pg 租约（两实例同时 acquire 恰一个成功、过期后接手行被改写、`pgStores` 带 `runLease`）、pg 库内形状（`json_typeof = 'object'` 且 `data::text` 逐字等于 `JSON.stringify`，append 与 fork）与字符串标量旧行兼容；pg 缺省三列：PGlite 直连、postgres.js 3 / 4 经 pglite-socket 走线协议，设 `REINS_PG_URL` 再以 pg 与 postgres.js 3 / 4 对真库各跑一遍 |
+| `packages/store-pg/src/postgres-js.test.ts` | 适配器本身：v3 / v4 的 camel、只改列名、自定义 value / row 在构造期拒绝且不连库；`column.to` / `undefined` 放行；参数复制、结果补成 `{ rows }` |
 
 **三张表与索引（pg 四张）。** 两边列名一致，只有类型不同：`reins_events`（`session_id` / `seq` / `id` / `type` / `at` / `data`，主键 `(session_id, seq)`），`reins_blobs`（`id` 主键 / `session_id` / `mime` / `size` / `created_at` / `bytes`），`reins_memory`（`path` 主键 / `content` / `updated_at`）；pg 另有 `reins_runs`（`session_id` 主键 / `owner` / `expires_at` bigint，D4 run 租约，`expires_at` 是**库时钟**的 Unix 毫秒）。SQLite 侧 `data` 是 `TEXT`、`bytes` 是 `BLOB`、时间是 `INTEGER`，且**故意不加 `STRICT`**（兼容更老的 SQLite，类型由写入端保证）；Postgres 侧 `data` 是 `json`、`bytes` 是 `bytea`、时间是 `bigint`（Unix 毫秒），`seq` 是 `integer`。**除主键外没有任何 `CREATE INDEX`**：事件查询全部走 `(session_id, seq)` 前缀，blob 与 memory 都按主键点查，`reins_blobs.session_id` 上没有索引（不存在按会话扫 blob 的查询）。事件整条以 JSON 存 `data`，读出来直接反序列化，壳字段只是给主键和排序用——所以 schema 演进由 core 的事件注册表 upcast 负责，表结构不用动。
 
@@ -55,14 +57,14 @@
 
   ```sql
   INSERT INTO reins_events (...)
-  SELECT $1, u.seq, ... FROM unnest($2::int[], ..., $6::json[]) AS u(...)
+  SELECT $1, u.seq, ..., u.data::json FROM unnest($2::int[], ..., $6::text[]) AS u(...)
   WHERE (SELECT COALESCE(MAX(seq),0) FROM reins_events WHERE session_id = $1) = $7   -- $7 = first.seq - 1
   RETURNING seq
   ```
 
   `RETURNING` 回来 0 行 = 末尾不符 = 一条都没插，此时再查一次末尾拼出准确的 `expected` 抛 `seq_conflict`；两个写入者同时通过 WHERE 则撞主键 23505，同样翻成 `seq_conflict`。整个 append 是**一条语句**，不开事务、不借连接，所以传 `Pool` 进来也是对的。
 
-**read / tail。** `read` 两边都按 `READ_PAGE = 500` 分页：`WHERE session_id = ? AND seq >= ? AND seq <= ? ORDER BY seq LIMIT 500`，取回不足一页即结束，否则 `from += rows.length` 继续（依赖 seq 连续，这由 append 保证）。默认上界 SQLite 用 `Number.MAX_SAFE_INTEGER`、Postgres 用 `2_147_483_647`（`seq` 是 int4，超了会报类型错）。`tail` 用 `ORDER BY seq DESC LIMIT n` 再 `.reverse()` 成升序；`n` 非负整数校验不过抛 `invalid_argument`，`n = 0` 直接返回 `[]`。read 出来的事件都是 `JSON.parse` 的新对象，天然是副本。
+**read / tail。** `read` 两边都按 `READ_PAGE = 500` 分页：`WHERE session_id = ? AND seq >= ? AND seq <= ? ORDER BY seq LIMIT 500`，取回不足一页即结束，否则 `from += rows.length` 继续（依赖 seq 连续，这由 append 保证）。默认上界 SQLite 用 `Number.MAX_SAFE_INTEGER`、Postgres 用 `2_147_483_647`（`seq` 是 int4，超了会报类型错）。`tail` 用 `ORDER BY seq DESC LIMIT n` 再 `.reverse()` 成升序。pg 两者都取 `data::text`、由 `eventOf` 解析（见第 4 节「文本过库」）；`n` 非负整数校验不过抛 `invalid_argument`，`n = 0` 直接返回 `[]`。read 出来的事件都是 `JSON.parse` 的新对象，天然是副本。
 
 **fork。** 契约相同（复制 `[1, atSeq]`，保留 `id` 与 `seq`，只换 `sessionId`；`atSeq` 越界 `out_of_range`，目标非空 `target_not_empty`），实现分岔：
 
@@ -82,12 +84,13 @@
 ## 4 核心设计决策
 
 - **一份 SQL、驱动由运行时给（S3）** — 只依赖 `{ exec, prepare }` 这个最小形状，`node:sqlite` 的 `DatabaseSync` 与 `bun:sqlite` 的 `Database` 天然满足，SQL 层一份不分叉。为什么：不用 better-sqlite3（原生编译、装机负担）也不用 sqlite-wasm（Node 下无持久化），零原生依赖。边界：Cloudflare 不走本包，Durable Objects SQLite 另起 `@reinsjs/store-do`（第二期）。
-- **Postgres 只认 `query(text, params) → { rows }`，且每个写都是单条语句** — pg 的 Pool / Client 与 PGlite 都直接满足，标签模板类库（postgres.js）包一层即可。为什么：单条语句在 Postgres 里天然原子，省掉"从池里借同一条连接跑 BEGIN/COMMIT"的复杂度，传连接池即正确。边界：这条约束反过来限制了实现——`fork` 因此不能用事务包"先查后插"，只能靠 `WHERE NOT EXISTS` 把守卫塞进同一条语句。
+- **Postgres 只认 `query(text, params) → { rows }`，且每个写都是单条语句** — pg 的 Pool / Client 与 PGlite 都直接满足，postgres.js 经 `postgresJsClient`（不是"随手包一层"：要配合文本过库，并拒绝 transform，见下条）。为什么：单条语句在 Postgres 里天然原子，省掉"从池里借同一条连接跑 BEGIN/COMMIT"的复杂度，传连接池即正确。边界：这条约束反过来限制了实现——`fork` 因此不能用事务包"先查后插"，只能靠 `WHERE NOT EXISTS` 把守卫塞进同一条语句。
+- **pg 事件只按文本过库（2026-11-05，AdRate 建议 5）** — 写 `text[]` 再在 SQL 里 `::json`，读 `data::text`。为什么：绑成 `json[]` 时 postgres.js 按服务端报的参数类型把已序列化的字符串再编码一次，库里全成字符串标量；读 json 列又会被宿主 transform（camel）改键。修在 SQL 让所有驱动一视同仁，`postgresJsClient` 只做形状转换和 transform 拒绝。边界：字符串标量旧行只读兼容、不回写；测试必须断言库内形状，只比读回会被兼容分支盖住（踩坑 47）。
 - **`data` 用 `json` 而不是 `jsonb`（B9）** — jsonb 会重排对象键序，读回来 `JSON.stringify` 就变了；而 T10 的 `pendingDigest` / `configHash` 正是按 `JSON.stringify` 算的，存 Postgres 的会话一续跑就会误报"pending 被篡改"。json 按文本原样存取，各后端逐字节一致。边界：代价是失去 jsonb 的索引与 `jsonb_set`，`fork` 只能在 JS 里改 sessionId。
 - **seq 由调用方分配、存储层只校验连续性（T4）** — 日志不发号，只校验"同一批同会话、从末尾 +1 连续"，不符就 `seq_conflict`。为什么：存储层不知道 seq 该是多少，只有循环层知道；这样并发写入者会明确报错而不是静默交错，乐观并发就这么简单。边界：主键 `(session_id, seq)` 的唯一约束是最后一道闸（多进程 / 多实例），两边都把它翻译成同一个 `seq_conflict`。
 - **fork 保留原事件 id（T4）** — 复制时只换 `sessionId`，`id` 与 `seq` 原样。为什么：`parentId` / `pinsKept` 这类会话内引用要继续有效。边界：事件 id 的唯一性范围因此是"会话内"而非全局。
 - **一致性套件不绑测试框架（T4/T5）** — `@reinsjs/core/testing` 只接收 `{ describe, it }`，断言自带（`ConformanceError`）。为什么：Bun、node:test 都能跑同一套件，第三方后端可自证合规。边界：套件里不能用 `expect`，特有行为测试才用 vitest。
-- **测试缺省 PGlite，真库按需（B9）** — pg 包缺省用进程内 WASM Postgres 跑全套，设 `REINS_PG_URL` 才对真库再跑一遍。为什么：真 Postgres 引擎但不需要服务器，CI 免依赖。边界：dogfood 前必须在真库上绿过。
+- **测试缺省 PGlite，真库按需（B9；2026-11-05 加线协议列）** — pg 包缺省用进程内 WASM Postgres 跑全套，postgres.js 3 / 4 经 `@electric-sql/pglite-socket` 连另一个 PGlite 走真协议；设 `REINS_PG_URL` 才以 pg 与 postgres.js 3 / 4 对真库再跑一遍。为什么：真 Postgres 引擎但不需要服务器，CI 免依赖；postgres.js 的参数类型推断与序列化在协议层，假客户端测不出来（pglite-socket 与真库 PG 15 表现一致已核实）。边界：dogfood 前必须在真库上绿过；pglite-socket 的版本跟 PGlite 一一对应，升 PGlite 要一起升。
 - **只让记忆表换名，事件表与 blob 表不可配（P2）** — `memoryTable` 只作用于 `reins_memory`。为什么：隔离需求只出现在记忆（按角色各一套），事件与 blob 按 `session_id` 隔离已足够，多开选项只会让"一个库多套 reins"这种未出现的场景提前定型；构造器从 `(db, now)` 改成 `(db, { table, now })` 选项对象，再加项不破坏签名。边界：真要整套隔离，用不同数据库 / schema（Postgres `search_path`）而不是表名前缀。
 - **run 租约用库时间、单条语句、同 owner 幂等（D4）** — 判定时钟必须唯一才能让各实例对"谁持有"达成一致，本机时钟偏几秒就会同时两个持有者；单条语句是本包的既有约束；同 owner 幂等让 server 侧"同进程并发 create"不必先查后占。边界：SQLite 未做（单文件库典型是单进程），需要时按同一契约加一张表跑 `runLeaseConformance` 即可。
 - **`removeNodeProtocol: false`（B11 附）** — store-sqlite 的 tsup 配置必须关掉这个缺省项。为什么：tsup 8 会把 `node:sqlite` 剥成裸的 `sqlite`（一个不存在的 npm 包），运行时 `ERR_MODULE_NOT_FOUND`；源码与 vitest 路径全绿完全掩盖了它，只有真跑 dist 才暴露。边界：所有含 `node:*` 子路径的包，验收都要加一条"跑一次 dist 产物"。

@@ -1,5 +1,6 @@
 import { PGlite } from "@electric-sql/pglite"
-import { InMemoryEventLog, type Stores } from "@reinsjs/core"
+import { PGLiteSocketServer } from "@electric-sql/pglite-socket"
+import { type Event, InMemoryEventLog, type Stores } from "@reinsjs/core"
 import {
   blobStoreConformance,
   collect,
@@ -9,6 +10,8 @@ import {
   runLeaseConformance,
 } from "@reinsjs/core/testing"
 import pg from "pg"
+import postgres from "postgres"
+import postgresV4 from "postgres-v4"
 import { afterAll, describe, expect, it } from "vitest"
 import {
   migratePg,
@@ -19,24 +22,57 @@ import {
   PgMemoryStore,
   PgRunLease,
   pgStores,
+  postgresJsClient,
 } from "./index.js"
 
 /**
- * 缺省用 PGlite（进程内 WASM Postgres，真 Postgres 引擎，不需要服务器）跑一致性套件；
- * 设了 REINS_PG_URL（如 postgres://localhost/reins_test）就再对真库跑一遍，dogfood 前必须在真库上绿过。
+ * 缺省三列，全在进程内、不需要服务器：
+ * - PGlite 直连（WASM Postgres，真引擎）；
+ * - postgres.js 3 与 4 经 pglite-socket 走线协议连另一个 PGlite——postgres.js 只会说线协议，而参数类型推断、
+ *   数组与 json 的序列化恰恰发生在这一层（踩坑 47），所以必须真走协议，不能拿假客户端代替。
+ * 设了 REINS_PG_URL（如 postgres://localhost/reins_test）就用 pg 与 postgres.js 3 / 4 再对真库各跑一遍，dogfood 前必须在真库上绿过。
  */
 const pglite = new PGlite()
 const backends: { name: string; client: PgClient; close: () => Promise<void> }[] = [
   { name: "PGlite", client: pglite, close: () => pglite.close() },
 ]
+
+// 另起一个 PGlite 当服务端，与直连那份互不相干；多路复用连接数要高于 postgres.js 的 max
+const socketDb = new PGlite()
+const socketServer = new PGLiteSocketServer({ db: socketDb, port: 0, maxConnections: 8 })
+await socketServer.start()
+const [socketHost, socketPort] = socketServer.getServerConn().split(":")
+const viaSocket = {
+  host: socketHost,
+  port: Number(socketPort),
+  user: "postgres",
+  database: "postgres",
+  max: 4,
+  onnotice: () => {},
+}
+const pgjs3 = postgres(viaSocket)
+const pgjs4 = postgresV4(viaSocket)
+backends.push(
+  { name: "postgres.js 3（PGlite socket）", client: postgresJsClient(pgjs3), close: () => pgjs3.end() },
+  { name: "postgres.js 4（PGlite socket）", client: postgresJsClient(pgjs4), close: () => pgjs4.end() },
+)
+
 const realUrl = process.env.REINS_PG_URL
 if (realUrl) {
   const pool = new pg.Pool({ connectionString: realUrl })
-  backends.push({ name: `pg（${realUrl}）`, client: pool, close: () => pool.end() })
+  const real3 = postgres(realUrl, { max: 4, onnotice: () => {} })
+  const real4 = postgresV4(realUrl, { max: 4, onnotice: () => {} })
+  backends.push(
+    { name: `pg（${realUrl}）`, client: pool, close: () => pool.end() },
+    { name: `postgres.js 3（${realUrl}）`, client: postgresJsClient(real3), close: () => real3.end() },
+    { name: `postgres.js 4（${realUrl}）`, client: postgresJsClient(real4), close: () => real4.end() },
+  )
 }
 
 afterAll(async () => {
   for (const b of backends) await b.close()
+  await socketServer.stop()
+  await socketDb.close()
 })
 
 for (const backend of backends) {
@@ -130,6 +166,54 @@ for (const backend of backends) {
         expect(await collect(stores.log.read("s2"))).toEqual(await collect(mem.read("s2")))
       })
 
+      it("事件按文本过库：库内是 json 对象、文本逐字等于 JSON.stringify（append 与 fork 都是）", async () => {
+        // 只比"读回一致"不够：旧行兼容会把二次编码的字符串标量也解回原事件，必须直接看库里存的是什么（踩坑 47）
+        const stores = await fresh()
+        const [first] = makeEvents("s1", 1)
+        const tricky = {
+          ...first,
+          payload: {
+            content: [{ type: "text", text: '中文 😀 "q" \\ \n\t end' }],
+            zLast: 1,
+            aFirst: { y: 2, b: [1, [2, { k: [] }], null] },
+            big: 9_007_199_254_740_991,
+            neg: -5e-8,
+          },
+        } as unknown as Event
+        const events = [tricky, ...makeEvents("s1", 2, 2)]
+        await stores.log.append(events)
+        await stores.log.fork("s1", 2, "s2")
+        const rows = await backend.client.query(
+          "SELECT json_typeof(data) AS t, data::text AS txt FROM reins_events ORDER BY session_id, seq",
+        )
+        const expected = [...events, ...events.slice(0, 2).map((e) => ({ ...e, sessionId: "s2" }))]
+        expect(rows.rows.map((r) => r.t)).toEqual(expected.map(() => "object"))
+        expect(rows.rows.map((r) => r.txt)).toEqual(expected.map((e) => JSON.stringify(e)))
+        expect((await collect(stores.log.read("s1"))).map((e) => JSON.stringify(e))).toEqual(
+          events.map((e) => JSON.stringify(e)),
+        )
+        expect(JSON.stringify(await stores.log.tail("s2", 2))).toBe(JSON.stringify(expected.slice(3)))
+      })
+
+      it("旧行兼容：库里是 JSON 字符串标量（早先裸包 postgres.js 写下的二次编码）也读回原事件，之后的新写入是对象", async () => {
+        const stores = await fresh()
+        const [old] = makeEvents("s1", 1)
+        await backend.client.query(
+          "INSERT INTO reins_events (session_id, seq, id, type, at, data) VALUES ($1, $2, $3, $4, $5, to_json($6::text))",
+          ["s1", 1, old?.id, old?.type, old?.at, JSON.stringify(old)],
+        )
+        await stores.log.append(makeEvents("s1", 1, 2))
+        const kinds = await backend.client.query(
+          "SELECT json_typeof(data) AS t FROM reins_events WHERE session_id = $1 ORDER BY seq",
+          ["s1"],
+        )
+        expect(kinds.rows.map((r) => r.t)).toEqual(["string", "object"])
+        const back = await collect(stores.log.read("s1"))
+        expect(back[0]).toEqual(old)
+        expect(back.map((e) => e.seq)).toEqual([1, 2])
+        expect(await stores.log.tail("s1", 2)).toEqual(back)
+      })
+
       it("长会话分页读取：超过一页也按 seq 连续读全", async () => {
         const stores = await fresh()
         await stores.log.append(makeEvents("s1", 1203))
@@ -143,10 +227,15 @@ for (const backend of backends) {
       })
 
       it("migrate:false 不建表；migratePg 幂等", async () => {
+        // 直接查表在不在，不靠"往缺表的库里写一次看报错"：经 pglite-socket 时，一条语句报错后后续语句会偶发无报错地返回空结果，
+        // 真库没有这个现象——走 socket 的列不放会触发 SQL 报错的用例（踩坑 48）
         await fresh()
         await backend.client.query("DROP TABLE reins_events, reins_blobs, reins_memory")
         const stores = await pgStores(backend.client, { migrate: false })
-        await expect(stores.log.append(makeEvents("s1", 1))).rejects.toThrow(/reins_events/)
+        const exists = await backend.client.query(
+          "SELECT to_regclass('reins_events') IS NOT NULL AS events, to_regclass('reins_memory') IS NOT NULL AS memory",
+        )
+        expect(exists.rows[0]).toEqual({ events: false, memory: false })
         await pgStores(backend.client)
         await pgStores(backend.client)
         await stores.log.append(makeEvents("s1", 1))

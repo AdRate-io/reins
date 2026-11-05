@@ -15,6 +15,9 @@ const READ_PAGE = 500
  * append 是**一条语句**：`INSERT … SELECT FROM unnest(...) WHERE 当前末尾 = 首条 seq − 1`。
  * 末尾不符（别人已经写了）→ 一行都不插，返回空 → seq_conflict；两个写入者同时通过 WHERE 检查 → 主键冲突（23505）→ seq_conflict。
  * 不开事务、不借连接，传连接池也正确。
+ *
+ * **事件只按文本过库**：写入以 `text[]` 绑定、在 SQL 里 `::json`，读出取 `data::text`。不能写成 `$n::json[]`——
+ * postgres.js 会按服务端报的参数类型对已序列化的字符串再 `JSON.stringify` 一次（踩坑 47）。
  */
 export class PgEventLog implements EventLog {
   constructor(private readonly client: PgClient) {}
@@ -55,8 +58,8 @@ export class PgEventLog implements EventLog {
     try {
       const res = await this.client.query(
         `INSERT INTO reins_events (session_id, seq, id, type, at, data)
-         SELECT $1, u.seq, u.id, u.type, u.at, u.data
-         FROM unnest($2::int[], $3::text[], $4::text[], $5::bigint[], $6::json[]) AS u(seq, id, type, at, data)
+         SELECT $1, u.seq, u.id, u.type, u.at, u.data::json
+         FROM unnest($2::int[], $3::text[], $4::text[], $5::bigint[], $6::text[]) AS u(seq, id, type, at, data)
          WHERE (SELECT COALESCE(MAX(seq), 0) FROM reins_events WHERE session_id = $1) = $7
          RETURNING seq`,
         [
@@ -105,7 +108,7 @@ export class PgEventLog implements EventLog {
     const to = opts.toSeq ?? 2_147_483_647
     while (from <= to) {
       const res = await this.client.query(
-        "SELECT data FROM reins_events WHERE session_id = $1 AND seq >= $2 AND seq <= $3 ORDER BY seq LIMIT $4",
+        "SELECT data::text AS data FROM reins_events WHERE session_id = $1 AND seq >= $2 AND seq <= $3 ORDER BY seq LIMIT $4",
         [sessionId, from, to, READ_PAGE],
       )
       for (const row of res.rows) yield eventOf(row.data)
@@ -119,7 +122,7 @@ export class PgEventLog implements EventLog {
       throw new StoreError("invalid_argument", `tail: n must be a non-negative integer, got ${n}`)
     if (n === 0) return []
     const res = await this.client.query(
-      "SELECT data FROM reins_events WHERE session_id = $1 ORDER BY seq DESC LIMIT $2",
+      "SELECT data::text AS data FROM reins_events WHERE session_id = $1 ORDER BY seq DESC LIMIT $2",
       [sessionId, n],
     )
     return res.rows.reverse().map((r) => eventOf(r.data))
@@ -153,8 +156,8 @@ export class PgEventLog implements EventLog {
     try {
       const res = await this.client.query(
         `INSERT INTO reins_events (session_id, seq, id, type, at, data)
-         SELECT $1, u.seq, u.id, u.type, u.at, u.data
-         FROM unnest($2::int[], $3::text[], $4::text[], $5::bigint[], $6::json[]) AS u(seq, id, type, at, data)
+         SELECT $1, u.seq, u.id, u.type, u.at, u.data::json
+         FROM unnest($2::int[], $3::text[], $4::text[], $5::bigint[], $6::text[]) AS u(seq, id, type, at, data)
          WHERE NOT EXISTS (SELECT 1 FROM reins_events WHERE session_id = $1)
          RETURNING seq`,
         [
@@ -182,7 +185,16 @@ export class PgEventLog implements EventLog {
   }
 }
 
-/** json 列：pg 与 PGlite 都已解析成对象（文本原样 → 键序不变）；万一驱动给的是字符串也兼容 */
-function eventOf(data: unknown): Event {
-  return (typeof data === "string" ? JSON.parse(data) : data) as Event
+/**
+ * 读侧拿到的是 `data::text`，由本包自己解析——驱动的 json 解析器与宿主 transform 都碰不到事件（踩坑 47）。
+ *
+ * 解出来还是字符串的，是旧行：早先把 postgres.js 裸包一层接入时，`$6::json[]` 让驱动把已序列化的文本又编码了一次，
+ * 库里存成了 JSON 字符串标量。再解一层即得原事件；只读兼容，不回写。
+ */
+function eventOf(text: unknown): Event {
+  if (typeof text !== "string") {
+    throw new StoreError("invalid_argument", `event data must be read back as text, got ${typeof text}`)
+  }
+  const value: unknown = JSON.parse(text)
+  return (typeof value === "string" ? JSON.parse(value) : value) as Event
 }

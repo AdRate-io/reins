@@ -243,3 +243,81 @@ reins 现在的理由是"暂停时模型看到的工具集就是它做决定的�
 reins 对应版本（已发布到 npm 官方源）：`@reinsjs/core` 0.10.0、`@reinsjs/server` 0.5.0、`@reinsjs/agent` 0.5.0；`brain` 0.8.3、`lowering-fetch` 0.6.1、`lowering-pi` / `eval` 0.4.5、其余 0.3.7。
 
 仍未处理、与 AdRate 有关的两项：跨实例停止（OPT-261105-5，AdRate 当前单实例，不受影响）；只带 `decisions` 不带 `resume` 的续跑口子（BUG-261105-2，AdRate 续跑请始终带 `resume`）。
+
+---
+
+# 第二批建议（2026-11-05）
+
+> 来自 AdRate 正式接入方案的第二轮独立审查。依据 reins `main@4f441dc`（store-pg 0.3.7）。
+
+## reins 回复（第二批，2026-11-05）
+
+> 建议 5 采纳，已实施，**待发版**（store-pg 0.4.0）。核实时发现的问题比建议里推测的更具体，修的位置也不同：主要修在 store-pg 自己的 SQL，适配器很薄。实施方案：`docs/implementation-plans/2026-11-05-store-pg接postgres.js.md`；踩坑 47、48。
+
+## 总览
+
+| # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 5 | store-pg 提供 postgres.js 官方适配，并把存储测试也对 postgres.js 跑一遍 | store-pg | 无冲突，是 `PgClient` 最小接口已承诺的兼容性的验证 | 中，AdRate 方案 M1 前置 |
+
+## AdRate 建议 5：postgres.js 官方适配与测试
+
+### 现状
+
+- `PgClient` 只要求 `query(text, params) → { rows }`（`store-pg/src/client.ts`）。注释写明"`pg` 的 Pool / Client、PGlite 都直接满足；postgres.js 之类用标签模板的库包一层即可"。
+- 存储测试只对 PGlite 与 `pg` 跑（`pg.test.ts`），postgres.js 没有被测过。
+- 写日志用一条语句批量插入：把 JS 数组绑定成 `$2::int[]`、`$3::text[]`、`$4::text[]`、`$5::bigint[]`、`$6::json[]`，再 `unnest` 展开（`event-log.ts` 的 `append`）。其中 `data` 是 `JSON.stringify(e)` 的字符串，按 `json[]` 传入。读回时直接取 `row.data`。blob 是 `bytea`。
+
+### 问题
+
+postgres.js 是主流 Node 驱动，Drizzle 项目多半用它（AdRate 就是）。它与 `pg` 的差异有两层：
+
+1. **调用形状**：原始 SQL 走 `sql.unsafe(text, params)`，返回的是行数组本身，没有 `.rows`。这层包一下就行。
+2. **参数与结果的类型转换**：JS 数组如何序列化成 Postgres 数组、字符串放进 `json[]` 会不会被再编码一次、`bigint` 参数与 `int8` 结果怎么转、`bytea` 返回什么、唯一冲突错误的 `code` 字段在哪。两个驱动的处理方式不同。
+
+风险集中在第 2 层，而且后果严重：`data` 的 json 文本只要没能原样往返（被二次编码、键序或数值形态变了），续跑的签名与配置校验就会把它判成篡改，会话再也续不上。这类问题只在真实数据上才暴露。
+
+现在的做法是每个用 postgres.js 的宿主自己包一层、自己踩一遍这些坑。这正是 reins 该统一解决的。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- store-pg 导出一个适配函数，例如 `postgresJsClient(sql)`：
+  - 按结构类型接入 postgres.js 实例（只用 `sql.unsafe`），不引入运行时依赖，store-pg 保持零依赖；
+  - 内部处理好数组、json、bigint、bytea 参数的类型，以及错误码的取法。
+- 现有存储测试矩阵（PGlite / `pg`）加一列 postgres.js，至少覆盖：
+  - 批量 append 后逐字节读回 `data` 的 json 文本，含键序、Unicode、大整数、嵌套数组；
+  - blob 写读；
+  - 唯一冲突映射成 `seq_conflict`；
+  - 租约的取得、续期与释放。
+- README 的接入示例补一段 postgres.js 写法。
+
+### 边界
+
+- 只做适配与验证，不改 `PgClient` 接口，也不改表结构。
+- 事务语义不变：store-pg 依旧是单语句、不依赖事务，适配器可以直接接连接池。
+
+### reins 回复
+
+**采纳。** 实测（本机 PG 15 与 PGlite，postgres.js 3.4.9 / 4.0.0）证实了建议里第 2 层的风险，但后果和推测的不一样：
+
+- **事件确实被二次编码**：`$6::json[]` 让 postgres.js 对已序列化的字符串再编码一次，库里每行 `json_typeof(data)` 都是 `string`。但续跑**不会**被判成篡改：读侧有"拿到字符串再解一层"的兼容，读回逐字一致。坏的是库里的形状，SQL 查 `data->>'type'` 只得到 null。
+- **另一个更危险的点**：宿主实例开了 `transform: postgres.camel`，blob meta 的 `sessionId` 会丢；而且一旦事件正确存成对象，camel 会把事件内部的键也改掉（`tool_name` 变成 `toolName`），这才会让续跑签名失效。
+- 其余都正常：`unsafe` 返回行数组、23505 在 `err.code`、bytea、int8、租约并发、`prepare: false`、Drizzle 包过的同一实例。
+
+做法：
+
+- **store-pg 的 SQL 改成只按文本过库**：写入绑 `text[]`、在 SQL 里 `::json`，读出取 `data::text` 由 reins 自己解析。驱动的 json 编解码和 transform 都碰不到事件，pg / PGlite 存取内容不变。不改表、不改 `PgClient`，事务语义不变。
+- **新导出 `postgresJsClient(sql)`**：结构类型，只用 `sql.unsafe`，store-pg 仍然零运行时依赖。实例带结果 transform（`postgres.camel`、列名映射、自定义 `value` / `row`）时构造期就抛 `invalid_argument`；只设 `transform.column.to` 的放行。
+- **测试**：一致性套件和特有行为现在对 postgres.js 3 和 4 各跑一列（经 `@electric-sql/pglite-socket` 走真协议，常驻 CI），设 `REINS_PG_URL` 时再对真库各跑一遍。新增的检查直接断言库内 `json_typeof = 'object'`、`data::text` 逐字等于 `JSON.stringify`，含键序、中文与 emoji、2^53−1、嵌套数组，append 与 fork 都测；blob、`seq_conflict`、租约在套件里本来就有。本机真库六列 270 格全绿。
+- **postgres.js 3 加 `fetch_types: false`** 时数组参数会被数据库拒绝（22P02，一条不写），v4 已修。README 有说明，适配器不拦。
+
+AdRate 接入时注意：
+
+- 交给适配器的实例不能带 `transform`。Drizzle 本身不需要它；如果 AdRate 的实例为别的代码开了 camel，就给 reins 单开一个不带 transform 的 `postgres()` 实例。
+- M1 开头的真库往返验证，建议直接看库：`SELECT json_typeof(data) FROM reins_events LIMIT 1` 应为 `object`。只比读回一致发现不了这次的问题。
+
+### AdRate 侧依赖
+
+| 发版前 AdRate 方案的状态 | 发版后 AdRate 要做的 |
+| --- | --- |
+| 方案中"reins 存储接入"标为依赖 reins，排在 M1 开头；M0 三项前置改造不受影响 | 直接把现有 postgres.js 连接交给适配器，不引入 `pg`、不另开连接池；M1 开头在真实库上做一次往返验证 |

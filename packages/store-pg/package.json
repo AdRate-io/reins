@@ -1,13 +1,14 @@
 {
   "name": "@reinsjs/store-pg",
   "version": "0.3.7",
-  "description": "reins — PostgreSQL-backed EventLog / BlobStore / MemoryStore. Works with any client exposing query(text, params) → { rows } (pg, PGlite, …)",
+  "description": "reins — PostgreSQL-backed EventLog / BlobStore / MemoryStore / RunLease. Works with pg, PGlite and postgres.js (via postgresJsClient), or any client exposing query(text, params) → { rows }",
   "keywords": [
     "agent",
     "event-log",
     "postgres",
     "postgresql",
-    "pglite"
+    "pglite",
+    "postgres.js"
   ],
   "license": "MIT",
   "author": "NewRate Limited (https://www.adrate.io)",
@@ -38,10 +39,13 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-socket": "0.2.11",
     "@reinsjs/server": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.23.0",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "postgres": "3.4.9",
+    "postgres-v4": "npm:postgres@4.0.0"
   },
   "engines": {
     "node": ">=22"

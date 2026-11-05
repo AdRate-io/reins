@@ -20,7 +20,7 @@ export interface PgStoresOptions {
 
 /**
  * 一套 Postgres 存储：`createAgent({ store: await pgStores(pool) })`。
- * client 是任何有 `query(text, params) → { rows }` 的对象：pg 的 Pool / Client、PGlite 实例。
+ * client 是任何有 `query(text, params) → { rows }` 的对象：pg 的 Pool / Client、PGlite 实例；postgres.js 先过 `postgresJsClient(sql)`。
  *
  * 带 `runLease`（D4）：`createAgent` 见到它会自动把 handler 的 run 登记表换成跨进程租约登记，多实例部署同一条会话
  * 同时只跑一个 run。单实例也无妨——代价只是每个在跑的 run 每 10 s 一条心跳 UPDATE。不想要就删掉这个键。

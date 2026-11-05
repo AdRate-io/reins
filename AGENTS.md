@@ -345,6 +345,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 ### 存储
 
 - ⚠️ **pg 的 `data` 列必须是 `json` 不能是 `jsonb`** — jsonb 重排键序，`pendingDigest` / `configHash` 按 `JSON.stringify` 算，一续跑就误报篡改。
+- ⚠️ **pg 事件只按文本过库：写 `$n::text[]` 再在 SQL 里 `::json`，读 `data::text`，绝不绑 `json[]`** — postgres.js 会按服务端报的类型把已序列化的字符串再编码一次；验证要直接查库内 `json_typeof`，只比读回会被字符串标量旧行的兼容分支盖住（踩坑 47）。`postgresJsClient` 拒绝带结果 transform 的实例（camel 改列名与 json 里的键）。
 - **含 `node:*` 的包 tsup 必须 `removeNodeProtocol: false`** — tsup 8 缺省剥 `node:` 前缀，源码与 vitest 全绿、只有跑 dist 才炸；新 `/node` 入口登记进 `check:dist` 的 `NODE_ALLOWED`（踩坑 5）。
 - **`memoryTable` / `table` 是字面拼进 SQL 的，`assertTableName` 白名单是唯一防注入闸，两包各一份同一正则** — 标识符绑不了参数。
 - **pg 侧刻意不开事务，每个写是单条语句** — 传连接池就是对的；任何"先查后写"两步逻辑都破坏这个前提。run 租约过期只比数据库 `now()`、`acquire` 对同一 owner 幂等；不用 advisory lock（会话级锁绑连接，池里解不了）。
