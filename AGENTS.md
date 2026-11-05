@@ -71,7 +71,7 @@
 
 **提交**：`type: 摘要`（`.githooks/commit-msg` 校验，见 `CONTRIBUTING.md`），正文写根因与取向和对应编号（OPT / BUG / 方案名）；结尾 `Co-Authored-By: Claude <当前模型名> <noreply@anthropic.com>`。只在 Boss 要求或发布时推远程。
 
-**发布**（Boss 在真终端操作，要 OTP）：`pnpm changeset version` → `pnpm check` + `pnpm check:dist` → 提交 → 仓库根 `pnpm -r publish --access public --no-git-checks`（**不能用 `npm publish`**，不重写 `workspace:*`）→ 打 tag / Release → 空目录从官方源真实安装冒烟。examples 是私有包不参与版本。
+**发布**（Boss 在真终端操作，要 OTP）：`pnpm changeset version` →（core 升版时手改 `packages/core/src/index.ts` 的 `REINS_VERSION`，否则 `check:dist` 拦下）→ `pnpm check` + `pnpm check:dist` → 提交 → 仓库根 `pnpm -r publish --access public --no-git-checks`（**不能用 `npm publish`**，不重写 `workspace:*`）→ 打 tag / Release → 空目录从官方源真实安装冒烟。examples 是私有包不参与版本。
 
 ---
 
