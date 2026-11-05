@@ -2,24 +2,20 @@
  * F1 真模型核实：@reinsjs/lowering-fetch 的 Chat Completions 线在 core runLoop 上跑一条带工具的多轮。
  *
  * 运行：仓库根 `pnpm build`，然后 `node spikes/f1-chat-live/probe.mjs [deepseek|cf-openai|all]`；
- * 密钥自动从《模型API测试信息.md》读（DeepSeek key、CF 网关令牌 / account id / gateway id）。
+ * 密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs：DEEPSEEK_API_KEY、CF_AIG_TOKEN、CF_ACCOUNT_ID、CF_GATEWAY_ID）。
  *
  * 判据是产出内容不是状态码（暗号法）：
  *   1. 模型先后调两次工具（第二次的请求里历史 assistant 带 tool_calls + 回填的 reasoning_content），最终答案含两次结果之和；
  *   2. 运行中途宿主注入的 system_note（暗号）到达模型；
  *   3. 每轮 budget_usage 有真实用量，DeepSeek 一侧算出成本。
  */
-import { readFileSync } from "node:fs"
 import { defineTool, InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { chatCompletions, deepseek } from "../../packages/lowering-fetch/dist/index.js"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const dsBlock = info.slice(info.lastIndexOf("deepseek官方"))
-const dsKey = dsBlock.match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-const cfToken = info.match(/(cfut_[A-Za-z0-9]+)/)?.[1]
-const cfAccount = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-const cfGateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
-if (!dsKey || !cfToken || !cfAccount) throw new Error("信息文件里缺 DeepSeek key / CF 令牌 / account id")
+const dsKey = need("DEEPSEEK_API_KEY")
+const cfToken = need("CF_AIG_TOKEN")
+const cfBase = cfGatewayBase()
 
 const which = process.argv[2] ?? "all"
 const CODEWORD = "TAMARIND"
@@ -29,7 +25,7 @@ const TARGETS = {
   "cf-openai": () =>
     chatCompletions(process.env.F1_CHAT_MODEL ?? "gpt-4o-mini", {
       provider: "openai",
-      baseUrl: `https://gateway.ai.cloudflare.com/v1/${cfAccount}/${cfGateway}/openai/v1`,
+      baseUrl: `${cfBase}/openai/v1`,
       apiKey: "",
       auth: "none",
       headers: { "cf-aig-authorization": `Bearer ${cfToken}` },

@@ -1,7 +1,7 @@
 /**
  * forced-compact 的 Anthropic 官方对照（2026-10-30）：经 CF AI Gateway 透传路径打 Messages API，缺省 claude-haiku-5-5。
  *
- * 运行：`node spikes/forced-compact/probe-anthropic.mjs [轮数]`（缺省 3 轮；配置自动从《模型API测试信息.md》读；MODEL 环境变量换型号）。
+ * 运行：`node spikes/forced-compact/probe-anthropic.mjs [轮数]`（缺省 3 轮；配置从仓库根 `.env.local` 读，经 scripts/local-env.mjs：CF_AIG_TOKEN、CF_ACCOUNT_ID、CF_GATEWAY_ID；MODEL 环境变量换型号）。
  * 与 probe.mjs 同一段对话（scenario.mjs），换算成 Messages 形状：说明是末尾一条 role:"system"（中途 system，紧跟只带
  * tool_result 的 user）；缓存用顶层 `cache_control` 自动断点；thinking 不设（Haiku 5.5 缺省 adaptive），即真实用法。
  * 各臂同 probe.mjs：W2 基线 / A 追加说明 / B tool_choice 指定 compact / Br tool_choice any / C 只留 compact；
@@ -10,14 +10,11 @@
  * user（tool_result 之后），感知说明仍是其后的中途 system。`ARMS=W2,U` 只跑列出的臂（按名字前缀）。
  * 缓存看 usage.cache_read_input_tokens 占 (read + creation + input) 的比例。
  */
-import { readFileSync } from "node:fs"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 import { allTools, compactTool, judge, NOTE, prefix } from "./scenario.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const token = info.match(/cfut_[A-Za-z0-9_-]+/)?.[0]
-const account = info.match(/account id：\s*([0-9a-f]{32})/)?.[1]
-if (!token || !account) throw new Error("信息文件里缺 CF 网关令牌或 account id")
-const URL_ = `https://gateway.ai.cloudflare.com/v1/${account}/reins-dev/anthropic/v1/messages`
+const token = need("CF_AIG_TOKEN")
+const URL_ = `${cfGatewayBase()}/anthropic/v1/messages`
 const MODEL = process.env.MODEL ?? "claude-haiku-5-5"
 const ROUNDS = Number(process.argv[2] ?? 3)
 

@@ -2,7 +2,7 @@
 
 对应 OPT-261030-3（OnSet 反馈建议 4）。裸 HTTP 打 DeepSeek 官方 Chat Completions（`deepseek-v4-flash`，缺省 thinking 模式），前缀约 7.6k token、一段做到一半的巡检对话、最后一条是工具结果。
 
-运行：`node spikes/forced-compact/probe.mjs [轮数]`（DeepSeek）；`node spikes/forced-compact/probe-anthropic.mjs [轮数]`（经 CF 网关打官方 Anthropic，缺省 `claude-haiku-5-5`）。配置自动从信息文件读；两个探针共用 `scenario.mjs` 的同一段对话。
+运行：`node spikes/forced-compact/probe.mjs [轮数]`（DeepSeek）；`node spikes/forced-compact/probe-anthropic.mjs [轮数]`（经 CF 网关打官方 Anthropic，缺省 `claude-haiku-5-5`）。配置从 `.env.local` 读；两个探针共用 `scenario.mjs` 的同一段对话。
 
 ## 结果（2026-10-30，6 轮）
 

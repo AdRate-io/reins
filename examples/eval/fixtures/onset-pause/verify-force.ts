@@ -16,6 +16,7 @@
  * `--second`：只跑 mid 现场，保留原先被无视的那条请求（标成 directive，当作第一级已请过），软线 [0.7, 0.75] 让本轮触发第二级。
  * Socket 顺序同 brain README（perception 在 compact 之前）。
  * 运行：node examples/eval/fixtures/onset-pause/verify-force.ts [--repeats 2] [--relay] [--user-request] [--no-probes] [--second]
+ * 密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs）：缺省 DEEPSEEK_API_KEY，`--relay` 时 RELAY_CLAUDE_API_KEY + RELAY_BASE_URL。
  * 结果写 examples/eval/out/onset-verify/results.jsonl（只在本地）。
  */
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs"
@@ -23,6 +24,7 @@ import { budget, COMPACT_TOOL_NAME, compact, isCompactRequest, perception, spill
 import { type CoreEventOf, type Event, InMemoryEventLog, runLoop, type Socket, type Tool } from "@reinsjs/core"
 import { gradeExpect, parseEventsJsonl, probeAnswerOf } from "@reinsjs/eval"
 import { deepseek } from "@reinsjs/lowering-fetch"
+import { need } from "../../../../scripts/local-env.mjs"
 import { loadOnsetWorld, ONSET_CONTEXT_WINDOW, ONSET_CUTS, onsetTools } from "./fixture.ts"
 
 const CELLS = new URL("../../out/onset-force/cells/", import.meta.url)
@@ -39,17 +41,13 @@ const PROBE_NOTE =
 const i = process.argv.indexOf("--repeats")
 const repeats = i >= 0 ? Number(process.argv[i + 1]) : 2
 
-const INFO = readFileSync(new URL("../../../../模型API测试信息.md", import.meta.url), "utf8")
 const relayRoute = process.argv.includes("--relay")
 const userRequest = process.argv.includes("--user-request")
 const second = process.argv.includes("--second")
 const noProbes = second || process.argv.includes("--no-probes")
-const relaySection = INFO.slice(INFO.lastIndexOf("Claude中转"))
-const apiKey = relayRoute
-  ? relaySection.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-  : INFO.slice(INFO.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-const relayBase = relaySection.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
-if (!apiKey || (relayRoute && !relayBase)) throw new Error("没在 模型API测试信息.md 找到 key / baseurl")
+const apiKey = need(relayRoute ? "RELAY_CLAUDE_API_KEY" : "DEEPSEEK_API_KEY")
+// RELAY_BASE_URL 不带 /v1、无尾斜杠；只有 --relay 才需要
+const relayBase = relayRoute ? need("RELAY_BASE_URL") : undefined
 const modelOf = (contextWindow: number) => {
   const m = relayRoute
     ? deepseek("deepseek-v4.1-flash", { apiKey, baseUrl: `${relayBase}/v1`, contextWindow, maxOutputTokens: 384_000 })

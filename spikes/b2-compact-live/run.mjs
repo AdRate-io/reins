@@ -13,16 +13,15 @@
  *             窗口小到越过裁剪目标时还能看到阈值兜底的摘要在真实 API 上被接受
  *   asked     用户在第二个子任务前明确要求整理并保留总重量 → 保证走一遍整理路径
  *
- * 运行：pnpm build 后 `node spikes/b2-compact-live/run.mjs [natural|pressured|asked|all]`；密钥自动从《模型API测试信息.md》读。
+ * 运行：pnpm build 后 `node spikes/b2-compact-live/run.mjs [natural|pressured|asked|all]`；密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs，AIREITER_API_KEY）。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { compact, perception } from "../../packages/brain/dist/index.js"
 import { defineTool, InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { PiAiLowering } from "../../packages/lowering-pi/dist/index.js"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const key = info.match(/密钥（三种协议共用）：`(sk-[^`]+)`/)?.[1]
-if (!key) throw new Error("没在信息文件里找到网关密钥")
+const key = need("AIREITER_API_KEY")
 const which = process.argv[2] ?? "all"
 const modelId = process.env.REINS_ANTHROPIC_MODEL ?? "claude-opus-5"
 

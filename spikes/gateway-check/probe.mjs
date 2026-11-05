@@ -1,14 +1,15 @@
 /**
  * 网关协议探针：核对 aireiter.com 的三种协议是否与官方行为一致，只测 reins 真正依赖的特性。
- * 用法：node probe.mjs <messages|chat|responses>   密钥从仓库根 模型API测试信息.md 读取，不打印。
+ * 用法：node probe.mjs <messages|chat|responses>   密钥从仓库根 .env.local 读取（经 scripts/local-env.mjs：AIREITER_API_KEY），不打印。
  * 每个请求的原始响应落在 out/ 下便于回看（已 gitignore）。
  */
-import { readFileSync, writeFileSync } from "node:fs"
+import { writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { need } from "../../scripts/local-env.mjs"
 
 const here = dirname(fileURLToPath(import.meta.url))
-const KEY = readFileSync(join(here, "../../模型API测试信息.md"), "utf8").match(/sk-[A-Za-z0-9_-]+/)[0]
+const KEY = need("AIREITER_API_KEY")
 const BASE = "https://aireiter.com/api/v1"
 const which = process.argv[2]
 

@@ -1,7 +1,7 @@
 # cf-gateway-fidelity — Cloudflare AI Gateway 透传路径的忠实度体检（2026-09-14，F0）
 
 > 目的：lowering-fetch 要拿官方 Anthropic / OpenAI 端点当验证靶子，我们没有厂商账号（Boss 定：有封号风险不申请），走 Cloudflare AI Gateway 的 Unified Billing 透传路径。aireiter 网关曾把中途 system 丢掉、把伪造签名放行，用它验出来的"通过"是假的，所以 CF 网关用前必须先证明它**不改写请求、不吞响应、错误原文透传**。
-> 运行：`node spikes/cf-gateway-fidelity/probe.mjs <anthropic|responses|chat|all>`；配置自动从仓库根《模型API测试信息.md》读（`cfut_` 令牌、`account id：`、`gateway id：`），原始响应含响应头落 `out/`（已 gitignore）。环境变量可换模型：`CF_ANTHROPIC_MODEL`（缺省 claude-haiku-4-5-20251001）、`CF_ANTHROPIC_MID_MODEL`（缺省 claude-opus-5）、`CF_OPENAI_MODEL`（缺省 gpt-5-mini）、`CF_CHAT_MODEL`（缺省 gpt-4o-mini）。
+> 运行：`node spikes/cf-gateway-fidelity/probe.mjs <anthropic|responses|chat|all>`；配置从仓库根 `.env.local` 读（`CF_AIG_TOKEN`、`CF_ACCOUNT_ID`、`CF_GATEWAY_ID`），原始响应含响应头落 `out/`（已 gitignore）。环境变量可换模型：`CF_ANTHROPIC_MODEL`（缺省 claude-haiku-4-5-20251001）、`CF_ANTHROPIC_MID_MODEL`（缺省 claude-opus-5）、`CF_OPENAI_MODEL`（缺省 gpt-5-mini）、`CF_CHAT_MODEL`（缺省 gpt-4o-mini）。
 
 ## 方法
 

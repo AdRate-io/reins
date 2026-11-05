@@ -43,7 +43,7 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
 `recordings/*.jsonl` / `.html` 都是脱敏版，由 `scrub.ts` 从 `recordings/raw/`（已 gitignore，只在本地）生成：广告主 id、计划 id、请求 id、
 Command / 凭证 id、人名 / 团队名 / 广告主名 / 授权账号名换成等长别名（口径 DECISIONS 2026-09-09 E2），同一个值在所有录像与
 `examples/eval/fixtures/adrate-patrol` 里是同一个别名。测试广告主 id、冒烟用计划 id
-等本地专用值只在根目录 `模型API测试信息.md`（gitignore）或环境变量里，由 `local.ts` 读取，源码与文档里出现的都是别名。
+等本地专用值只在仓库根 `.env.local`（gitignore，`ADRATE_ADVERTISER_ID` / `ADRATE_SMOKE_CAMPAIGN_ID`）或同名环境变量里，由 `local.ts` 读取，源码与文档里出现的都是别名。
 重新脱敏：`node examples/adrate/scrub.ts`（需要 raw/ 与 AdRate CLI，回放页面用 `examples/minimal/replay.ts` 重生成）。
 
 ## 第一条真实长任务：巡检降本（2026-09-08，`recordings/patrol-disable.jsonl` / `.html`）

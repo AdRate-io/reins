@@ -1,6 +1,6 @@
 # gateway-check — 聚合网关三协议核实（2026-09-08）
 
-> 网关：`https://aireiter.com/api/v1`，密钥在仓库根 `模型API测试信息.md`（已 gitignore，不进提交）。
+> 网关：`https://aireiter.com/api/v1`，密钥在仓库根 `.env.local` 的 `AIREITER_API_KEY`（已 gitignore，不进提交）。
 > 运行：`node spikes/gateway-check/probe.mjs <messages|chat|responses>`；`MODEL=gpt-5.5` 可指定 GPT 模型。
 > 原始响应落在 `out/`（已 gitignore）。
 

@@ -9,19 +9,16 @@
  * 反向项（伪造签名 / 伪造 encrypted_content / 假 beta 头）要求拿到厂商**原文 400**，证明网关没有在中间吞掉再放行。
  *
  * 运行：node spikes/cf-gateway-fidelity/probe.mjs <anthropic|responses|chat|all>
- *   配置自动从仓库根《模型API测试信息.md》读（cfut_ 令牌、account id、gateway id）；原始响应落 out/（已 gitignore）。
+ *   配置从仓库根 `.env.local` 读（经 scripts/local-env.mjs：CF_AIG_TOKEN、CF_ACCOUNT_ID、CF_GATEWAY_ID 缺省 reins-dev）；原始响应落 out/（已 gitignore）。
  *   可用环境变量换模型：CF_ANTHROPIC_MODEL（缺省 claude-haiku-4-5-20251001）、CF_ANTHROPIC_MID_MODEL（缺省 claude-opus-5，
  *   中途 system 只有 Opus 5 / Fable 5 族接受）、CF_OPENAI_MODEL（缺省 gpt-5-mini，Responses 要能出 encrypted reasoning）、
  *   CF_CHAT_MODEL（缺省 gpt-4o-mini）。
  */
-import { readFile, writeFile } from "node:fs/promises"
+import { writeFile } from "node:fs/promises"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const token = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-const account = info.match(/account id：\s*([0-9a-f]{32})/)?.[1]
-const gateway = info.match(/gateway id：\s*([A-Za-z0-9_-]+)/)?.[1]
-if (!token || !account || !gateway) throw new Error("信息文件里缺 cfut_ 令牌 / account id / gateway id")
-const BASE = `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}`
+const token = need("CF_AIG_TOKEN")
+const BASE = cfGatewayBase()
 const AUTH = { "cf-aig-authorization": `Bearer ${token}` }
 
 const ANTHROPIC_MODEL = process.env.CF_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001"

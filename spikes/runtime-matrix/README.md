@@ -22,7 +22,7 @@ node spikes/runtime-matrix/run.mjs --live --only bun,deno-sys                # �
 REINS_OAI_MODEL=gpt-5.6-sol node spikes/runtime-matrix/run.mjs --live ...    # aireiter 的 gpt-5.5 过载时换同网关别的模型
 ```
 
-`NO_PROXY` 必须：本机代理环境变量会把打 `127.0.0.1` 假端点的请求劫走。密钥自动从《模型API测试信息.md》读，只经子进程环境变量传递。
+`NO_PROXY` 必须：本机代理环境变量会把打 `127.0.0.1` 假端点的请求劫走。密钥从仓库根 `.env.local` 读，只经子进程环境变量传递。
 
 ## 六个臂
 

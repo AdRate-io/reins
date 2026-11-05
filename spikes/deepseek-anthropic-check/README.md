@@ -1,7 +1,7 @@
 # deepseek-anthropic-check — DeepSeek 的 Anthropic 兼容端口作为第二家上游（2026-09-08）
 
-> Boss 提供 DeepSeek 官方密钥（记在仓库根《模型API测试信息.md》，已 gitignore）。目的：给 B1 的 prompt cache 结论找第二家 Anthropic 协议上游做对照，并核实 reins 依赖的几件事在非 Anthropic 官方服务器上的反应。
-> 运行：`node spikes/deepseek-anthropic-check/probe.mjs`（密钥自动从信息文件读取；原始响应落 `out/`，已 gitignore）。
+> Boss 提供 DeepSeek 官方密钥（记在仓库根 `.env.local` 的 `DEEPSEEK_API_KEY`，已 gitignore）。目的：给 B1 的 prompt cache 结论找第二家 Anthropic 协议上游做对照，并核实 reins 依赖的几件事在非 Anthropic 官方服务器上的反应。
+> 运行：`node spikes/deepseek-anthropic-check/probe.mjs`（密钥从 `.env.local` 读；原始响应落 `out/`，已 gitignore）。
 
 ## 探针（模型 deepseek-v4-flash，端点 `https://api.deepseek.com/anthropic/v1/messages`）
 

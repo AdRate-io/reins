@@ -4,7 +4,7 @@
  * createAgent 只是拼对象，mcpTools 懒连接，按请求重建没有代价。工具表变了循环会记 tools_bound 并告诉模型增删了什么。
  *
  * 模型来源与 examples/adrate 相同：REINS_PROVIDER=aireiter（缺省，claude-opus-5）或 deepseek；密钥从仓库根
- * 《模型API测试信息.md》读，也可用 ANTHROPIC_API_KEY 覆盖；REINS_MODEL 覆盖模型 id。
+ * `.env.local` 读（经 scripts/local-env.mjs：AIREITER_API_KEY / DEEPSEEK_API_KEY），也可用 ANTHROPIC_API_KEY 覆盖；REINS_MODEL 覆盖模型 id。
  */
 import { mkdirSync, readFileSync } from "node:fs"
 import { approval, budget, compact, perception, pins, spill } from "@reinsjs/brain"
@@ -13,16 +13,13 @@ import { sqliteStores } from "@reinsjs/store-sqlite"
 import { openSqlite } from "@reinsjs/store-sqlite/node"
 import { httpTransport, type McpToolsSocket, mcpTools } from "@reinsjs/tools-mcp"
 import { type Agent, createAgent, defineTool } from "@reinsjs/agent"
+import { need } from "../../scripts/local-env.mjs"
 
 const here = (p: string) => new URL(p, import.meta.url)
 
 function readKey(section: "aireiter" | "deepseek"): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-  const info = readFileSync(here("../../模型API测试信息.md"), "utf8")
-  const keys = [...info.matchAll(/密钥[^`]*`(sk-[^`]+)`/g)].map((m) => m[1] as string)
-  const key = section === "aireiter" ? keys[0] : keys[1]
-  if (!key) throw new Error(`没在 模型API测试信息.md 里找到 ${section} 的密钥；或设 ANTHROPIC_API_KEY`)
-  return key
+  return need(section === "aireiter" ? "AIREITER_API_KEY" : "DEEPSEEK_API_KEY")
 }
 
 const provider = (process.env.REINS_PROVIDER ?? "aireiter") as "aireiter" | "deepseek"

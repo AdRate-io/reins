@@ -1,6 +1,6 @@
 # relay-check — Boss 的 Claude 中转忠实度体检（2026-09-09，E3b 前置）
 
-> 运行：`node spikes/relay-check/probe.mjs [claude-sonnet-5|claude-opus-5]`（密钥与地址从《模型API测试信息.md》"Claude中转"段读）。
+> 运行：`node spikes/relay-check/probe.mjs [claude-sonnet-5|claude-opus-5]`（密钥与地址从 `.env.local` 的 `RELAY_CLAUDE_API_KEY` / `RELAY_BASE_URL` 读）。
 > 方法同 `aireiter-gateway-check`：暗号法 + 工具往返 + 让模型逐条列出它看到的对话。
 
 ## 结论

@@ -14,24 +14,23 @@
  *      (c) 历史里 tool_reference 指向已移除工具（预期 400，与 P5 同源）。
  *   deepseek 靶子只跑 P1 / P2：看第三方 Anthropic 兼容端口对 defer_loading / tool_reference 的态度，决定能力位缺省。
  *
- * 运行：`node spikes/l1-deferred-tools/probe.mjs [haiku|opus|deepseek|all]`；配置自动从《模型API测试信息.md》读。
+ * 运行：`node spikes/l1-deferred-tools/probe.mjs [haiku|opus|deepseek|all]`；配置从仓库根 `.env.local` 读（经 scripts/local-env.mjs：CF_AIG_TOKEN、CF_ACCOUNT_ID、
+ * CF_GATEWAY_ID；DEEPSEEK_API_KEY 可缺，缺了 deepseek 靶子以空 key 发出）。
  * 原始请求 / 响应写 out/（gitignore）。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
+import { cfGatewayBase, maybe, need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const cfToken = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-const cfAccount = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-const cfGateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
-const deepseekKey = info.match(/deepseek官方[\s\S]{0,40}?(sk-[A-Za-z0-9]{20,})/)?.[1]
-if (!cfToken || !cfAccount) throw new Error("信息文件里缺 CF 令牌 / account id")
+const cfToken = need("CF_AIG_TOKEN")
+const cfBase = cfGatewayBase()
+const deepseekKey = maybe("DEEPSEEK_API_KEY")
 
 const outDir = new URL("./out/", import.meta.url)
 await mkdir(outDir, { recursive: true })
 
 const TARGETS = {
   haiku: {
-    url: `https://gateway.ai.cloudflare.com/v1/${cfAccount}/${cfGateway}/anthropic/v1/messages`,
+    url: `${cfBase}/anthropic/v1/messages`,
     headers: { "cf-aig-authorization": `Bearer ${cfToken}`, "anthropic-version": "2023-06-01" },
     model: process.env.L1_HAIKU_MODEL ?? "claude-haiku-4-5-20251001",
     /** Haiku 4.5 最小可缓存 4096 token */
@@ -39,7 +38,7 @@ const TARGETS = {
     full: true,
   },
   opus: {
-    url: `https://gateway.ai.cloudflare.com/v1/${cfAccount}/${cfGateway}/anthropic/v1/messages`,
+    url: `${cfBase}/anthropic/v1/messages`,
     headers: { "cf-aig-authorization": `Bearer ${cfToken}`, "anthropic-version": "2023-06-01" },
     model: process.env.L1_OPUS_MODEL ?? "claude-opus-5",
     padRepeats: 300,

@@ -3,7 +3,7 @@
  * 透传路径打官方模型（F0 体检 43/43 已证网关忠实）。
  *
  * 运行：仓库根 `pnpm build`，然后 `node spikes/f3-responses-live/probe.mjs [mini|full|all]`；
- * 配置自动从《模型API测试信息.md》读（CF 网关令牌 / account id / gateway id）。可用 F3_MINI_MODEL / F3_FULL_MODEL 换模型。
+ * 配置从仓库根 `.env.local` 读（经 scripts/local-env.mjs：CF_AIG_TOKEN、CF_ACCOUNT_ID、CF_GATEWAY_ID）。可用 F3_MINI_MODEL / F3_FULL_MODEL 换模型。
  *
  * 判据是产出内容不是状态码（暗号法）：
  *   1. 模型先后调两次工具，最终答案含两次结果之和（19）；
@@ -15,16 +15,12 @@
  *   5. 系统提示凑过 1024 token，第二个请求起 budget_usage 有 cacheRead > 0（OpenAI 自动前缀缓存的用量被正确换算）；
  *   6. 每轮 budget_usage 有真实用量并算出成本；有损落点只有声明过的几种。
  */
-import { readFileSync } from "node:fs"
 import { defineTool, InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { openaiResponses } from "../../packages/lowering-fetch/dist/index.js"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const cfToken = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-const cfAccount = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-const cfGateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
-if (!cfToken || !cfAccount) throw new Error("信息文件里缺 CF 令牌 / account id")
-const BASE = `https://gateway.ai.cloudflare.com/v1/${cfAccount}/${cfGateway}/openai/v1`
+const cfToken = need("CF_AIG_TOKEN")
+const BASE = `${cfGatewayBase()}/openai/v1`
 
 const which = process.argv[2] ?? "all"
 const CODEWORD = "TAMARIND"

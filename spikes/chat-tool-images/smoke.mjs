@@ -1,7 +1,7 @@
 /**
  * 库路径真模型冒烟：`deepseek("deepseek-flash")` + core runLoop，工具返回一张写着随机码的图（只有看图才知道的信息）。
  *
- * 运行：仓库根 `pnpm build`，然后 `node spikes/chat-tool-images/smoke.mjs`（需要 ImageMagick）。
+ * 运行：仓库根 `pnpm build`，然后 `node spikes/chat-tool-images/smoke.mjs`（需要 ImageMagick；密钥从仓库根 `.env.local` 读，经 scripts/local-env.mjs：DEEPSEEK_API_KEY）。
  * 两臂：
  *   lift   缺省（liftToolImages 开）：模型答出码；末次请求里 tool 之后紧跟带 image_url 的 user；落点 tool+lifted-images
  *   off    chat.liftToolImages: false：退回占位文本，模型不该答出码（反向对照，证明答对靠的是上浮）
@@ -14,10 +14,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { defineTool, InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { deepseek } from "../../packages/lowering-fetch/dist/index.js"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const dsKey = info.slice(info.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-if (!dsKey) throw new Error("信息文件里缺 DeepSeek key")
+const dsKey = need("DEEPSEEK_API_KEY")
 
 const dir = mkdtempSync(join(tmpdir(), "reins-img-"))
 const randCode = () =>

@@ -6,16 +6,14 @@
  * 不必让它复述系统提示（复述会触发拒答或撞 max_tokens）。另用"逐条列出所有消息"看网关实际交给模型的对话。
  * 对照：DeepSeek 官方 Anthropic 端口（直连、不经网关）。
  *
- * 运行：node spikes/aireiter-gateway-check/probe.mjs   （密钥自动从《模型API测试信息.md》读）
+ * 运行：node spikes/aireiter-gateway-check/probe.mjs   （密钥从仓库根 `.env.local` 读，经 scripts/local-env.mjs：AIREITER_API_KEY、DEEPSEEK_API_KEY）
  */
-import { readFile } from "node:fs/promises"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const gwKey = info.match(/密钥（三种协议共用）：`(sk-[^`]+)`/)?.[1]
-const dsBlock = info.slice(info.lastIndexOf("deepseek官方"))
-const dsKey = dsBlock.match(/key:\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-const dsBase = dsBlock.match(/anthropic 协议 baseurl：\s*(\S+)/)?.[1]
-if (!gwKey || !dsKey || !dsBase) throw new Error("信息文件里缺密钥或 baseurl")
+const gwKey = need("AIREITER_API_KEY")
+const dsKey = need("DEEPSEEK_API_KEY")
+// DeepSeek 官方 Anthropic 协议端口（公开地址）
+const dsBase = "https://api.deepseek.com/anthropic"
 
 const targets = {
   aireiter: { url: "https://aireiter.com/api/v1/messages", key: gwKey, model: "claude-opus-5" },

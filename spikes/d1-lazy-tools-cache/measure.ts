@@ -10,10 +10,11 @@
  *   2. 六个任务算总账，lazy 的未命中 token（input + cacheWrite）与总 token 是否仍低于 eager
  *
  * 运行：先 pnpm build，然后 node spikes/d1-lazy-tools-cache/measure.ts <relay|deepseek> [eager|lazy|all]
- * 密钥从仓库根 `模型API测试信息.md` 读（与 examples/eval/run.ts 同一套字段）；REINS_MODEL 可换模型。
+ * 密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs：RELAY_CLAUDE_API_KEY + RELAY_BASE_URL 或 DEEPSEEK_API_KEY，
+ * 与 examples/eval/run.ts 同源）；ANTHROPIC_API_KEY 可覆盖密钥；REINS_MODEL 可换模型。
  * 结果打印表格并写 out/<provider>-<model>-<arm>.json（已 gitignore）。
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import {
   TASKS,
   TOOL_DISCOVERY_SYSTEM_PROMPT,
@@ -22,6 +23,7 @@ import {
 import { lazyTools } from "../../packages/brain/dist/index.js"
 import { InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { anthropic } from "../../packages/lowering-pi/dist/index.js"
+import { need } from "../../scripts/local-env.mjs"
 
 type Provider = "relay" | "deepseek"
 const provider = (process.argv[2] ?? "deepseek") as Provider
@@ -30,27 +32,12 @@ if (provider !== "relay" && provider !== "deepseek")
   throw new Error("用法：measure.ts <relay|deepseek> [eager|lazy|all]")
 
 // ---- 模型（与 examples/eval/run.ts 同源）----
-const INFO = new URL("../../模型API测试信息.md", import.meta.url)
-const info = readFileSync(INFO, "utf8")
 function readKey(section: Provider): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-  if (section === "relay") {
-    const block = info.slice(info.lastIndexOf("Claude中转"))
-    const key = block.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-    if (!key) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 key")
-    return key
-  }
-  const keys = [...info.matchAll(/密钥[^`]*`(sk-[^`]+)`/g)].map((m) => m[1] as string)
-  const key = keys[1]
-  if (!key) throw new Error("没在 模型API测试信息.md 里找到 deepseek 的密钥")
-  return key
+  return need(section === "relay" ? "RELAY_CLAUDE_API_KEY" : "DEEPSEEK_API_KEY")
 }
-function relayBase(): string {
-  const block = info.slice(info.lastIndexOf("Claude中转"))
-  const base = block.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
-  if (!base) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 baseurl")
-  return base
-}
+// RELAY_BASE_URL 不带 /v1、无尾斜杠
+const relayBase = (): string => need("RELAY_BASE_URL")
 const modelId = process.env.REINS_MODEL ?? (provider === "relay" ? "claude-sonnet-5" : "deepseek-v4-flash")
 const bound = anthropic(modelId, {
   apiKey: readKey(provider),

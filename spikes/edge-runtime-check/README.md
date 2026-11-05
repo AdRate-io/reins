@@ -29,7 +29,7 @@ pnpm build
 # 前两层，零成本、不出外网
 NO_PROXY=127.0.0.1,localhost node spikes/edge-runtime-check/run.mjs
 
-# 追加两条真 API（密钥自动从《模型API测试信息.md》读，不需要设环境变量）
+# 追加两条真 API（密钥从仓库根 `.env.local` 读，不需要设环境变量）
 NO_PROXY=127.0.0.1,localhost node spikes/edge-runtime-check/run.mjs --live
 ```
 
@@ -107,7 +107,7 @@ flag 也能 `import("node:fs")`）。所以只跑新 date 会**高估**结论。
 
 1. `worker.mjs` 的块注释里写了 `packages/*/dist` —— 那个 `*/` 提前闭合了注释，后面的中文被当代码解析，
    esbuild 报 `Expected ";" but found "，"`。块注释里别写含 `*/` 的路径。
-2. 《模型API测试信息.md》第 135 行有一句**说明文字**也含 `anthropic 协议 baseurl：` 字样，后面紧跟反引号。
+2. （历史记录，2026-11-05 起密钥改读 `.env.local`，此坑不再适用）当时《模型API测试信息.md》第 135 行有一句**说明文字**也含 `anthropic 协议 baseurl：` 字样，后面紧跟反引号。
    用 `/anthropic 协议 baseurl：\s*(\S+)/` 会先撞上它、抓到一个反引号，`/live` 于是报
    `Invalid URL string.` 却仍返回 HTTP 200（worker 正常返回了错误 JSON）。已改为要求 `https?://` 开头。
    **教训：HTTP 200 从不等于探测通过，必须逐项核对产出内容。** 本次两回假通过都是这么抓出来的。

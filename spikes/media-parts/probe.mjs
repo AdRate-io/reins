@@ -1,7 +1,7 @@
 /**
  * 视频 / 音频片段的槽位核实（2026-11-05，OnSet 建议 12 方案 P0，`docs/implementation-plans/2026-11-05-视频音频片段.md`）。
  *
- * 运行：`node spikes/media-parts/probe.mjs`（需要本机 ffmpeg 与 macOS `say`；密钥自动从《模型API测试信息.md》读）。
+ * 运行：`node spikes/media-parts/probe.mjs`（需要本机 ffmpeg 与 macOS `say`；密钥从仓库根 `.env.local` 读，经 scripts/local-env.mjs：RELAY_GEMINI_API_KEY、RELAY_BASE_URL、DEEPSEEK_API_KEY）。
  * 素材每次现做（暗号法）：视频画面上是随机 6 位码，口播是两个随机词；纯音频只有口播。原始答案与用量落到 OUT_DIR。
  *
  * 判据是模型复述出暗号，不是状态码。四组：
@@ -17,13 +17,12 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const gBlock = info.slice(info.lastIndexOf("Gemini中转"))
-const G_KEY = gBlock.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-const G_BASE = `${gBlock.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")}/v1`
-const DS_KEY = info.slice(info.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-if (!G_KEY || !DS_KEY) throw new Error("信息文件里缺 Gemini中转 或 deepseek官方 的 key")
+const G_KEY = need("RELAY_GEMINI_API_KEY")
+// RELAY_BASE_URL 不带 /v1、无尾斜杠
+const G_BASE = `${need("RELAY_BASE_URL")}/v1`
+const DS_KEY = need("DEEPSEEK_API_KEY")
 const G_MODEL = process.env.G_MODEL ?? "gemini-3.8-flash-high"
 const OUT = process.env.OUT_DIR ?? mkdtempSync(join(tmpdir(), "reins-media-"))
 mkdirSync(OUT, { recursive: true })

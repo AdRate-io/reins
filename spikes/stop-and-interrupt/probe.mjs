@@ -14,22 +14,20 @@
  *   approval-moved  改 A 预算等审批，用户不批而说"改成 150"，宿主以 deny + reason 回 → 判据：提出 150，没有 200
  *
  * 运行：仓库根 `pnpm build`，然后 `node spikes/stop-and-interrupt/probe.mjs [deepseek|claude|cf-sonnet|all] [--repeats 5]`
- * （all = deepseek + claude 中转；中转号池不可用时用 cf-sonnet，经 CF 网关按原价计费）。密钥自动从信息文件读。
+ * （all = deepseek + claude 中转；中转号池不可用时用 cf-sonnet，经 CF 网关按原价计费）。
+ * 密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs：DEEPSEEK_API_KEY 必需；RELAY_CLAUDE_API_KEY / RELAY_BASE_URL、
+ * CF_AIG_TOKEN / CF_ACCOUNT_ID / CF_GATEWAY_ID 只在跑对应靶子时用）。
  */
-import { readFileSync } from "node:fs"
 import { InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { callTool, ScriptedLowering } from "../../packages/core/dist/testing/index.js"
 import { anthropicMessages, deepseek } from "../../packages/lowering-fetch/dist/index.js"
+import { cfGatewayBase, maybe, need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const dsKey = info.slice(info.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-const relay = info.slice(info.lastIndexOf("Claude中转"))
-const relayKey = relay.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-const relayBase = relay.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
-if (!dsKey) throw new Error("信息文件里缺 deepseek官方 的 key")
-const cfToken = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-const cfAccount = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-const cfGateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
+const dsKey = need("DEEPSEEK_API_KEY")
+// 以下只在跑对应靶子时用到，缺了不在起步时报错（与旧读法一致）
+const relayKey = maybe("RELAY_CLAUDE_API_KEY")
+const relayBase = maybe("RELAY_BASE_URL")
+const cfToken = maybe("CF_AIG_TOKEN")
 
 const which = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "all"
 const ri = process.argv.indexOf("--repeats")
@@ -51,7 +49,7 @@ const MODELS = {
   "cf-sonnet": () =>
     anthropicMessages(process.env.CF_MODEL ?? "claude-sonnet-5-5", {
       provider: "anthropic",
-      baseUrl: `https://gateway.ai.cloudflare.com/v1/${cfAccount}/${cfGateway}/anthropic/v1`,
+      baseUrl: `${cfGatewayBase()}/anthropic/v1`,
       apiKey: "",
       auth: "none",
       headers: { "cf-aig-authorization": `Bearer ${cfToken}` },

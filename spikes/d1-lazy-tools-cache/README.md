@@ -1,7 +1,7 @@
 # d1-lazy-tools-cache — 逐轮变动请求工具集对 prompt cache 的实测（2026-09-14）
 
 > 对应任务 D1 的核实项：`lazyTools()` 取回工具后请求的工具表会变，Anthropic 文档写明工具表变动使 tools / system / messages 三段缓存全部失效——代价到底多大、什么情形下值得。
-> 运行：`pnpm build` 后 `node spikes/d1-lazy-tools-cache/measure.ts <relay|deepseek> [eager|lazy|all]`；密钥从仓库根《模型API测试信息.md》读；结果写 `out/`（已 gitignore，本文摘录关键数字）。
+> 运行：`pnpm build` 后 `node spikes/d1-lazy-tools-cache/measure.ts <relay|deepseek> [eager|lazy|all]`；密钥从仓库根 `.env.local` 读；结果写 `out/`（已 gitignore，本文摘录关键数字）。
 
 ## 方法
 

@@ -88,7 +88,7 @@
 | 实施方案 | `docs/implementation-plans/` → `docs/archive/implementation-plans/` | 回溯方案；v1.0 技术方案（规格原文、§ 编号）在 archive |
 | 归档（调研、审查报告、任务记录、0.1～0.4 决策日志） | `docs/archive/` | 只作证据；代码里"DECISIONS 日期"的引用到这里 grep |
 | 核实脚本 | `spikes/README.md` | 上游升级时复跑 |
-| 密钥 | 根目录 `模型API测试信息.md`（gitignore） | spike 与真模型跑数自动读；CF 网关私有值在末尾 |
+| 密钥与私有值 | 根目录 `.env.local`（gitignore），一律经 `scripts/local-env.mjs` 的 `need` / `maybe` 读 | spike 与真模型跑数；线路说明与模型清单在 `模型API测试信息.md`（gitignore，只给人看，不放密钥、脚本不解析） |
 
 ---
 

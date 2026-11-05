@@ -15,7 +15,7 @@
  *   edge       esbuild 打成单个 IIFE 塞进 edge-runtime 的裸 vm（Vercel 官方本地 Edge 运行时，禁 eval、无 node:*、无 process）
  *   edge-process  同上，但往 vm 里放一个只有 env 的 process（Vercel 文档对线上 Edge 承诺的最小面）
  *
- * 密钥自动从《模型API测试信息.md》读，只经子进程环境变量传递，不落盘。
+ * 密钥从仓库根 `.env.local` 读（经 edge-runtime-check/secrets.mjs → scripts/local-env.mjs），只经子进程环境变量传递，不落盘。
  */
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"

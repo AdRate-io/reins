@@ -1,17 +1,15 @@
 /**
  * DeepSeek 的 Anthropic 兼容端口核实：作为"第二家 Anthropic 协议上游"，我们依赖的几件事它怎么反应。
  *   node spikes/deepseek-anthropic-check/probe.mjs
- * 密钥自动从仓库根《模型API测试信息.md》读取（该文件已 gitignore）。原始响应落 out/（已 gitignore）。
+ * 密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs：DEEPSEEK_API_KEY）。原始响应落 out/（已 gitignore）。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-// 原始字段块放在文件末尾（前面还有一段说明文字会提到同样的字样），所以取最后一次出现
-const block = info.slice(info.lastIndexOf("deepseek官方"))
-const key = block.match(/key:\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-const model = block.match(/模型：\s*(\S+)/)?.[1] ?? "deepseek-v4-flash"
-const base = block.match(/anthropic 协议 baseurl：\s*(\S+)/)?.[1]
-if (!key || !base) throw new Error("没找到 DeepSeek 的 key / baseurl")
+const key = need("DEEPSEEK_API_KEY")
+const model = "deepseek-v4-flash"
+// DeepSeek 官方 Anthropic 协议端口（公开地址）
+const base = "https://api.deepseek.com/anthropic"
 const outDir = new URL("./out/", import.meta.url)
 await mkdir(outDir, { recursive: true })
 

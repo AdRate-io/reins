@@ -9,13 +9,15 @@
  * 装配同 run.ts 的 force 臂（缺省规则、spill、perception、budget，compact 不自己发请求），maxTurns 1 只走一步。
  *
  * 运行：node examples/eval/fixtures/onset-pause/wording.ts [--scenes new,mid,wrapup] [--variants A,B,C,D,E,F] [--repeats 3]
- * 密钥同 run.ts 的 onset-relay（"Claude中转"段）。结果写 examples/eval/out/onset-wording/results.jsonl。
+ * 密钥同 run.ts 的 onset-relay：仓库根 `.env.local` 的 RELAY_CLAUDE_API_KEY + RELAY_BASE_URL（经 scripts/local-env.mjs）；
+ * `--direct` 用 DEEPSEEK_API_KEY。结果写 examples/eval/out/onset-wording/results.jsonl。
  */
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs"
 import { budget, COMPACT_RULES, COMPACT_TOOL_NAME, compact, perception, renderCompactRequest, spill } from "@reinsjs/brain"
 import { contextOverheadOf, type Event, InMemoryEventLog, runLoop, type Socket } from "@reinsjs/core"
 import { parseEventsJsonl } from "@reinsjs/eval"
 import { deepseek } from "@reinsjs/lowering-fetch"
+import { maybe, need } from "../../../../scripts/local-env.mjs"
 import { loadOnsetWorld, ONSET_CONTEXT_WINDOW, onsetTools } from "./fixture.ts"
 
 const flag = (name: string, fallback: string) => {
@@ -71,14 +73,12 @@ const VARIANTS: Record<string, Render> = {
 }
 
 // ---- 模型（同 run.ts onset-relay） ----
-const INFO = readFileSync(new URL("../../../../模型API测试信息.md", import.meta.url), "utf8")
-const relay = INFO.slice(INFO.lastIndexOf("Claude中转"))
-const apiKey = relay.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-const base = relay.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
-if (!apiKey || !base) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 key / baseurl")
+const apiKey = need("RELAY_CLAUDE_API_KEY")
+// RELAY_BASE_URL 不带 /v1、无尾斜杠
+const base = need("RELAY_BASE_URL")
 // --direct：DeepSeek 官方直连（短文本探针用的就是它，型号 deepseek-v4-flash），用来分开"中转站 / 型号"这一变量
 const direct = process.argv.includes("--direct")
-const dsKey = INFO.slice(INFO.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
+const dsKey = maybe("DEEPSEEK_API_KEY")
 const model = direct
   ? deepseek(process.env.MODEL ?? "deepseek-v4-flash", { apiKey: dsKey ?? "", contextWindow: ONSET_CONTEXT_WINDOW, maxOutputTokens: 384_000 })
   : deepseek(process.env.MODEL ?? "deepseek-v4.1-flash", {

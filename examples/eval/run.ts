@@ -19,14 +19,16 @@
  * - brain：dogfood 同款全部脑子模块（感知、模型自决整理、pin、外溢 6k、记忆、交接、预算、审批）
  * - brain-lean：精简版（感知、模型自决整理、pin、外溢 16k、预算、审批；无记忆 / 交接）
  *
- * 模型密钥从仓库根 `模型API测试信息.md` 读（已 gitignore），与 examples/adrate/agent.ts 同源；ANTHROPIC_API_KEY 可覆盖。
+ * 模型密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs，已 gitignore），与 examples/adrate/agent.ts 同源；ANTHROPIC_API_KEY 可覆盖。
+ * 用到的变量：DEEPSEEK_API_KEY、AIREITER_API_KEY、RELAY_CLAUDE_API_KEY + RELAY_BASE_URL（relay / onset-relay）、
+ * CF_AIG_TOKEN + CF_ACCOUNT_ID + CF_GATEWAY_ID（cloudflare）。
  * REINS_PROVIDER：deepseek（缺省，官方 Chat Completions 直连）| deepseek-anthropic（DeepSeek 的 Anthropic 端口 + thinking 2048，0.1 门禁的配置，作对照）
  *               | deepseek-pi（同上配置但用 pi 版降级层，把降级层实现从对照里剥出来）| cloudflare（Cloudflare AI Gateway 透传官方 Anthropic，F0 体检 43/43，见 spikes/README.md 末节）
  *               | relay（Boss 的 Claude 中转，忠实直通官方 API，见 spikes/relay-check）| aireiter（会丢中途 system，只作参考）
- *               | onset-relay（公司中转站的 DeepSeek，Chat 协议，与 OnSet 线上 createMainBrain 同配置，密钥用"Claude中转"段那把）。
+ *               | onset-relay（公司中转站的 DeepSeek，Chat 协议，与 OnSet 线上 createMainBrain 同配置，密钥用 RELAY_CLAUDE_API_KEY 那把）。
  * REINS_MODEL 覆盖模型 id（cloudflare / relay 缺省 claude-sonnet-5，可用 claude-opus-5）。
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import type { BoundModel, Event } from "@reinsjs/core"
 import { approval, budget, COMPACT_RULES, compact, handoff, lazyTools, memory, perception, pins, spill } from "@reinsjs/brain"
 import { type EvalArm, type EvalOutcome, noneArm, runEval, thresholdArm, toEventsJsonl } from "@reinsjs/eval"
@@ -40,6 +42,7 @@ import {
   onsetPauseFixtures,
 } from "./fixtures/onset-pause/fixture.ts"
 import { toolDiscoveryFixtures } from "./fixtures/tool-discovery/fixture.ts"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 
 // ---- 参数 ----
 const argv = process.argv.slice(2)
@@ -80,33 +83,17 @@ const out = flag("--out", new URL(`./out/${stamp}-${modelId}`, import.meta.url).
 mkdirSync(`${out}/cells`, { recursive: true })
 
 // ---- 模型 ----
-const INFO = new URL("../../模型API测试信息.md", import.meta.url)
 function readKey(section: Exclude<Provider, "cloudflare" | "deepseek-anthropic" | "deepseek-pi">): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-  const info = readFileSync(INFO, "utf8")
   // 公司中转站一把钥匙两用：Claude 与 DeepSeek 型号都认（2026-10-30 实测）
-  if (section === "relay" || section === "onset-relay") {
-    // "Claude中转"段：key：sk-…  baseurl:http://…
-    const block = info.slice(info.lastIndexOf("Claude中转"))
-    const key = block.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-    if (!key) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 key")
-    return key
-  }
-  const keys = [...info.matchAll(/密钥[^`]*`(sk-[^`]+)`/g)].map((m) => m[1] as string)
-  const key = section === "aireiter" ? keys[0] : keys[1]
-  if (!key) throw new Error(`没在 模型API测试信息.md 里找到 ${section} 的密钥；或设 ANTHROPIC_API_KEY`)
-  return key
+  if (section === "relay" || section === "onset-relay") return need("RELAY_CLAUDE_API_KEY")
+  return need(section === "aireiter" ? "AIREITER_API_KEY" : "DEEPSEEK_API_KEY")
 }
 /** Cloudflare AI Gateway 透传路径：凭证在 cf-aig-authorization 头（auth: "none"），与 spikes/l1-deferred-tools/live.mjs 同一套读法 */
 function cloudflareGateway(): { baseUrl: string; headers: Record<string, string> } {
-  const info = readFileSync(INFO, "utf8")
-  const token = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-  const account = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-  const gateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
-  if (!token || !account) throw new Error("没在 模型API测试信息.md 里找到 Cloudflare AI Gateway 的令牌 / account id")
   return {
-    baseUrl: `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}/anthropic/v1`,
-    headers: { "cf-aig-authorization": `Bearer ${token}` },
+    baseUrl: `${cfGatewayBase()}/anthropic/v1`,
+    headers: { "cf-aig-authorization": `Bearer ${need("CF_AIG_TOKEN")}` },
   }
 }
 /**
@@ -122,11 +109,9 @@ const patientFetch: typeof globalThis.fetch = async (input, init) => {
     await new Promise((r) => setTimeout(r, 10_000 * attempt))
   }
 }
+/** RELAY_BASE_URL 不带 /v1、无尾斜杠 */
 function relayBase(): string {
-  const block = readFileSync(INFO, "utf8").slice(readFileSync(INFO, "utf8").lastIndexOf("Claude中转"))
-  const base = block.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
-  if (!base) throw new Error("没在 模型API测试信息.md 的 Claude中转 段找到 baseurl")
-  return base
+  return need("RELAY_BASE_URL")
 }
 /**
  * 降级层用 fetch 版（0.2 起示例统一）。DeepSeek 走官方 Chat Completions 直连（内置表有 deepseek-v4-flash，reasoning_content 方言缺省开、

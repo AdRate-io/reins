@@ -30,16 +30,14 @@
  *   ③  B_no_flag 不命中，且写入量比 A 多 Δ        → 同样三件一旦实发就进前缀，Δ 即三件定义的 token；
  *   ④  A2_second 命中 C2_first 写的前缀           → 方向反过来同样成立。
  *
- * 运行：`node spikes/l1-deferred-tools/billing-deferred.mjs`
+ * 运行：`node spikes/l1-deferred-tools/billing-deferred.mjs`（配置从仓库根 `.env.local` 读，经 scripts/local-env.mjs：
+ * CF_AIG_TOKEN、CF_ACCOUNT_ID、CF_GATEWAY_ID）
  * 前置：先跑过 `node spikes/l1-deferred-tools/probe.mjs haiku`（基座取自它写的 out/haiku-p2-req1.json，out/ 不入库）。
  */
 import { readFile, writeFile } from "node:fs/promises"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const cfToken = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-const cfAccount = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-const cfGateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
-if (!cfToken || !cfAccount) throw new Error("信息文件里缺 CF 令牌 / account id")
+const cfToken = need("CF_AIG_TOKEN")
 
 const baseUrl = new URL("./out/haiku-p2-req1.json", import.meta.url)
 const base = await readFile(baseUrl, "utf8").catch(() => {
@@ -69,7 +67,7 @@ function arm(salt, shape) {
   return body
 }
 
-const url = `https://gateway.ai.cloudflare.com/v1/${cfAccount}/${cfGateway}/anthropic/v1/messages`
+const url = `${cfGatewayBase()}/anthropic/v1/messages`
 const headers = {
   "content-type": "application/json",
   "cf-aig-authorization": `Bearer ${cfToken}`,

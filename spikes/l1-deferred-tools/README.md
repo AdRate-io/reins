@@ -1,7 +1,7 @@
 # l1-deferred-tools — lazy-tools 的 provider 原生路径核实（2026-09-15）
 
 > 对应任务「lazy-tools 的 provider 原生路径」。D1 实测取回工具后 Anthropic 缓存整段重写（频繁换任务贵 1.7 倍）；官方有 `defer_loading` + `tool_reference`（GA、无 beta 头）能让工具表整段不变。进代码前先核实厂商规矩，判据全部是产出内容。
-> 运行：`node spikes/l1-deferred-tools/probe.mjs [haiku|opus|deepseek|all]`（裸 fetch，测厂商规矩）；`pnpm build` 后 `node spikes/l1-deferred-tools/live.mjs [haiku|opus]`（`runLoop + lazyTools() + @reinsjs/lowering-fetch` 端到端）；`node spikes/l1-deferred-tools/billing-deferred.mjs`（P9 计费六臂，Haiku；基座取自 probe.mjs 写下的 `out/haiku-p2-req1.json`，需先跑过 `probe.mjs haiku`）。配置自动从《模型API测试信息.md》读；官方模型经 Cloudflare AI Gateway 透传路径（F0 体检 43/43）。原始请求 / 响应写 `out/`（gitignore）。
+> 运行：`node spikes/l1-deferred-tools/probe.mjs [haiku|opus|deepseek|all]`（裸 fetch，测厂商规矩）；`pnpm build` 后 `node spikes/l1-deferred-tools/live.mjs [haiku|opus]`（`runLoop + lazyTools() + @reinsjs/lowering-fetch` 端到端）；`node spikes/l1-deferred-tools/billing-deferred.mjs`（P9 计费六臂，Haiku；基座取自 probe.mjs 写下的 `out/haiku-p2-req1.json`，需先跑过 `probe.mjs haiku`）。配置从仓库根 `.env.local` 读；官方模型经 Cloudflare AI Gateway 透传路径（F0 体检 43/43）。原始请求 / 响应写 `out/`（gitignore）。
 
 ## 厂商规矩（probe.mjs，Haiku 4.5 与 Opus 5 各 14/14）
 

@@ -1,7 +1,7 @@
 # aireiter-gateway-check — 网关 Claude 端点会丢掉末尾注入的说明（2026-09-08，B2 附带）
 
 > 起因：B2 真模型实测里，模型两次在 thinking 里说"用户只发了一个句号"，我们发出的请求里没有这条消息。Boss 提议用 DeepSeek 直连做对照确认是不是网关加的。
-> 运行：`node spikes/aireiter-gateway-check/probe.mjs`（密钥自动从《模型API测试信息.md》读）。
+> 运行：`node spikes/aireiter-gateway-check/probe.mjs`（密钥从仓库根 `.env.local` 读）。
 
 ## 方法：暗号法
 

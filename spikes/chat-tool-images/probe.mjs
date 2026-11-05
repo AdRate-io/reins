@@ -1,7 +1,7 @@
 /**
  * Chat 线工具结果图片上浮的上游核实（2026-10-27，OnSet 需求）：裸 HTTP 打 DeepSeek 官方 Chat Completions。
  *
- * 运行：`node spikes/chat-tool-images/probe.mjs`（需要本机 ImageMagick；密钥自动从《模型API测试信息.md》读）。
+ * 运行：`node spikes/chat-tool-images/probe.mjs`（需要本机 ImageMagick；密钥从仓库根 `.env.local` 读，经 scripts/local-env.mjs：DEEPSEEK_API_KEY）。
  * 每次运行生成新的随机码图片（暗号法），判据是回答内容不是状态码：
  *   A 基线：user 消息直接带图，模型读出码——DeepSeek Chat 线到底收不收图
  *   B 上浮：assistant(tool_calls) → tool(指路文字) → user(说明 + 图)，模型读出码
@@ -13,10 +13,9 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const dsKey = info.slice(info.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-if (!dsKey) throw new Error("信息文件里缺 DeepSeek key")
+const dsKey = need("DEEPSEEK_API_KEY")
 const MODEL = process.env.MODEL ?? "deepseek-flash"
 
 const dir = mkdtempSync(join(tmpdir(), "reins-img-"))

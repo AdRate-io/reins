@@ -1,5 +1,5 @@
 /**
- * Gemini 经中转站（《模型API测试信息.md》"Gemini中转"段）多轮工具调用的签名核实（2026-11-05，OnSet 建议 12 前置）。
+ * Gemini 经中转站（仓库根 `.env.local` 的 RELAY_GEMINI_API_KEY / RELAY_BASE_URL，经 scripts/local-env.mjs 读）多轮工具调用的签名核实（2026-11-05，OnSet 建议 12 前置）。
  *
  * 问题：Gemini 3 多轮函数调用要求回放 functionCall 上的 thoughtSignature。中转站把它放在非标字段里
  * （Messages 线的 tool_use.signature 等），reins 读流时不保留这些字段——丢了之后中转站还认不认？
@@ -12,7 +12,7 @@
  * 另外从第一轮原始流里找签名类字段（signature / thought_signature / thoughtSignature / extra_content），
  * 再看 reins 发出的第二、三个请求里这些字段还在不在。
  */
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { defineTool, InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
@@ -21,12 +21,11 @@ import {
   chatCompletions,
   openaiResponses,
 } from "../../packages/lowering-fetch/dist/index.js"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const block = info.slice(info.lastIndexOf("Gemini中转"))
-const key = block.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-const base = block.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
-if (!key || !base) throw new Error("信息文件里缺 Gemini中转 的 key 或 baseurl")
+const key = need("RELAY_GEMINI_API_KEY")
+// RELAY_BASE_URL 不带 /v1、无尾斜杠
+const base = need("RELAY_BASE_URL")
 const MODEL = process.env.MODEL ?? "gemini-3.8-flash-high"
 const OUT = process.env.OUT_DIR ?? mkdtempSync(join(tmpdir(), "reins-gemini-sig-"))
 mkdirSync(OUT, { recursive: true })

@@ -10,8 +10,8 @@
  * 要按角色分表，把 `pgStores(client, { memoryTable: "analyst_memory" })` 各建一套即可（第一层）。角色不进事件、不进存储 —— 哪个角色
  * 由"哪个 createAgent"决定。
  *
- * 模型：REINS_PROVIDER=deepseek（缺省，deepseek-v4-flash）或 aireiter（claude-opus-5）；密钥从仓库根《模型API测试信息.md》读，
- * ANTHROPIC_API_KEY 可覆盖；REINS_MODEL 覆盖模型 id。存储：PGlite 文件库 data/team.pgdata（真 Postgres 换成 `new pg.Pool(...)` 传进去）。
+ * 模型：REINS_PROVIDER=deepseek（缺省，deepseek-v4-flash）或 aireiter（claude-opus-5）；密钥从仓库根 `.env.local` 读
+ * （经 scripts/local-env.mjs：DEEPSEEK_API_KEY / AIREITER_API_KEY），ANTHROPIC_API_KEY 可覆盖；REINS_MODEL 覆盖模型 id。存储：PGlite 文件库 data/team.pgdata（真 Postgres 换成 `new pg.Pool(...)` 传进去）。
  */
 import { mkdirSync, readFileSync } from "node:fs"
 import { PGlite } from "@electric-sql/pglite"
@@ -19,17 +19,14 @@ import { approval, budget, compact, memory, perception, pins } from "@reinsjs/br
 import { anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
 import { pgStores } from "@reinsjs/store-pg"
 import { type Agent, createAgent, defineTool, type ToolContext } from "@reinsjs/agent"
+import { need } from "../../scripts/local-env.mjs"
 import { expertTool } from "./subagent-tool.ts"
 
 const here = (p: string) => new URL(p, import.meta.url)
 
 function readKey(section: "aireiter" | "deepseek"): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-  const info = readFileSync(here("../../模型API测试信息.md"), "utf8")
-  const keys = [...info.matchAll(/密钥[^`]*`(sk-[^`]+)`/g)].map((m) => m[1] as string)
-  const key = section === "aireiter" ? keys[0] : keys[1]
-  if (!key) throw new Error(`没在 模型API测试信息.md 里找到 ${section} 的密钥；或设 ANTHROPIC_API_KEY`)
-  return key
+  return need(section === "aireiter" ? "AIREITER_API_KEY" : "DEEPSEEK_API_KEY")
 }
 
 const provider = (process.env.REINS_PROVIDER ?? "deepseek") as "aireiter" | "deepseek"

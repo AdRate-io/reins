@@ -1,19 +1,17 @@
 /**
- * Claude 中转（《模型API测试信息.md》"Claude中转"段）忠实度体检（2026-09-09，E3b 前置）。
+ * Claude 中转（仓库根 `.env.local` 的 RELAY_CLAUDE_API_KEY / RELAY_BASE_URL，经 scripts/local-env.mjs 读）忠实度体检（2026-09-09，E3b 前置）。
  *
  * 用 aireiter-gateway-check 的暗号法：把"暗号是 PINEAPPLE"放在请求的不同位置，只让模型回一行暗号或 NONE。
  * 另外三项 reins 依赖的能力：工具调用往返（tool_use → tool_result）、thinking 块与签名、用量里的缓存字段；
  * 最后让模型逐条列出它看到的对话，看中转有没有塞东西。
  *
- * 运行：node spikes/relay-check/probe.mjs [claude-sonnet-5]   （密钥自动从信息文件读；缺省模型 claude-sonnet-5）
+ * 运行：node spikes/relay-check/probe.mjs [claude-sonnet-5]   （缺省模型 claude-sonnet-5）
  */
-import { readFile } from "node:fs/promises"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const block = info.slice(info.lastIndexOf("Claude中转"))
-const key = block.match(/key[：:]\s*(sk-[A-Za-z0-9_-]+)/)?.[1]
-const base = block.match(/baseurl[：:]\s*(\S+)/)?.[1]?.replace(/\/+$/, "")
-if (!key || !base) throw new Error("信息文件里缺 Claude中转 的 key 或 baseurl")
+const key = need("RELAY_CLAUDE_API_KEY")
+// RELAY_BASE_URL 不带 /v1、无尾斜杠
+const base = need("RELAY_BASE_URL")
 const model = process.argv[2] ?? "claude-sonnet-5"
 const url = `${base}/v1/messages`
 

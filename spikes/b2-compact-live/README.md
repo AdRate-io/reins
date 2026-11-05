@@ -1,7 +1,7 @@
 # b2-compact-live — compact 工具在真实模型上的核实（2026-09-08）
 
 > 对应任务 B2。单测用 ScriptedLowering 能证明机制，证明不了三件事：模型会不会正确用这个工具、整理后的请求上游接不接受、整理后模型还能不能接着干。
-> 运行：仓库根 `pnpm build`，然后 `node spikes/b2-compact-live/run.mjs [natural|pressured|asked|all]`；`REINS_B2_WINDOW=<n>` 改 pressured 情形声明的窗口。密钥自动从《模型API测试信息.md》读；原始记录落 `out/`（已 gitignore）。
+> 运行：仓库根 `pnpm build`，然后 `node spikes/b2-compact-live/run.mjs [natural|pressured|asked|all]`；`REINS_B2_WINDOW=<n>` 改 pressured 情形声明的窗口。密钥从仓库根 `.env.local` 读（`AIREITER_API_KEY`）；原始记录落 `out/`（已 gitignore）。
 
 ## 方法
 

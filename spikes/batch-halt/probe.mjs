@@ -9,17 +9,15 @@
  *   waiting  [deploy(需审批) → 挂起, chat_send → 以 still waiting 被拦]，宿主随后批准续跑：deploy 补跑成功，
  *            判据：真模型阶段重发了 chat_send
  *
- * 运行：仓库根 `pnpm build`，然后 `node spikes/batch-halt/probe.mjs [--repeats 5]`；密钥自动从信息文件读。
+ * 运行：仓库根 `pnpm build`，然后 `node spikes/batch-halt/probe.mjs [--repeats 5]`；密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs，DEEPSEEK_API_KEY）。
  */
-import { readFileSync } from "node:fs"
 import { haltOnFailure } from "../../packages/brain/dist/index.js"
 import { InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { callTool, ScriptedLowering } from "../../packages/core/dist/testing/index.js"
 import { deepseek } from "../../packages/lowering-fetch/dist/index.js"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const dsKey = info.slice(info.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-if (!dsKey) throw new Error("信息文件里缺 DeepSeek key")
+const dsKey = need("DEEPSEEK_API_KEY")
 const i = process.argv.indexOf("--repeats")
 const repeats = i >= 0 ? Number(process.argv[i + 1]) : 5
 

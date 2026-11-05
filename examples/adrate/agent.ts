@@ -2,7 +2,7 @@
  * dogfood agent：AdRate CLI 工具 + 全部脑子模块 + SQLite 存储 + 经网关的模型。
  *
  * 模型来源（`REINS_PROVIDER`）：`aireiter`（缺省，claude-opus-5）或 `deepseek`（deepseek-v4-flash）；密钥从仓库根
- * `模型API测试信息.md` 读（已 gitignore），也可用 ANTHROPIC_API_KEY 覆盖。`REINS_MODEL` 覆盖模型 id。
+ * `.env.local` 读（经 scripts/local-env.mjs：AIREITER_API_KEY / DEEPSEEK_API_KEY），也可用 ANTHROPIC_API_KEY 覆盖。`REINS_MODEL` 覆盖模型 id。
  *
  * 系统提示 = 角色与任务约定 + 技能菜单（两份 AdRate Agent Skill 的 name + description）；正文由模型用 `skill_read` 按需翻（S1）。
  * 2026-09-08 的版本把两份 Skill 全文（约 37k 字符）直接塞进系统提示——"框架替模型决定读什么"，是反面做法，现在改成第一个真实样本。
@@ -12,12 +12,13 @@
  * 把头部 + 正文拼成 SKILL.md 预填进 inlineSkills——这也正是 Workers 上"把 SKILL.md bundle 成字符串"的用法。
  */
 import { execFileSync } from "node:child_process"
-import { mkdirSync, readFileSync } from "node:fs"
+import { mkdirSync } from "node:fs"
 import { approval, budget, compact, handoff, inlineSkills, memory, perception, pins, skills, spill } from "@reinsjs/brain"
 import { anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
 import { sqliteStores } from "@reinsjs/store-sqlite"
 import { openSqlite } from "@reinsjs/store-sqlite/node"
 import { createAgent } from "@reinsjs/agent"
+import { need } from "../../scripts/local-env.mjs"
 import { advertiserId } from "./local.ts"
 import { adrateTools } from "./tools.ts"
 
@@ -25,11 +26,7 @@ const here = (p: string) => new URL(p, import.meta.url)
 
 function readKey(section: "aireiter" | "deepseek"): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-  const info = readFileSync(here("../../模型API测试信息.md"), "utf8")
-  const keys = [...info.matchAll(/密钥[^`]*`(sk-[^`]+)`/g)].map((m) => m[1] as string)
-  const key = section === "aireiter" ? keys[0] : keys[1]
-  if (!key) throw new Error(`没在 模型API测试信息.md 里找到 ${section} 的密钥；或设 ANTHROPIC_API_KEY`)
-  return key
+  return need(section === "aireiter" ? "AIREITER_API_KEY" : "DEEPSEEK_API_KEY")
 }
 
 const provider = (process.env.REINS_PROVIDER ?? "aireiter") as "aireiter" | "deepseek"

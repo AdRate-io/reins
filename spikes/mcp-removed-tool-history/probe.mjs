@@ -9,16 +9,15 @@
  *   deepseek（Anthropic 协议直连） / aireiter-claude（Anthropic 协议经网关） / aireiter-openai（OpenAI Responses）
  * 判据不是状态码：要看到模型真的产出了回答（有 model_text 且非空）。
  *
- * 运行：仓库根 pnpm build 后 `node spikes/mcp-removed-tool-history/probe.mjs`；密钥自动从《模型API测试信息.md》读。
+ * 运行：仓库根 pnpm build 后 `node spikes/mcp-removed-tool-history/probe.mjs`；密钥从仓库根 `.env.local` 读（经 scripts/local-env.mjs：AIREITER_API_KEY、DEEPSEEK_API_KEY）。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { createCoreEvent, createCoreRegistry } from "../../packages/core/dist/index.js"
 import { PiAiLowering } from "../../packages/lowering-pi/dist/index.js"
+import { need } from "../../scripts/local-env.mjs"
 
-const info = await readFile(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const gatewayKey = info.match(/密钥（三种协议共用）：`(sk-[^`]+)`/)?.[1]
-const deepseekKey = info.match(/DeepSeek 官方[\s\S]*?密钥：`(sk-[^`]+)`/)?.[1]
-if (!gatewayKey || !deepseekKey) throw new Error("没在信息文件里找到密钥")
+const gatewayKey = need("AIREITER_API_KEY")
+const deepseekKey = need("DEEPSEEK_API_KEY")
 
 const registry = createCoreRegistry()
 const outDir = new URL("./out/", import.meta.url)

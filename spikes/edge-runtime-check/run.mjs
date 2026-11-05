@@ -6,7 +6,7 @@
  *   node spikes/edge-runtime-check/run.mjs            # 只跑零成本的前两层
  *   node spikes/edge-runtime-check/run.mjs --live      # 追加真 API 一次
  *
- * 密钥自动从《模型API测试信息.md》读（沿用 b2-compact-live 的做法），
+ * 密钥从仓库根 `.env.local` 读（经 secrets.mjs → scripts/local-env.mjs），
  * 经 .dev.vars 交给 wrangler，**跑完立即删除**；该文件也已写进 .gitignore。
  *
  * F4（2026-09-15）追加 @reinsjs/lowering-fetch 的同形探测 /fetch-*（三条线：Chat → DeepSeek 直连，

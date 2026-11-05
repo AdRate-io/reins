@@ -1,7 +1,7 @@
 /**
  * 到阈值强制模型整理的上游核实（2026-10-30，OnSet 反馈建议 4 / OPT-261030-3）：裸 HTTP 打 DeepSeek 官方 Chat Completions。
  *
- * 运行：`node spikes/forced-compact/probe.mjs [轮数]`（缺省 3 轮；密钥自动从《模型API测试信息.md》读；MODEL 环境变量换型号）。
+ * 运行：`node spikes/forced-compact/probe.mjs [轮数]`（缺省 3 轮；密钥从仓库根 `.env.local` 读，经 scripts/local-env.mjs：DEEPSEEK_API_KEY；MODEL 环境变量换型号）。
  * 前缀 P = 系统提示（带一次性盐）+ 一段做到一半的巡检对话（约 8k token，最后一条是工具结果，模型"正想接着干"）。
  * 每轮先发两次 P 暖缓存（W2 的命中即基线），再发各臂：
  *   A  追加：P + 末尾一条 system 说明"先 compact 再继续"，工具表不变、不强制 —— 前缀不变，看模型照不照做
@@ -12,12 +12,10 @@
  * 判据是产出内容不是状态码：调没调 compact、入参是否合法（summary 非空、keep 是数组）、有没有夹带别的调用；
  * 缓存看 usage.prompt_cache_hit_tokens / prompt_cache_miss_tokens。
  */
-import { readFileSync } from "node:fs"
+import { need } from "../../scripts/local-env.mjs"
 import { allTools, compactTool, judge, NOTE, prefix } from "./scenario.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const dsKey = info.slice(info.lastIndexOf("deepseek官方")).match(/key:\s*(sk-[a-z0-9]+)/)?.[1]
-if (!dsKey) throw new Error("信息文件里缺 DeepSeek key")
+const dsKey = need("DEEPSEEK_API_KEY")
 const MODEL = process.env.MODEL ?? "deepseek-v4-flash"
 const ROUNDS = Number(process.argv[2] ?? 3)
 

@@ -8,19 +8,15 @@
  *   4. 同一会话第二次 run（新问题 Tokyo）：模型直接调 get_weather 不再取回（已取回集合从时间线重建，厂商从历史展开引用）；
  *   5. 有损落点只有声明过的：tool-reference lossy（说明文字改放之后）、budget_usage / tools_bound dropped。
  *
- * 运行：仓库根 `pnpm build`，然后 `node spikes/l1-deferred-tools/live.mjs [haiku|opus]`；配置自动从《模型API测试信息.md》读。
+ * 运行：仓库根 `pnpm build`，然后 `node spikes/l1-deferred-tools/live.mjs [haiku|opus]`；配置从仓库根 `.env.local` 读（经 scripts/local-env.mjs：CF_AIG_TOKEN、CF_ACCOUNT_ID、CF_GATEWAY_ID）。
  */
-import { readFileSync } from "node:fs"
 import { lazyTools } from "../../packages/brain/dist/index.js"
 import { defineTool, InMemoryEventLog, runLoop } from "../../packages/core/dist/index.js"
 import { anthropicMessages } from "../../packages/lowering-fetch/dist/index.js"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 
-const info = readFileSync(new URL("../../模型API测试信息.md", import.meta.url), "utf8")
-const cfToken = info.match(/(cfut_[A-Za-z0-9_-]+)/)?.[1]
-const cfAccount = info.match(/account id：\s*([a-f0-9]{32})/)?.[1]
-const cfGateway = info.match(/gateway id：\s*([\w-]+)/)?.[1] ?? "reins-dev"
-if (!cfToken || !cfAccount) throw new Error("信息文件里缺 CF 令牌 / account id")
-const BASE = `https://gateway.ai.cloudflare.com/v1/${cfAccount}/${cfGateway}/anthropic/v1`
+const cfToken = need("CF_AIG_TOKEN")
+const BASE = `${cfGatewayBase()}/anthropic/v1`
 
 const which = process.argv[2] ?? "haiku"
 const MODEL_ID = which === "opus" ? "claude-opus-5" : "claude-haiku-4-5-20251001"
