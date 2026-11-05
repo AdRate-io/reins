@@ -185,3 +185,32 @@ OnSet 最后的做法：状态挂在宿主自己的 run 对象上，在包住 ru
 优先级低：不影响行为，只是每次提醒多一行重复。OnSet 先在中文渲染里跳过（OPT-261105-1），reins 修了就删。
 
 > **处置（reins，2026-11-05）**：照做，但不是"一律不比 `contextTokens`"。`limits.contextTokens` 与窗口 `contextLimit` 不是同一个数：宿主可能在 1M 窗口上把单次上下文封到 200k，这条上限分母不同、会真的暂停，删掉就丢了真信息。判据：上限 ≥ 窗口时单次请求越不过它，余量只是 1 − 使用率的另一种说法，不参与最紧维比较；小于窗口照报。没以兜底触发点为界（审查指出）：兜底按请求前估算判，投影后才加的快照 / 说明、估少的新内容、首轮无校准开销都能让真实上下文越过触发点，budget 按真实用量暂停，触发点与窗口之间的上限碰得到。改在读数层（`reading.ts` `remainingOf`），宿主自写 render 不用再判。OnSet 只设上下文上限且等于窗口，升级 brain 后余量行消失，可删 OnSet 侧 OPT-261105-1 的中文渲染跳过。
+
+## 建议 12（接入 Gemini 主脑补充，2026-11-05）：内容片段加视频 / 音频，模型声明能不能收
+
+背景：OnSet 想让角色主脑接公司中转站的 `gemini-3.8-flash-high`，让角色直接看片子，而不是把视频交给看片助手（另起一次 Gemini 调用）、只拿回文字结论。导演看节奏、剪辑看切点，这些判断转述一道就会失真。2026-11-05 在公司中转站（地址只在本地信息文件，上游是 Antigravity）实测：
+- Chat Completions、Responses、Anthropic Messages、Gemini 原生（`/antigravity/v1beta/models/{model}:generateContent`）四条协议都通，都能看画面、听音轨（6 秒测试片的颜色顺序、画面数字和人声都答对了；72 秒真片的 7 句台词都听全了）。
+- 按 reins 的写法跑两轮工具调用：第一轮调工具，第二轮在工具结果里给视频。三条现有线都通；Chat 线的结果按 reins 的现行做法上浮到紧随其后的 user 消息。Messages 线返回的 thinking 块和 `tool_use` 块都带 `signature`。
+- 视频在各线的放法：Chat 只认 `image_url` 的 data URI（`video_url` 被丢，`file` 被当成文字、4.7 万 token、输出乱码）；Responses 只认 `input_image`（`input_file` 同样被当成文字）；Messages 的 `image` 和 `document` 两种块都认，填视频 mime 就行。
+- 视频的 token：同一条片子在四条线上输入 token 一样（6 秒 868，72 秒 6847），按每秒约 95 token 算，是 Gemini 的低分辨率档。只有原生协议的 `generationConfig.mediaResolution: HIGH` 能升档（6 秒 812→2000，72 秒 6.8k→21k）；Chat / Responses 的 `detail: "high"`、`extra_body` 等写法都不起作用。`videoMetadata`（截段、fps）四条线都被忽略，截段只能由宿主先裁好片子。
+
+现状：`ContentPart` 只有 `text` / `image` / `tool_reference`（`packages/core/src/events/base.ts`），能力位只有 `images`（`packages/core/src/lowering/types.ts`）。`ImagePart.mime` 不校验，三条线都把 mime 原样编码进去（Chat `data:${mime};base64`、Anthropic `media_type`、Responses `input_image`），所以宿主现在把 `video/mp4` 塞进 `ImagePart` 就能跑。OnSet 不打算这样做，原因有三：
+1. 估算失真：`projection/estimate.ts` 每张图固定按 `IMAGE_TOKENS = 1600` 估，72 秒视频实际 6.8k（高分辨率 21k），上下文用量少估，整理和兜底裁剪的时机就跟着不准。
+2. 能力位会误放行：`images: true` 的模型不一定收视频（比如 DeepSeek 收图不收视频），这时视频会以图片身份发出去，换来上游报错，而不是按降级矩阵落成文字占位、记一条 lossy。
+3. 每轮重发：视频进了历史就每轮整段重发。图片也有这个问题，但图片 1–2k token，视频要 7k–20k，而且一个角色一次 run 可能看好几段。
+
+建议：
+- **core**：加媒体片段，比如 `{ type: "video" | "audio"; mime; data; durationSec? }`，或者统一成一种 `MediaPart`、按 mime 大类分。能力位加 `video` / `audio`，与 `images` 并列，缺省为 false。`run-loop.ts` 的 `CONTENT_PART_TYPES`、`loop/tools.ts`、`server/handler.ts` 的白名单同步放行。
+- **估算**：按时长估，比如视频每秒约 100 token、音频每秒约 32 token（Gemini 低分辨率档），宿主可覆盖。拿不到时长时按字节保守估。
+- **降级矩阵**：三条线写清落点。能力位为 true 时，Chat 落 `image_url`、Responses 落 `input_image`、Anthropic 落 `image`（这是中转站转换层认的写法，各家官方协议本身不收视频，要在 `note` 里写明，算 lossy 还是 exact 由 reins 定）；能力位为 false 时降成文字占位（"此处有一段 N 秒视频，模型不收视频"），记 dropped。工具结果里的视频照图片的上浮规则走。
+- **（可选）历史里的旧媒体**：投影时把较早的视频 / 音频折叠成文字占位，只保留最近 N 段，或交给宿主的 `toModelOutput` 决定。这一项可以晚于前三项。
+- **（可选，优先级最低）Gemini 原生第四条线**：`contents` / `parts`、`inlineData`、`functionCall` / `functionResponse`、`thoughtSignature` 回放、`generationConfig`（`mediaResolution`、`thinkingConfig.thinkingLevel`、`includeThoughts`）。中转站实测这些都生效，`thinkingLevel: low` 时思考 token 从约 200 降到 95。它是唯一能开高分辨率、拿到原生思考的线，转换损失最小，但工作量最大，等前几项用起来、确认低分辨率不够看再做。
+
+OnSet 这边跟着做的（reins 发版后）：型号库的模型加"收视频 / 收音频"勾选；`fs_read` / `read_resource` 读视频、音频时，模型能收就直接给片子（宿主自定时长和字节上限），不能收就照旧给元数据加封面；看片助手 `media_inspect` 留给不收视频的模型用。在那之前，Gemini 先按现有三条线之一接成普通主脑（倾向 Messages 线：它带回签名，reins 的 Anthropic 线本来就回放 thinking 签名；但 `tool_use` 块上的 `signature` 是中转站的非标字段，reins 会不会保留、丢了中转站认不认，还没经 reins 实测）。
+
+优先级中：不影响现有功能，但决定角色能不能"自己看片"，这是 OnSet 下一阶段提升成片判断力的主要办法。
+
+> **处置（reins，2026-11-05）**：接，分三步——先核签名、再做视频 / 音频片段、旧媒体折叠与 Gemini 原生线暂缓。
+> - **签名（已核）**：`spikes/gemini-relay-signature/` 用 reins 真实降级层在三条线上各跑两轮依赖工具调用（step 1 取口令、step 2 凭口令取暗号），两遍 6/6 答对暗号。中转站只在 Messages 线返回签名，且是挂在 `tool_use` 块上的 `signature`（这次没有返回 thinking 块）；reins 不保留这个字段，后续请求不带签名，中转站照样接受。Chat / Responses 线的响应里没有任何签名字段。**OnSet 现在就可以按任一条线把 Gemini 接成普通主脑**，Messages 线不比另两条多得什么。
+> - **视频 / 音频（待实施，方案另写）**：采纳 OnSet 的原因 ① ②，改三处——独立的 `video` / `audio` 两种片段（不用一种按 mime 区分的 MediaPart：分开写，漏处理的地方编译不过；混在一起，漏掉的地方会悄悄当成图片发出去）；费率常量进 core 缺省估算，宿主要改就注入自己的 `TokenEstimator`，不另加开关；能力位缺省 false、内置模型表一律不开，宿主对中转站模型声明为 true 时落 exact 并在 note 写明"中转站方言，官方端点不收"，false 时落文字占位、记 dropped。pi 版恒占位；tools-mcp 顺带把 MCP 原生的 audio 块与 video/* / audio/* 资源接上。
+> - **暂缓**：旧媒体折叠是框架替模型决定，按宪法一不做缺省，现有 compact 折叠 + `recall` 已覆盖工具结果里的视频，记 OPT 待真实用量；Gemini 原生第四条线同意 OnSet 的判断，等低分辨率确认不够用再做。
