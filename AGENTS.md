@@ -275,7 +275,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **用户停止的收尾挂在 `pause()` 里，判据是 `signal.reason` 的 `name === "RunStop"`** — 新增任何暂停出口都必须走 `pause()`，否则停止留下 pending、下一个 run 照样补跑；停止原因只认第一个 abort，已因丢租约中止的 run 再 `abort(new RunStop())` 无效。连接阶段被掐时 fetch 抛的是 `signal.reason` 本身（踩坑 46），宿主已中止的失败一律暂停不记 error。
 - **没声明 `risk` 的工具缺省不可重放：execute 前多落一条 `core.tool_started`** — 断言日志长度 / seq 的用例要算进去（纯计算的测试工具标 `risk: "low"`）；TanStack 宿主工具视图不带 risk，每次执行都会写。续跑见到"有 started 无结果"落"结果未知"不执行；任何工具返回 `subagentPause` 后补写 started，asTool 靠它判"父在补跑同一个调用"。
 - **`validateResume` 只有在状态带 `modelDigest` / `pendingToolsDigest` 且调用方传了 `model` 与基础工具表时才走收窄比对** — 漏传就退回 configHash 整体比对（更严，不会放过）；两个摘要在场即进签名材料，旧状态材料不变。工具摘要取基础工具表，别传 beforeModel 补丁改过的本轮工具表。
-- **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠子日志末条是否 `run_paused` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
+- **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠父日志里本调用是否已有 `core.tool_started` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
 - **工具返回 `subagentPause` 是暂停不是失败，`ctx.spend` 只加 `tokensSpent` 不追加 `budget_usage`** — 抛错会被 execute 的 catch 吞成 isError；父的 budget_usage 是感知校准上下文的依据，掺入子用量会污染。
 
 ### 脑子模块（brain）

@@ -232,6 +232,54 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
     })
   })
 
+  it("前一个调用转审批期间被停止：后面的写工具不执行，两个都落'没执行'", async () => {
+    const log = new InMemoryEventLog()
+    const ac = new AbortController()
+    const executed: string[] = []
+    const gated: Tool = {
+      ...writeTool("gated", executed),
+      // 审批判定是异步的，停止恰好落在这里
+      needsApproval: async () => {
+        ac.abort(new RunStop())
+        return true
+      },
+    }
+    const tools = [gated, writeTool("b", executed)]
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c0", "gated", { x: 0 }), callTool("c1", "b", { x: 1 })] },
+    ])
+    const { result } = await drain(runLoop(cfgOf(lowering, log, { tools, input: "go", signal: ac.signal })))
+    expect(result).toMatchObject({ status: "paused", reason: "host" })
+    expect(executed).toEqual([])
+    expect(await resultTexts(log)).toEqual({ c0: STOPPED_NOT_EXECUTED_TEXT, c1: STOPPED_NOT_EXECUTED_TEXT })
+  })
+
+  it("模型回复收完、首个工具开跑前被停止：写工具不执行、不写 started，落'没执行'", async () => {
+    const log = new InMemoryEventLog()
+    const ac = new AbortController()
+    const executed: string[] = []
+    const lateStop: Socket = {
+      afterModel() {
+        ac.abort(new RunStop())
+      },
+    }
+    const lowering = new ScriptedLowering([{ drafts: [callTool("c1", "a", { x: 1 })] }])
+    const { result } = await drain(
+      runLoop(
+        cfgOf(lowering, log, {
+          tools: [writeTool("a", executed)],
+          sockets: [lateStop],
+          input: "go",
+          signal: ac.signal,
+        }),
+      ),
+    )
+    expect(result).toMatchObject({ status: "paused", reason: "host" })
+    expect(executed).toEqual([])
+    expect(types(await all(log))).not.toContain("tool_started")
+    expect((await resultTexts(log)).c1).toBe(STOPPED_NOT_EXECUTED_TEXT)
+  })
+
   it("工具批中途停止时不进 onTurnEnd：Socket 判 stop 也不会让 pending 带进 done", async () => {
     const log = new InMemoryEventLog()
     const ac = new AbortController()

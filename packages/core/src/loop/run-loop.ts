@@ -960,6 +960,10 @@ async function* executeToolCalls(
       continue
     }
 
+    // 中止检查紧贴副作用之前：批尾那道检查拦不住"前一个调用转审批 / 被拦后 continue"与"模型回复收完、首个工具开跑前"两个空档。
+    // 本调用留作 pending——用户停止由 pause() 收尾成"没执行"，其它中止恢复时补跑
+    if (cfg.signal?.aborted) break
+
     // 不可重放的工具先记"开始动手"：execute 途中进程死亡，续跑见到它就不再执行（D2）
     const replayable = isReplayable(tool)
     const markStarted = async function* (): AsyncGenerator<Event, void> {
