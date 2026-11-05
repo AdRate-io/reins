@@ -252,7 +252,7 @@ reins 对应版本（已发布到 npm 官方源）：`@reinsjs/core` 0.10.0、`@
 
 ## reins 回复（第二批，2026-11-05）
 
-> 建议 5 采纳，已实施，**待发版**（store-pg 0.4.0）。核实时发现的问题比建议里推测的更具体，修的位置也不同：主要修在 store-pg 自己的 SQL，适配器很薄。实施方案：`docs/implementation-plans/2026-11-05-store-pg接postgres.js.md`；踩坑 47、48。
+> 建议 5 采纳，**已发版**：`@reinsjs/store-pg` 0.4.0（2026-11-06，npm 官方源；其余包版本不变，依赖 `@reinsjs/core` 0.10.0）。核实时发现的问题比建议里推测的更具体，修的位置也不同：主要修在 store-pg 自己的 SQL，适配器很薄。实施方案：`docs/implementation-plans/2026-11-05-store-pg接postgres.js.md`；踩坑 47、48。
 
 ## 总览
 
@@ -321,3 +321,5 @@ AdRate 接入时注意：
 | 发版前 AdRate 方案的状态 | 发版后 AdRate 要做的 |
 | --- | --- |
 | 方案中"reins 存储接入"标为依赖 reins，排在 M1 开头；M0 三项前置改造不受影响 | 直接把现有 postgres.js 连接交给适配器，不引入 `pg`、不另开连接池；M1 开头在真实库上做一次往返验证 |
+
+发版后核实（2026-11-06）：空目录从 npm 官方源安装 `@reinsjs/store-pg@0.4.0` + postgres.js 4.0.0，对真库冒烟 9/9——库内 `json_typeof = object` 且逐字、读回、fork、并发同 seq 报 `seq_conflict`、blob、租约、记忆、camel 实例被拒。reins CI 每次推送都对 `postgres:16.13-alpine`（与 AdRate 生产同版本）跑 pg、postgres.js 3 / 4、Drizzle 包过的 postgres.js 3 / 4 五列。
