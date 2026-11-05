@@ -309,6 +309,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败。
 - **内置模型表是最小表，`definitionOf` 内置打底、选项覆盖，表外必须给 `baseUrl`；同一 OpenAI id 两条协议各一份，无协议解析缺省走 Responses** — 测试目标模型显式取条目，别靠无协议解析。
 - **Chat 线有损**：thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点。**工具结果图片缺省上浮**到同批 tool 之后的一条 user（`tool+lifted-images`，`chat.liftToolImages: false` 退回占位）——放出时机是第一个**会下发的**非 tool_result 条目，`dropped` 不算（踩坑 39）。
+- ⚠️ **视频 / 音频能力位为真时三条线都走图片槽，这是中转站方言（官方端点 400），内置表一律不开；绝不改成 `input_audio`——中转站回 200 却静默丢弃（踩坑 45）** — 能力位缺省不收、落占位记 lossy；只有图片时 Chat 上浮输出逐字节不变（快照取自改动前实现），改 `chat/to-request.ts` 先跑它。片段形状真源 core `isContentPart`，server 白名单是独立一份、靠跨包用例锁同口径。
 - **`system_note.directive: true` 的说明三条线都走带标签的 user，不看 `midConversationSystem`** — 只给要模型去做的指令用（compact 请求）；写进日志即定格，历史说明升级后送达方式不变。Anthropic 线同轮有感知说明时形状是 user(tool_result + 请求) → system(感知)，请求不是最后一条（用例锁住）。
 - **Anthropic 线的中途 system 攒到下一条 assistant 之前或收尾再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user（含只带 tool_result 的 user）、后接 assistant 或收尾；说明位置比时间线晚一条 user 仍算 exact 并备注。
 - **Anthropic 线缓存断点由本包打：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 占一格；别把断点留在 system 消息上（几乎零命中）。

@@ -52,7 +52,7 @@ describe("toToolInfo：服务器声明 → 纯数据", () => {
 })
 
 describe("toContentParts：MCP 内容块 → reins 内容片段，有损处明说", () => {
-  it("text / image 原样；audio、resource_link、二进制 resource 翻成说明文字；文本 resource 带 uri 头；图片 resource 成图片", () => {
+  it("text / image / audio 原样；resource_link、二进制 resource 翻成说明文字；文本 resource 带 uri 头；图片 resource 成图片", () => {
     const parts = toContentParts({
       content: [
         { type: "text", text: "t" },
@@ -77,7 +77,7 @@ describe("toContentParts：MCP 内容块 → reins 内容片段，有损处明�
     expect(parts).toEqual([
       { type: "text", text: "t" },
       { type: "image", mime: "image/png", data: "aGVsbG8=" },
-      { type: "text", text: "[audio audio/wav, 5 bytes; audio cannot be shown to the model]" },
+      { type: "audio", mime: "audio/wav", data: "aGVsbG8=" },
       { type: "text", text: "Resource link: file:///x.txt (x.txt) [text/plain] — notes" },
       { type: "text", text: "[resource file:///y.txt (text/plain)]\ninline text" },
       {
@@ -88,6 +88,24 @@ describe("toContentParts：MCP 内容块 → reins 内容片段，有损处明�
       { type: "text", text: '{"type":"weird","foo":1}' },
     ])
   })
+  it("视频 / 音频（2026-11-05）：resource blob 按 mime 前缀成片段（没有时长）；audio 块缺 data 或 mime 不对仍落说明", () => {
+    expect(
+      toContentParts({
+        content: [
+          { type: "resource", resource: { uri: "file:///c.mp4", mimeType: "video/mp4", blob: "aGVsbG8=" } },
+          { type: "resource", resource: { uri: "file:///c.mp3", mimeType: "audio/mpeg", blob: "aGVsbG8=" } },
+          { type: "audio", data: "aGVsbG8=", mimeType: "application/octet-stream" },
+          { type: "audio", mimeType: "audio/wav" },
+        ],
+      }),
+    ).toEqual([
+      { type: "video", mime: "video/mp4", data: "aGVsbG8=" },
+      { type: "audio", mime: "audio/mpeg", data: "aGVsbG8=" },
+      { type: "text", text: "[audio application/octet-stream, 5 bytes; audio cannot be shown to the model]" },
+      { type: "text", text: "[audio audio/wav, 0 bytes; audio cannot be shown to the model]" },
+    ])
+  })
+
   it("content 为空：有 structuredContent 用它的 JSON，否则空文本", () => {
     expect(toContentParts({ content: [], structuredContent: { a: 1 } })).toEqual([
       { type: "text", text: '{"a":1}' },

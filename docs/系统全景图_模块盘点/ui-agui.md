@@ -58,7 +58,7 @@
 1. `messageId` 一律取 `event.id`；`timestamp` 取 `event.at`；每条都带 `metadata.reins = { seq, eventId, type, dropped? }`，客户端据此去重或定位回时间线。
 2. **没有任何事件被丢弃**：`switch` 的 `default` 分支兜底成 `CUSTOM`，所以新增事件类型不会静默消失，只是前端可能不认识。
 3. 空正文不造空帧：`model_text` / `user_message` 文本为空时不发 `TEXT_MESSAGE_CONTENT`；`model_thinking` 文本为空（加密 reasoning 只有 replay 没正文）时只发 `REASONING_START` + `REASONING_END`，让前端知道"这里想过"。
-4. 内容片段只有文本能进 AG-UI 正文：`partsToText` 把图片换成 `[图片 <mime>]` 占位并在 `metadata.reins.dropped` 里记 `image:<mime>`（P7 有损必声明）。
+4. 内容片段只有文本能进 AG-UI 正文：`partsToText` 把图片 / 视频 / 音频换成 `[<类型> <mime>]` 占位并在 `metadata.reins.dropped` 里记 `<类型>:<mime>`（P7 有损必声明）。
 5. `tool_result` 的 `isError` / `spilled` 在 AG-UI 没有对应字段，塞进 `metadata.reins` 不丢。
 
 ### 3.2 流式：增量与完整事件接成一条消息

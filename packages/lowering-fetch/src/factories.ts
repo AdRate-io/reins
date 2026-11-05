@@ -28,6 +28,9 @@ export interface ModelOptions {
   maxOutputTokens?: number
   reasoning?: boolean
   images?: boolean
+  /** 收不收视频 / 音频；缺省 false。⚠️ 走图片槽是中转站方言，只对确认收的中转站模型声明，见 models.ts FetchModel.video */
+  video?: boolean
+  audio?: boolean
   cost?: ModelCost
   /** 上游是否接受中途 role:"system"；Chat 缺省 true，Anthropic 按模型族推断 */
   midConversationSystem?: boolean
@@ -90,6 +93,8 @@ export function definitionOf(
       maxOutputTokens: opts.maxOutputTokens,
       reasoning: opts.reasoning,
       images: opts.images,
+      video: opts.video,
+      audio: opts.audio,
       cost: opts.cost,
       midConversationSystem: opts.midConversationSystem,
       auth: opts.auth,
@@ -120,11 +125,13 @@ export function chatCompletions(id: string, opts: ProviderModelOptions): BoundMo
 
 /** DeepSeek 直连：缺省官方地址、开 reasoning_content 方言（带 tools 时缺它 400） */
 export function deepseek(id: string, opts: ModelOptions): BoundModel {
+  // 表外的新型号按"收图"起；表内型号以内置定义为准（deepseek-v4-pro 只收文字，不能被这个缺省盖掉，BUG-261105-1）
+  const unknown = findBuiltin("deepseek", id, "openai-chat") === undefined
   return chatCompletions(id, {
     provider: "deepseek",
     baseUrl: "https://api.deepseek.com",
     reasoning: true,
-    images: true,
+    ...(unknown ? { images: true } : {}),
     ...opts,
     chat: { reasoningContent: true, ...opts.chat },
   })

@@ -48,8 +48,37 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     })
   }
   const user = () => mk("core.user_message", { content: [{ type: "text", text: "hi" }] })
+  const video = { type: "video", mime: "video/mp4", data: "AA", durationSec: 72 }
+  const audio = { type: "audio", mime: "audio/mpeg", data: "AA" }
+  const call = () => mk("core.tool_call", { toolCallId: "c1", name: "f", args: {} }, origin)
   return [
     { label: "user_message", events: [user()] },
+    {
+      label: "user_message 带视频 / 音频（占位）",
+      events: [mk("core.user_message", { content: [video, audio] })],
+    },
+    {
+      label: "user_message 带视频且夹在调用与结果之间",
+      events: [
+        user(),
+        call(),
+        mk("core.user_message", { content: [video] }),
+        mk("core.tool_result", {
+          toolCallId: "c1",
+          name: "f",
+          content: [{ type: "text", text: "r" }],
+          isError: false,
+        }),
+      ],
+    },
+    {
+      label: "tool_result 带音频（占位）",
+      events: [
+        user(),
+        call(),
+        mk("core.tool_result", { toolCallId: "c1", name: "f", content: [audio], isError: false }),
+      ],
+    },
     { label: "model_text", events: [user(), mk("core.model_text", { text: "ok" }, origin)] },
     {
       label: "model_thinking 带签名",

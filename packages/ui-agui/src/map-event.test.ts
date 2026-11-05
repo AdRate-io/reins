@@ -118,6 +118,18 @@ describe("字段细节", () => {
     expect(partsToText([])).toEqual({ text: "", dropped: [] })
   })
 
+  it("视频 / 音频同样以占位符代替、按类型记 dropped（2026-11-05）", () => {
+    expect(
+      partsToText([
+        { type: "video", mime: "video/mp4", data: "V", durationSec: 3 },
+        { type: "audio", mime: "audio/mpeg", data: "A" },
+      ]),
+    ).toEqual({
+      text: "[video video/mp4]\n[audio audio/mpeg]",
+      dropped: ["video:video/mp4", "audio:audio/mpeg"],
+    })
+  })
+
   it("model_text 空正文：没有 CONTENT（AG-UI 不允许空 delta），只有 START / END", () => {
     const out = mapEvent(ev("core.model_text", { text: "" }))
     expect(out.map((e) => e.type)).toEqual(["TEXT_MESSAGE_START", "TEXT_MESSAGE_END"])

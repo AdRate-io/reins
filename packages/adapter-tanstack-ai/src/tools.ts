@@ -13,13 +13,12 @@ import {
   isSubagentPause,
   normalizeToolOutput,
   type Tool as ReinsTool,
-  renderToolReference,
   type ToolContext,
   type ToolResult,
 } from "@reinsjs/core"
 import type { AnyTool, JSONSchema, ToolExecutionContext } from "@tanstack/ai"
 import { convertSchemaToJsonSchema } from "@tanstack/ai"
-import { toTanstackContent } from "./content.js"
+import { partAsText, toTanstackContent } from "./content.js"
 
 /** 视图标记：这是 TanStack 宿主工具在 reins 这边的影子，不由 reins 执行 */
 export const NATIVE_TOOL: unique symbol = Symbol("reins.tanstack.nativeTool")
@@ -114,9 +113,5 @@ export function toTanstackTool(tool: ReinsTool, bridge: ToolBridge): AnyTool {
 }
 
 function textOf(result: ToolResult): string {
-  return result.content
-    .map((p) =>
-      p.type === "text" ? p.text : p.type === "tool_reference" ? renderToolReference(p) : `[image ${p.mime}]`,
-    )
-    .join("\n")
+  return result.content.map(partAsText).join("\n")
 }

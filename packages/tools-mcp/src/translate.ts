@@ -65,9 +65,11 @@ export interface McpCallResult {
 /**
  * MCP 内容块 → reins 内容片段。
  * - text → 文本；image → 图片（mime + base64）
- * - audio → 一行说明（模型看不到音频）
+ * - audio → 音频片段（2026-11-05 起；MCP 没有时长，估算走字节折算）；缺 data 或 mime 不是 audio/* 时一行说明
  * - resource_link → 一行 "Resource link: uri (name) [mime]"
- * - resource（内嵌）：文本资源 → 带 uri 头的文本；图片二进制 → 图片；其他二进制 → 一行说明
+ * - resource（内嵌）：文本资源 → 带 uri 头的文本；image/* / video/* / audio/* 二进制 → 对应片段（MCP 没有 video 块，
+ *   视频只会从这里来）；其他二进制 → 一行说明
+ * 模型收不收视频 / 音频由降级层按能力位处置（不收落占位），这里只管如实翻译
  * - 不认识的块 → JSON 文本（不静默丢）
  * - content 为空而有 structuredContent → 其 JSON；都没有 → 空文本（模型总得有个结果块）
  */
@@ -86,6 +88,10 @@ export function toContentParts(result: McpCallResult): ContentPart[] {
         else parts.push({ type: "text", text: "[image block without data/mimeType]" })
         break
       case "audio": {
+        if (typeof b.data === "string" && typeof b.mimeType === "string" && b.mimeType.startsWith("audio/")) {
+          parts.push({ type: "audio", mime: b.mimeType, data: b.data })
+          break
+        }
         const bytes = typeof b.data === "string" ? base64Bytes(b.data) : 0
         parts.push({
           type: "text",
@@ -111,6 +117,10 @@ export function toContentParts(result: McpCallResult): ContentPart[] {
           parts.push({ type: "text", text: `[resource ${uri}${mime ? ` (${mime})` : ""}]\n${r.text}` })
         } else if (typeof r.blob === "string" && mime?.startsWith("image/")) {
           parts.push({ type: "image", mime, data: r.blob })
+        } else if (typeof r.blob === "string" && mime?.startsWith("video/")) {
+          parts.push({ type: "video", mime, data: r.blob })
+        } else if (typeof r.blob === "string" && mime?.startsWith("audio/")) {
+          parts.push({ type: "audio", mime, data: r.blob })
         } else {
           const bytes = typeof r.blob === "string" ? base64Bytes(r.blob) : 0
           parts.push({

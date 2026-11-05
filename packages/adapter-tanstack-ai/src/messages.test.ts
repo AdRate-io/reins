@@ -1,7 +1,7 @@
 import { type CoreEvent, createCoreEvent, createCoreRegistry, type Event } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { BlockAssembler } from "./assembler.js"
-import { toTanstackParts } from "./content.js"
+import { fromTanstackContent, toTanstackContent, toTanstackParts } from "./content.js"
 import { TANSTACK_LOSS_MATRIX } from "./loss-matrix.js"
 import {
   COMPACTION_PREFIX,
@@ -312,11 +312,11 @@ describe("importModelMessages / trailingUserMessages", () => {
     expect(drafts[1]?.replay).toEqual({ ...ORIGIN, thinkingSignature: "sig" })
     expect(drafts[2]?.payload).toEqual({ toolCallId: "c1", name: "add", args: { a: 1 } })
     expect(drafts[3]?.payload).toMatchObject({ name: "add", isError: true })
-    expect(dropped).toEqual(["audio"])
+    expect(dropped).toEqual(["audio(url)"])
     expect(drafts[5]?.payload).toEqual({
       content: [
         { type: "text", text: "再来" },
-        { type: "text", text: "[audio part could not be imported into the reins timeline]" },
+        { type: "text", text: "[audio(url) part could not be imported into the reins timeline]" },
       ],
     })
   })
@@ -465,5 +465,47 @@ describe("工具定义引用段（L1）", () => {
         { type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } },
       ]),
     ).toEqual([{ type: "text", content: '### g\ndg\nInput schema: {"type":"object"}' }])
+  })
+})
+
+describe("视频 / 音频片段互译（2026-11-05 方案）", () => {
+  it("reins → TanStack：data 源的 video / audio，durationSec 不带（TanStack 没有时长字段）；含媒体时正文给片段数组", () => {
+    const parts = [
+      { type: "text" as const, text: "看" },
+      { type: "video" as const, mime: "video/mp4", data: "V", durationSec: 72 },
+      { type: "audio" as const, mime: "audio/mpeg", data: "A" },
+    ]
+    const expected = [
+      { type: "text", content: "看" },
+      { type: "video", source: { type: "data", value: "V", mimeType: "video/mp4" } },
+      { type: "audio", source: { type: "data", value: "A", mimeType: "audio/mpeg" } },
+    ]
+    expect(toTanstackParts(parts)).toEqual(expected)
+    expect(toTanstackContent(parts)).toEqual(expected)
+    expect(
+      toTanstackContent([
+        { type: "text", text: "a" },
+        { type: "text", text: "b" },
+      ]),
+    ).toBe("a\n\nb")
+  })
+
+  it("TanStack → reins：data 源逐字翻译（没有时长）；URL 源、mime 前缀不符的落占位并声明", () => {
+    const imported = fromTanstackContent([
+      { type: "video", source: { type: "data", value: "V", mimeType: "video/webm" } },
+      { type: "audio", source: { type: "data", value: "A", mimeType: "audio/wav" } },
+      { type: "video", source: { type: "url", value: "https://x/v.mp4" } },
+      { type: "audio", source: { type: "data", value: "B", mimeType: "application/octet-stream" } },
+    ])
+    expect(imported.parts).toEqual([
+      { type: "video", mime: "video/webm", data: "V" },
+      { type: "audio", mime: "audio/wav", data: "A" },
+      { type: "text", text: "[video(url) part could not be imported into the reins timeline]" },
+      {
+        type: "text",
+        text: "[audio(application/octet-stream) part could not be imported into the reins timeline]",
+      },
+    ])
+    expect(imported.dropped).toEqual(["video(url)", "audio(application/octet-stream)"])
   })
 })

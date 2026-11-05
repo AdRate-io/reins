@@ -48,6 +48,12 @@ export interface LoweringCapabilities {
    */
   deferredTools: boolean
   images: boolean
+  /**
+   * 模型收不收视频 / 音频片段（2026-11-05）。没写 = 不收（fail-closed），降级层落文字占位并记 lossy。
+   * 可选是为了宿主自写的 Lowering 不改也能编译；视频里的音轨不要求 `audio`
+   */
+  video?: boolean
+  audio?: boolean
   contextWindow: number
   maxOutputTokens: number
 }

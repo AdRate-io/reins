@@ -33,30 +33,45 @@ export function deferredToolSpecOf(tool: Tool, deferred: boolean): ToolSpec {
   return deferred ? { ...toolSpecOf(tool), deferLoading: true } : toolSpecOf(tool)
 }
 
-/** 工具返回值里能认出的内容段：文本、图片、工具定义引用（L1）。宿主经 HTTP 送来的用户消息另有白名单（server），不含引用段 */
+/** 时长：缺省，或有限正数 */
+function isDuration(x: unknown): boolean {
+  return x === undefined || (typeof x === "number" && Number.isFinite(x) && x > 0)
+}
+
+/**
+ * 内容片段的形状校验，全包唯一一份（真源索引）：工具返回值归一（本文件）与 runLoop 输入草稿 / 片段数组（run-loop.ts）都调它。
+ * 坏片段一旦进日志，之后每次读到它都会崩（会话报废），所以在写之前拦。
+ * 规则：text 有 `text`；image 有 `mime` 与 `data`（mime 不校验，历史行为）；video / audio 的 mime 以 "video/" / "audio/" 开头、
+ * `durationSec` 缺省或为有限正数；tool_reference 有名字、描述与对象形 inputSchema。
+ * 宿主经 HTTP 送来的用户消息另有白名单（server `rebuildContentParts`，两份实现靠跨包用例锁同口径），不含引用段
+ */
 export function isContentPart(x: unknown): x is ContentPart {
   if (typeof x !== "object" || x === null) return false
-  const p = x as {
-    type?: unknown
-    text?: unknown
-    mime?: unknown
-    data?: unknown
-    name?: unknown
-    description?: unknown
-    inputSchema?: unknown
+  const p = x as Record<string, unknown>
+  switch (p.type) {
+    case "text":
+      return typeof p.text === "string"
+    case "image":
+      return typeof p.mime === "string" && typeof p.data === "string"
+    case "video":
+    case "audio":
+      return (
+        typeof p.mime === "string" &&
+        p.mime.startsWith(`${p.type}/`) &&
+        typeof p.data === "string" &&
+        isDuration(p.durationSec)
+      )
+    case "tool_reference":
+      return (
+        typeof p.name === "string" &&
+        typeof p.description === "string" &&
+        typeof p.inputSchema === "object" &&
+        p.inputSchema !== null &&
+        !Array.isArray(p.inputSchema)
+      )
+    default:
+      return false
   }
-  if (p.type === "text") return typeof p.text === "string"
-  if (p.type === "image") return typeof p.mime === "string" && typeof p.data === "string"
-  if (p.type === "tool_reference") {
-    return (
-      typeof p.name === "string" &&
-      typeof p.description === "string" &&
-      typeof p.inputSchema === "object" &&
-      p.inputSchema !== null &&
-      !Array.isArray(p.inputSchema)
-    )
-  }
-  return false
 }
 
 function isToolResult(x: unknown): x is ToolResult {

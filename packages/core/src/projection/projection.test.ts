@@ -14,7 +14,7 @@ import { foldCompactions } from "./fold.js"
 import { digestArgs, foldedToolResults, renderFoldedToolResults } from "./manifest.js"
 import { reinjectPins } from "./pins.js"
 import { defaultProjectionChain, project } from "./project.js"
-import { budgetTruncate, splitTurns } from "./truncate.js"
+import { budgetTruncate, defaultThresholdSummary, splitTurns } from "./truncate.js"
 import type { ProjectionContext } from "./types.js"
 
 const registry = createCoreRegistry()
@@ -115,6 +115,49 @@ describe("roughTokenEstimate", () => {
         ev(5, "core.budget_usage", { tokens: { input: 1, output: 2 }, toolCalls: 0, wallMs: 0 }),
       ),
     ).toBeGreaterThan(4)
+  })
+})
+
+describe("roughTokenEstimate：视频 / 音频（2026-11-05 方案 P0 费率）", () => {
+  /** n 字节对应的 base64 串（长度 = 字节 × 4/3） */
+  const b64 = (bytes: number) => "A".repeat(Math.ceil((bytes * 4) / 3))
+  const um = (part: unknown) =>
+    roughTokenEstimate(
+      ev(1, "core.user_message", { content: [part] } as CoreEventPayloads["core.user_message"]),
+    )
+
+  it("有时长：视频每秒 100、音频每秒 32，向上取整", () => {
+    expect(um({ type: "video", mime: "video/mp4", data: "AAAA", durationSec: 72 })).toBe(7200 + 4)
+    expect(um({ type: "video", mime: "video/mp4", data: "AAAA", durationSec: 0.5 })).toBe(50 + 4)
+    expect(um({ type: "audio", mime: "audio/mpeg", data: "AAAA", durationSec: 6.01 })).toBe(193 + 4)
+  })
+
+  it("没时长：按字节折算（视频 1 Mbps、音频 64 kbps）", () => {
+    // 5 Mbps 的 30 秒片 ≈ 18.75 MB → 150 秒 → 15000
+    expect(um({ type: "video", mime: "video/mp4", data: b64(18_750_000) })).toBe(15_000 + 4)
+    // 64 kbps mp3 的 60 秒 = 480 KB → 60 秒 → 1920
+    expect(um({ type: "audio", mime: "audio/mpeg", data: b64(480_000) })).toBe(1920 + 4)
+  })
+
+  it("没时长且文件小：30 秒下限（宁高勿低）", () => {
+    expect(um({ type: "video", mime: "video/mp4", data: b64(56_000) })).toBe(3000 + 4)
+    expect(um({ type: "audio", mime: "audio/wav", data: "AAAA" })).toBe(960 + 4)
+  })
+})
+
+describe("defaultThresholdSummary：非文本片段按类型摘录", () => {
+  it("image / video / audio / tool_reference 各写各的占位", () => {
+    const u = ev(1, "core.user_message", {
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", mime: "image/png", data: "AAAA" },
+        { type: "video", mime: "video/mp4", data: "AAAA", durationSec: 3 },
+        { type: "audio", mime: "audio/mpeg", data: "AAAA" },
+        { type: "tool_reference", name: "g", description: "d", inputSchema: {} },
+      ],
+    })
+    const text = defaultThresholdSummary([u], ctxOf([u]))
+    expect(text).toContain("- look [image] [video] [audio] [tool g]")
   })
 })
 

@@ -49,8 +49,11 @@ is where reins' "no dynamic registration" stance lands. The loop records the tab
 (invisible to the model) and, when it differs from the previous run's, appends a visible `system_note` naming the
 added and removed tools so the model knows its hands changed.
 
-**Calls go through `tools/call`.** The result's `content` blocks become reins content parts (text and images as-is;
-audio, resource links and binary resources become one-line descriptions — lossy, and said so). `isError` passes
+**Calls go through `tools/call`.** The result's `content` blocks become reins content parts (text, images and audio as-is;
+embedded binary resources become image / video / audio parts by mime type; resource links and other binary
+resources become one-line descriptions — lossy, and said so). MCP carries no duration, so video and audio are
+estimated from their byte size, and whether the model actually sees them depends on the lowering's `video` /
+`audio` capabilities (a placeholder otherwise). `isError` passes
 through. A thrown error (unknown tool, dropped connection, timeout) becomes a `tool_result` with `isError: true`;
 the run continues and the model decides what to do.
 

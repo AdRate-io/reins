@@ -71,9 +71,13 @@ const USER_DEFERRED = lossy(
   "the user speaks up before all tool results are in",
 )
 
+/** pi-ai 没有视频 / 音频内容：换占位（2026-11-05 视频音频方案）；to-request.ts 落点 note 用同一常量 */
+export const MEDIA_PLACEHOLDER_NOTE = "pi-ai has no video / audio content; replaced with placeholder text"
+const MEDIA_WHEN = "the content carries video or audio"
+
 export const LOSS_MATRIX: LossMatrix = {
   "anthropic-messages": {
-    "core.user_message": [exact("user"), USER_DEFERRED],
+    "core.user_message": [exact("user"), USER_DEFERRED, lossy("user", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN)],
     "core.model_text": [exact("assistant-text")],
     "core.model_thinking": [
       exact("thinking-block", "replayed verbatim with its signature"),
@@ -81,7 +85,10 @@ export const LOSS_MATRIX: LossMatrix = {
       THINKING_COMMON.foreign,
     ],
     "core.tool_call": [exact("tool_use"), TOOL_CALL_ARGS],
-    "core.tool_result": [exact("tool_result", "in the user message right after the matching tool_use")],
+    "core.tool_result": [
+      exact("tool_result", "in the user message right after the matching tool_use"),
+      lossy("tool_result", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN),
+    ],
     "core.system_note": [
       exact(
         "system",
@@ -109,7 +116,7 @@ export const LOSS_MATRIX: LossMatrix = {
     ],
   },
   "openai-responses": {
-    "core.user_message": [exact("user"), USER_DEFERRED],
+    "core.user_message": [exact("user"), USER_DEFERRED, lossy("user", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN)],
     "core.model_text": [exact("assistant-message")],
     "core.model_thinking": [
       exact("reasoning-item", "the encrypted_content is replayed verbatim"),
@@ -117,7 +124,10 @@ export const LOSS_MATRIX: LossMatrix = {
       THINKING_COMMON.foreign,
     ],
     "core.tool_call": [exact("function_call"), TOOL_CALL_ARGS],
-    "core.tool_result": [exact("function_call_output")],
+    "core.tool_result": [
+      exact("function_call_output"),
+      lossy("function_call_output", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN),
+    ],
     "core.system_note": [
       exact("developer", "reasoning models take the developer role"),
       exact("system", "non-reasoning models take the system role"),

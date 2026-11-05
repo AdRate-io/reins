@@ -23,7 +23,20 @@ const COMPAT: FetchModel = {
   images: false,
   midConversationSystem: false,
 }
-const lowering = new FetchLowering({ apiKey: () => "k", models: [COMPAT] })
+/** 中转站模型：宿主声明收图、视频、音频（2026-11-05 方案；三条线都走图片槽） */
+const RELAY: FetchModel = {
+  provider: "relay",
+  id: "gemini-relay",
+  api: "openai-responses",
+  baseUrl: "https://relay/v1",
+  contextWindow: 1_000_000,
+  maxOutputTokens: 8_000,
+  reasoning: false,
+  images: true,
+  video: true,
+  audio: true,
+}
+const lowering = new FetchLowering({ apiKey: () => "k", models: [RELAY, COMPAT] })
 
 interface Variant {
   label: string
@@ -71,6 +84,8 @@ function variants(api: string, model: { provider: string; id: string }): Variant
   const text = (t = "ok", replay: Record<string, unknown> = origin) =>
     mk("core.model_text", { text: t }, { replay })
   const image = { type: "image", mime: "image/png", data: "AA" }
+  const video = { type: "video", mime: "video/mp4", data: "AA", durationSec: 72 }
+  const audio = { type: "audio", mime: "audio/mpeg", data: "AA" }
   const call = (id: string, args: unknown = {}, replay: Record<string, unknown> = origin) =>
     mk("core.tool_call", { toolCallId: id, name: "f", args }, { replay })
   const result = (id: string, content: unknown[] = [{ type: "text", text: "r" }], isError = false) =>
@@ -86,6 +101,11 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       label: "user_message 带图片",
       events: [mk("core.user_message", { content: [{ type: "text", text: "看" }, image] })],
     },
+    {
+      label: "user_message 带视频 / 音频",
+      events: [mk("core.user_message", { content: [{ type: "text", text: "看" }, video, audio] })],
+    },
+    { label: "user_message 只带音频", events: [mk("core.user_message", { content: [audio] })] },
     { label: "model_text 带项 id", events: [user(), text("ok", { ...origin, textSignature: "msg_1" })] },
     { label: "model_text 无项 id（补一个）", events: [user(), text()] },
     {
@@ -168,6 +188,14 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       events: [user(), call("call_1"), result("call_1", [{ type: "text", text: "see" }, image])],
     },
     {
+      label: "tool_result 带视频 / 音频",
+      events: [user(), call("call_1"), result("call_1", [video, audio])],
+    },
+    {
+      label: "tool_result 图 + 视频 + 音频混放",
+      events: [user(), call("call_1"), result("call_1", [image, video, audio])],
+    },
+    {
       label: "user_message 夹在调用与结果之间（后移）",
       events: [user(), call("call_1"), user("wait"), result("call_1")],
     },
@@ -221,6 +249,11 @@ function variants(api: string, model: { provider: string; id: string }): Variant
 }
 
 const TARGETS = [
+  {
+    api: "openai-responses",
+    model: { provider: "relay", id: "gemini-relay" },
+    label: "中转站声明收视频 / 音频（方言）",
+  },
   {
     api: "openai-responses",
     model: { provider: "openai", id: "gpt-5-mini" },

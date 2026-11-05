@@ -43,6 +43,7 @@ const stream = chat({
 - **`defer` pauses the whole tool batch**, not just the call that needs approval — that is where TanStack's boundary sits.
 - **No `system` role.** `system_note` events travel as a framed `user` message and are declared lossy; thinking is replayed only with a same-provider signature. The complete table is `TANSTACK_LOSS_MATRIX`.
 - **Sub-agent pause bubbling (`asTool`) is not available here.** A tool returning `subagentPause` is reported to the model as an error; the child session stays paused and can be resumed by the host.
+- **Content parts:** data-sourced image, video and audio parts translate both ways; TanStack has no duration field, so `durationSec` is not exported and imported clips have none (the estimate falls back to byte size). URL sources, documents and parts whose mime type does not match their kind become a placeholder and are reported in `dropped`. Whether the provider takes video or audio is up to TanStack's provider adapter, not reins.
 - `@tanstack/ai` is pinned to an exact version because the middleware relies on hook contracts read from its source.
 
 ## Two more boundaries

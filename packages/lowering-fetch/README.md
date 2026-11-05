@@ -64,6 +64,7 @@ No `node:*`, no `process`, no `Buffer` — the same `dist/index.js` runs on Node
 | `apiKey` | required; use `auth: "none"` when the credential lives in `headers` (Cloudflare AI Gateway's `cf-aig-authorization`) |
 | `baseUrl` | protocol root; `/chat/completions` (OpenAI: `…/v1`, DeepSeek: the bare host), `/messages` (Anthropic: `…/v1`) or `/responses` (OpenAI: `…/v1`) is appended |
 | `contextWindow`, `maxOutputTokens`, `reasoning`, `images`, `cost`, `midConversationSystem` | override the built-in table; unknown models start from conservative defaults (128k / 16k / no reasoning / no images) |
+| `video`, `audio` | whether the model takes video / audio content parts (default `false` everywhere, including the built-in table). See "Video and audio" below before turning them on |
 | `chat.reasoningContent` | DeepSeek dialect: replay `reasoning_content` (on by default in `deepseek()`, see below) |
 | `chat.liftToolImages` | when the model takes images, move images in tool results into a `user` message right after the batch of `tool` messages (default `true`); set `false` for an upstream that rejects that shape and images become a placeholder again |
 | `anthropic.betas` | values for the `anthropic-beta` header; sent only when set (mid-conversation system needs none) |
@@ -109,6 +110,14 @@ Declared in `LOSS_MATRIX["openai-responses"]`, cell for cell comparable with `@r
 - Tool results are `function_call_output` items matched by `call_id`: a string when text-only, an array of `input_text` / `input_image` blocks when the result has images and the model accepts them; `isError` has no flag on this protocol and is expressed as a `[tool error]` prefix (`lossy`).
 - Usage: `input_tokens` includes cached and cache-write tokens, so `input` is `input_tokens − cached_tokens − cache_write_tokens`, with the two mapped to `cacheRead` / `cacheWrite`. `status: "incomplete"` with `max_output_tokens` is `length`; with `content_filter` a non-retryable `error`; `response.failed` and `error` frames are errors carrying the provider's code and message. Automatic prefix caching is best-effort on OpenAI's side; pass `prompt_cache_key` in `requestOptions` to improve hit rates.
 - Built-in table: the gpt-5 family (5.5 / 5.4 / 5.4-mini / 5.2 / 5.1 / 5 / 5-mini / 5-nano), o3 / o4-mini and gpt-4.1 / 4.1-mini / 4o-mini on Responses; the same OpenAI ids also exist as Chat Completions entries, which `openaiChat()` picks by protocol. A bare `{ provider: "openai", id }` on a `FetchLowering` you construct yourself resolves to Responses.
+
+## Video and audio
+
+`video` and `audio` content parts follow one rule on all three protocols: when the model declares `video: true` / `audio: true` they travel in that protocol's **image slot** with their own mime type (Chat `image_url` data URI, Responses `input_image`, Anthropic `image` block — cache breakpoints still apply); otherwise they become a placeholder such as `[video omitted: this model does not accept video (video/mp4, 72 s)]` and the event is `lossy`. On Chat, video and audio in tool results are moved after the batch like images, labelled by kind (`video 2:`) with an "N attachment(s)" header; a result with images only is lowered exactly as before.
+
+- **This is a relay dialect.** The image-slot shape is what OpenAI-compatible relays in front of Gemini accept; the official OpenAI, Anthropic and DeepSeek endpoints reject it. Only declare `video` / `audio` for an endpoint you have verified (the landing note says "relay dialect"), and re-check when the relay changes (`spikes/media-parts/`).
+- **Never `input_audio`.** The layer deliberately does not use it: the relay we measured answers 200 to `input_audio` but silently drops the audio, and the model then makes up what it "heard" — worse than an error.
+- `deepseek-v4-pro` takes text only (its `/models` entry lists no image input; images were silently dropped), so the built-in table says `images: false` and images become placeholders; pass `images: true` only if that changes.
 
 ## Errors and retries
 

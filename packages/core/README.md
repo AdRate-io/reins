@@ -76,6 +76,14 @@ const deploy = defineTool<{ env: "staging" | "prod" }>({
 
 A tool can also *be* another agent: return `subagentPause(...)` from `execute` and the run pauses with `Interruption { kind: "subagent" }`, carrying the child session's own interruptions and state. `@reinsjs/agent` ships `asTool(agent, opts)` on top of this.
 
+## Media: images, video and audio
+
+Content parts are `text`, `image`, `video`, `audio` and `tool_reference`. A `video` / `audio` part carries `mime` (must start with `video/` / `audio/`), base64 `data` and an optional `durationSec` (a finite positive number); a malformed part is rejected before anything is written. A video's soundtrack is part of the video — use `audio` only for audio files.
+
+- **Capabilities decide, not mime types.** `LoweringCapabilities.video` / `audio` are optional and mean "no" when absent: a lowering that does not take them replaces the part with a placeholder and records the event `lossy`, so the run goes on instead of the provider answering 400.
+- **Estimates follow duration.** Video is estimated at 100 tokens per second and audio at 32 (measured: about 91 and 25 on a relay Gemini). Without `durationSec` the estimate falls back to the byte size at a deliberately low bitrate (1 Mbps / 64 kbps) with a 30-second floor — erring high, because bitrates differ by about 60× and underestimating leads to overflow. Give `durationSec` whenever you know it. For other rates, wrap `roughTokenEstimate` in your own `TokenEstimator`.
+- **They stay in the log.** Media `data` is stored in the event like an image (append-only, never spilled) and is re-sent on every turn while it is in view. Cap the size and length of clips on your side; the model can fold what it has watched with `compact` and get it back with `recall`.
+
 ## Sockets
 
 A `Socket` is the seam brain modules use — five hooks (`beforeModel`, `afterModel`, `beforeTool`, `afterTool`, `onTurnEnd`) plus two static contributions (`tools`, `systemPrompt`, resolved once per run so prompt caches stay warm). Anything a socket wants the model to see is emitted as an event and lands in the log first; nothing is injected around the log. Every hook gets `ctx.batch`: the tool calls of the current batch, the results logged so far (in `beforeTool`, only those of earlier calls), the ids left waiting for approval / a client result / a paused sub-agent, and `resumed` when the batch is one a previous run left unfinished. It is one object updated in place during the turn — copy what you need instead of keeping a reference. A batch is one contiguous stretch of model output (`toolBatchOf`).

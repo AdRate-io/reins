@@ -1,9 +1,11 @@
 /**
  * 内容片段在 reins 与 TanStack AI 之间的互译。
  *
- * reins 只有两种片段：text（`text` 字段）与 image（base64 `data` + `mime`）；TanStack 的 TextPart 用 `content`，
- * 多媒体片段统一是 `{ source: { type: "data" | "url", value, mimeType } }`。能一一对应的逐字翻译，
- * 对不上的（音频、视频、文档、URL 图片）以占位文本代替并在返回值里声明丢了什么（P7：有损必声明）。
+ * reins 的片段：text（`text` 字段）、image / video / audio（base64 `data` + `mime`，视频音频可带 `durationSec`）、
+ * tool_reference；TanStack 的 TextPart 用 `content`，多媒体片段统一是 `{ source: { type: "data" | "url", value, mimeType } }`。
+ * 能一一对应的逐字翻译（data 源的图片 / 视频 / 音频，2026-11-05 起视频音频双向互译；TanStack 没有时长字段，导出丢
+ * `durationSec`、导入没有时长，估算走字节折算）；对不上的（文档、URL 源、mime 前缀与类型不符）以占位文本代替并在返回值里
+ * 声明丢了什么（P7：有损必声明）。
  */
 import { type ContentPart as ReinsPart, renderToolReference } from "@reinsjs/core"
 import type { ContentPart as TanstackPart } from "@tanstack/ai"
@@ -17,22 +19,50 @@ export interface ImportedContent {
 /** reins → TanStack：给 TanStack 工具结果与消息用 */
 export function toTanstackParts(parts: readonly ReinsPart[]): TanstackPart[] {
   return parts.map((p): TanstackPart => {
-    if (p.type === "text") return { type: "text", content: p.text }
-    // 工具定义引用（L1）：TanStack 没有对应片段，展开成文本
-    if (p.type === "tool_reference") return { type: "text", content: renderToolReference(p) }
-    return { type: "image", source: { type: "data", value: p.data, mimeType: p.mime } }
+    switch (p.type) {
+      case "text":
+        return { type: "text", content: p.text }
+      // 工具定义引用（L1）：TanStack 没有对应片段，展开成文本
+      case "tool_reference":
+        return { type: "text", content: renderToolReference(p) }
+      case "image":
+      case "video":
+      case "audio":
+        // durationSec 只用于 reins 的估算，模型看不到；TanStack 没有对应字段，不带
+        return { type: p.type, source: { type: "data", value: p.data, mimeType: p.mime } }
+      default: {
+        const _exhaustive: never = p
+        return _exhaustive
+      }
+    }
   })
 }
 
+/** 片段在纯文本语境里的写法（TanStack 消息的文本形态、模型看不到的展示）：媒体写 `[<类型> <mime>]` */
+export function partAsText(p: ReinsPart): string {
+  switch (p.type) {
+    case "text":
+      return p.text
+    case "tool_reference":
+      return renderToolReference(p)
+    case "image":
+    case "video":
+    case "audio":
+      return `[${p.type} ${p.mime}]`
+    default: {
+      const _exhaustive: never = p
+      return _exhaustive
+    }
+  }
+}
+
 /**
- * reins → TanStack 的消息正文：全是文本时给单个字符串（多段以空行连接，这是 TanStack 消息的自然形态），
- * 含图片时给片段数组。
+ * reins → TanStack 的消息正文：只有文本 / 工具引用时给单个字符串（多段以空行连接，这是 TanStack 消息的自然形态），
+ * 含任何媒体（图片 / 视频 / 音频）时给片段数组。
  */
 export function toTanstackContent(parts: readonly ReinsPart[]): string | TanstackPart[] {
-  if (parts.every((p) => p.type !== "image"))
-    return parts
-      .map((p) => (p.type === "text" ? p.text : p.type === "tool_reference" ? renderToolReference(p) : ""))
-      .join("\n\n")
+  if (parts.every((p) => p.type === "text" || p.type === "tool_reference"))
+    return parts.map(partAsText).join("\n\n")
   return toTanstackParts(parts)
 }
 
@@ -53,7 +83,21 @@ export function fromTanstackContent(
       parts.push({ type: "image", mime: p.source.mimeType, data: p.source.value })
       continue
     }
-    const what = p.type === "image" ? "image(url)" : p.type
+    // 视频 / 音频：data 源且 mime 前缀与类型一致才收（与 core isContentPart 同规则，否则进日志后整条会话读不回）
+    if (
+      (p.type === "video" || p.type === "audio") &&
+      p.source.type === "data" &&
+      p.source.mimeType.startsWith(`${p.type}/`)
+    ) {
+      parts.push({ type: p.type, mime: p.source.mimeType, data: p.source.value })
+      continue
+    }
+    const what =
+      p.type === "image" || p.type === "video" || p.type === "audio"
+        ? p.source.type === "url"
+          ? `${p.type}(url)`
+          : `${p.type}(${p.source.mimeType})`
+        : p.type
     dropped.push(what)
     parts.push({ type: "text", text: `[${what} part could not be imported into the reins timeline]` })
   }

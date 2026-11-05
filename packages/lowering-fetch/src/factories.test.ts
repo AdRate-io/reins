@@ -32,6 +32,39 @@ describe("工厂", () => {
     expect(caps.images).toBe(true)
   })
 
+  it("deepseek-v4-pro 只收文字（BUG-261105-1）：内置表与 deepseek() 工厂都是 images 假，宿主仍可显式覆盖", () => {
+    const pro = deepseek("deepseek-v4-pro", { apiKey: "k" })
+    expect(pro.lowering.capabilities(pro.model).images).toBe(false)
+    const forced = deepseek("deepseek-v4-pro", { apiKey: "k", images: true })
+    expect(forced.lowering.capabilities(forced.model).images).toBe(true)
+  })
+
+  it("video / audio 能力位：内置表一律不开，宿主声明才开（中转站方言）", () => {
+    for (const m of [
+      deepseek("deepseek-flash", { apiKey: "k" }),
+      anthropic("claude-opus-5", { apiKey: "k" }),
+      openai("gpt-5.5", { apiKey: "k" }),
+    ]) {
+      expect(m.lowering.capabilities(m.model)).toMatchObject({ video: false, audio: false })
+    }
+    const relay = chatCompletions("gemini-3.8-flash-high", {
+      provider: "relay",
+      apiKey: "k",
+      baseUrl: "https://relay/v1",
+      images: true,
+      video: true,
+      audio: true,
+    })
+    expect(relay.lowering.capabilities(relay.model)).toMatchObject({ images: true, video: true, audio: true })
+    const onlyVideo = anthropicMessages("gemini-x", {
+      provider: "relay",
+      apiKey: "k",
+      baseUrl: "https://r",
+      video: true,
+    })
+    expect(onlyVideo.lowering.capabilities(onlyVideo.model)).toMatchObject({ video: true, audio: false })
+  })
+
   it("openaiChat()：官方地址、无方言、thinkingReplay 假；表外 id 用保守缺省", () => {
     const known = openaiChat("gpt-4o-mini", { apiKey: "k" })
     expect(known.lowering.capabilities(known.model)).toMatchObject({ thinkingReplay: false, images: true })

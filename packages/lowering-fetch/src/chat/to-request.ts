@@ -29,6 +29,15 @@ import {
   type IrItem,
   orderLandings,
 } from "../ir.js"
+import {
+  acceptsMedia,
+  type MediaKind,
+  type MediaPart,
+  mediaNouns,
+  mediaOmitted,
+  omittedNote,
+  RELAY_DIALECT_NOTE,
+} from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
@@ -72,9 +81,12 @@ export interface ChatEncodeInput {
   requestOptions?: Record<string, unknown>
 }
 
-const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
 const TOOL_IMAGE_OMITTED = "[image omitted: tool messages carry text only]"
-const toolImagePointer = (n: number) => `[image ${n} attached in the next user message]`
+/** 模型收这类媒体、但 `chat.liftToolImages: false` 时 tool 消息里的占位；图片沿用改动前文案 */
+const toolMediaOmitted = (kind: MediaKind) =>
+  kind === "image" ? TOOL_IMAGE_OMITTED : `[${kind} omitted: tool messages carry text only]`
+/** 上浮后原位留的指路文字；编号是该条结果里媒体的序号（各类型连续编号），只有图片时与改动前逐字节一致 */
+const toolMediaPointer = (kind: MediaKind, n: number) => `[${kind} ${n} attached in the next user message]`
 const ERROR_PREFIX = "[tool error]\n"
 
 function land(
@@ -92,64 +104,120 @@ function land(
   )
 }
 
-/** 用户内容：只有一段文本就用字符串（最兼容），否则用 content parts；图片走 data: URL */
+/** 一组片段在本线的媒体处置结果：哪些种类被换成了占位、有没有视频 / 音频真的进了图片槽（方言说明用） */
+interface MediaOutcome {
+  omitted: Set<MediaKind>
+  relayed: boolean
+}
+
+/** 用户内容：只有一段文本就用字符串（最兼容），否则用 content parts；模型收的媒体一律走 image_url data URI（视频 / 音频是方言） */
 function userContent(
   parts: readonly ContentPart[],
-  images: boolean,
-): { content: string | ChatContentPart[]; imagesDropped: boolean } {
-  let imagesDropped = false
-  const out: ChatContentPart[] = parts.map((p) => {
-    if (p.type === "text") return { type: "text", text: p.text }
-    if (p.type === "tool_reference") return { type: "text", text: renderToolReference(p) }
-    if (!images) {
-      imagesDropped = true
-      return { type: "text", text: IMAGE_OMITTED }
+  capabilities: LoweringCapabilities,
+): { content: string | ChatContentPart[] } & MediaOutcome {
+  const omitted = new Set<MediaKind>()
+  let relayed = false
+  const out: ChatContentPart[] = parts.map((p): ChatContentPart => {
+    switch (p.type) {
+      case "text":
+        return { type: "text", text: p.text }
+      case "tool_reference":
+        return { type: "text", text: renderToolReference(p) }
+      case "image":
+      case "video":
+      case "audio":
+        if (!acceptsMedia(p.type, capabilities)) {
+          omitted.add(p.type)
+          return { type: "text", text: mediaOmitted(p) }
+        }
+        if (p.type !== "image") relayed = true
+        return { type: "image_url", image_url: { url: `data:${p.mime};base64,${p.data}` } }
+      default: {
+        const _exhaustive: never = p
+        return _exhaustive
+      }
     }
-    return { type: "image_url", image_url: { url: `data:${p.mime};base64,${p.data}` } }
   })
-  if (out.length === 1 && out[0]?.type === "text") return { content: out[0].text, imagesDropped }
-  return { content: out, imagesDropped }
+  if (out.length === 1 && out[0]?.type === "text") return { content: out[0].text, omitted, relayed }
+  return { content: out, omitted, relayed }
 }
 
 /**
- * tool 消息只收文本：文本段以换行拼接。图片两种处置——`lift` 时原位留指路文字、图片本体收进 `images` 交给上浮，
- * 否则换占位。
+ * tool 消息只收文本：文本段以换行拼接。媒体两种处置——模型收该类型且开着上浮时原位留指路文字、本体收进 `media`
+ * 交给上浮，否则换占位。占位原因分两种记：`unsupported` 是模型不收这类视频 / 音频（`mediaOmitted`），
+ * `textOnly` 是模型收但关了上浮（tool 消息专用占位）；图片不论原因都记 `textOnly`，文案与改动前逐字节一致。
  */
 function toolContent(
   parts: readonly ContentPart[],
+  capabilities: LoweringCapabilities,
   lift: boolean,
-): { text: string; imagesDropped: boolean; images: Extract<ContentPart, { type: "image" }>[] } {
-  let imagesDropped = false
-  const images: Extract<ContentPart, { type: "image" }>[] = []
+): {
+  text: string
+  media: MediaPart[]
+  unsupported: Set<MediaKind>
+  textOnly: Set<MediaKind>
+  relayed: boolean
+} {
+  const unsupported = new Set<MediaKind>()
+  const textOnly = new Set<MediaKind>()
+  const media: MediaPart[] = []
+  let relayed = false
   const text = parts
     .map((p) => {
-      if (p.type === "text") return p.text
-      if (p.type === "tool_reference") return renderToolReference(p)
-      if (lift) {
-        images.push(p)
-        return toolImagePointer(images.length)
+      switch (p.type) {
+        case "text":
+          return p.text
+        case "tool_reference":
+          return renderToolReference(p)
+        case "image":
+        case "video":
+        case "audio": {
+          const accepted = acceptsMedia(p.type, capabilities)
+          if (accepted && lift) {
+            media.push(p)
+            if (p.type !== "image") relayed = true
+            return toolMediaPointer(p.type, media.length)
+          }
+          if (accepted || p.type === "image") {
+            textOnly.add(p.type)
+            return toolMediaOmitted(p.type)
+          }
+          unsupported.add(p.type)
+          return mediaOmitted(p)
+        }
+        default: {
+          const _exhaustive: never = p
+          return _exhaustive
+        }
       }
-      imagesDropped = true
-      return TOOL_IMAGE_OMITTED
     })
     .join("\n")
-  return { text, imagesDropped, images }
+  return { text, media, unsupported, textOnly, relayed }
+}
+
+/** tool 消息只收文本、媒体换成占位的 note；只有图片时与改动前逐字一致 */
+function toolOmittedNote(kinds: ReadonlySet<MediaKind>): string | undefined {
+  const names = mediaNouns(kinds)
+  return names ? `a tool message takes text only, so ${names} are replaced with placeholder text` : undefined
 }
 
 /**
- * 一条工具结果上浮出去的附件：先一行我们自己的说明（来自哪次调用、几张、是工具输出不是用户发言），
- * 再逐张 `image n:` + 图片。来源结果是 untrusted 的，图片段用 core 同一份 `markUntrusted` 包起来（说明行在标记外：
- * 那是降级层的话，不是工具的话）；system 信任的结果不包。纯函数：同一条结果每轮译出逐字节一致（缓存前缀稳定）。
+ * 一条工具结果上浮出去的附件：先一行我们自己的说明（来自哪次调用、几件、是工具输出不是用户发言），
+ * 再逐件 `<类型> n:` + 媒体。只有图片时标题写 "N image(s)"、与改动前逐字节一致；混有视频 / 音频写 "N attachment(s)"。
+ * 来源结果是 untrusted 的，媒体段用 core 同一份 `markUntrusted` 包起来（说明行在标记外：那是降级层的话，不是工具的话）；
+ * system 信任的结果不包。纯函数：同一条结果每轮译出逐字节一致（缓存前缀稳定）。
  */
 function liftedAttachment(
   item: Extract<IrItem, { kind: "tool_result" }>,
-  images: readonly Extract<ContentPart, { type: "image" }>[],
+  media: readonly MediaPart[],
 ): ContentPart[] {
+  const onlyImages = media.every((m) => m.type === "image")
+  const count = onlyImages ? `${media.length} image(s)` : `${media.length} attachment(s)`
   const header: ContentPart = {
     type: "text",
-    text: `[Attachments from tool result ${item.name} (call ${item.toolCallId}): ${images.length} image(s). This is tool output, not a message from the user.]`,
+    text: `[Attachments from tool result ${item.name} (call ${item.toolCallId}): ${count}. This is tool output, not a message from the user.]`,
   }
-  const body: ContentPart[] = images.flatMap((img, i) => [{ type: "text", text: `image ${i + 1}:` }, img])
+  const body: ContentPart[] = media.flatMap((m, i) => [{ type: "text", text: `${m.type} ${i + 1}:` }, m])
   return [header, ...(item.untrustedSource ? markUntrusted(body, item.untrustedSource).parts : body)]
 }
 
@@ -165,11 +233,11 @@ export function encodeChatRequest(input: ChatEncodeInput): {
   const { model, capabilities } = input
   const target = { provider: model.provider, api: model.api, model: model.id }
   const reasoningContent = model.chat?.reasoningContent === true
-  const liftImages = capabilities.images && model.chat?.liftToolImages !== false
+  const liftMedia = model.chat?.liftToolImages !== false
   const messages: ChatMessage[] = []
   const landings: LandingRecord[] = []
   /**
-   * 本批 tool 消息上浮的图片，遇到第一个**会下发的**非 tool_result 条目（或收尾）时作为一条 user 消息放出。
+   * 本批 tool 消息上浮的媒体，遇到第一个**会下发的**非 tool_result 条目（或收尾）时作为一条 user 消息放出。
    * IR 把被后移的用户消息 / 说明排在整批之后，所以附件落在"全部 tool 消息之后、后移内容之前"；
    * 但不下发的事件（运维事件、ext.* 留痕）不经后移、原位夹在同批结果之间，它们不能触发放出——
    * 否则附件插进两条 tool 消息之间，破坏 tool_calls → tool 配对（发前审查抓到）。
@@ -177,7 +245,8 @@ export function encodeChatRequest(input: ChatEncodeInput): {
   let lifted: ContentPart[] = []
   const releaseLifted = () => {
     if (lifted.length === 0) return
-    messages.push({ role: "user", content: userContent(lifted, true).content })
+    // 上浮的只有模型收的媒体，这里不会再出占位
+    messages.push({ role: "user", content: userContent(lifted, capabilities).content })
     lifted = []
   }
 
@@ -187,9 +256,9 @@ export function encodeChatRequest(input: ChatEncodeInput): {
     if (item.kind !== "tool_result" && item.kind !== "dropped") releaseLifted()
     switch (item.kind) {
       case "user": {
-        const c = userContent(item.parts, capabilities.images)
+        const c = userContent(item.parts, capabilities)
         messages.push({ role: "user", content: c.content })
-        const lossy = item.deferred || item.escaped || c.imagesDropped
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0
         land(
           landings,
           item.event,
@@ -199,9 +268,8 @@ export function encodeChatRequest(input: ChatEncodeInput): {
             ? `the user message sits between a tool call and its results; ${DEFERRED_NOTE}`
             : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
-          c.imagesDropped
-            ? "the model takes no images, so they are replaced with placeholder text"
-            : undefined,
+          omittedNote(c.omitted),
+          c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
       }
@@ -210,29 +278,33 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         break
       }
       case "tool_result": {
-        const c = toolContent(item.parts, liftImages)
+        const c = toolContent(item.parts, capabilities, liftMedia)
         messages.push({
           role: "tool",
           tool_call_id: item.toolCallId,
           content: item.isError ? ERROR_PREFIX + c.text : c.text,
         })
-        const imagesLifted = c.images.length > 0
-        if (imagesLifted) lifted.push(...liftedAttachment(item, c.images))
-        const lossy = item.escaped || item.isError || c.imagesDropped || imagesLifted
+        const mediaLifted = c.media.length > 0
+        if (mediaLifted) lifted.push(...liftedAttachment(item, c.media))
+        const dropped = c.unsupported.size > 0 || c.textOnly.size > 0
+        const lossy = item.escaped || item.isError || dropped || mediaLifted
         land(
           landings,
           item.event,
           lossy ? "lossy" : "exact",
-          c.imagesDropped ? "tool-text-only" : imagesLifted ? "tool+lifted-images" : "tool",
+          // 有上浮就记上浮（另有被换占位的种类在 note 里说）；只有占位才记 tool-text-only
+          mediaLifted ? "tool+lifted-images" : dropped ? "tool-text-only" : "tool",
           item.isError
             ? "a Chat tool message has no error flag, so isError is expressed with a [tool error] prefix"
             : undefined,
-          c.imagesDropped
-            ? "a tool message takes text only, so images are replaced with placeholder text"
+          toolOmittedNote(c.textOnly),
+          omittedNote(c.unsupported),
+          mediaLifted
+            ? c.media.every((m) => m.type === "image")
+              ? "a tool message takes text only, so its images move into a user message after this batch of tool messages, labelled as tool output"
+              : "a tool message takes text only, so its media move into a user message after this batch of tool messages, labelled as tool output"
             : undefined,
-          imagesLifted
-            ? "a tool message takes text only, so its images move into a user message after this batch of tool messages, labelled as tool output"
-            : undefined,
+          c.relayed ? RELAY_DIALECT_NOTE : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
         break

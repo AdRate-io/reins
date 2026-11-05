@@ -27,6 +27,7 @@ import {
   type ToolSpec,
   untrustedSourceOf,
 } from "@reinsjs/core"
+import { MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
 import type { PiModel } from "./models.js"
 import { framedSystemNote, markSystemNote } from "./system-note.js"
 
@@ -58,15 +59,42 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 }
 
-function toPiContent(
-  parts: readonly ContentPart[],
-): (TextContent | { type: "image"; data: string; mimeType: string })[] {
-  return parts.map((p) => {
-    if (p.type === "text") return { type: "text", text: p.text }
-    // 工具引用段（L1）：pi-ai 的请求整形改不了，没有 defer_loading 落点，展开成文本
-    if (p.type === "tool_reference") return { type: "text", text: renderToolReference(p) }
-    return { type: "image", data: p.data, mimeType: p.mime }
+/** pi-ai 0.85.1 没有视频 / 音频内容，这两种片段一律换占位并记 lossy（2026-11-05 视频音频方案） */
+const MEDIA_NOTE = MEDIA_PLACEHOLDER_NOTE
+
+function mediaPlaceholder(p: Extract<ContentPart, { type: "video" | "audio" }>): string {
+  const sec =
+    p.durationSec === undefined
+      ? ""
+      : `, ${Number.isInteger(p.durationSec) ? p.durationSec : p.durationSec.toFixed(1)} s`
+  return `[${p.type} omitted: this model does not accept ${p.type} (${p.mime}${sec})]`
+}
+
+function toPiContent(parts: readonly ContentPart[]): {
+  content: (TextContent | { type: "image"; data: string; mimeType: string })[]
+  mediaDropped: boolean
+} {
+  let mediaDropped = false
+  const content = parts.map((p): TextContent | { type: "image"; data: string; mimeType: string } => {
+    switch (p.type) {
+      case "text":
+        return { type: "text", text: p.text }
+      // 工具引用段（L1）：pi-ai 的请求整形改不了，没有 defer_loading 落点，展开成文本
+      case "tool_reference":
+        return { type: "text", text: renderToolReference(p) }
+      case "image":
+        return { type: "image", data: p.data, mimeType: p.mime }
+      case "video":
+      case "audio":
+        mediaDropped = true
+        return { type: "text", text: mediaPlaceholder(p) }
+      default: {
+        const _exhaustive: never = p
+        return _exhaustive
+      }
+    }
   })
+  return { content, mediaDropped }
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -202,7 +230,9 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.user_message": {
         flush()
         const c = content(e, e.payload.content)
-        const msg: Message = { role: "user", content: toPiContent(c.parts), timestamp: e.at }
+        const pc = toPiContent(c.parts)
+        const msg: Message = { role: "user", content: pc.content, timestamp: e.at }
+        const mediaNote = pc.mediaDropped ? MEDIA_NOTE : undefined
         // 工具结果还没到齐就来了用户消息：后移到同批结果之后，否则 tool_use 后面紧跟的不是 tool_result，厂商 400。
         // 顺序变了所以记 lossy；日志里它仍在原位
         if (awaiting.size > 0) {
@@ -211,14 +241,24 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
             event: e,
             kind: "lossy",
             landing: "user",
-            note: c.escaped
-              ? `the user message sits between a tool call and its results; ${ESCAPED_NOTE}`
-              : "the user message sits between a tool call and its results",
+            note: [
+              "the user message sits between a tool call and its results",
+              c.escaped ? ESCAPED_NOTE : undefined,
+              mediaNote,
+            ]
+              .filter(Boolean)
+              .join("; "),
           })
           break
         }
         messages.push(msg)
-        if (c.escaped) land(e, "lossy", "user", ESCAPED_NOTE)
+        if (c.escaped || mediaNote)
+          land(
+            e,
+            "lossy",
+            "user",
+            [c.escaped ? ESCAPED_NOTE : undefined, mediaNote].filter(Boolean).join("; "),
+          )
         else land(e, "exact", "user")
         break
       }
@@ -281,16 +321,25 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.tool_result": {
         flush()
         const c = content(e, e.payload.content)
+        const pc = toPiContent(c.parts)
         messages.push({
           role: "toolResult",
           toolCallId: e.payload.toolCallId,
           toolName: e.payload.name,
-          content: toPiContent(c.parts),
+          content: pc.content,
           isError: e.payload.isError,
           timestamp: e.at,
         })
         const landing = isAnthropic ? "tool_result" : "function_call_output"
-        if (c.escaped) land(e, "lossy", landing, ESCAPED_NOTE)
+        if (c.escaped || pc.mediaDropped)
+          land(
+            e,
+            "lossy",
+            landing,
+            [c.escaped ? ESCAPED_NOTE : undefined, pc.mediaDropped ? MEDIA_NOTE : undefined]
+              .filter(Boolean)
+              .join("; "),
+          )
         else land(e, "exact", landing)
         awaiting.delete(e.payload.toolCallId)
         if (awaiting.size === 0) releaseDeferred()

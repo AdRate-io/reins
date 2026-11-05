@@ -36,6 +36,7 @@ import {
   type ModelOrigin,
   orderLandings,
 } from "../ir.js"
+import { acceptsMedia, type MediaKind, mediaOmitted, omittedNote, RELAY_DIALECT_NOTE } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
@@ -113,7 +114,6 @@ export interface AnthropicEncodeInput {
 /** Anthropic 每个请求最多 4 个断点（顶层自动缓存也占一个），超出即 400 */
 export const MAX_ANTHROPIC_BREAKPOINTS = 4
 
-const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
 const EMPTY_NOTE =
   "the content is empty and Anthropic rejects empty text blocks, so the whole message is not sent"
 const MOVED_NOTE =
@@ -144,26 +144,44 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v)
 }
 
-/** 内容段 → Anthropic 块；空文本段跳过（厂商不接受空文本块），图片按模型能力处置，工具引用展开成文本（原生落点在 tool_result 分支另行处理） */
+/**
+ * 内容段 → Anthropic 块；空文本段跳过（厂商不接受空文本块），工具引用展开成文本（原生落点在 tool_result 分支另行处理）。
+ * 媒体按模型能力处置：收的一律进 `image` 块、`media_type` 填原 mime（视频 / 音频是中转站方言，见 media.ts；
+ * 不用 `document` 块——实测也能用，但与 image 块无差别，统一一种写法）
+ */
 function blocksOf(
   parts: readonly ContentPart[],
-  images: boolean,
-): { blocks: AnthropicContentBlock[]; imagesDropped: boolean } {
-  let imagesDropped = false
+  capabilities: LoweringCapabilities,
+): { blocks: AnthropicContentBlock[]; omitted: Set<MediaKind>; relayed: boolean } {
+  const omitted = new Set<MediaKind>()
+  let relayed = false
   const blocks: AnthropicContentBlock[] = []
   for (const p of parts) {
-    if (p.type === "text") {
-      if (p.text.length > 0) blocks.push({ type: "text", text: p.text })
-    } else if (p.type === "tool_reference") {
-      blocks.push({ type: "text", text: renderToolReference(p) })
-    } else if (images) {
-      blocks.push({ type: "image", source: { type: "base64", media_type: p.mime, data: p.data } })
-    } else {
-      imagesDropped = true
-      blocks.push({ type: "text", text: IMAGE_OMITTED })
+    switch (p.type) {
+      case "text":
+        if (p.text.length > 0) blocks.push({ type: "text", text: p.text })
+        break
+      case "tool_reference":
+        blocks.push({ type: "text", text: renderToolReference(p) })
+        break
+      case "image":
+      case "video":
+      case "audio":
+        if (acceptsMedia(p.type, capabilities)) {
+          if (p.type !== "image") relayed = true
+          blocks.push({ type: "image", source: { type: "base64", media_type: p.mime, data: p.data } })
+        } else {
+          omitted.add(p.type)
+          blocks.push({ type: "text", text: mediaOmitted(p) })
+        }
+        break
+      default: {
+        const _exhaustive: never = p
+        void _exhaustive
+      }
     }
   }
-  return { blocks, imagesDropped }
+  return { blocks, omitted, relayed }
 }
 
 interface PendingNote {
@@ -251,13 +269,13 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
   for (const item of input.ir) {
     switch (item.kind) {
       case "user": {
-        const c = blocksOf(item.parts, capabilities.images)
+        const c = blocksOf(item.parts, capabilities)
         if (c.blocks.length === 0) {
           land(landings, item.event, "dropped", "none", EMPTY_NOTE)
           break
         }
         openUser().push(...c.blocks)
-        const lossy = item.deferred || item.escaped || c.imagesDropped
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0
         land(
           landings,
           item.event,
@@ -267,9 +285,8 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
             ? `the user message sits between a tool call and its results; ${DEFERRED_NOTE}`
             : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
-          c.imagesDropped
-            ? "the model takes no images, so they are replaced with placeholder text"
-            : undefined,
+          omittedNote(c.omitted),
+          c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
       }
@@ -291,7 +308,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           block.content = refs.map((r) => ({ type: "tool_reference", tool_name: r.name }))
           const rest = blocksOf(
             item.parts.filter((p) => p.type !== "tool_reference"),
-            capabilities.images,
+            capabilities,
           )
           openUser().push(block)
           asides.push(...rest.blocks)
@@ -299,22 +316,21 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           land(
             landings,
             item.event,
-            aside || item.escaped || rest.imagesDropped ? "lossy" : "exact",
+            aside || item.escaped || rest.omitted.size > 0 ? "lossy" : "exact",
             "tool-reference",
             aside ? REF_TEXT_ASIDE_NOTE : undefined,
-            rest.imagesDropped
-              ? "the model takes no images, so they are replaced with placeholder text"
-              : undefined,
+            omittedNote(rest.omitted),
+            rest.relayed ? RELAY_DIALECT_NOTE : undefined,
             item.escaped ? ESCAPED_NOTE : undefined,
           )
           break
         }
-        const c = blocksOf(item.parts, capabilities.images)
+        const c = blocksOf(item.parts, capabilities)
         if (c.blocks.length > 0) block.content = c.blocks
         openUser().push(block)
         const unbound = refs.length > 0 && capabilities.deferredTools && trusted
         const untrustedRefs = refs.length > 0 && capabilities.deferredTools && !trusted
-        const lossy = item.escaped || c.imagesDropped || unbound
+        const lossy = item.escaped || c.omitted.size > 0 || unbound
         land(
           landings,
           item.event,
@@ -322,9 +338,8 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           "tool_result",
           unbound ? REF_UNBOUND_NOTE : undefined,
           untrustedRefs ? REF_UNTRUSTED_NOTE : undefined,
-          c.imagesDropped
-            ? "the model takes no images, so they are replaced with placeholder text"
-            : undefined,
+          omittedNote(c.omitted),
+          c.relayed ? RELAY_DIALECT_NOTE : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
         break

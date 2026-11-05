@@ -29,6 +29,13 @@ export interface FetchModel {
   /** 模型会产出 thinking / reasoning */
   reasoning: boolean
   images?: boolean
+  /**
+   * 收不收视频 / 音频片段（2026-11-05）；缺省 false，不收时落文字占位并记 lossy。
+   * ⚠️ 收的话三条线都放进图片槽——这是中转站方言（P0 实测公司中转站 Gemini 认），三家官方端点都不收，
+   * 所以内置表一律不开，只对确认收的中转站模型声明。视频里的音轨不要求 `audio`
+   */
+  video?: boolean
+  audio?: boolean
   cost?: ModelCost
   /** 额外请求头（私有网关鉴权等），与降级层级别的 headers 合并、以模型级为准 */
   headers?: Record<string, string>
@@ -189,7 +196,8 @@ export const BUILTIN_MODELS: readonly FetchModel[] = [
     contextWindow: 1_000_000,
     maxOutputTokens: 384_000,
     reasoning: true,
-    images: true,
+    // 官方 /models 的 input_modalities 只有 text；带图请求回 200 但图被静默丢掉（BUG-261105-1，spikes/media-parts P 组）
+    images: false,
     cost: { input: 1.32, output: 3.96, cacheRead: 0.044, cacheWrite: 0 },
     chat: { reasoningContent: true },
   },

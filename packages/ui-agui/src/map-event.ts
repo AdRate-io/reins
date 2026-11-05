@@ -58,10 +58,21 @@ export function partsToText(parts: readonly ContentPart[]): { text: string; drop
   const dropped: string[] = []
   const text = parts
     .map((p) => {
-      if (p.type === "text") return p.text
-      if (p.type === "tool_reference") return renderToolReference(p)
-      dropped.push(`image:${p.mime}`)
-      return `[image ${p.mime}]`
+      switch (p.type) {
+        case "text":
+          return p.text
+        case "tool_reference":
+          return renderToolReference(p)
+        case "image":
+        case "video":
+        case "audio":
+          dropped.push(`${p.type}:${p.mime}`)
+          return `[${p.type} ${p.mime}]`
+        default: {
+          const _exhaustive: never = p
+          return _exhaustive
+        }
+      }
     })
     .join("\n")
   return { text, dropped }

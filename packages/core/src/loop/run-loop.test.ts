@@ -1871,6 +1871,45 @@ describe("input 草稿数组（OnSet 建议 7）", () => {
     ],
     ["片段缺字段", [{ type: "text" }], /content parts are malformed/],
     ["tool_reference 片段缺字段", [{ type: "tool_reference", name: "g" }], /content parts are malformed/],
+    [
+      "video mime 前缀不符",
+      [{ type: "video", mime: "audio/mpeg", data: "AA" }],
+      /content parts are malformed/,
+    ],
+    [
+      "audio mime 前缀不符",
+      [{ type: "audio", mime: "video/mp4", data: "AA" }],
+      /content parts are malformed/,
+    ],
+    ["video 缺 data", [{ type: "video", mime: "video/mp4" }], /content parts are malformed/],
+    ["durationSec 为 0", [{ type: "video", mime: "video/mp4", data: "AA", durationSec: 0 }], /malformed/],
+    ["durationSec 为负", [{ type: "audio", mime: "audio/wav", data: "AA", durationSec: -1 }], /malformed/],
+    [
+      "durationSec 为 NaN",
+      [{ type: "audio", mime: "audio/wav", data: "AA", durationSec: Number.NaN }],
+      /malformed/,
+    ],
+    [
+      "durationSec 为 Infinity",
+      [{ type: "video", mime: "video/mp4", data: "AA", durationSec: Number.POSITIVE_INFINITY }],
+      /malformed/,
+    ],
+    [
+      "durationSec 是字符串",
+      [{ type: "video", mime: "video/mp4", data: "AA", durationSec: "3" }],
+      /malformed/,
+    ],
+    [
+      "草稿里的坏视频片段",
+      [
+        {
+          type: "core.user_message",
+          actor: "user",
+          payload: { content: [{ type: "video", mime: "x", data: "AA" }] },
+        },
+      ],
+      /payload.content/,
+    ],
   ])("%s → RangeError，一条日志都不写", async (_name, input, message) => {
     const log = new InMemoryEventLog()
     const run = runLoop(
@@ -1889,6 +1928,23 @@ describe("input 草稿数组（OnSet 建议 7）", () => {
       ),
     ).rejects.toThrow(message)
     expect(await all(log)).toHaveLength(0)
+  })
+
+  it("合规的视频 / 音频片段（有无时长）原样落进 user_message", async () => {
+    const parts = [
+      { type: "video", mime: "video/mp4", data: "AAAA", durationSec: 72 },
+      { type: "audio", mime: "audio/mpeg", data: "AAAA" },
+    ] as const
+    const log = new InMemoryEventLog()
+    await drain(
+      runLoop(
+        baseConfig(new ScriptedLowering([{ drafts: [say("ok")] }]), log, {
+          input: parts as unknown as NonNullable<LoopConfig["input"]>,
+        }),
+      ),
+    )
+    const first = (await all(log)).find((e) => e.type === "core.user_message")
+    expect(first?.payload).toEqual({ content: parts })
   })
 
   it("回归：字符串 / 内容片段 / 单条草稿 / 空数组与改动前同样落一条", async () => {

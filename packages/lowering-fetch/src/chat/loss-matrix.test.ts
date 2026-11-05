@@ -22,9 +22,22 @@ const NO_MID: FetchModel = {
   midConversationSystem: false,
 }
 // gpt-4o-mini 无协议解析缺省走 Responses（F3 起），这里显式取 Chat 条目
+/** 中转站模型：宿主声明收图、视频、音频（2026-11-05 方案；三条线都走图片槽） */
+const RELAY: FetchModel = {
+  provider: "relay",
+  id: "gemini-relay",
+  api: "openai-chat",
+  baseUrl: "https://relay/v1",
+  contextWindow: 1_000_000,
+  maxOutputTokens: 8_000,
+  reasoning: false,
+  images: true,
+  video: true,
+  audio: true,
+}
 const lowering = new FetchLowering({
   apiKey: () => "k",
-  models: [NO_MID, findBuiltin("openai", "gpt-4o-mini", "openai-chat") as FetchModel],
+  models: [RELAY, NO_MID, findBuiltin("openai", "gpt-4o-mini", "openai-chat") as FetchModel],
 })
 
 interface Variant {
@@ -62,6 +75,8 @@ function variants(api: string, model: { provider: string; id: string }): Variant
   }
   const user = (text = "hi") => mk("core.user_message", { content: [{ type: "text", text }] })
   const image = { type: "image", mime: "image/png", data: "AA" }
+  const video = { type: "video", mime: "video/mp4", data: "AA", durationSec: 72 }
+  const audio = { type: "audio", mime: "audio/mpeg", data: "AA" }
   const call = (id: string) =>
     mk("core.tool_call", { toolCallId: id, name: "f", args: {} }, { replay: origin })
   const result = (id: string, content: unknown[] = [{ type: "text", text: "r" }], isError = false) =>
@@ -72,6 +87,11 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       label: "user_message 带图片",
       events: [mk("core.user_message", { content: [{ type: "text", text: "看" }, image] })],
     },
+    {
+      label: "user_message 带视频 / 音频",
+      events: [mk("core.user_message", { content: [{ type: "text", text: "看" }, video, audio] })],
+    },
+    { label: "user_message 只带音频", events: [mk("core.user_message", { content: [audio] })] },
     { label: "model_text", events: [user(), mk("core.model_text", { text: "ok" }, { replay: origin })] },
     {
       label: "model_text 一轮多段",
@@ -99,6 +119,11 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       events: [user(), call("c1"), result("c1", [{ type: "text", text: "boom" }], true)],
     },
     { label: "tool_result 带图片", events: [user(), call("c1"), result("c1", [image])] },
+    { label: "tool_result 带视频 / 音频", events: [user(), call("c1"), result("c1", [video, audio])] },
+    {
+      label: "tool_result 图 + 视频 + 音频混放",
+      events: [user(), call("c1"), result("c1", [image, video, audio])],
+    },
     {
       label: "user_message 夹在调用与结果之间（后移）",
       events: [user(), call("c1"), user("wait"), result("c1")],
@@ -151,6 +176,11 @@ function variants(api: string, model: { provider: string; id: string }): Variant
 }
 
 const TARGETS = [
+  {
+    api: "openai-chat",
+    model: { provider: "relay", id: "gemini-relay" },
+    label: "中转站声明收视频 / 音频（方言）",
+  },
   {
     api: "openai-chat",
     model: { provider: "deepseek", id: "deepseek-flash" },

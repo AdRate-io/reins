@@ -68,7 +68,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `events/index.ts` | 汇总导出 base / core / create / id / registry |
-| `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image / **tool_reference**——工具定义引用，带 name / description / inputSchema 快照，L1）、`renderToolReference()`（引用段展开成文本的唯一写法）、各 actor 的默认信任 `DEFAULT_TRUST` |
+| `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image / **video / audio**（2026-11-05，mime 前缀 + 可选 `durationSec`）/ **tool_reference**——工具定义引用，带 name / description / inputSchema 快照，L1）、`renderToolReference()`（引用段展开成文本的唯一写法）、各 actor 的默认信任 `DEFAULT_TRUST` |
 | `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite）与 `contextOverheadOf(timeline)`（估算不含的固定开销，非有限值回 0；阈值兜底与感知共用，2026-10-30 从 brain 搬来） |
 | `events/create.ts` | `EventDraft`（无 id/seq/at/sessionId 的草稿）与 `createEvent` / `createCoreEvent` 工厂：补齐壳字段、从注册表取 schemaVersion |
 | `events/id.ts` | 自实现 `uuidv7`（RFC 9562，只用 `crypto.getRandomValues`，不引依赖） |
@@ -96,7 +96,7 @@
 | `projection/fold.ts` | 策略 2 折叠：`covers` / `keptBy` / `isPinNote` / `supersededIds` 幸存判定，`foldCompactions` 把摘要插到**被覆盖区间的位置** |
 | `projection/pins.ts` | 策略 3 钉住重注入：把幸存的被覆盖事件挪到覆盖它的最新可见 compaction 之后（去掉本策略投影仍正确，只是顺序不好读） |
 | `projection/truncate.ts` | 策略 5 预算裁剪兜底：过触发线才裁、一裁到回落线（`cutToRatio` 缺省 `DEFAULT_CUT_TO_RATIO` 0.6）；`splitTurns` 切轮、三条切点硬规则、`defaultThresholdSummary` 机械摘要（并入旧摘要 + 用户原话 + 被裁工具结果清单），新造 `compaction(decidedBy=threshold)` 经 `emitted` 交出 |
-| `projection/estimate.ts` | 零依赖 token 粗估：ASCII 4 字一 token、非 ASCII 一字一 token、图片 1600、每事件 +4 固定开销；`estimateTotal`；`estimateBudgetOf(budget)`（目标 − 开销，兜底判据唯一一份） |
+| `projection/estimate.ts` | 零依赖 token 粗估：ASCII 4 字一 token、非 ASCII 一字一 token、图片 1600、视频 100 / 秒与音频 32 / 秒（缺 `durationSec` 按 1 Mbps / 64 kbps 折算、30 秒下限）、每事件 +4 固定开销；`estimateTotal`；`estimateBudgetOf(budget)`（目标 − 开销，兜底判据唯一一份） |
 | `projection/manifest.ts` | E3c 被折叠工具结果清单：`foldedToolResults` 抽取（入参从 lookup 找、外溢记 blob id）、`digestArgs` 键排序截断、`renderFoldedToolResults` 渲染成 `seq N tool(args) — 大小` |
 | `projection/project.ts` | 策略链执行器 `project()` + `defaultProjectionChain()`（四步）+ `DEFAULT_RESERVE_RATIO = 0.15`；入参校验 seq 严格升序，逐策略累计 stats 与 emitted |
 | 测试 | `projection.test.ts` 覆盖粗估、四个策略各自的规则、manifest 渲染、supersedes（B3）四种情形、默认链端到端与拒绝条件 |
@@ -124,7 +124,8 @@
 | `loop/static.ts` | `resolveSocketContributions`（P1 起 **async**，各 Socket 依次 await 而非并发）：宿主工具 + 各 Socket 静态工具（同名宿主优先）、系统提示按注册顺序拼接；每个 Socket 拿自己的一份 `SocketSetup`，`tools` 是到它为止已并入的工具表快照、同一 Socket 的 `tools` / `systemPrompt` 两次解析共用同一对象（2026-09-22，lazy-tools 收 MCP 工具靠它）；循环起步与 server 预校验共用，configHash 才对得上 |
 | `loop/subagent.ts` | 子代理暂停标记（§10.1）：`subagentPause(detail)` / `isSubagentPause()`，`Symbol.for` 品牌；工具 `execute` 返回它，循环不落 tool_result、run 整体 paused(kind=subagent) |
 | `loop/tools-bound.ts` | P1 纯函数：`lastToolsBound`、`diffToolNames`、`renderToolChangeNote`（给模型的英文文案）、`toolsBoundDrafts`（起步要 append 的 `tools_bound` + 有增删时的 `system_note(kind=host, meta.toolsChanged)`）；runLoop 与 TanStack 适配器共用，两处文案与判定不分叉 |
-| `loop/tools.ts` | 工具纯函数：`defineTool`（擦类型以便放进 `Tool[]`）、`toolSpecOf`（刻意单参，`map(toolSpecOf)` 多一参会吃下标）、`deferredToolSpecOf(tool, deferred)`（L1）、`isContentPart`（认 text / image / tool_reference）、`normalizeToolOutput`（string / ContentPart[] / {content,isError} / undefined / 其余 JSON）、`errorMessageOf` |
+| `loop/tools.ts` | 工具纯函数：`defineTool`（擦类型以便放进 `Tool[]`）、`toolSpecOf`（刻意单参，`map(toolSpecOf)` 多一参会吃下标）、`deferredToolSpecOf(tool, deferred)`（L1）、`isContentPart`（片段形状唯一真源：text / image / video / audio / tool_reference；runLoop 输入校验也调它）、`normalizeToolOutput`（string / ContentPart[] / {content,isError} / undefined / 其余 JSON）、`errorMessageOf` |
+| `loop/content-part.test.ts` | `isContentPart` 视频 / 音频边界（mime 前缀、`durationSec` 为 0 / 负 / NaN / Infinity / null）、image mime 维持不校验、`normalizeToolOutput` 对媒体片段的归一；runLoop 输入侧的同组边界在 `run-loop.test.ts` |
 | `loop/deferred-tools.test.ts` | L1 在 core 的用例：`renderToolReference` 写法、`normalizeToolOutput` 认引用段、估算按展开文本算、`BeforeModelPatch.deferredTools` → `ToolSpec.deferLoading` 的接线（不在表的名字忽略、后一个 Socket 整体替换、没给就沿用） |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |

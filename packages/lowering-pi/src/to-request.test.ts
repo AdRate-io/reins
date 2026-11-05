@@ -240,6 +240,38 @@ describe("延迟加载（L1）：pi 版没有原生落点", () => {
   })
 })
 
+describe("视频 / 音频片段：pi-ai 没有落点（2026-11-05 方案）", () => {
+  it("user 与工具结果里的视频 / 音频一律换占位、记 lossy；图片照常", () => {
+    seq = 0
+    const events = [
+      ev("core.user_message", "user", {
+        content: [
+          { type: "image", mime: "image/png", data: "I" },
+          { type: "video", mime: "video/mp4", data: "V", durationSec: 72 },
+        ],
+      }),
+      ev("core.tool_call", "model", { toolCallId: "c1", name: "t", args: {} }),
+      ev("core.tool_result", "tool", {
+        toolCallId: "c1",
+        name: "t",
+        content: [{ type: "audio", mime: "audio/mpeg", data: "A" }],
+        isError: false,
+      }),
+    ]
+    const { context, landings } = eventsToContext({ events, model, capabilities: caps(true) })
+    expect(context.messages[0]?.content).toEqual([
+      { type: "image", data: "I", mimeType: "image/png" },
+      { type: "text", text: "[video omitted: this model does not accept video (video/mp4, 72 s)]" },
+    ])
+    expect(JSON.stringify(context.messages[2])).toContain(
+      "[audio omitted: this model does not accept audio (audio/mpeg)]",
+    )
+    const note = "pi-ai has no video / audio content; replaced with placeholder text"
+    expect(landings[0]).toMatchObject({ kind: "lossy", landing: "user", note })
+    expect(landings[2]).toMatchObject({ kind: "lossy", landing: "tool_result", note })
+  })
+})
+
 describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿方案）", () => {
   it("context 里背景在任务前；中途 system 开时发出前由 rewriteAnthropicPayload 归位到任务之后（见 pi-lowering.test「system_note 后面紧跟 user」）", () => {
     for (const mid of [true, false]) {

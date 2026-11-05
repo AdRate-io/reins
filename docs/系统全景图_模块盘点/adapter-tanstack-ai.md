@@ -59,7 +59,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | `src/middleware.ts` | 主体（约 930 行）：`reinsMiddleware()`，十一个 TanStack 钩子 → 五个 Socket 方法的翻译，run 状态、事件 append、审批中断、交接、用量记账都在这里。 |
 | `src/messages.ts` | 事件 ⇄ TanStack `ModelMessage` 的纯函数翻译：出口 `toModelMessages`（含 trust 标注：untrusted 内容调 core `markUntrusted` 包 `<untrusted>`，`trustMarkers` 可关）、入口 `importModelMessages`（每条草稿的 `provenance.ref` 是幂等键 `importRef`：消息 id 或客户端数组位置）与 `dedupeImportedUserMessages`（R5 去重），外加 `trailingUserMessages`、`framedSystemNote`、`parseArgs`。 |
 | `src/assembler.ts` | `BlockAssembler`：把流式 AG-UI chunk（TEXT_* / REASONING_* / TOOL_CALL_*）拼成完整内容块的 `EventDraft`，`finish()` 收尾未闭合的块。 |
-| `src/content.ts` | 内容片段互译：`toTanstackParts` / `toTanstackContent` / `fromTanstackContent` / `fromTanstackToolResult`，翻不动的片段留占位文本并报 `dropped`。 |
+| `src/content.ts` | 内容片段互译：`toTanstackParts` / `toTanstackContent` / `fromTanstackContent` / `fromTanstackToolResult`，data 源的图片 / 视频 / 音频双向逐字翻译（TanStack 没有时长字段：导出丢 `durationSec`、导入没有时长），URL 源、文档、mime 前缀不符的留占位文本并报 `dropped`（如 `video(url)`）；`partAsText` 是纯文本语境的唯一写法（`[<类型> <mime>]`）。 |
 | `src/tools.ts` | 工具桥接：`viewOfTanstackTool`（宿主工具 → reins 只读视图，打 `NATIVE_TOOL` 标记）、`toTanstackTool`（reins 工具 → TanStack 工具，包 `ToolContext` 并把归一结果存进 `ToolBridge.outputs`；工具返回 core 的 `subagentPause` 时降级为 isError——TanStack 边界不能只暂停一个工具，子会话保留可续跑）。`toolContextBase.spend` 由 middleware 提供，子代理用量计入 `s.tokensSpent`。 |
 | `src/interrupt.ts` | `reinsApprovalInterrupt`（`defineInterrupt`）：动态审批在 TanStack 里的落点，含 payload / response 两个 schema 与 `REINS_APPROVAL_INTERRUPT_ID = "reins.approval"`；头注释写明类型层 + 运行时两道漏登记保护（R7）。 |
 | `src/schema.ts` | `reinsSchema()`：手写的 Standard Schema（同时满足 `StandardSchemaV1` 与 `StandardJSONSchemaV1`），只为 `defineInterrupt` 服务，不引 zod；附 `isRecord`。 |

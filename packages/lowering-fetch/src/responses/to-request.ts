@@ -32,6 +32,7 @@ import {
   type ModelOrigin,
   orderLandings,
 } from "../ir.js"
+import { acceptsMedia, type MediaKind, mediaOmitted, omittedNote, RELAY_DIALECT_NOTE } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
@@ -85,7 +86,6 @@ export interface ResponsesEncodeInput {
   requestOptions?: Record<string, unknown>
 }
 
-const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
 const ERROR_PREFIX = "[tool error]\n"
 const EMPTY_NOTE = "the content is empty, so no empty message is sent"
 const ENCRYPTED_INCLUDE = "reasoning.encrypted_content"
@@ -105,26 +105,40 @@ function land(
   )
 }
 
-/** 内容段 → 输入块；空文本段跳过，图片按模型能力处置 */
+/** 内容段 → 输入块；空文本段跳过，媒体按模型能力处置：收的一律进 input_image（视频 / 音频是中转站方言，绝不用 input_audio，见 media.ts） */
 function contentOf(
   parts: readonly ContentPart[],
-  images: boolean,
-): { content: ResponsesInputContent[]; imagesDropped: boolean } {
-  let imagesDropped = false
+  capabilities: LoweringCapabilities,
+): { content: ResponsesInputContent[]; omitted: Set<MediaKind>; relayed: boolean } {
+  const omitted = new Set<MediaKind>()
+  let relayed = false
   const content: ResponsesInputContent[] = []
   for (const p of parts) {
-    if (p.type === "text") {
-      if (p.text.length > 0) content.push({ type: "input_text", text: p.text })
-    } else if (p.type === "tool_reference") {
-      content.push({ type: "input_text", text: renderToolReference(p) })
-    } else if (images) {
-      content.push({ type: "input_image", image_url: `data:${p.mime};base64,${p.data}`, detail: "auto" })
-    } else {
-      imagesDropped = true
-      content.push({ type: "input_text", text: IMAGE_OMITTED })
+    switch (p.type) {
+      case "text":
+        if (p.text.length > 0) content.push({ type: "input_text", text: p.text })
+        break
+      case "tool_reference":
+        content.push({ type: "input_text", text: renderToolReference(p) })
+        break
+      case "image":
+      case "video":
+      case "audio":
+        if (acceptsMedia(p.type, capabilities)) {
+          if (p.type !== "image") relayed = true
+          content.push({ type: "input_image", image_url: `data:${p.mime};base64,${p.data}`, detail: "auto" })
+        } else {
+          omitted.add(p.type)
+          content.push({ type: "input_text", text: mediaOmitted(p) })
+        }
+        break
+      default: {
+        const _exhaustive: never = p
+        void _exhaustive
+      }
     }
   }
-  return { content, imagesDropped }
+  return { content, omitted, relayed }
 }
 
 /** tool_call 入参回到线上是 JSON 字符串；读侧解析失败时存的是原始字符串，写侧原样送回 */
@@ -186,13 +200,13 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
   for (const item of input.ir) {
     switch (item.kind) {
       case "user": {
-        const c = contentOf(item.parts, capabilities.images)
+        const c = contentOf(item.parts, capabilities)
         if (c.content.length === 0) {
           land(landings, item.event, "dropped", "none", EMPTY_NOTE)
           break
         }
         items.push({ role: "user", content: c.content })
-        const lossy = item.deferred || item.escaped || c.imagesDropped
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0
         land(
           landings,
           item.event,
@@ -202,21 +216,20 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             ? `the user message sits between a tool call and its results; ${DEFERRED_NOTE}`
             : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
-          c.imagesDropped
-            ? "the model takes no images, so they are replaced with placeholder text"
-            : undefined,
+          omittedNote(c.omitted),
+          c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
       }
       case "tool_result": {
-        const c = contentOf(item.parts, capabilities.images)
+        const c = contentOf(item.parts, capabilities)
         const hasImage = c.content.some((b) => b.type === "input_image")
         const text = c.content
           .filter((b): b is Extract<ResponsesInputContent, { type: "input_text" }> => b.type === "input_text")
           .map((b) => b.text)
           .join("\n")
         const prefixed = item.isError ? ERROR_PREFIX + text : text
-        // 只有文本就用字符串（最兼容）；带图片时 output 为内容块数组（文本在前，前缀一并放进去）
+        // 只有文本就用字符串（最兼容）；带媒体（都在 input_image 里）时 output 为内容块数组（文本在前，前缀一并放进去）
         const output: string | ResponsesInputContent[] = hasImage
           ? [
               ...(prefixed.length > 0 ? [{ type: "input_text" as const, text: prefixed }] : []),
@@ -224,7 +237,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             ]
           : prefixed
         items.push({ type: "function_call_output", call_id: item.toolCallId, output })
-        const lossy = item.escaped || item.isError || c.imagesDropped
+        const lossy = item.escaped || item.isError || c.omitted.size > 0
         land(
           landings,
           item.event,
@@ -233,9 +246,8 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           item.isError
             ? "the Responses function_call_output has no error flag, so isError is expressed with a [tool error] prefix"
             : undefined,
-          c.imagesDropped
-            ? "the model takes no images, so they are replaced with placeholder text"
-            : undefined,
+          omittedNote(c.omitted),
+          c.relayed ? RELAY_DIALECT_NOTE : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )
         break

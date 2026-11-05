@@ -18,6 +18,9 @@ export function capabilitiesOf(model: FetchModel): LoweringCapabilities {
     api: model.api,
     parallelTools: true,
     images: model.images ?? false,
+    // 视频 / 音频只由宿主对中转站模型声明（方言，见 media.ts），缺省不收
+    video: model.video ?? false,
+    audio: model.audio ?? false,
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
     taskBudget: false,

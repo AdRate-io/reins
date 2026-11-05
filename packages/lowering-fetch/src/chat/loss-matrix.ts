@@ -2,7 +2,9 @@
  * Chat Completions 的有损矩阵（P7：有损必声明）。事件 type → 可能落点；toRequest 记录的每条实际落点必须命中其中一条，
  * 矩阵里不能有从未命中的死条目（loss-matrix.test.ts）。新增事件类型或改落点不补表，测试就红。
  */
+
 import type { LandingSpec } from "@reinsjs/core"
+import { RELAY_DIALECT_NOTE } from "../media.js"
 
 const exact = (landing: string, note?: string, when?: string): LandingSpec => {
   const spec: LandingSpec = { kind: "exact", landing }
@@ -58,11 +60,14 @@ export const NOT_SENT: Readonly<Record<string, readonly LandingSpec[]>> = {
 
 export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> = {
   "core.user_message": [
-    exact("user"),
+    exact(
+      "user",
+      `images, video and audio the model takes go in image_url parts as data URIs; ${RELAY_DIALECT_NOTE}`,
+    ),
     lossy(
       "user",
-      "moved after that batch of tool results (the order changes), untrusted content escaped, or images replaced with placeholder text because the model takes none",
-      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images the model does not take",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, or images / video / audio replaced with placeholder text because the model takes none of that kind",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take",
     ),
   ],
   "core.model_text": [
@@ -96,13 +101,13 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
     ),
     lossy(
       "tool+lifted-images",
-      "a tool message takes text only, so it keeps a pointer where each image was and the images move into a user message right after the whole batch of tool messages (the order and the role change); that message labels them as tool output, with the tool name, call id and index, and keeps the result's untrusted marking",
-      "the result carries images and the model takes images (chat.liftToolImages is on by default)",
+      `a tool message takes text only, so it keeps a pointer where each image (or video / audio) was and they move into a user message right after the whole batch of tool messages (the order and the role change); that message labels them as tool output, with the tool name, call id and index, and keeps the result's untrusted marking; kinds the model does not take are replaced with placeholder text; ${RELAY_DIALECT_NOTE}`,
+      "the result carries images / video / audio of a kind the model takes (chat.liftToolImages is on by default)",
     ),
     lossy(
       "tool-text-only",
-      "a tool message takes text only, so images are replaced with placeholder text",
-      "the result carries images and the model takes no images, or chat.liftToolImages is false",
+      "a tool message takes text only, so images / video / audio are replaced with placeholder text",
+      "the result carries images / video / audio and the model takes none of those kinds, or chat.liftToolImages is false",
     ),
   ],
   "core.system_note": [

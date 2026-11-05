@@ -5,8 +5,10 @@
  * "降为正文 / 厂商看着办"、tool_call 入参不是对象也照发（arguments 本就是 JSON 字符串，不必包 { value }）、
  * tool_result 的 isError 以前缀表达（协议没有错误位）并按模型能力处置图片。
  */
+
 import type { LandingSpec } from "@reinsjs/core"
 import { NOT_SENT } from "../chat/loss-matrix.js"
+import { RELAY_DIALECT_NOTE } from "../media.js"
 
 const exact = (landing: string, note?: string, when?: string): LandingSpec => {
   const spec: LandingSpec = { kind: "exact", landing }
@@ -21,11 +23,14 @@ const dropped = (landing: string, note: string, when?: string): LandingSpec =>
 
 export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> = {
   "core.user_message": [
-    exact("user", "a user message in input, as input_text / input_image blocks"),
+    exact(
+      "user",
+      `a user message in input, as input_text / input_image blocks (video and audio the model takes also go in input_image; never input_audio, which the relay silently drops); ${RELAY_DIALECT_NOTE}`,
+    ),
     lossy(
       "user",
-      "moved after that batch of tool results (the order changes), untrusted content escaped, or images replaced with placeholder text because the model takes none",
-      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images the model does not take",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, or images / video / audio replaced with placeholder text because the model takes none of that kind",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take",
     ),
     dropped(
       "none",
@@ -60,11 +65,11 @@ export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
   "core.tool_result": [
     exact(
       "function_call_output",
-      "matched by call_id; output is a string for text, or an array of content blocks when images are present; tool reference parts are expanded into text (Responses has no deferred-loading landing)",
+      `matched by call_id; output is a string for text, or an array of content blocks when images / video / audio are present (all in input_image); tool reference parts are expanded into text (Responses has no deferred-loading landing); ${RELAY_DIALECT_NOTE}`,
     ),
     lossy(
       "function_call_output",
-      "isError is expressed with a [tool error] prefix (the protocol has no error flag), or untrusted content is escaped, or images are replaced with placeholder text because the model takes none",
+      "isError is expressed with a [tool error] prefix (the protocol has no error flag), or untrusted content is escaped, or images / video / audio are replaced with placeholder text because the model takes none of that kind",
     ),
   ],
   "core.system_note": [

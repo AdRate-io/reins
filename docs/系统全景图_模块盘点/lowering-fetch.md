@@ -57,6 +57,7 @@
 | `src/capabilities.ts` | `FetchModel` → `LoweringCapabilities`：Chat 线 `midConversationSystem` 缺省 true、`thinkingReplay` 只在 DeepSeek 方言下为真；Anthropic 线 `midConversationSystem` 按模型族正则（Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8）或宿主声明、`thinkingReplay = reasoning`、`taskBudget` Opus 5 / Fable 5.1、`deferredTools` 缺省 `provider === "anthropic"`（L1；其余两线恒假）；Responses 线 `midConversationSystem` 缺省 true、`thinkingReplay = reasoning && encryptedReasoning !== false` |
 | `src/factories.ts` | `deepseek()` / `openaiChat()` / `chatCompletions()` / `anthropic()` / `anthropicMessages()` / `openai()` / `openaiResponses()` → `BoundModel`；`definitionOf(provider, id, api, opts)` 按协议精确取内置定义打底、选项覆盖（方言对象按键合并），表外模型从保守缺省起（`openai()` 对表外新型号按推理 / 收图起）；`ModelOptions` / `ProviderModelOptions`（旧名 `ChatModelOptions` / `ChatCompletionsOptions` 保留为别名） |
 | `src/ir.ts` | 共用遍历器 `eventsToIr`：assistant 分组、`awaiting` / `deferred` 后移、`markUntrusted` 标注、来源判定 `foreignOrigin`；`orderLandings` 把落点排回输入顺序 |
+| `src/media.ts` | 媒体（image / video / audio）三线共用：`acceptsMedia`（能力位判定，视频音频缺省不收）、`mediaOmitted`（占位文案，图片文案与旧版逐字节一致）、`omittedNote` / `mediaNouns`（落点 note）、`RELAY_DIALECT_NOTE`（视频音频走图片槽是中转站方言）；注释写明绝不用 `input_audio` |
 | `src/notes.ts` | `framedSystemNote` / `framedSummary`：说明与摘要落成 user 文本时的框（文案与 pi 版一致） |
 | `src/http.ts` | `postJson`（非 2xx 抛 `HttpError`，格式与两家 SDK 同款让 core 的瞬断判据直接可用）、`requestSignals`（宿主 signal 与 `AbortSignal.timeout` 合成，`timedOut()` 区分谁中止的） |
 | `src/sse.ts` | `parseSse`：WHATWG SSE 字段子集，兼容 CRLF / 裸 CR / 块切半行 / 末尾无空行 |
@@ -70,7 +71,7 @@
 | `src/responses/to-request.ts` | `encodeResponsesRequest`：IR → `{ input[], tools?, stream, store: false, include? }`；系统提示与说明是任意位置的 developer / system 消息；assistant 一轮拆成多个项（`type:message` 带 id / phase、整个 reasoning 项原样、`function_call` 带 call_id 与可选 fc_ 项 id）；`function_call_output` 三形态（字符串 / `[tool error]` 前缀 / 带图片的内容块数组）；宿主 `input` / `tools` / `previous_response_id` 剥掉；`reasoningItemOf` 判可回放 |
 | `src/responses/from-stream.ts` | `consumeResponsesStream`：按 `type` 分派 `response.output_item.added/done`、`reasoning_summary_part.added` / `reasoning_summary_text.delta` / `reasoning_text.delta`、`output_text.delta` / `refusal.delta`、`function_call_arguments.delta/done`、`response.completed/incomplete/failed`、`error`；按 output_index 存槽、项收尾以厂商最终形状为准（function_call 入参过 `decodeToolArgumentsText`）、`completed.output` 回填加密项；`usageOf`（input 减 cached 与 cache_write） |
 | `src/responses/loss-matrix.ts` | `RESPONSES_LOSS_MATRIX`：Responses 线的有损合同，与 pi 版同名表逐格对照 |
-| 测试（14 个 `*.test.ts`，424 例） | `sse` / `http` / `ir` / `chat/*`（三个目标 × 24 变体 + 死条目；读写往返七种入参原文：写侧送回的与工具拿到的同一份）/ `anthropic/to-request`（S1 五种摆放、断点三档、签名四种来源）/ `anthropic/from-stream` / `anthropic/loss-matrix`（三个目标 × 30 变体 + 死条目）/ `responses/to-request`（骨架、角色、requestOptions 剥盖、reasoning 五种来源、正文 id 四种来源、两个 id、输出三形态、说明任意位置、后移）/ `responses/from-stream` / `responses/loss-matrix`（三个目标 × 34 变体 + 死条目 + 与 pi 版对照）/ `factories` / `lowering`（假 fetch 全链、三条线各一条真跑 core `runLoop` 的多轮集成） |
+| 测试（14 个 `*.test.ts`，582 例） | `sse` / `http` / `ir` / `chat/*`（四个目标 × 28 变体 + 死条目；只有图片的上浮快照取自改动前实现；读写往返七种入参原文：写侧送回的与工具拿到的同一份）/ `anthropic/to-request`（S1 五种摆放、断点三档、签名四种来源）/ `anthropic/from-stream` / `anthropic/loss-matrix`（三个目标 × 30 变体 + 死条目）/ `responses/to-request`（骨架、角色、requestOptions 剥盖、reasoning 五种来源、正文 id 四种来源、两个 id、输出三形态、说明任意位置、后移）/ `responses/from-stream` / `responses/loss-matrix`（三个目标 × 34 变体 + 死条目 + 与 pi 版对照）/ `factories` / `lowering`（假 fetch 全链、三条线各一条真跑 core `runLoop` 的多轮集成） |
 
 ## 3 核心流程
 
@@ -84,14 +85,14 @@
 ### 3.2 `encodeChatRequest`：IR → Chat 请求体
 
 - `systemPrompt` → 首条 `system`。`system_note` → 中途 `system`（缺省 exact），否则 `<system_note kind=…>` 框住走 user（lossy user-role）。三条线同一规则：`directive: true` 的说明（IR 带 `directive`）不看 `midConversationSystem`，一律走框住的 user，落点 note 为 `DIRECTIVE_NOTE`（OPT-261031-1）。`compaction` → `[Summary of earlier conversation]` user 文本（lossy user-text）。
-- user：单段文本用字符串，否则 content parts；图片走 `data:` URL，模型不收图时换占位文本并记 lossy。
+- user：单段文本用字符串，否则 content parts；模型收的图片 / 视频 / 音频都走 `image_url` 的 `data:` URL（视频音频是中转站方言，落点 exact 并带 `RELAY_DIALECT_NOTE`），不收的换占位文本并记 lossy。
 - assistant：正文多段合并成一个字符串（lossy merged-text）；`tool_calls[].function.arguments` 是 JSON 字符串；**方言开着时 `reasoning_content` 字段必在**。
-- tool：只收文本；`isError` 以 `[tool error]\n` 前缀表达（lossy）。图片两种处置：模型收图且 `chat.liftToolImages` 未关（缺省）→ 原位留 `[image n attached in the next user message]`，图片本体攒进 `lifted`，遇到第一个会下发的非 tool_result 条目（`dropped` 不算——它们原位夹在同批结果之间）或收尾时放成一条 user 消息（每条结果一行说明 + 逐张 `image n:`；untrusted 结果的图片段用 core `markUntrusted` 包），落点 lossy `tool+lifted-images`；否则换占位（lossy tool-text-only）。IR 已把后移的用户消息排在整批结果之后，所以附件天然在它们之前。
+- tool：只收文本；`isError` 以 `[tool error]\n` 前缀表达（lossy）。媒体两种处置：模型收该类型且 `chat.liftToolImages` 未关（缺省）→ 原位留 `[<类型> n attached in the next user message]`（一条结果内各类型连续编号），本体攒进 `lifted`，遇到第一个会下发的非 tool_result 条目（`dropped` 不算——它们原位夹在同批结果之间）或收尾时放成一条 user 消息（每条结果一行说明——只有图片写 "N image(s)"，混有视频音频写 "N attachment(s)"——+ 逐件 `<类型> n:`；只有图片时输出与 2026-11-05 前逐字节一致，快照用例锁住；untrusted 结果的图片段用 core `markUntrusted` 包），落点 lossy `tool+lifted-images`；否则换占位（lossy tool-text-only）：模型收但关了上浮写 tool 专用占位，模型不收的视频音频写 `mediaOmitted`，note 按原因分开写。IR 已把后移的用户消息排在整批结果之后，所以附件天然在它们之前。
 - 请求体：宿主 `requestOptions` 先铺（`tools` 剥掉），`model` / `messages` / `tools` / `stream` / `stream_options` 后盖。
 
 ### 3.3 `encodeAnthropicRequest`：IR → Anthropic 请求体（F2）
 
-1. **user 侧合并**：user / tool_result / compaction / 不支持中途 system 时的说明，都追加到"正在攒的 user 消息"（`userRun`）；遇到 assistant 或放出说明时收口成一条 `{ role: "user", content: [...] }`。这样同批 tool_result 与被 IR 后移的用户消息天然并在同一条 user 里（F0 A5b 实测可达）。空文本段跳过；整条没有任何块就不发并记 dropped。
+1. **user 侧合并**（模型收的图片 / 视频 / 音频一律 `image` 块、`media_type` 原样，断点照常打在末块上）：user / tool_result / compaction / 不支持中途 system 时的说明，都追加到"正在攒的 user 消息"（`userRun`）；遇到 assistant 或放出说明时收口成一条 `{ role: "user", content: [...] }`。这样同批 tool_result 与被 IR 后移的用户消息天然并在同一条 user 里（F0 A5b 实测可达）。空文本段跳过；整条没有任何块就不发并记 dropped。
 2. **说明归位**：支持中途 system 时，`system_note` 进 `pendingNotes`，等到下一条 assistant 之前（或收尾）才放出。放出时看 `messages` 末条：是 user / system → 逐条 `{ role: "system", content: [text] }`，exact（转义过 lossy；被 IR 后移或位置晚了一条 user 的加备注）；是 assistant 或什么都没有 → 全部框成一条 user 文本，lossy(user-role) 并写明原因。有说明在等而又来了 user 侧内容 → 标 `moved`。
 3. **assistant**：先算内容块，全部块都发不出（如只有无签名 thinking）就整条不发、也不切开 user 侧合并；否则先放出说明再 push。块：text 原样（空段 dropped）；thinking 看 `replay.thinkingSignature`——别家 dropped、无签名 dropped、`redacted` → `redacted_thinking(data)`、否则 `thinking(thinking, signature)`（同家不同型号加备注）；tool_call → `tool_use`，非对象入参包 `{ value }`（lossy wrapped-args）。
 4. **请求体**：宿主 `requestOptions` 先铺（`system` / `tools` 剥掉），`model` / `max_tokens`（宿主没给取 `maxOutputTokens`）/ `messages` / `stream: true` 后盖；`systemPrompt` → `system: [{ type: "text", text }]`；`tools[].input_schema` 直接透传 JSON Schema。
@@ -101,7 +102,7 @@
 ### 3.4 `encodeResponsesRequest`：IR → Responses 请求体（F3）
 
 1. **角色**：`systemRole = responses.systemRole ?? (reasoning ? "developer" : "system")`；`systemPrompt` 是 `input` 首项，`system_note` 在它出现的位置直接放出（Responses 对 developer / system 的位置没有规则，不用归位）；宿主声明 `midConversationSystem: false` 才框成 `<system_note>` user 文本记 lossy(user-role)。
-2. **user 侧**：user → `{ role: "user", content: [input_text | input_image] }`（空内容 dropped；不收图换占位记 lossy）；compaction → `[Summary of earlier conversation]` user 文本（lossy user-text）；tool_result → `{ type: "function_call_output", call_id, output }`，只有文本时 `output` 是字符串、`isError` 加 `[tool error]\n` 前缀（lossy），带图片且模型收图时是 `input_text` + `input_image` 数组。
+2. **user 侧**：user → `{ role: "user", content: [input_text | input_image] }`（空内容 dropped；视频音频收时也进 `input_image`、绝不用 `input_audio`；不收的换占位记 lossy）；compaction → `[Summary of earlier conversation]` user 文本（lossy user-text）；tool_result → `{ type: "function_call_output", call_id, output }`，只有文本时 `output` 是字符串、`isError` 加 `[tool error]\n` 前缀（lossy），带模型收的媒体时是 `input_text` + `input_image` 数组。
 3. **assistant**：一轮拆成多个项。text → `{ type: "message", role: "assistant", id, status: "completed", content: [output_text] }`，id 取 `replay.textSignature`（裸 msg_ id 或 pi 版 `{"v":1,"id","phase"}` JSON），别家或没有就补 `msg_reins_<n>`（空正文 dropped）；thinking → `reasoningItemOf(replay)` 解出带非空 `encrypted_content` 的整项就原样 push（同家别的型号照发并备注），别家 / 无加密项 dropped 并说明原因；tool_call → `{ type: "function_call", id?, call_id: toolCallId, name, arguments: JSON 字符串 }`，`id` 只在 `replay.itemId` 存在且同一模型时带。
 4. **请求体**：宿主 `requestOptions` 先铺（`input` / `tools` / `previous_response_id` 剥掉），`model` / `input` / `stream: true` / `store: false` 后盖；`tools[]` 是 `{ type: "function", name, description, parameters, strict: false }`；`reasoning && encryptedReasoning !== false` 时 `include` 合并进 `reasoning.encrypted_content`（去重）。`reasoning` / `max_output_tokens` 不缺省设置。
 5. 落点最后 `orderLandings` 排回输入顺序。

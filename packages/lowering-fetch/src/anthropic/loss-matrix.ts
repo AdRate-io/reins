@@ -4,8 +4,10 @@
  * thinking-block / system），不同处只有三格——无签名 thinking 这里 dropped 而非 pi-ai 的"降为正文"、redacted 单列、
  * tool_result 图片按模型能力处置。
  */
+
 import type { LandingSpec } from "@reinsjs/core"
 import { NOT_SENT } from "../chat/loss-matrix.js"
+import { RELAY_DIALECT_NOTE } from "../media.js"
 
 const exact = (landing: string, note?: string, when?: string): LandingSpec => {
   const spec: LandingSpec = { kind: "exact", landing }
@@ -20,11 +22,14 @@ const dropped = (landing: string, note: string, when?: string): LandingSpec =>
 
 export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> = {
   "core.user_message": [
-    exact("user"),
+    exact(
+      "user",
+      `images, video and audio the model takes go in image blocks with their own media_type; ${RELAY_DIALECT_NOTE}`,
+    ),
     lossy(
       "user",
-      "moved after that batch of tool results (the order changes), untrusted content escaped, or images replaced with placeholder text because the model takes none",
-      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images the model does not take",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, or images / video / audio replaced with placeholder text because the model takes none of that kind",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take",
     ),
     dropped(
       "none",
@@ -66,11 +71,11 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
   "core.tool_result": [
     exact(
       "tool_result",
-      "in the user message right after the assistant that holds the tool_use; is_error is passed through; tool reference parts are expanded into text when the native capability is missing or the result is not trusted as system",
+      `in the user message right after the assistant that holds the tool_use; is_error is passed through; tool reference parts are expanded into text when the native capability is missing or the result is not trusted as system; video and audio the model takes go in image blocks (${RELAY_DIALECT_NOTE})`,
     ),
     lossy(
       "tool_result",
-      "untrusted content is escaped, or images are replaced with placeholder text because the model takes none, or the referenced tool is absent from this request's tool table and its definition is expanded into text",
+      "untrusted content is escaped, or images / video / audio are replaced with placeholder text because the model takes none of that kind, or the referenced tool is absent from this request's tool table and its definition is expanded into text",
     ),
     exact(
       "tool-reference",

@@ -47,7 +47,13 @@ import {
 } from "./state.js"
 import { resolveSocketContributions } from "./static.js"
 import { isSubagentPause } from "./subagent.js"
-import { deferredToolSpecOf, errorMessageOf, normalizeToolOutput, toolResultTrust } from "./tools.js"
+import {
+  deferredToolSpecOf,
+  errorMessageOf,
+  isContentPart,
+  normalizeToolOutput,
+  toolResultTrust,
+} from "./tools.js"
 import { toolsBoundDrafts } from "./tools-bound.js"
 import type {
   ApprovalDecisionInput,
@@ -84,7 +90,7 @@ export const INPUT_DRAFT_TYPES: ReadonlySet<string> = new Set([
 ])
 
 const INPUT_ACTORS: ReadonlySet<string> = new Set<Actor>(["user", "model", "tool", "system", "host"])
-const CONTENT_PART_TYPES: ReadonlySet<string> = new Set(["text", "image", "tool_reference"])
+const CONTENT_PART_TYPES: ReadonlySet<string> = new Set(["text", "image", "video", "audio", "tool_reference"])
 
 /**
  * 数组元素归类：片段（ContentPart，无 actor）还是草稿（带 actor，或 type 为 core.* / ext.*）。
@@ -101,23 +107,9 @@ function classifyInputItem(item: unknown): "part" | "draft" | undefined {
 
 const NOTE_KINDS: ReadonlySet<string> = new Set(["perception", "pin", "budget", "host"])
 
-/** 内容片段的最小形状校验：坏片段一旦进日志，之后每次读到它都会崩（会话报废），所以在写之前拦 */
+/** 内容片段数组的形状校验；单个片段的规则只在 `isContentPart`（tools.ts），与工具返回值同一口径 */
 function isContentPartList(x: unknown): boolean {
-  if (!Array.isArray(x)) return false
-  return x.every((p) => {
-    if (typeof p !== "object" || p === null) return false
-    const part = p as Record<string, unknown>
-    if (part.type === "text") return typeof part.text === "string"
-    if (part.type === "image") return typeof part.mime === "string" && typeof part.data === "string"
-    if (part.type === "tool_reference")
-      return (
-        typeof part.name === "string" &&
-        typeof part.description === "string" &&
-        typeof part.inputSchema === "object" &&
-        part.inputSchema !== null
-      )
-    return false
-  })
+  return Array.isArray(x) && x.every(isContentPart)
 }
 
 /** 三种 core 输入草稿的 payload 最小形状；ext.* 的形状归宿主自己的注册表 */

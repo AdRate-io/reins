@@ -16,7 +16,7 @@
  *
  * 被裁掉的旧 compaction 摘要会原文并入新摘要，模型写过的整理不丢。
  */
-import type { Event } from "../events/base.js"
+import type { ContentPart, Event } from "../events/base.js"
 import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { estimateBudgetOf, estimateTotal } from "./estimate.js"
@@ -65,13 +65,27 @@ export interface BudgetTruncateOptions {
 /** 兜底裁剪的缺省回落线（占 contextLimit 的比例） */
 export const DEFAULT_CUT_TO_RATIO = 0.6
 
+/** 单个片段在摘录里的写法：非文本按类型写占位 */
+function partExcerpt(p: ContentPart): string {
+  switch (p.type) {
+    case "text":
+      return p.text
+    case "image":
+    case "video":
+    case "audio":
+      return `[${p.type}]`
+    case "tool_reference":
+      return `[tool ${p.name}]`
+    default: {
+      const _exhaustive: never = p
+      return _exhaustive
+    }
+  }
+}
+
 /** 摘录文本片段，供机械摘要引用用户原话 */
 function excerpt(parts: CoreEventOf<"core.user_message">["payload"]["content"], max = 120): string {
-  const text = parts
-    .map((p) => (p.type === "text" ? p.text : "[image]"))
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim()
+  const text = parts.map(partExcerpt).join(" ").replace(/\s+/g, " ").trim()
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 

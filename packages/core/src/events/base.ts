@@ -56,9 +56,12 @@ export type Event<T extends string = string, P = unknown> = EventBase & {
 
 /**
  * 内容片段。用户消息、工具结果都由它组成；投影/降级时再翻译成各家 API 的 content block。
- * 文本、图片，以及"工具定义引用"（L1）；大结果不塞进片段，走 tool_result.spilled 外溢到 BlobStore。
+ * 文本、图片、视频、音频，以及"工具定义引用"（L1）；大结果不塞进片段，走 tool_result.spilled 外溢到 BlobStore。
+ *
+ * 消费片段的地方一律逐类型显式分支、末尾 `const _exhaustive: never = p` 收口——
+ * "不是文本就当图片"的 else 兜底会让新加的片段类型悄悄落进图片分支（2026-11-05 视频 / 音频方案）。
  */
-export type ContentPart = TextPart | ImagePart | ToolReferencePart
+export type ContentPart = TextPart | ImagePart | VideoPart | AudioPart | ToolReferencePart
 
 export interface TextPart {
   type: "text"
@@ -70,6 +73,31 @@ export interface ImagePart {
   mime: string
   /** base64 编码的图片字节 */
   data: string
+}
+
+/**
+ * 视频片段（2026-11-05，OnSet 建议 12）。音轨算视频的一部分，不另要 `audio` 能力位；纯音频文件用 AudioPart。
+ * 模型收不收看 `LoweringCapabilities.video`，不收时降级层落文字占位并记 lossy。
+ */
+export interface VideoPart {
+  type: "video"
+  /** 必须以 "video/" 开头 */
+  mime: string
+  /** base64 编码的文件字节 */
+  data: string
+  /** 时长（秒，有限正数）；只用于 token 估算，没有时按字节折算（偏高）。宿主拿得到就该给 */
+  durationSec?: number
+}
+
+/** 音频片段（2026-11-05）。模型收不收看 `LoweringCapabilities.audio` */
+export interface AudioPart {
+  type: "audio"
+  /** 必须以 "audio/" 开头 */
+  mime: string
+  /** base64 编码的文件字节 */
+  data: string
+  /** 时长（秒，有限正数）；只用于 token 估算，没有时按字节折算（偏高） */
+  durationSec?: number
 }
 
 /**

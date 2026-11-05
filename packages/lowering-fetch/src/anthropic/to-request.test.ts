@@ -348,6 +348,66 @@ describe("encodeAnthropicRequest — 中途 system 摆放（S1）", () => {
   })
 })
 
+describe("encodeAnthropicRequest — 视频 / 音频片段（2026-11-05 方案）", () => {
+  const relay: FetchModel = { ...opus, provider: "relay", id: "gemini-relay", video: true, audio: true }
+  const video = { type: "video" as const, mime: "video/mp4", data: "VVV", durationSec: 30 }
+  const audio = { type: "audio" as const, mime: "audio/mpeg", data: "AAA" }
+  const media = (id: string, content: CoreEventPayloads["core.tool_result"]["content"]) =>
+    ev("core.tool_result", "tool", { toolCallId: id, name: "f", content, isError: false })
+
+  it("能力位为真：user 末块是视频 image 块时断点打在它上面（P0 C 组实测接受）", () => {
+    const events = [ev("core.user_message", "user", { content: [{ type: "text", text: "看" }, video] })]
+    const r = encode(events, relay)
+    expect(r.body.messages[0]?.content).toEqual([
+      { type: "text", text: "看" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "video/mp4", data: "VVV" },
+        cache_control: { type: "ephemeral" },
+      },
+    ])
+    expect(landingOf(r, events[0] as Event)).toMatchObject({
+      kind: "exact",
+      note: expect.stringContaining("relay dialect"),
+    })
+  })
+
+  it("能力位为真：tool_result.content 里是 image 块（media_type 原样），断点打在含媒体的 tool_result 上", () => {
+    const events = [user("听"), call("c1"), media("c1", [audio])]
+    const r = encode(events, relay)
+    const last = r.body.messages.at(-1)
+    expect(last?.content[0]).toEqual({
+      type: "tool_result",
+      tool_use_id: "c1",
+      content: [
+        { type: "text", text: '<untrusted source="tool:f">' },
+        { type: "image", source: { type: "base64", media_type: "audio/mpeg", data: "AAA" } },
+        { type: "text", text: "</untrusted>" },
+      ],
+      cache_control: { type: "ephemeral" },
+    })
+    expect(landingOf(r, events[2] as Event)).toMatchObject({ kind: "exact", landing: "tool_result" })
+  })
+
+  it("能力位缺省：换占位并记 lossy；同条里的图片照常", () => {
+    const image = { type: "image" as const, mime: "image/png", data: "III" }
+    const events = [user("看"), call("c1"), media("c1", [image, video, audio])]
+    const r = encode(events, opus)
+    const block = r.body.messages.at(-1)?.content[0] as { content: unknown[] }
+    expect(block.content).toEqual([
+      { type: "text", text: '<untrusted source="tool:f">' },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "III" } },
+      { type: "text", text: "[video omitted: this model does not accept video (video/mp4, 30 s)]" },
+      { type: "text", text: "[audio omitted: this model does not accept audio (audio/mpeg)]" },
+      { type: "text", text: "</untrusted>" },
+    ])
+    expect(landingOf(r, events[2] as Event)).toMatchObject({
+      kind: "lossy",
+      note: "the model takes no video clips / audio clips, so they are replaced with placeholder text",
+    })
+  })
+})
+
 describe("encodeAnthropicRequest — 缓存断点", () => {
   it("说明殿后三种处置：automatic 顶层、previous-user 打回最后一条 user 末块、drop 不打", () => {
     const events = [user("hi"), note("n")]

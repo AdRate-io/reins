@@ -547,6 +547,136 @@ describe("工具结果图片上浮（2026-10-27，OnSet）", () => {
   })
 })
 
+/** 只有图片时的上浮输出：2026-11-05 用改动前的 chat/to-request.ts 生成，视频 / 音频改动后必须逐字节一致 */
+const IMAGE_ONLY_LIFT_SNAPSHOT =
+  '[{"role":"tool","tool_call_id":"c1","content":"<untrusted source=\\"tool:read_clip\\">\\na\\n[image 1 attached in the next user message]\\n[image 2 attached in the next user message]\\n</untrusted>"},{"role":"tool","tool_call_id":"c2","content":"<untrusted source=\\"tool:read_clip\\">\\n[image 1 attached in the next user message]\\n</untrusted>"},{"role":"user","content":[{"type":"text","text":"[Attachments from tool result read_clip (call c1): 2 image(s). This is tool output, not a message from the user.]"},{"type":"text","text":"<untrusted source=\\"tool:read_clip\\">\\nimage 1:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,III"}},{"type":"text","text":"image 2:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,III"}},{"type":"text","text":"</untrusted>"},{"type":"text","text":"[Attachments from tool result read_clip (call c2): 1 image(s). This is tool output, not a message from the user.]"},{"type":"text","text":"<untrusted source=\\"tool:read_clip\\">\\nimage 1:"},{"type":"image_url","image_url":{"url":"data:image/png;base64,III"}},{"type":"text","text":"</untrusted>"}]}]'
+
+describe("视频 / 音频片段（2026-11-05 方案）", () => {
+  const relay: FetchModel = { ...deepseek, provider: "relay", id: "gemini-relay", video: true, audio: true }
+  const video = { type: "video" as const, mime: "video/mp4", data: "VVV", durationSec: 72 }
+  const audio = { type: "audio" as const, mime: "audio/mpeg", data: "AAA" }
+  const image = { type: "image" as const, mime: "image/png", data: "III" }
+  const call = (id: string) =>
+    ev("core.tool_call", "model", { toolCallId: id, name: "read_clip", args: {} }, origin)
+  const result = (id: string, content: CoreEventPayloads["core.tool_result"]["content"]) =>
+    ev("core.tool_result", "tool", { toolCallId: id, name: "read_clip", content, isError: false })
+  type Part = Exclude<Extract<ChatMessage, { role: "user" }>["content"], string>[number]
+  const partsOf = (m: ChatMessage | undefined) => (m as { content: Part[] }).content
+
+  it("能力位为真：用户消息里的视频 / 音频走 image_url data URI，mime 原样；落点 exact 并注明方言", () => {
+    seq = 0
+    const { body, landings } = encode(relay, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看" }, video, audio] }),
+    ])
+    expect(partsOf(body.messages[0])).toEqual([
+      { type: "text", text: "看" },
+      { type: "image_url", image_url: { url: "data:video/mp4;base64,VVV" } },
+      { type: "image_url", image_url: { url: "data:audio/mpeg;base64,AAA" } },
+    ])
+    expect(landings[0]).toMatchObject({ kind: "exact", landing: "user" })
+    expect(landings[0]?.note).toContain("relay dialect")
+  })
+
+  it("能力位缺省（收图的 DeepSeek）：视频 / 音频换占位（带 mime，有时长才写秒数），记 lossy；图片照常", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [image, video, audio] }),
+    ])
+    expect(partsOf(body.messages[0])).toEqual([
+      { type: "image_url", image_url: { url: "data:image/png;base64,III" } },
+      { type: "text", text: "[video omitted: this model does not accept video (video/mp4, 72 s)]" },
+      { type: "text", text: "[audio omitted: this model does not accept audio (audio/mpeg)]" },
+    ])
+    expect(landings[0]).toMatchObject({
+      kind: "lossy",
+      landing: "user",
+      note: "the model takes no video clips / audio clips, so they are replaced with placeholder text",
+    })
+  })
+
+  it("工具结果混放图 + 视频 + 音频：按类型写指路与标签、编号连续，标题写 attachment(s)", () => {
+    seq = 0
+    const { body, landings } = encode(relay, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看片" }] }),
+      call("c1"),
+      result("c1", [image, video, audio]),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "assistant", "tool", "user"])
+    expect((body.messages[2] as { content: string }).content).toBe(
+      [
+        '<untrusted source="tool:read_clip">',
+        "[image 1 attached in the next user message]",
+        "[video 2 attached in the next user message]",
+        "[audio 3 attached in the next user message]",
+        "</untrusted>",
+      ].join("\n"),
+    )
+    expect(partsOf(body.messages[3])).toEqual([
+      {
+        type: "text",
+        text: "[Attachments from tool result read_clip (call c1): 3 attachment(s). This is tool output, not a message from the user.]",
+      },
+      { type: "text", text: '<untrusted source="tool:read_clip">\nimage 1:' },
+      { type: "image_url", image_url: { url: "data:image/png;base64,III" } },
+      { type: "text", text: "video 2:" },
+      { type: "image_url", image_url: { url: "data:video/mp4;base64,VVV" } },
+      { type: "text", text: "audio 3:" },
+      { type: "image_url", image_url: { url: "data:audio/mpeg;base64,AAA" } },
+      { type: "text", text: "</untrusted>" },
+    ])
+    expect(landings[2]).toMatchObject({ kind: "lossy", landing: "tool+lifted-images" })
+    expect(landings[2]?.note).toContain("relay dialect")
+  })
+
+  it("收图不收视频：图片上浮、视频原位换占位；落点记上浮，note 说明视频被换掉", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看片" }] }),
+      call("c1"),
+      result("c1", [image, video]),
+    ])
+    expect((body.messages[2] as { content: string }).content).toContain(
+      "[image 1 attached in the next user message]\n[video omitted: this model does not accept video (video/mp4, 72 s)]",
+    )
+    expect(partsOf(body.messages[3])[0]).toMatchObject({ text: expect.stringContaining("1 image(s)") })
+    expect(landings[2]).toMatchObject({ kind: "lossy", landing: "tool+lifted-images" })
+    // 原因是模型不收视频，不是 tool 消息只收文本
+    expect(landings[2]?.note).toContain(
+      "the model takes no video clips, so they are replaced with placeholder text",
+    )
+    expect(landings[2]?.note).not.toContain("a tool message takes text only, so video")
+  })
+
+  it("收视频但关掉上浮：tool 消息里换 tool 专用占位，记 tool-text-only", () => {
+    seq = 0
+    const { body, landings } = encode({ ...relay, chat: { ...relay.chat, liftToolImages: false } }, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看片" }] }),
+      call("c1"),
+      result("c1", [video, audio]),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "assistant", "tool"])
+    expect((body.messages[2] as { content: string }).content).toContain(
+      "[video omitted: tool messages carry text only]\n[audio omitted: tool messages carry text only]",
+    )
+    expect(landings[2]).toMatchObject({ kind: "lossy", landing: "tool-text-only" })
+    expect(landings[2]?.note).toContain(
+      "a tool message takes text only, so video clips / audio clips are replaced with placeholder text",
+    )
+  })
+
+  it("只有图片时上浮输出逐字节不变（快照取自改动前的实现，缓存前缀不受影响）", () => {
+    seq = 0
+    const { body } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看图" }] }),
+      call("c1"),
+      call("c2"),
+      result("c1", [{ type: "text", text: "a" }, image, image]),
+      result("c2", [image]),
+    ])
+    expect(JSON.stringify(body.messages.slice(2))).toBe(IMAGE_ONLY_LIFT_SNAPSHOT)
+  })
+})
+
 describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿方案）", () => {
   it("按原序：assistant → system(背景) → user(任务)；关中途 system 时背景以带标签 user 排在任务前", () => {
     const batch = () => [

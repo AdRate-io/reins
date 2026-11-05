@@ -391,6 +391,68 @@ describe("延迟加载（L1）：Responses 没有原生落点", () => {
   })
 })
 
+describe("视频 / 音频片段（2026-11-05 方案）", () => {
+  const relay: FetchModel = {
+    ...gpt41,
+    provider: "relay",
+    id: "gemini-relay",
+    images: true,
+    video: true,
+    audio: true,
+  }
+  const video = { type: "video" as const, mime: "video/mp4", data: "VVV", durationSec: 6.5 }
+  const audio = { type: "audio" as const, mime: "audio/wav", data: "AAA" }
+
+  it("能力位为真：user 与 function_call_output 里都走 input_image（detail auto），mime 原样；绝不出 input_audio", () => {
+    const events = [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看" }, video] }),
+      call("c1", {}, { provider: "relay", api: "openai-responses", model: "gemini-relay" }),
+      result("c1", [{ type: "text", text: "clip" }, audio]),
+    ]
+    const r = encode(events, relay)
+    expect(r.body.input[0]).toEqual({
+      role: "user",
+      content: [
+        { type: "input_text", text: "看" },
+        { type: "input_image", image_url: "data:video/mp4;base64,VVV", detail: "auto" },
+      ],
+    })
+    expect(r.body.input[2]).toEqual({
+      type: "function_call_output",
+      call_id: "c1",
+      output: [
+        { type: "input_text", text: "clip" },
+        { type: "input_image", image_url: "data:audio/wav;base64,AAA", detail: "auto" },
+      ],
+    })
+    expect(JSON.stringify(r.body)).not.toContain("input_audio")
+    expect(landingOf(r, events[0] as Event)).toMatchObject({
+      kind: "exact",
+      note: expect.stringContaining("relay dialect"),
+    })
+    expect(landingOf(r, events[2] as Event)).toMatchObject({ kind: "exact", landing: "function_call_output" })
+  })
+
+  it("能力位缺省：换占位（时长保留一位小数），记 lossy；function_call_output 退回字符串", () => {
+    const events = [ev("core.user_message", "user", { content: [video] }), call("c1"), result("c1", [audio])]
+    const r = encode(events, mini)
+    expect(r.body.input[0]).toEqual({
+      role: "user",
+      content: [
+        { type: "input_text", text: "[video omitted: this model does not accept video (video/mp4, 6.5 s)]" },
+      ],
+    })
+    expect(r.body.input.find((i) => "type" in i && i.type === "function_call_output")).toMatchObject({
+      output: "[audio omitted: this model does not accept audio (audio/wav)]",
+    })
+    expect(landingOf(r, events[0] as Event)).toMatchObject({
+      kind: "lossy",
+      note: "the model takes no video clips, so they are replaced with placeholder text",
+    })
+    expect(landingOf(r, events[2] as Event)).toMatchObject({ kind: "lossy", landing: "function_call_output" })
+  })
+})
+
 describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿方案）", () => {
   it("按原序：背景说明项排在任务之前", () => {
     const r = encode([

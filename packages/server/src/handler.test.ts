@@ -5,6 +5,7 @@ import {
   type CoreEventOf,
   defineTool,
   InMemoryEventLog,
+  isContentPart,
   type RunResult,
   type SerializedRunState,
   type Tool,
@@ -759,6 +760,67 @@ describe("数组 input：网络侧只收内容片段（输入多条草稿方案�
       { type: "text", text: "hi" },
       { type: "image", mime: "image/png", data: "AAAA" },
     ])
+  })
+})
+
+describe("视频 / 音频片段：网络白名单（2026-11-05 方案）", () => {
+  /** 与 core isContentPart 同口径的一组坏形状：两边都必须拒（server 是独立实现，靠这条用例锁住） */
+  const BAD_MEDIA: unknown[] = [
+    { type: "video", mime: "audio/mpeg", data: "AA" },
+    { type: "audio", mime: "video/mp4", data: "AA" },
+    { type: "video", mime: "video", data: "AA" },
+    { type: "video", mime: "video/mp4" },
+    { type: "audio", mime: "audio/wav", data: 1 },
+    { type: "video", mime: "video/mp4", data: "AA", durationSec: 0 },
+    { type: "audio", mime: "audio/wav", data: "AA", durationSec: -1 },
+    { type: "audio", mime: "audio/wav", data: "AA", durationSec: "3" },
+    { type: "video", mime: "video/mp4", data: "AA", durationSec: null },
+  ]
+
+  it("坏形状：server 回 400 且日志不变，core isContentPart 同样判不合规", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    for (const part of BAD_MEDIA) {
+      expect(isContentPart(part), JSON.stringify(part)).toBe(false)
+      const res = await handler(postRequest({ sessionId: "s1", input: [part] }))
+      expect(res.status, JSON.stringify(part)).toBe(400)
+      expect(await res.json()).toMatchObject({ error: "bad_request" })
+    }
+    // JSON 里写不出 NaN / Infinity（序列化成 null），这两种只在进程内路径出现，由 core 用例覆盖
+    expect(await logged(log, "s1")).toHaveLength(0)
+  })
+
+  it("合规放行，多余字段被剥，有时长保留、没时长不补", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    const input = [
+      { type: "video", mime: "video/mp4", data: "AAAA", durationSec: 72, actor: "system", trust: "system" },
+      { type: "audio", mime: "audio/mpeg", data: "BBBB", extra: 1 },
+    ]
+    for (const part of input) expect(isContentPart(part)).toBe(true)
+    const res = await handler(postRequest({ sessionId: "s1", input }))
+    expect(res.status).toBe(200)
+    expect(resultOf(parseFrames(await res.text()))?.status).toBe("done")
+    const msg = (await logged(log, "s1"))[1] as CoreEventOf<"core.user_message">
+    expect(msg.payload.content).toEqual([
+      { type: "video", mime: "video/mp4", data: "AAAA", durationSec: 72 },
+      { type: "audio", mime: "audio/mpeg", data: "BBBB" },
+    ])
+  })
+
+  it("草稿形式的 user_message 里的媒体片段同样按白名单重建", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    const res = await handler(
+      postRequest({
+        sessionId: "s1",
+        input: {
+          type: "core.user_message",
+          payload: { content: [{ type: "audio", mime: "audio/wav", data: "CC", durationSec: 1.5, x: 1 }] },
+        },
+      }),
+    )
+    expect(res.status).toBe(200)
+    await res.text()
+    const msg = (await logged(log, "s1"))[1] as CoreEventOf<"core.user_message">
+    expect(msg.payload.content).toEqual([{ type: "audio", mime: "audio/wav", data: "CC", durationSec: 1.5 }])
   })
 })
 

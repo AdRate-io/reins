@@ -105,7 +105,10 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
   if (Array.isArray(b.input)) {
     const parts = rebuildContentParts(b.input)
     if (!parts)
-      return { ok: false, error: "input content parts must be a non-empty array of text or image parts" }
+      return {
+        ok: false,
+        error: "input content parts must be a non-empty array of text, image, video or audio parts",
+      }
     b.input = parts
   } else if (b.input !== undefined) {
     const okInput =
@@ -140,19 +143,41 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
 }
 
 /**
- * 网络来的内容片段按白名单重建：非空、只收 text / image，每个片段只留该类型的字段（壳字段由服务端定）。
- * 多余字段（如 actor）因此不可能进到循环、改变它对 input 的判别；不合规返回 undefined
+ * 网络来的内容片段按白名单重建：非空、只收 text / image / video / audio，每个片段只留该类型的字段（壳字段由服务端定）。
+ * 多余字段（如 actor）因此不可能进到循环、改变它对 input 的判别；不合规返回 undefined。
+ * video / audio 的形状规则与 core `isContentPart` 同口径（mime 以 "video/" / "audio/" 开头、durationSec 缺省或有限正数）；
+ * server 不依赖 core 内部判定，两份实现靠跨包用例锁住（同一组坏形状两边都拒）。tool_reference 不收（网络边界不能替模型点亮工具）
  */
 function rebuildContentParts(x: unknown): ContentPart[] | undefined {
   if (!Array.isArray(x) || x.length === 0) return undefined
   const out: ContentPart[] = []
   for (const p of x) {
     if (typeof p !== "object" || p === null) return undefined
-    const part = p as { type?: unknown; text?: unknown; mime?: unknown; data?: unknown }
+    const part = p as {
+      type?: unknown
+      text?: unknown
+      mime?: unknown
+      data?: unknown
+      durationSec?: unknown
+    }
     if (part.type === "text" && typeof part.text === "string") out.push({ type: "text", text: part.text })
     else if (part.type === "image" && typeof part.mime === "string" && typeof part.data === "string")
       out.push({ type: "image", mime: part.mime, data: part.data })
-    else return undefined
+    else if (
+      (part.type === "video" || part.type === "audio") &&
+      typeof part.mime === "string" &&
+      part.mime.startsWith(`${part.type}/`) &&
+      typeof part.data === "string"
+    ) {
+      const d = part.durationSec
+      if (d !== undefined && !(typeof d === "number" && Number.isFinite(d) && d > 0)) return undefined
+      out.push({
+        type: part.type,
+        mime: part.mime,
+        data: part.data,
+        ...(d !== undefined ? { durationSec: d } : {}),
+      })
+    } else return undefined
   }
   return out
 }

@@ -24,12 +24,11 @@ import {
   markUntrustedText,
   needsUntrustedMark,
   type ContentPart as ReinsPart,
-  renderToolReference,
   type ToolCallPayload,
   untrustedSourceOf,
 } from "@reinsjs/core"
 import type { ModelMessage, ToolCall as TanstackToolCall } from "@tanstack/ai"
-import { fromTanstackContent, toTanstackContent } from "./content.js"
+import { fromTanstackContent, partAsText, toTanstackContent } from "./content.js"
 
 export interface ToModelMessagesOptions {
   /** 当前请求的模型；thinking 签名只对同一来源回放 */
@@ -282,11 +281,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
 }
 
 function textOf(parts: readonly ReinsPart[]): string {
-  return parts
-    .map((p) =>
-      p.type === "text" ? p.text : p.type === "tool_reference" ? renderToolReference(p) : `[image ${p.mime}]`,
-    )
-    .join("\n")
+  return parts.map(partAsText).join("\n")
 }
 
 // ---- 入口：客户端历史 → 事件草稿 ----
