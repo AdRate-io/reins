@@ -301,19 +301,19 @@ postgres.js 是主流 Node 驱动，Drizzle 项目多半用它（AdRate 就是�
 **采纳。** 实测（本机 PG 15 与 PGlite，postgres.js 3.4.9 / 4.0.0）证实了建议里第 2 层的风险，但后果和推测的不一样：
 
 - **事件确实被二次编码**：`$6::json[]` 让 postgres.js 对已序列化的字符串再编码一次，库里每行 `json_typeof(data)` 都是 `string`。但续跑**不会**被判成篡改：读侧有"拿到字符串再解一层"的兼容，读回逐字一致。坏的是库里的形状，SQL 查 `data->>'type'` 只得到 null。
-- **另一个更危险的点**：宿主实例开了 `transform: postgres.camel`，blob meta 的 `sessionId` 会丢；而且一旦事件正确存成对象，camel 会把事件内部的键也改掉（`tool_name` 变成 `toolName`），这才会让续跑签名失效。
+- **另一个点**：宿主实例开了 `transform: postgres.camel`，结果列名会被改成驼峰，blob meta 的 `sessionId` 丢失。camel 也会改 json 列里的对象键（`tool_name` 变成 `toolName`），但修好后 reins 读的是 `data::text`，事件不受这一条影响。
 - 其余都正常：`unsafe` 返回行数组、23505 在 `err.code`、bytea、int8、租约并发、`prepare: false`、Drizzle 包过的同一实例。
 
 做法：
 
 - **store-pg 的 SQL 改成只按文本过库**：写入绑 `text[]`、在 SQL 里 `::json`，读出取 `data::text` 由 reins 自己解析。驱动的 json 编解码和 transform 都碰不到事件，pg / PGlite 存取内容不变。不改表、不改 `PgClient`，事务语义不变。
-- **新导出 `postgresJsClient(sql)`**：结构类型，只用 `sql.unsafe`，store-pg 仍然零运行时依赖。实例带结果 transform（`postgres.camel`、列名映射、自定义 `value` / `row`）时构造期就抛 `invalid_argument`；只设 `transform.column.to` 的放行。
-- **测试**：一致性套件和特有行为现在对 postgres.js 3 和 4 各跑一列（经 `@electric-sql/pglite-socket` 走真协议，常驻 CI），设 `REINS_PG_URL` 时再对真库各跑一遍。新增的检查直接断言库内 `json_typeof = 'object'`、`data::text` 逐字等于 `JSON.stringify`，含键序、中文与 emoji、2^53−1、嵌套数组，append 与 fork 都测；blob、`seq_conflict`、租约在套件里本来就有。本机真库六列 270 格全绿。
-- **postgres.js 3 加 `fetch_types: false`** 时数组参数会被数据库拒绝（22P02，一条不写），v4 已修。README 有说明，适配器不拦。
+- **新导出 `postgresJsClient(sql)`**：结构类型，只用 `sql.unsafe`，store-pg 仍然零运行时依赖。实例带结果 transform（`postgres.camel`、列名映射、自定义 `value` / `row`）时构造期就抛 `invalid_argument`；只设 `transform.column.to` 的放行。传事务 tx 或 `sql.reserve()` 的连接也拒绝：它们带着实例的 transform 却不暴露，适配器查不了。
+- **测试**：一致性套件和特有行为现在对 postgres.js 3 和 4 各跑一列（经 `@electric-sql/pglite-socket` 走真协议，常驻 CI），设 `REINS_PG_URL` 时再对真库各跑一遍。新增的检查直接断言库内 `json_typeof = 'object'`、`data::text` 逐字等于 `JSON.stringify`，含键序、中文与 emoji、2^53−1、嵌套数组，append 与 fork 都测；blob 与租约在一致性套件里本来就有。唯一冲突映射成 `seq_conflict` 原先没有用例真正撞到 23505（串行的 PGlite 撞不出），审查后补了两条：驱动把冲突放在 `err.code`（非 socket 列）；真库上两个写入者并发 append 同一 seq 撞主键后翻成 `seq_conflict`。本机真库六列 284 格全绿。
+- **postgres.js 3 加 `fetch_types: false`** 时数组参数会被数据库拒绝（事件 append / fork 报 22P02，blob 与记忆写入不受影响），v4 已修。README 有说明，适配器不拦。
 
 AdRate 接入时注意：
 
-- 交给适配器的实例不能带 `transform`。Drizzle 本身不需要它；如果 AdRate 的实例为别的代码开了 camel，就给 reins 单开一个不带 transform 的 `postgres()` 实例。
+- 交给适配器的必须是 `postgres()` 返回的顶层实例，不能是事务或 reserve 出来的连接，也不能带 `transform`。Drizzle 本身不需要它；如果 AdRate 的实例为别的代码开了 camel，就给 reins 单开一个不带 transform 的 `postgres()` 实例。
 - M1 开头的真库往返验证，建议直接看库：`SELECT json_typeof(data) FROM reins_events LIMIT 1` 应为 `object`。只比读回一致发现不了这次的问题。
 
 ### AdRate 侧依赖

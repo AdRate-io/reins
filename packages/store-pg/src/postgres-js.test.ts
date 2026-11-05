@@ -73,6 +73,7 @@ describe("postgresJsClient：形状转换", () => {
         parameters.push("mutated")
         return Promise.resolve([{ query }])
       },
+      options: {},
     }
     const client = postgresJsClient(fake)
     expect(await client.query("SELECT 1", params)).toEqual({ rows: [{ query: "SELECT 1" }] })
@@ -81,4 +82,26 @@ describe("postgresJsClient：形状转换", () => {
     expect(await client.query("SELECT 2")).toEqual({ rows: [{ query: "SELECT 2" }] })
     expect(seen[1]).toEqual(["mutated"])
   })
+
+  it("没有 options 的实例（事务 tx、reserve 出来的连接）拒绝：它们继承 transform 却不暴露", () => {
+    // 运行时形状与 postgres.js 3 / 4 的 tx、reserved 一致：有 unsafe、没有 options
+    const tx = { unsafe: () => Promise.resolve([]) } as unknown as PostgresJsSql
+    expect(() => postgresJsClient(tx)).toThrow(
+      expect.objectContaining({
+        code: "invalid_argument",
+        message: expect.stringContaining("got one without options"),
+      }),
+    )
+  })
 })
+
+/** 类型层：两个大版本的 TransactionSql 都不满足 PostgresJsSql，传 tx 编译期就报错。只做类型检查，不执行 */
+export function _typeLevelRejectsTransactions(
+  tx3: postgres.TransactionSql,
+  tx4: postgresV4.TransactionSql,
+): void {
+  // @ts-expect-error 事务没有 options
+  postgresJsClient(tx3)
+  // @ts-expect-error 事务没有 options
+  postgresJsClient(tx4)
+}

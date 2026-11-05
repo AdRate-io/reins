@@ -27,12 +27,12 @@ const sql = postgres(process.env.DATABASE_URL)            // the instance you al
 const store = await pgStores(postgresJsClient(sql))
 ```
 
-Tested against postgres.js 3.4 and 4.0, including `prepare: false` (transaction-mode poolers such as PgBouncer). Two limits:
+Tested against postgres.js 3.4 and 4.0. `postgresJsClient` only calls `sql.unsafe`, which never creates named prepared statements, so an instance with `prepare: false` (as used with transaction-mode poolers such as PgBouncer) behaves the same; PgBouncer itself is not in the test matrix. Pass the top-level `sql` returned by `postgres()`: a transaction from `sql.begin()` or a connection from `sql.reserve()` is rejected with `invalid_argument`, because it applies the instance's transforms without exposing them. Two limits:
 
-- **No result transforms.** An instance created with `transform` — `postgres.camel`, a column mapper, or a custom `value` / `row` function — is rejected with `invalid_argument` when you call `postgresJsClient`. The stores read columns by their real names, and `postgres.camel` also rewrites keys inside JSON values, which would change stored events and break resume checks. Give reins its own `postgres()` instance without `transform`. `transform.column.to` alone is allowed.
-- **postgres.js 3 with `fetch_types: false`** sends arrays in a form Postgres rejects (`22P02 malformed array literal`) on the first write, and nothing is stored. Keep the default, or use postgres.js 4.
+- **No result transforms.** An instance created with `transform` — `postgres.camel`, a column mapper, or a custom `value` / `row` function — is rejected with `invalid_argument` when you call `postgresJsClient`. The stores read columns by their real names; `postgres.camel` turns `session_id` into `sessionId`, and blob metadata comes back incomplete. Give reins its own `postgres()` instance without `transform`. `transform.column.to` alone is allowed.
+- **postgres.js 3 with `fetch_types: false`** sends arrays in a form Postgres rejects: every event append and fork fails with `22P02 malformed array literal` (blob and memory writes still go through). Keep the default, or use postgres.js 4.
 
-Writing your own wrapper for another driver: bind parameters as given and return rows keyed by the column names in the SQL. The stores never rely on the driver's JSON encoding (see below).
+Writing your own wrapper for another driver: bind parameters as given and return rows keyed by the column names in the SQL, with `data` (selected as `data::text`) left as a string. The stores never rely on the driver's JSON encoding (see below).
 
 ## Layout and two deliberate choices
 

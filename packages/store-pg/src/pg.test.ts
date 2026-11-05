@@ -14,6 +14,7 @@ import postgres from "postgres"
 import postgresV4 from "postgres-v4"
 import { afterAll, describe, expect, it } from "vitest"
 import {
+  isUniqueViolation,
   migratePg,
   PG_SCHEMA_SQL,
   PG_SCHEMA_STATEMENTS,
@@ -32,12 +33,20 @@ import {
  *   数组与 json 的序列化恰恰发生在这一层（踩坑 47），所以必须真走协议，不能拿假客户端代替。
  * 设了 REINS_PG_URL（如 postgres://localhost/reins_test）就用 pg 与 postgres.js 3 / 4 再对真库各跑一遍，dogfood 前必须在真库上绿过。
  */
+/**
+ * 列的种类决定哪些用例能在它上面断言（踩坑 48）：
+ * - direct：PGlite 直连，单会话串行，撞不出主键冲突；
+ * - socket：经 pglite-socket，只在"单连接、不出 SQL 报错"时与真库一致——不跑会触发 SQL 报错的用例，并发语义不在这里断言；
+ * - real：真库，并发与报错路径都可测。
+ */
+type BackendKind = "direct" | "socket" | "real"
 const pglite = new PGlite()
-const backends: { name: string; client: PgClient; close: () => Promise<void> }[] = [
-  { name: "PGlite", client: pglite, close: () => pglite.close() },
+const backends: { name: string; kind: BackendKind; client: PgClient; close: () => Promise<void> }[] = [
+  { name: "PGlite", kind: "direct", client: pglite, close: () => pglite.close() },
 ]
 
-// 另起一个 PGlite 当服务端，与直连那份互不相干；多路复用连接数要高于 postgres.js 的 max
+// 另起一个 PGlite 当服务端，与直连那份互不相干。postgres.js 必须 max: 1：pglite-socket 只在事务内让一个连接独占 PGlite，
+// 事务外多个连接的扩展协议消息会在同一会话里交错（串台、报错、v4 下甚至挂住不返回）
 const socketDb = new PGlite()
 const socketServer = new PGLiteSocketServer({ db: socketDb, port: 0, maxConnections: 8 })
 await socketServer.start()
@@ -47,14 +56,24 @@ const viaSocket = {
   port: Number(socketPort),
   user: "postgres",
   database: "postgres",
-  max: 4,
+  max: 1,
   onnotice: () => {},
 }
 const pgjs3 = postgres(viaSocket)
 const pgjs4 = postgresV4(viaSocket)
 backends.push(
-  { name: "postgres.js 3（PGlite socket）", client: postgresJsClient(pgjs3), close: () => pgjs3.end() },
-  { name: "postgres.js 4（PGlite socket）", client: postgresJsClient(pgjs4), close: () => pgjs4.end() },
+  {
+    name: "postgres.js 3（PGlite socket）",
+    kind: "socket",
+    client: postgresJsClient(pgjs3),
+    close: () => pgjs3.end(),
+  },
+  {
+    name: "postgres.js 4（PGlite socket）",
+    kind: "socket",
+    client: postgresJsClient(pgjs4),
+    close: () => pgjs4.end(),
+  },
 )
 
 const realUrl = process.env.REINS_PG_URL
@@ -63,9 +82,19 @@ if (realUrl) {
   const real3 = postgres(realUrl, { max: 4, onnotice: () => {} })
   const real4 = postgresV4(realUrl, { max: 4, onnotice: () => {} })
   backends.push(
-    { name: `pg（${realUrl}）`, client: pool, close: () => pool.end() },
-    { name: `postgres.js 3（${realUrl}）`, client: postgresJsClient(real3), close: () => real3.end() },
-    { name: `postgres.js 4（${realUrl}）`, client: postgresJsClient(real4), close: () => real4.end() },
+    { name: `pg（${realUrl}）`, kind: "real", client: pool, close: () => pool.end() },
+    {
+      name: `postgres.js 3（${realUrl}）`,
+      kind: "real",
+      client: postgresJsClient(real3),
+      close: () => real3.end(),
+    },
+    {
+      name: `postgres.js 4（${realUrl}）`,
+      kind: "real",
+      client: postgresJsClient(real4),
+      close: () => real4.end(),
+    },
   )
 }
 
@@ -152,6 +181,47 @@ for (const backend of backends) {
         expect((await collect(stores.log.read("s1"))).map((e) => e.seq)).toEqual([1, 2, 3])
       })
 
+      it.skipIf(backend.kind === "socket")(
+        "驱动把主键冲突放在 err.code = 23505，isUniqueViolation 认得出",
+        async () => {
+          await fresh()
+          const insert = () =>
+            backend.client.query(
+              "INSERT INTO reins_runs (session_id, owner, expires_at) VALUES ($1, $2, $3)",
+              ["dup", "A", 1],
+            )
+          await insert()
+          const err = await insert().then(
+            () => null,
+            (e: unknown) => e,
+          )
+          expect(isUniqueViolation(err)).toBe(true)
+        },
+      )
+
+      it.skipIf(backend.kind !== "real")(
+        "并发 append 同一 seq：两个写入者都过了 WHERE 守卫时撞主键，23505 翻成 seq_conflict，日志只留一份",
+        async () => {
+          // 串行的 PGlite 永远走不到这条路径（后到者在 WHERE 守卫处就插 0 行），只有真库并发才撞得出；多跑几轮保证至少撞到一次
+          await fresh()
+          let viaUniqueViolation = 0
+          for (let round = 0; round < 20; round++) {
+            const sessionId = `race-${round}`
+            const [a, b] = [new PgEventLog(backend.client), new PgEventLog(backend.client)]
+            const results = await Promise.allSettled([
+              a.append(makeEvents(sessionId, 1)),
+              b.append(makeEvents(sessionId, 1)),
+            ])
+            expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1)
+            const failure = results.find((r) => r.status === "rejected") as PromiseRejectedResult
+            expect(failure.reason).toMatchObject({ code: "seq_conflict" })
+            if (String(failure.reason.message).includes("another writer")) viaUniqueViolation++
+            expect((await collect(a.read(sessionId))).map((e) => e.seq)).toEqual([1])
+          }
+          expect(viaUniqueViolation).toBeGreaterThan(0)
+        },
+      )
+
       it("与内存实现读出来 deepEqual（json 列往返不改内容，本包刻意不用 jsonb）；fork 后 sessionId 换掉、其余原样", async () => {
         const stores = await fresh()
         const mem = new InMemoryEventLog()
@@ -227,8 +297,6 @@ for (const backend of backends) {
       })
 
       it("migrate:false 不建表；migratePg 幂等", async () => {
-        // 直接查表在不在，不靠"往缺表的库里写一次看报错"：经 pglite-socket 时，一条语句报错后后续语句会偶发无报错地返回空结果，
-        // 真库没有这个现象——走 socket 的列不放会触发 SQL 报错的用例（踩坑 48）
         await fresh()
         await backend.client.query("DROP TABLE reins_events, reins_blobs, reins_memory")
         const stores = await pgStores(backend.client, { migrate: false })
@@ -236,6 +304,11 @@ for (const backend of backends) {
           "SELECT to_regclass('reins_events') IS NOT NULL AS events, to_regclass('reins_memory') IS NOT NULL AS memory",
         )
         expect(exists.rows[0]).toEqual({ events: false, memory: false })
+        // 缺表时写入要把驱动的 SQL 错误原样抛上来（顺带证明适配器不吞错）。socket 列不跑：
+        // 经 pglite-socket 时一条语句报错后，后续语句会无报错地返回空结果（踩坑 48）
+        if (backend.kind !== "socket") {
+          await expect(stores.log.append(makeEvents("s1", 1))).rejects.toThrow(/reins_events/)
+        }
         await pgStores(backend.client)
         await pgStores(backend.client)
         await stores.log.append(makeEvents("s1", 1))
