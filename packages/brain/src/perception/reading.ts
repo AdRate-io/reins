@@ -32,7 +32,10 @@ export interface PerceptionReading {
   sessionTokens: Tier
   /** 可见的外溢工具结果条数档位；level 0 即没有 */
   spilledResults: Tier
-  /** 配置了上限时：最紧的那一维的剩余比例档位 */
+  /**
+   * 配置了上限时：最紧的那一维的剩余比例档位。contextTokens 上限不小于窗口时不参与（与 contextUsage 重复）；
+   * 只设了这样一条上下文上限时为空
+   */
   budgetRemaining?: Tier & { tightest: LimitDimension }
 }
 
@@ -79,6 +82,12 @@ export function sumSessionTokens(timeline: readonly Event[]): number {
  */
 export { contextOverheadOf }
 
+/**
+ * 余量取最紧的一维。contextTokens 维只在上限小于窗口（contextLimit）时参与（2026-11-05 OnSet 建议 11）：
+ * 上限 ≥ 窗口时单次请求不可能越过它（超窗口厂商直接 400），它的余量只是"1 − 上下文使用率"换个说法，与 contextUsage 重复。
+ * 不能以兜底触发点（targetTokens）为界：兜底判的是请求前的估算，投影后才加的快照 / 说明、估少的新内容、
+ * 首轮无校准开销都能让真实上下文越过触发点，而 budget 按真实用量暂停 —— 触发点与窗口之间的上限碰得到，必须报。
+ */
 function remainingOf(
   budget: TurnContext["budget"],
   contextTokens: number,
@@ -95,6 +104,7 @@ function remainingOf(
   for (const dimension of Object.keys(used) as LimitDimension[]) {
     const limit = limits[dimension]
     if (limit === undefined || limit <= 0) continue
+    if (dimension === "contextTokens" && limit >= budget.contextLimit) continue
     const fraction = Math.max(0, 1 - used[dimension] / limit)
     if (!tightest || fraction < tightest.fraction) tightest = { fraction, dimension }
   }

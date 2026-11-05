@@ -438,6 +438,25 @@ describe("perception：用上一请求的真实用量校准上下文使用率（
     expect(withLimits.budgetRemaining).toEqual({ level: 1, label: "5%–20%", tightest: "contextTokens" })
   })
 
+  it("contextTokens 上限不小于窗口时不进余量：只设它就不出余量行，与其它维并设时取其它维；触发点与窗口之间照报（OnSet 建议 11）", () => {
+    const ctx = fakeCtx({ budget: { used: 4000, contextLimit: 8000, targetTokens: 6800, toolCalls: 3 } })
+    const onlyContext = readPerception(ctx, thresholds, { contextTokens: 8000 })
+    expect(onlyContext.budgetRemaining).toBeUndefined()
+    expect(renderPerception(onlyContext)).not.toContain("Run budget remaining")
+    expect(readPerception(ctx, thresholds, { contextTokens: 9000 }).budgetRemaining).toBeUndefined()
+    const mixed = readPerception(ctx, thresholds, { contextTokens: 8000, toolCalls: 10 })
+    expect(mixed.budgetRemaining).toEqual({ level: 3, label: "≥50%", tightest: "toolCalls" })
+    // 触发点（6800）到窗口之间：兜底按估算判，真实请求仍可能越过触发点撞上这条线，照报（4000 / 7000 → 余 43%）
+    expect(readPerception(ctx, thresholds, { contextTokens: 7000 }).budgetRemaining).toEqual({
+      level: 2,
+      label: "20%–50%",
+      tightest: "contextTokens",
+    })
+    expect(readPerception(ctx, thresholds, { contextTokens: 6800 }).budgetRemaining?.tightest).toBe(
+      "contextTokens",
+    )
+  })
+
   it("循环里：第二轮读数吃到第一轮的真实用量，档位随之上跳并追加新说明", async () => {
     const log = new InMemoryEventLog()
     // 窗口 4000：估算不到 10%；第一轮真实 input 2500 远大于估算 → 第二轮校准后 ≥ 50%

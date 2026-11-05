@@ -162,3 +162,26 @@ OnSet 最后的做法：状态挂在宿主自己的 run 对象上，在包住 ru
 优先级低：OnSet 已经有可用实现（`src/server/services/agent-runtime/end-run.ts`，调度器 `trackTurn`），这条是为了让后来的宿主少踩坑，并删掉 OnSet 的两份重复。
 
 > **处置（reins，2026-11-02）**：照做"小改动"那一版并多走一步。core `TurnContext.batch` 消掉坑 1～3（本批调用与结果随落随更，补跑批标 `resumed`）；brain 新增 opt-in Socket `stopAfter({ tools })`：本批名单工具成功、同批无失败无挂起才 `"stop"`。没做 `Tool.endsTurn`：它要压过所有 onTurnEnd，打破"第一个给意见的定"。两处与原提议不同：① 补跑批不是一律不算——`[action 需审批, end_run]` 批准续跑、批后没有新用户消息时照样收尾（坑 3 的真判据是"遗留收尾别吞掉新输入"），与 handoff 从日志重建意图同理；② 坑 4 更正：compact 的到线请求在 beforeModel 发，不在 onTurnEnd，真正要排序的是 handoff → stopAfter → compact / budget——排在 handoff 前会吞掉已回执的交接。TanStack 路径补跑批没有 onTurnEnd，"审批后收尾"在那里不成立（刻意不对称）。OnSet 的 `end_run` / `fork_done` 改用 `stopAfter()` 按推荐顺序注册后，可删 `trackTurn`。
+
+## 建议 11（经营类漫剧试拍补充，2026-11-05）：最紧维度是上下文时，perception 不再报预算余量
+
+背景：OnSet 的 `perception({ limits })` 只给了 `contextTokens`（`budget({ limits })` 同一份）。`remainingOf` 在唯一维度里取最紧，结果永远是 `contextTokens`，余量 = 1 − 上下文已用。于是每次提醒都是同一个数的两种说法：
+
+```
+- Context window used: <50% (the harness auto-folds the oldest turns at 85%)
+- Run budget remaining: ≥50% (tightest: contextTokens)
+```
+
+模型读到的是重复信息；Boss 在轨迹里看到 "最紧的是上下文" 也不知道想传达什么。只设上下文上限是最常见的配置，所有这样配的宿主都会遇到。
+
+现状：`packages/brain/src/perception/reading.ts` 的 `readPerception` 把 `contextTokens` 也纳入 `remainingOf` 的比较；`render.ts` 只要有 `budgetRemaining` 就出一行。
+
+建议（二选一）：
+- `remainingOf` 不比 `contextTokens`：上下文已有 `contextUsage` 一行专门报，余量只在 token 总量 / 轮数 / 工具调用 / 时长这些维度里取最紧；都没设时 `budgetRemaining` 为空、不出这一行。
+- 或保留读数，`renderPerception` 在 `tightest === "contextTokens"` 时不出这一行。
+
+前一种更干净：读数层就没有重复，宿主自写的 `render`（OnSet 用中文版）不用各自再判一次。
+
+优先级低：不影响行为，只是每次提醒多一行重复。OnSet 先在中文渲染里跳过（OPT-261105-1），reins 修了就删。
+
+> **处置（reins，2026-11-05）**：照做，但不是"一律不比 `contextTokens`"。`limits.contextTokens` 与窗口 `contextLimit` 不是同一个数：宿主可能在 1M 窗口上把单次上下文封到 200k，这条上限分母不同、会真的暂停，删掉就丢了真信息。判据：上限 ≥ 窗口时单次请求越不过它，余量只是 1 − 使用率的另一种说法，不参与最紧维比较；小于窗口照报。没以兜底触发点为界（审查指出）：兜底按请求前估算判，投影后才加的快照 / 说明、估少的新内容、首轮无校准开销都能让真实上下文越过触发点，budget 按真实用量暂停，触发点与窗口之间的上限碰得到。改在读数层（`reading.ts` `remainingOf`），宿主自写 render 不用再判。OnSet 只设上下文上限且等于窗口，升级 brain 后余量行消失，可删 OnSet 侧 OPT-261105-1 的中文渲染跳过。
