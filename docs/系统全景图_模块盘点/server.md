@@ -98,7 +98,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 3. `fromSeq = Math.min(plan.fromSeq, tailSeq + 1)` —— 客户端报的 lastSeq 超过日志末尾（换了会话、存储被清）就钳到末尾，否则之后的实时事件会被当成"已补发过"静默丢掉。
 4. `start` 帧（`sessionId` / `fromSeq` / `live`）→ `readEvents(log, sessionId, { registry, fromSeq })` 逐条 `event` 帧（`replay: true`），记录 `maxSeq`。
 5. 无 run：`resumableTailState` 再取一次日志末尾，末尾 seq 等于 `maxSeq` 且 `pausedStateOf` 有值（零补发时从 tail 读出，只对 `run_paused` 过注册表，读不出也只是不给，免得已追平的客户端撞未登记 ext.* 变成 error 帧）才给 state；`end` 帧带 `lastSeq` 与可选 `state` 后关闭。复核放在补发之后：读完之后又落了事件（别处续跑、停止收尾）就不给，end 的 `lastSeq` 与 `state` 永远说同一刻（AdRate 建议 8）。
-6. 有 run：`begun = true`、`plan.begin?.()` 起跑 —— 补发期间客户端就算走了也照跑。先 `sub.drain()` 把攒下的信号推出（`seq <= maxSeq` 的事件跳过，delta 全部丢弃），再 `for await` 实时转发；收到 `result` 或 `error` 即收尾关闭。
+6. 有 run：`begun = true`、`plan.begin?.()` 起跑 —— 补发期间客户端就算走了也照跑。先 `sub.drain()` 把攒下的信号推出（`seq <= maxSeq` 的事件跳过，delta 全部丢弃），再 `for await` 实时转发；收到 `result` 或 `error` 即收尾关闭。**增量闸门** `dropDeltas`：非发起者的流（GET 中途挂上）起步就关着，drain 里丢过 delta 也关上，任一事件信号（含去重跳过的）到达即打开——挂上那一刻正在流的块前半截没收到，后半截不能转发（客户端会拿到截断的块，AG-UI 编码器也对不上内容）；降级层整次响应流完才提交，下一个事件之后的增量必定属于新响应、从头完整。代价是挂上那次响应没有流式效果。发起者（POST）从头看起，起步开着（2026-11-06，AdRate 建议 9 审查补漏）。
 7. `pump()` 抛错（补发读日志失败等）→ `error` 帧 + 关闭；若本连接是发起者且 run 还没开跑，`run.abandon(code, message)` 把名额还回去，否则这条会话会永久 409。
 8. `cancel()`（客户端断开）：清心跳、退订；发起者 + `onDisconnect === "abort"` 时 `run.controller.abort()`（还没开跑也没关系，`runLoop` 拿到的是已中止的 signal → `paused(host)`）。缺省 `"continue"`，run 跑完为止。
 9. **旁路观测**（D2，`observed`）：设了 `options.onEvent` 时，`begin()` 把 `runLoop` 的生成器包一层再交给 `run.drive`。每条事件先 yield（由 `drive` 广播给 SSE 订阅者）再调钩子，钩子的返回值按事件顺序 `then` 成一条链但不 await 就拉下一条；生成器 `finally` 里 `await chain`，所以 `drive` 的 `finish`（result 帧、`run.done`）排在最后一次观测之后。钩子 throw / reject 进同一个 catch → `options.warn`（缺省 console.warn），一次 run 只报一次。补发走 `readEvents`，不经这层。
@@ -141,7 +141,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 - **进行中投递：handler 内存信箱，取出不删、写入才删**（2026-11-06）— 取舍见全景图「核心设计决策 · 服务端」同名条目；盘点只记实现约束：信箱挂模块级 WeakMap 不上 `ActiveRun`（公开形状、宿主自建登记表也构造它），共用 `runs` 的任一开了 `midRunInput` 的 handler 都能投递（AdRate 建议 7：按请求新建 handler 的宿主靠这个），表别挪回 handler 闭包；`deliver` 不能有 await。
 
 - **T12 缺省推原始时间线事件，AG-UI 只是可插编码器** — SSE 的 `id:` 直接用事件 `seq`，控制帧不带 id，所以 `Last-Event-ID` 永远指向真实事件。理由是宪法二：时间线是唯一真源，前端协议只是翻译，server 不该绑死一种。边界：编码器与请求体形状 DECISIONS 标注"发布前可调"。
-- **T12 重连补发零额外状态** — 客户端记住最后一个 `id`，服务端从 EventLog 读 `(lastSeq, 末尾]`。不需要 Redis、不需要消息队列。边界：只在 EventLog 里的东西补得回来，`delta` 补不回（补发期间攒下的 delta 直接丢弃，因为它们所属的内容块要么已在补发里完整出现，要么不久后会完整到达）。
+- **T12 重连补发零额外状态** — 客户端记住最后一个 `id`，服务端从 EventLog 读 `(lastSeq, 末尾]`。不需要 Redis、不需要消息队列。边界：只在 EventLog 里的东西补得回来，`delta` 补不回（补发期间攒下的 delta 直接丢弃，因为它们所属的内容块要么已在补发里完整出现，要么不久后会完整到达；同一块随后的 delta 也由增量闸门挡掉，不转发半截块）。
 - **T12 POST 先补发再起 run，GET 先订阅再补发** — 两条路都保证"补发的和实时的不重不漏"：POST 的 run 在补发完成后才 `begin()`，GET 靠 `maxSeq` 去重。
 - **T12 / D4 同会话同时只允许一个 run** — 缺省 `InMemoryRunRegistry` 只管本进程；多实例部署用 `leasedRunRegistry(store.runLease)`（`createAgent` 见 `store.runLease` 自动装）。租约语义放 server 一份（心跳、丢租约中止、失败告警是登记表的行为，与数据库无关），store 只做三条语句；`get` 刻意不跨进程（转发别的实例的事件流要引入消息通道，不值，补发本就从日志读）；丢租约后 abort 是"少浪费一次模型调用"，正确性仍靠 EventLog 的 `seq_conflict`。`ActiveRun.onFinish` 同步启动、`done` 等异步部分，是为了删项立刻生效而 Workers `waitUntil` 又覆盖到 release。
 - **T12 发起者断开缺省不中止 run** — `onDisconnect: "continue"`，理由是"模型的工作不应因用户关掉标签页而丢"，重连带 lastSeq 即接上；Workers 靠 `ctx.waitUntil(run.done)` 不被回收。想要旧行为传 `"abort"` → `paused(host)`。

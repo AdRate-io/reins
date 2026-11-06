@@ -55,7 +55,7 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 | option | default | meaning |
 | --- | --- | --- |
 | `encode` | raw events | `StreamEncoderFactory`; `aguiEncoding()` from `@reinsjs/ui-agui` |
-| `deltas` | `true` | forward streaming text/thinking deltas as `delta` frames |
+| `deltas` | `true` | forward streaming text/thinking deltas as `delta` frames. A stream that attaches to a run already in progress (`GET`) skips deltas until the next event, so it never receives the second half of a block whose first half it missed; that block arrives complete with its event |
 | `heartbeatMs` | 15 000 | SSE comment heartbeat; `0` disables |
 | `onDisconnect` | `"continue"` | or `"abort"` the run when the client goes away |
 | `principal(req)` | — | who is asking; passed to the loop and tools |

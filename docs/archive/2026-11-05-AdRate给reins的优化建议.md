@@ -544,3 +544,90 @@ npm 官方源 `@reinsjs/agent` 0.6.2（精确依赖 server 0.6.1 / ui-agui 0.4.1
 - **安全**：能 GET 挂到进行中 run 的主事人，今天本来就会收到带状态的 `result` 帧。这次只是把可得时间延长到暂停之后，范围仍由 `authorizeSession` 定。
 - **BUG-261105-2**：本次不修。状态能从补发取到之后，"带 `decisions` 必须带 `resume`"已经可行，会另行通知 AdRate / OnSet 后收紧。AdRate 已按约定总带 `resume`，不受影响。
 - **升级前已暂停的会话**：`run_paused` 里没有状态，补发不给。AdRate 尚未上线，没有影响。
+
+---
+
+> 来自 AdRate M1-2 本机真模型验收（DeepSeek `deepseek-flash`，2026-11-06）。依据 npm 官方源 ui-agui 0.4.1 的 `dist/index.js`（`createAguiEncoder`）与实际抓到的 SSE 帧。
+
+## 总览
+
+| # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 9 | 同一轮 thinking + 正文都流式时，AG-UI 流不再整段重发 | ui-agui | 宪法二：live 流与时间线（补发）对同一轮给出不同的消息集合 | 中，M1-3 前端上线前需要 |
+
+## AdRate 建议 9：同一轮先流思考、再流正文时，AG-UI 流把两段各发两遍
+
+### 现状
+
+`createAguiEncoder` 只留一个 `open` 槽，用来把「正在流式输出的那一块」和随后提交的事件对上：
+
+- 增量到来：kind / index 与 `open` 相同就续写；不同就先 `closeOpen()`（发**不带** `metadata.reins` 的 `_END`），再用新的 `messageId` 开一块。
+- 事件提交：只有 `open` 恰好是同 kind 的那一块，才发带 `metadata.reins` 的 `_END` 收口；否则先 `closeOpen()`，再经 `mapEvent` 用事件 id 把整段内容**重新完整发一遍**。
+
+一轮里 thinking 和正文都流式时，增量顺序是 thinking → 正文，提交顺序是 `core.model_thinking` → `core.model_text`：
+
+1. 正文增量一到，thinking 块被无元数据关闭（临时 id A）；正文开在临时 id B。
+2. 提交 `model_thinking`：`open` 是正文、kind 不同 → 无元数据关闭 B，再按事件 id 整段重发 thinking。
+3. 提交 `model_text`：`open` 已空 → 按事件 id 整段重发正文。
+
+实测帧序（拒绝审批后的续跑轮，节选）：
+
+```
+REASONING_START            01a1afd0-a14d…   （临时 id，无 metadata）
+REASONING_MESSAGE_CONTENT  "The…"           （增量）
+REASONING_END              01a1afd0-a14d…   （无 metadata）
+TEXT_MESSAGE_START         01a1afd0-a38b…   （临时 id，无 metadata）
+TEXT_MESSAGE_CONTENT       "我…"            （增量）
+TEXT_MESSAGE_END           01a1afd0-a38b…   （无 metadata）
+REASONING_START            01a1afd0-a6b1…   metadata.reins.seq=13 core.model_thinking   ← 整段重发
+TEXT_MESSAGE_START         01a1afd0-a6b4…   metadata.reins.seq=14 core.model_text       ← 整段重发
+```
+
+时间线里只有一条 `model_thinking`、一条 `model_text`，日志正确，重复只在 live 流上。没有 thinking 的轮次不受影响：正文增量的 `_END` 直接带上 `metadata.reins`，是一条消息。
+
+### 问题
+
+- 按 AG-UI 协议原样渲染的客户端（CopilotKit、ui-agui 自带 demo）会把这一轮的思考和回答各显示两遍；刷新后走补发，又只剩一遍，同一会话前后不一致。
+- 客户端想自己去重，只能靠「无 metadata 的块之后紧跟同 kind、内容相同的有 metadata 块」这类启发式猜测，这正是编码层该给出的确定信息。
+- 推理模型在审批被拒、工具报错后几乎每轮都会思考，触发并不罕见。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- **按 kind / index 对账，而不是只对「当前打开的那一块」**：例如每个 kind 记住本轮最近一个已关闭、尚未被提交事件认领的流式块；`model_thinking` / `model_text` 提交时先认领同 kind 的块，发带 `metadata.reins` 的收口帧，不再整段重发。
+- 或者在增量阶段就**用将要提交的事件 id 作为 `messageId`**（如果 core 能在流式开始时预分配），提交时只补一个带 metadata 的 `_END`。
+- 无论哪种，请在 ui-agui 测试里补一个「同一轮 thinking + text 都流式」的用例，断言每段只出现一组 `_START` / `_CONTENT…` / `_END`，且最后的 `_END` 带 `metadata.reins`。
+
+### 边界
+
+- 不改时间线与 `mapEvent` 的逐事件映射，只改流式编码器的对账方式。
+- 一轮里有多段正文（index 不同）时，同样适用：每段各自认领各自的提交事件。
+
+### AdRate 侧依赖
+
+| 发版前 | 发版后 |
+| --- | --- |
+| M1-3 前端不写去重启发式；本地与测试服验收时，带思考的轮次会看到重复，记为已知问题 | 升级 ui-agui，渲染只按 AG-UI 帧原样累加 |
+
+### reins 处置（2026-11-06）
+
+接受，按建议形态的第一种（编码器对账）做。主修在 ui-agui，server 补一处配套，各发一个 patch。时间线与 `mapEvent` 不动。
+
+- **范围比反馈的大**：不只 DeepSeek。四条降级层（fetch 的 Chat / Anthropic / Responses 与 pi 版）都在整次响应流完后才交出草稿，所以只要一轮先思考、再说话，哪家模型都会重复。
+- **修法**：编码器的单个 `open` 槽改成按 `kind:index` 的待认领表，换块时不再收尾前一块，思考块和正文块可以同时打开。完整的 `model_thinking` / `model_text` 到达时，认领**内容对得上**的最早同 kind 块，只补带 `metadata.reins` 的 `_END`，不再整段重发。"对得上"指增量拼出的正文与完整正文去掉首尾空白后相等。一轮里有多段（index 不同）时，各段按内容各自认领。对不上的情况就整段照发，宁可重复，也不丢内容、不挂错元数据：
+  - redacted 思考：正文是占位串 `[Reasoning redacted]`；
+  - 加密思考：正文为空；
+  - 上游没给草稿的块。
+
+  工具调用不打断待认领的块。只有非模型输出的事件和 run 结束时，才把剩下没人认领的块无主收尾。
+- **server 配套**：GET 中途挂上进行中的 run 时，原来会转发挂上之后的增量。挂上那一刻正在流的块，客户端只拿到后半截。现在挂上的流先丢增量，等到第一个事件信号再放行。那个块的完整内容会随它的完整事件到达，下一次响应照常流式。代价是挂上那次响应没有流式效果。发起 run 的 POST 流不受影响。
+- **协议合法性**：照 @ag-ui/client 1.0.3 的 `verifyEvents` 核过：不同 id 的文本、思考消息允许同时进行，只要求 `RUN_FINISHED` 前全部收尾。测试里的 `assertValidAgui` 已按这套规则逐帧核对帧序。
+- **验证**：ui-agui 新增五个用例，覆盖以下场景：
+  - 真实降级层节奏：思考与正文都流完才依次提交；
+  - 同 kind 多段；
+  - redacted 思考在前，后面有流过的思考，另有上游没给草稿的块；
+  - 只流到后半截的块；
+  - 未认领的块收尾。
+
+  每段只有一组 `_START` / `_CONTENT…` / `_END`，认领的 `_END` 带 `metadata.reins`，SSE `id` 挂在收尾帧上。server 新增一个"块中间挂上"的用例。原实现上这些用例全部失败。初版"按顺序认领"的实现，在 redacted 与后半截两格上也失败（独立审查发现）。另用真 lowering-fetch Chat 线做了一次端到端（假 fetch 回放 DeepSeek 风格的 SSE）：思考一块、正文一块，收尾帧分别带 `core.model_thinking` / `core.model_text` 的 seq。
+- **AdRate 升级后**：渲染按 AG-UI 帧原样累加即可。帧序会变成 `REASONING_START…CONTENT` → `TEXT_MESSAGE_START…CONTENT` → `REASONING_END` → `TEXT_MESSAGE_END`，也就是正文开始时思考还没收尾。前端如果用"收到 `_END` 才算思考结束"来折叠思考区，这段时间会显示两块都在进行中，属于预期行为。redacted 思考仍会以一条完整的思考消息出现，正文是占位串。
+- **README 顺带改正**：原文"每个事件都带 `metadata.reins`"不准确，增量开出的 `_START` / `_CONTENT` 帧本来就不带，只有收尾帧带。现已写明。

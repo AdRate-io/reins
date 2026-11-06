@@ -9,7 +9,11 @@
  *   result / end     → RUN_FINISHED（done / handoff → success；paused → interrupt，interrupts 一一对应 Interruption）
  *   error            → RUN_ERROR
  *
- * 有状态的只有"正在流的那个内容块"：增量先到、完整事件后到，两者要接成同一条消息。
+ * 有状态的只有"流过增量、还没被完整事件认领的内容块"：增量先到、完整事件后到，两者要接成同一条消息。
+ * 降级层一律在整次响应流完后才交出草稿（思考 → 正文 → 工具调用），所以同一轮的思考块与正文块会同时处于打开状态：
+ * 换块时不收尾，完整 model_thinking / model_text 到达时认领**内容对得上**的最早同 kind 块，补带 metadata.reins 的 END。
+ * 对不上（redacted 思考的占位正文、上游没给草稿的块）就不认领、整段照发：宁可重复，不丢内容。
+ * AG-UI 按 id 分别跟踪进行中的消息，允许多块同时打开，只要求 RUN_FINISHED 前全部收尾（@ag-ui/client 1.0.3 verify）。
  * 由增量开出的消息 id 是临时生成的（增量里没有事件 id）；不带增量的补发路径直接用事件 id。
  * SSE 的 `id:`（= seq）只挂在一个时间线事件翻出的最后一帧上，这样 Last-Event-ID 永远指向已完整送达的事件。
  */
@@ -30,6 +34,16 @@ interface OpenBlock {
   kind: "text" | "thinking"
   index: number
   messageId: string
+  /** 已流出的增量拼起来的正文，认领时与完整事件比对 */
+  text: string
+}
+
+/**
+ * 增量拼出的正文与完整事件的正文是不是同一段。首尾空白不算：pi-ai 的 Responses 线在每段推理摘要后多发一个
+ * "\n\n" 增量，收尾正文不带最后那个
+ */
+function sameText(streamed: string, committed: string): boolean {
+  return streamed.trim() === committed.trim()
 }
 
 function interruptsOf(result: Extract<RunResult, { status: "paused" }>): AguiInterrupt[] {
@@ -77,34 +91,54 @@ export function createAguiEncoder(options: AguiEncoderOptions = {}): StreamEncod
   const newMessageId = options.newMessageId ?? (() => uuidv7())
   let threadId = ""
   let runId = ""
-  let open: OpenBlock | undefined
+  /** 流过增量、尚未被完整事件认领的块；键 `kind:index`，Map 的插入顺序即认领顺序 */
+  const open = new Map<string, OpenBlock>()
   /** 本轮 assistant 文本的消息 id，给随后的 tool_call 做 parentMessageId；用户说话即重置 */
   let parentMessageId: string | undefined
 
-  /** 把正在流的块收尾（正常路径由对应的完整事件收尾；别的事件先到时也不留半截） */
-  const closeOpen = (): AguiEvent[] => {
-    if (!open) return []
-    const { kind, messageId } = open
-    open = undefined
-    return kind === "text"
-      ? [{ type: "TEXT_MESSAGE_END", messageId }]
+  /** 一块的收尾帧；由完整事件认领时带 metadata.reins，无主收尾时不带 */
+  const endOf = (block: OpenBlock, e?: Event): AguiEvent[] => {
+    const meta = e ? { timestamp: e.at, metadata: metaOf(e) } : {}
+    return block.kind === "text"
+      ? [{ type: "TEXT_MESSAGE_END", messageId: block.messageId, ...meta }]
       : [
-          { type: "REASONING_MESSAGE_END", messageId },
-          { type: "REASONING_END", messageId },
+          { type: "REASONING_MESSAGE_END", messageId: block.messageId, ...meta },
+          { type: "REASONING_END", messageId: block.messageId, ...meta },
         ]
+  }
+
+  /** 无主收尾所有打开的块：非模型输出的事件、run 结束时都不留半截（AG-UI 要求 RUN_FINISHED 前全部收尾） */
+  const closeOpen = (): AguiEvent[] => {
+    const out = [...open.values()].flatMap((b) => endOf(b))
+    open.clear()
+    return out
+  }
+
+  /** 取出最早打开、内容对得上的同 kind 块 */
+  const claim = (kind: OpenBlock["kind"], text: string): OpenBlock | undefined => {
+    for (const [key, block] of open) {
+      if (block.kind !== kind || !sameText(block.text, text)) continue
+      open.delete(key)
+      return block
+    }
+    return undefined
   }
 
   const onDelta = (d: LoweringDelta): AguiEvent[] => {
     if (d.kind === "tool_args") return []
     if (d.delta.length === 0) return []
-    if (open && open.kind === d.kind && open.index === d.index) {
-      return open.kind === "text"
-        ? [{ type: "TEXT_MESSAGE_CONTENT", messageId: open.messageId, delta: d.delta }]
-        : [{ type: "REASONING_MESSAGE_CONTENT", messageId: open.messageId, delta: d.delta }]
+    const key = `${d.kind}:${d.index}`
+    const cur = open.get(key)
+    if (cur) {
+      cur.text += d.delta
+      return cur.kind === "text"
+        ? [{ type: "TEXT_MESSAGE_CONTENT", messageId: cur.messageId, delta: d.delta }]
+        : [{ type: "REASONING_MESSAGE_CONTENT", messageId: cur.messageId, delta: d.delta }]
     }
-    const out = closeOpen()
+    // 换块不收尾前一块：它的完整事件要等整次响应流完才到，届时再认领（AdRate 建议 9）
+    const out: AguiEvent[] = []
     const messageId = newMessageId()
-    open = { kind: d.kind, index: d.index, messageId }
+    open.set(key, { kind: d.kind, index: d.index, messageId, text: d.delta })
     if (d.kind === "text") {
       parentMessageId = messageId
       out.push(
@@ -122,21 +156,19 @@ export function createAguiEncoder(options: AguiEncoderOptions = {}): StreamEncod
   }
 
   const onEvent = (e: Event): AguiEvent[] => {
-    // 增量已经把这个块流完了：只补收尾，id 沿用增量开出的那个
-    if (open && e.type === "core.model_text" && open.kind === "text") {
-      const { messageId } = open
-      open = undefined
-      return [{ type: "TEXT_MESSAGE_END", messageId, timestamp: e.at, metadata: metaOf(e) }]
+    // 增量已经把这个块流完了：只补收尾，id 沿用增量开出的那个。
+    // 按内容认领而不是按顺序：redacted 思考（正文是占位串）、加密思考（正文为空）都没流过增量，按顺序会抢走后面真流过的块
+    const kind =
+      e.type === "core.model_text" ? "text" : e.type === "core.model_thinking" ? "thinking" : undefined
+    if (kind !== undefined) {
+      const block = claim(kind, (e.payload as { text: string }).text)
+      if (block) {
+        if (kind === "text") parentMessageId = block.messageId
+        return endOf(block, e)
+      }
     }
-    if (open && e.type === "core.model_thinking" && open.kind === "thinking") {
-      const { messageId } = open
-      open = undefined
-      return [
-        { type: "REASONING_MESSAGE_END", messageId, timestamp: e.at, metadata: metaOf(e) },
-        { type: "REASONING_END", messageId, timestamp: e.at, metadata: metaOf(e) },
-      ]
-    }
-    const out = closeOpen()
+    // 同一次响应的其它模型输出（工具调用、没流过的块）不打断仍待认领的块；其余事件先把半截块无主收尾
+    const out = kind !== undefined || e.type === "core.tool_call" ? [] : closeOpen()
     if (e.type === "core.user_message") parentMessageId = undefined
     if (e.type === "core.model_text") parentMessageId = e.id
     out.push(...mapEvent(e, parentMessageId !== undefined ? { parentMessageId } : {}))

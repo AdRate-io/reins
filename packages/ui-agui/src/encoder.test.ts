@@ -59,6 +59,52 @@ function assertValidAgui(frames: readonly SseFrame[]) {
       true,
     )
   }
+  assertAguiSequence(data(frames))
+}
+
+/**
+ * 帧序合法性，照 @ag-ui/client 1.0.3 verifyEvents 的规则手抄：文本消息 / 思考跨度 / 思考消息 / 工具调用各按 id 跟踪，
+ * 同 id 不能重复 START，CONTENT / END 必须在打开状态，RUN_FINISHED 时四类都必须已收尾；不同 id 允许同时打开
+ */
+function assertAguiSequence(events: readonly AguiEvent[]) {
+  const active = {
+    text: new Set<string>(),
+    span: new Set<string>(),
+    reasoning: new Set<string>(),
+    tool: new Set<string>(),
+  }
+  const opens: Partial<Record<string, [keyof typeof active, "start" | "in" | "end"]>> = {
+    TEXT_MESSAGE_START: ["text", "start"],
+    TEXT_MESSAGE_CONTENT: ["text", "in"],
+    TEXT_MESSAGE_END: ["text", "end"],
+    REASONING_START: ["span", "start"],
+    REASONING_END: ["span", "end"],
+    REASONING_MESSAGE_START: ["reasoning", "start"],
+    REASONING_MESSAGE_CONTENT: ["reasoning", "in"],
+    REASONING_MESSAGE_END: ["reasoning", "end"],
+    TOOL_CALL_START: ["tool", "start"],
+    TOOL_CALL_ARGS: ["tool", "in"],
+    TOOL_CALL_END: ["tool", "end"],
+  }
+  events.forEach((e, i) => {
+    const where = `#${i} ${e.type}`
+    if (e.type === "RUN_FINISHED") {
+      for (const [k, set] of Object.entries(active)) expect([...set], `${where}：${k} 未收尾`).toEqual([])
+      return
+    }
+    const rule = opens[e.type]
+    if (!rule) return
+    const [k, op] = rule
+    const id = "toolCallId" in e ? e.toolCallId : "messageId" in e ? e.messageId : ""
+    const set = active[k]
+    if (op === "start") {
+      expect(set.has(id), `${where}：${id} 已在进行中`).toBe(false)
+      set.add(id)
+    } else {
+      expect(set.has(id), `${where}：${id} 没有打开`).toBe(true)
+      if (op === "end") set.delete(id)
+    }
+  })
 }
 
 describe("流式增量与完整事件接成同一条消息", () => {
@@ -124,6 +170,186 @@ describe("流式增量与完整事件接成同一条消息", () => {
     expect(data(frames)[9]).toMatchObject({ type: "TOOL_CALL_START", parentMessageId: "m2" })
     // tool_args 增量丢弃：入参在完整 tool_call 到达时一次给出
     expect(data(frames)[10]).toMatchObject({ type: "TOOL_CALL_ARGS", delta: '{"a":1,"b":2}' })
+    assertValidAgui(frames)
+  })
+
+  it("真实降级层节奏：思考与正文都流完才依次提交，每段只有一组 START/CONTENT/END，END 带 metadata（AdRate 建议 9）", () => {
+    const frames = feed([
+      start,
+      delta("thinking", 0, "The"),
+      delta("thinking", 0, " user"),
+      delta("text", 1, "我"),
+      delta("text", 1, "来查"),
+      delta("tool_args", 2, '{"id":'),
+      item(ev("core.model_thinking", { text: "The user" }, 13)),
+      item(ev("core.model_text", { text: "我来查" }, 14)),
+      item(ev("core.tool_call", { toolCallId: "c1", name: "get", args: { id: 1 } }, 15)),
+      done,
+    ])
+    expect(types(frames)).toEqual([
+      "RUN_STARTED",
+      "REASONING_START",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_START", // 思考块仍开着：它的完整事件还没到
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_END",
+      "REASONING_END",
+      "TEXT_MESSAGE_END",
+      "TOOL_CALL_START",
+      "TOOL_CALL_ARGS",
+      "TOOL_CALL_END",
+      "RUN_FINISHED",
+    ])
+    const evs = data(frames)
+    // 思考是 m1、正文是 m2，各自只出现一次 START；收尾帧带事件元数据，SSE id 挂在收尾帧上
+    expect(
+      evs
+        .filter((e) => e.type.endsWith("_START") && e.type !== "RUN_STARTED")
+        .map(
+          (e) =>
+            (e as { messageId?: string; toolCallId?: string }).messageId ??
+            (e as { toolCallId: string }).toolCallId,
+        ),
+    ).toEqual(["m1", "m1", "m2", "c1"])
+    expect(evs[9]).toMatchObject({
+      type: "REASONING_END",
+      messageId: "m1",
+      metadata: { reins: { seq: 13, eventId: "e13", type: "core.model_thinking" } },
+    })
+    expect(evs[10]).toMatchObject({
+      type: "TEXT_MESSAGE_END",
+      messageId: "m2",
+      metadata: { reins: { seq: 14, eventId: "e14", type: "core.model_text" } },
+    })
+    expect(evs[11]).toMatchObject({ type: "TOOL_CALL_START", parentMessageId: "m2" })
+    expect(frames.filter((f) => f.id !== undefined).map((f) => [f.id, (f.data as AguiEvent).type])).toEqual([
+      ["13", "REASONING_END"],
+      ["14", "TEXT_MESSAGE_END"],
+      ["15", "TOOL_CALL_END"],
+    ])
+    assertValidAgui(frames)
+  })
+
+  it("同一 kind 多块（index 不同）按打开顺序各自认领；没流过增量的空思考（加密 / redacted）不抢认领", () => {
+    const frames = feed([
+      start,
+      delta("thinking", 1, "想一"),
+      delta("text", 2, "第一段"),
+      delta("thinking", 3, "想二"),
+      delta("text", 4, "第二段"),
+      item(ev("core.model_thinking", { text: "" }, 2)),
+      item(ev("core.model_thinking", { text: "想一" }, 3)),
+      item(ev("core.model_text", { text: "第一段" }, 4)),
+      item(ev("core.model_thinking", { text: "想二" }, 5)),
+      item(ev("core.model_text", { text: "第二段" }, 6)),
+      done,
+    ])
+    const evs = data(frames)
+    const ends = evs.filter((e) => e.type === "REASONING_END" || e.type === "TEXT_MESSAGE_END")
+    expect(
+      ends.map((e) => [
+        (e as { messageId: string }).messageId,
+        (e.metadata as { reins?: { seq: number } } | undefined)?.reins?.seq,
+      ]),
+    ).toEqual([
+      ["e2", 2], // 空思考走完整翻译，用事件 id，不碰 m1
+      ["m1", 3],
+      ["m2", 4],
+      ["m3", 5],
+      ["m4", 6],
+    ])
+    // 内容只经增量出现一次，提交时不再重发
+    expect(
+      evs.filter((e) => e.type === "TEXT_MESSAGE_CONTENT").map((e) => (e as { delta: string }).delta),
+    ).toEqual(["第一段", "第二段"])
+    assertValidAgui(frames)
+  })
+
+  it("按内容认领：redacted 思考（占位正文）不抢后面流过的块；上游没给草稿的块不被错认；首尾空白不算", () => {
+    const frames = feed([
+      start,
+      delta("thinking", 1, "真正的思考"),
+      delta("thinking", 1, "\n\n"), // pi-ai Responses 线每段摘要后多发的空行，收尾正文不带
+      delta("text", 2, "甲"), // 这块上游没给草稿
+      delta("text", 3, "乙"),
+      item(ev("core.model_thinking", { text: "[Reasoning redacted]" }, 2)),
+      item(ev("core.model_thinking", { text: "真正的思考" }, 3)),
+      item(ev("core.model_text", { text: "乙" }, 4)),
+      done,
+    ])
+    const evs = data(frames)
+    const ends = evs
+      .filter((e) => e.type === "REASONING_END" || e.type === "TEXT_MESSAGE_END")
+      .map((e) => [
+        (e as { messageId: string }).messageId,
+        (e.metadata as { reins?: { seq: number } } | undefined)?.reins?.seq,
+      ])
+    expect(ends).toEqual([
+      ["e2", 2], // redacted 走完整翻译
+      ["m1", 3],
+      ["m3", 4], // "乙" 认领 m3，不是更早打开的 m2
+      ["m2", undefined], // "甲" 没人认领，run 结束时无主收尾
+    ])
+    // 流过的正文各只出现一次
+    const contents = evs
+      .filter((e) => e.type === "REASONING_MESSAGE_CONTENT" || e.type === "TEXT_MESSAGE_CONTENT")
+      .map((e) => (e as { delta: string }).delta)
+    expect(contents.filter((c) => c === "真正的思考")).toHaveLength(1)
+    expect(contents.filter((c) => c === "乙")).toHaveLength(1)
+    assertValidAgui(frames)
+  })
+
+  it("内容对不上（只流到后半截）：不认领、整段照发，宁可重复也不丢内容", () => {
+    const frames = feed([
+      start,
+      delta("thinking", 0, "后半"),
+      item(ev("core.model_thinking", { text: "前半后半" }, 13)),
+      done,
+    ])
+    const evs = data(frames)
+    expect(evs.find((e) => e.type === "REASONING_MESSAGE_CONTENT" && e.messageId === "e13")).toMatchObject({
+      delta: "前半后半",
+    })
+    expect(
+      evs.filter((e) => e.type === "REASONING_END").map((e) => (e as { messageId: string }).messageId),
+    ).toEqual(["e13", "m1"])
+    assertValidAgui(frames)
+  })
+
+  it("没被认领的块：遇到非模型输出的事件或 run 结束时无主收尾，不留半截", () => {
+    const frames = feed([
+      start,
+      delta("thinking", 0, "想到一半"),
+      delta("text", 1, "说到一半"),
+      item(ev("core.error", { category: "provider", message: "boom", retryable: false }, 2)),
+      delta("text", 0, "新一轮"),
+      done,
+    ])
+    expect(types(frames)).toEqual([
+      "RUN_STARTED",
+      "REASONING_START",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_END",
+      "REASONING_END",
+      "TEXT_MESSAGE_END",
+      "CUSTOM",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "RUN_FINISHED",
+    ])
+    // 无主收尾不带 metadata：它们没有对应的时间线事件
+    expect(
+      data(frames)
+        .filter((e) => e.type.endsWith("_END"))
+        .every((e) => e.metadata === undefined),
+    ).toBe(true)
     assertValidAgui(frames)
   })
 

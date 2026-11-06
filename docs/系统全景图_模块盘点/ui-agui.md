@@ -16,12 +16,13 @@
         │
         │ StreamItem
         ▼
-  createAguiEncoder()  ── 每条流一个实例，状态 = { threadId, runId, open, parentMessageId }
+  createAguiEncoder()  ── 每条流一个实例，状态 = { threadId, runId, open（待认领块表）, parentMessageId }
         │
         ├─ start   ─────────────────────────────────► RUN_STARTED
-        ├─ delta   ─► onDelta ─► 开/续"正在流的块" ──► TEXT_* / REASONING_*（tool_args 丢弃）
-        ├─ event   ─► onEvent ─┬─ 与 open 同类 → 只补 END（沿用增量的 messageId）
-        │                      └─ 否则 closeOpen() + mapEvent(event, { parentMessageId })
+        ├─ delta   ─► onDelta ─► 按 kind:index 开/续块（换块不收尾）──► TEXT_* / REASONING_*（tool_args 丢弃）
+        ├─ event   ─► onEvent ─┬─ model_text / model_thinking 且 open 有内容对得上的同 kind 块 → 认领最早那块，只补带 metadata 的 END
+        │                      ├─ 其余模型输出（对不上的块、tool_call）→ mapEvent，不动 open
+        │                      └─ 非模型输出 → closeOpen() + mapEvent(event, { parentMessageId })
         ├─ result  ─► closeOpen() + RUN_FINISHED(success|interrupt) / RUN_ERROR
         ├─ end     ─► closeOpen() + RUN_FINISHED(success, result=replayed[+state])
         └─ error   ─► closeOpen() + RUN_ERROR
@@ -40,7 +41,7 @@
 | `src/encoder.ts` | 有状态编码器：增量与完整事件接成同一条消息、`parentMessageId` 维护、run 四态收尾、`interruptsOf` 把 core 的 `Interruption` 翻成 AG-UI interrupt、SSE 帧的 id 归属 |
 | `demo/index.html` | 无依赖的最小页面：直连 SSE、按 AG-UI 事件渲染 |
 | `demo/serve.mjs` | 最小演示服务（node:http + `createAgentHandler` + `aguiEncoding()`），无密钥时用 core testing 的剧本假模型离线跑 |
-| 测试（2 个 `*.test.ts`） | `map-event.test.ts` 逐种事件核对映射表与字段细节；`encoder.test.ts` 测增量与完整事件接成同一条消息、run 结束的三种翻译、补发结束带续跑状态（有才出键）、以及接上 `@reinsjs/server` 的端到端 |
+| 测试（2 个 `*.test.ts`） | `map-event.test.ts` 逐种事件核对映射表与字段细节；`encoder.test.ts` 测增量与完整事件接成同一条消息（含真实降级层节奏：思考与正文都流完才依次提交、同 kind 多块按序认领、按内容认领（redacted 不抢、没草稿的块不被错认、首尾空白容差）、对不上整段照发、未认领块无主收尾；`assertValidAgui` 另按 @ag-ui/client verify 规则核帧序）、run 结束的三种翻译、补发结束带续跑状态（有才出键）、以及接上 `@reinsjs/server` 的端到端 |
 
 ## 3 核心流程
 
@@ -65,8 +66,8 @@
 ### 3.2 流式：增量与完整事件接成一条消息
 
 1. `onDelta` 只处理 `text` / `thinking`，**`tool_args` 增量直接丢弃**（返回空数组）—— 增量里没有 toolCallId 与工具名，凑不出 `TOOL_CALL_START`；参数等完整 `tool_call` 事件到达时一次给出。空 delta 也丢弃。
-2. 第一片增量：`closeOpen()` 收掉上一个块，`newMessageId()`（缺省 `uuidv7`）开一个**临时 id**，发 `TEXT_MESSAGE_START` + `CONTENT`（或 `REASONING_START` + `MESSAGE_START` + `CONTENT`），并把 `{ kind, index, messageId }` 记进 `open`。后续同 kind 同 index 的片只发 `CONTENT`。
-3. `onEvent` 收到与 `open` 同类的完整 `core.model_text` / `core.model_thinking` 时，**只补 END**，`messageId` 沿用增量开出的那个（此时 `metadata.reins` 才带上真实 seq 与事件 id）。不同类的事件先 `closeOpen()` 再走 `mapEvent`，不留半截消息。
+2. 第一片增量：`newMessageId()`（缺省 `uuidv7`）开一个**临时 id**，发 `TEXT_MESSAGE_START` + `CONTENT`（或 `REASONING_START` + `MESSAGE_START` + `CONTENT`），把 `{ kind, index, messageId }` 以键 `kind:index` 记进 `open`（Map，插入顺序即认领顺序）。后续同键的片只发 `CONTENT`。**换块不收尾前一块**：四条降级层（fetch 三线与 pi 版）都在整次响应流完后才按块序交出草稿，思考块的完整事件要等正文也流完才到，所以同一轮的思考块与正文块会同时打开。AG-UI 按 id 分别跟踪进行中的消息，允许并存，只要求 `RUN_FINISHED` 前全部收尾（@ag-ui/client 1.0.3 `verifyEvents`）。
+3. `onEvent` 收到 `core.model_text` / `core.model_thinking` 时，在 `open` 里找**内容对得上**（`sameText`：增量拼出的正文与完整正文 trim 后相等，trim 是为 pi-ai Responses 线摘要段尾多发的 `\n\n`）的最早同 kind 块，**认领它、只补 END**，`messageId` 沿用增量开出的那个（此时 `metadata.reins` 才带上真实 seq 与事件 id）。对不上就走 `mapEvent` 整段照发、不动 `open`：redacted 思考（正文是占位串 `[Reasoning redacted]`）、加密思考（正文空）、只流到后半截的块、上游没给草稿的块都是这种——宁可重复，不丢内容、不错挂元数据。`tool_call` 也不动 `open`；非模型输出的事件先 `closeOpen()` 把剩下的块无主收尾（不带 metadata）再翻译，不留半截消息。2026-11-06 之前只有一个 `open` 槽，换块即无主收尾、提交时整段重发，带思考的轮次 live 流每段各出两遍（AdRate 建议 9，踩坑 49）。中途挂上的流由 server 挡掉半截块的增量（见 server 盘点）。
 4. `parentMessageId`：`core.user_message` 到达即重置为 undefined；完整 `core.model_text` 设为事件 id，增量开出的文本块设为那个临时 id；随后的 `tool_call` 用它做 `parentMessageId`。
 
 ### 3.3 run 收尾与 SSE 帧

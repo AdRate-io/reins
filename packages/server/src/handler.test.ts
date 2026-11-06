@@ -234,6 +234,68 @@ describe("GET：重连补发", () => {
   })
 })
 
+describe("中途挂上的流不转发半截块的增量", () => {
+  /**
+   * 按真实降级层的节奏：先流完整次响应的增量，再交出草稿。第 1 次响应在两片增量之间卡在闸门上，
+   * 好让另一个客户端恰在块中间挂上；第 2 次响应正常流
+   */
+  class MidBlockLowering extends ScriptedLowering {
+    constructor(private readonly between: () => Promise<void>) {
+      super([
+        { drafts: [say("前半后半"), callTool("c1", "add", { a: 1, b: 2 })] },
+        { drafts: [say("答案是 3")] },
+      ])
+    }
+    override async *stream(
+      req: Parameters<ScriptedLowering["stream"]>[0],
+      ctx: Parameters<ScriptedLowering["stream"]>[1] = {},
+    ): ReturnType<ScriptedLowering["stream"]> {
+      if (req.payload.turn === 0) {
+        ctx.onDelta?.({ kind: "text", index: 0, delta: "前半" })
+        await this.between()
+        ctx.onDelta?.({ kind: "text", index: 0, delta: "后半" })
+        yield say("前半后半")
+        yield callTool("c1", "add", { a: 1, b: 2 })
+        return { stopReason: "toolUse", usage: { input: 10, output: 5 } }
+      }
+      ctx.onDelta?.({ kind: "text", index: 0, delta: "答案是 3" })
+      yield say("答案是 3")
+      return { stopReason: "stop", usage: { input: 10, output: 5 } }
+    }
+  }
+
+  it("块中间挂上：丢掉这次响应剩下的增量，块随完整事件到达；下一个事件之后的增量照常转发", async () => {
+    const g = gate()
+    const atMid = gate()
+    const lowering = new MidBlockLowering(async () => {
+      atMid.open()
+      await g.wait()
+    })
+    const { handler } = setup([], [addTool], { lowering })
+    const starter = await openReader(handler(postRequest({ sessionId: "s1", input: "1+2" })))
+    await atMid.wait() // 第一片增量已发出，模型卡在块中间
+
+    const late = await openReader(handler(getRequest({ sessionId: "s1", lastSeq: "0" })))
+    await late.until((f) => f.id === "2") // 补发完 tools_bound 与 user_message，已订阅
+    g.open()
+
+    const lateFrames = [...late.seen, ...(await late.rest())]
+    const starterFrames = [...starter.seen, ...(await starter.rest())]
+    const deltas = (frames: Frame[]) =>
+      frames.filter((f) => f.event === "delta").map((f) => (f.data as { delta: string }).delta)
+
+    // 发起者从头看起，增量完整
+    expect(deltas(starterFrames)).toEqual(["前半", "后半", "答案是 3"])
+    // 挂上的流：第 1 次响应的后半截被挡掉（完整正文随 model_text 到达），第 2 次响应的增量照常
+    expect(deltas(lateFrames)).toEqual(["答案是 3"])
+    expect(eventsOf(lateFrames).find((e) => e.seq === 3)).toMatchObject({
+      type: "core.model_text",
+      payload: { text: "前半后半" },
+    })
+    expect(resultOf(lateFrames)?.status).toBe("done")
+  })
+})
+
 describe("并发与断开", () => {
   it("同一会话已有 run 在跑：第二个 POST 得 409 run_in_progress；跑完后可以再来", async () => {
     const g = gate()

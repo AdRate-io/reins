@@ -534,14 +534,19 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
           plan.begin?.()
           if (closed) return
 
+          // 增量闸门：关着时丢增量，任一事件信号到达即打开。中途挂上的流（非发起者）起步就关着——
+          // 挂上那一刻模型可能正流到块中间，前半截的增量本流没收到，转发后半截会让客户端拿到截断的块；
+          // 降级层整次响应流完才提交，所以下一个事件信号之后的增量必定属于新的一次响应，从头完整
+          let dropDeltas = !plan.starter
           const forward = (sig: RunSignal): boolean => {
             switch (sig.kind) {
               case "event":
+                dropDeltas = false
                 // 补发时已经从日志读到的事件不再推第二遍
                 if (sig.event.seq > maxSeq) emit({ kind: "event", event: sig.event, replay: false })
                 return true
               case "delta":
-                emit({ kind: "delta", delta: sig.delta })
+                if (!dropDeltas) emit({ kind: "delta", delta: sig.delta })
                 return true
               case "result":
                 emit({ kind: "result", result: sig.result })
@@ -551,9 +556,13 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
                 return false
             }
           }
-          // 补发期间攒下的：事件去重后推，增量丢弃（它们所属的内容块要么已在补发里完整出现，要么不久后会完整到达）
+          // 补发期间攒下的：事件去重后推，增量丢弃并关上闸门——丢掉的是某个块的前半截，
+          // 同一块随后的增量也不能转发（块的完整内容随下一个事件到达）
           for (const sig of sub.drain()) {
-            if (sig.kind === "delta") continue
+            if (sig.kind === "delta") {
+              dropDeltas = true
+              continue
+            }
             if (!forward(sig)) {
               close()
               return

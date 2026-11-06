@@ -343,6 +343,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **POST 不读 `Last-Event-ID`，只认 `body.lastSeq`；错误响应里只有 409 `run_in_progress` 与 429 `mailbox_full` 带 `X-Reins-Session`** — 客户端别统一从错误头取会话 id。
 - **`midRunInput` 信箱只在本进程内存、取出不删写入才删、投递者须是 run 的发起人、从 `runs.get` 到入箱不能有 await** — `pullInput` 回快照，`claiming` 见到带 ref 的 user_message 才删（拉完发现已中止 core 不写，取出即删就丢了）；发起人比 `principal?.id`（run 以发起人身份执行）；`deliver` 必须整段同步，否则 run 在空隙里结束、202 进了已关的箱。登记后开箱前（`runs.create` 的 await）到达的投递 409 是刻意的。信箱挂在 handler.ts **模块级** WeakMap（键是 `ActiveRun` 对象），不上公开形状、也不能挪回 handler 闭包——宿主按请求新建 handler（按会话凭据装配工具）时，投递只能靠共用 `runs` 找到信箱。
 - **补发 end 帧的 `state` 只在会话末尾正是带状态的 `run_paused` 时给，判据是补发读完后再取一次末尾** — 状态是暂停那一刻签的，绝不在 GET 时按当前配置重算（暂停后改过的工具会被签成一致）；宿主若在暂停后自己往日志追加事件（ext.* 等），补发就不再交出状态，等审批的会话只能停止或发新消息。
+- **AG-UI 编码器换块不收尾，思考块与正文块会同时打开；提交时按内容认领（增量拼出的正文与完整事件 trim 后相等的最早同 kind 块），不按顺序** — 降级层整次响应流完才交草稿，退回单槽就会让带思考的轮次每段各发两遍；redacted 思考正文是占位串 `[Reasoning redacted]` 不是空串，按顺序认领会抢走后面真流过的块。对不上就整段照发（宁重复不丢）。server 侧配套：中途挂上的流（非发起者）丢增量直到第一个事件信号，否则客户端拿到半截块（踩坑 49）。
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
 - **handler 对 `decisions` 的预校验必须与 runLoop 同一口径** — 只有本会话的结论对照本会话 pending，带子会话 id 的原样下传；两处不是同一函数，靠跨包用例锁住（踩坑 20）。
 - **停止请求 `POST { sessionId, stop: true }` 回 JSON 不开流、不等 run 结束；鉴权 `method` 是 "STOP"** — 空闲但有 pending 时起的收尾 run 没有流驱动，handler 自己 drive 并 `waitUntil(run.done)`；只认本进程的 run（跨实例 OPT-261105-5）。
