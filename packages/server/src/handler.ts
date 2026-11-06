@@ -22,6 +22,7 @@ import {
   type EventLog,
   type LoopConfig,
   type Principal,
+  pausedStateOf,
   pendingToolCalls,
   type RunResult,
   RunStateError,
@@ -30,6 +31,7 @@ import {
   readTimeline,
   resolveSocketContributions,
   runLoop,
+  SchemaError,
   type Tool,
   type ToolCallEvent,
   uuidv7,
@@ -451,6 +453,26 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     return json(202, queued, { [SESSION_HEADER]: sessionId })
   }
 
+  /**
+   * 补发结束时可交给客户端的续跑状态（AdRate 建议 8）：补发读完后**再取一次日志末尾**，末尾 seq 正是本次 end 的 lastSeq
+   * 且是带状态的 run_paused 才给——读完之后又落了事件（续跑、停止收尾）就不给，end 的 lastSeq 与 state 永远说同一刻。
+   * 客户端 lastSeq 已在末尾、一条没补发时 lastReplayed 为空，从 tail 读出再过注册表。判据只走 core 的 `pausedStateOf`。
+   * 只对 run_paused 过注册表：末尾是未登记的 ext.* 时，已追平的客户端以前正常收到 end，不能因为这里多读一次就变成 error 帧；
+   * run_paused 自己读不出来（未来版本）时也只是不给状态——不给是保守的那一边
+   */
+  async function resumableTailState(sessionId: string, endSeq: number, lastReplayed: Event | undefined) {
+    const tail = (await log.tail(sessionId, 1))[0]
+    if (tail === undefined || tail.seq !== endSeq) return undefined
+    if (lastReplayed?.seq === endSeq) return pausedStateOf(lastReplayed)
+    if (tail.type !== "core.run_paused") return undefined
+    try {
+      return pausedStateOf(registry.read(tail))
+    } catch (err) {
+      if (err instanceof SchemaError) return undefined
+      throw err
+    }
+  }
+
   /** 组装 SSE 响应。补发 + （可选）实时推，全部在 ReadableStream 内部异步进行，Response 立刻返回 */
   function openStream(plan: StreamPlan): Response {
     const encode: StreamEncoder = makeEncoder()
@@ -494,13 +516,16 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
           emit({ kind: "start", sessionId: plan.sessionId, fromSeq, live: plan.run !== undefined })
 
           let maxSeq = fromSeq - 1
+          let lastReplayed: Event | undefined
           for await (const e of readEvents(log, plan.sessionId, { registry, fromSeq })) {
             if (closed) break
             emit({ kind: "event", event: e, replay: true })
             maxSeq = e.seq
+            lastReplayed = e
           }
           if (plan.run === undefined || sub === undefined) {
-            emit({ kind: "end", sessionId: plan.sessionId, lastSeq: maxSeq })
+            const state = closed ? undefined : await resumableTailState(plan.sessionId, maxSeq, lastReplayed)
+            emit({ kind: "end", sessionId: plan.sessionId, lastSeq: maxSeq, ...(state ? { state } : {}) })
             close()
             return
           }

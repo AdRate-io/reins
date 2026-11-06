@@ -31,7 +31,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
               │ ② fromSeq = min(请求的 fromSeq, 日志末尾 seq + 1)（钳位）  │
               │ ③ start 帧                                               │
               │ ④ readEvents 逐条补发（replay=true），记 maxSeq           │
-              │ ⑤ 无 run → end 帧 → close                                │
+              │ ⑤ 无 run → 复核日志末尾 → end 帧（可带 state）→ close     │
               │ ⑥ 有 run → begin() 起 runLoop → drain 已攒信号（按 seq    │
               │    去重、丢弃 delta）→ 实时 event / delta                 │
               │ ⑦ result 或 error 帧 → close                             │
@@ -56,6 +56,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 | `packages/server/src/runs.ts` | run 登记：`Channel<T>`（单生产者多消费者、可 `drain()`）、`ActiveRun`（`subscribe` / `broadcast` / `drive` / `abandon` / `onFinish` 收尾钩子 / `done` 等钩子落定）、`RunRegistry` **接口**（`get` 只认本进程、`create` 异步）、`InMemoryRunRegistry`（缺省，一张 Map，结束时只删自己）、`RunConflictError`（code `run_in_progress`，`heldBy: "process" \| "lease"`） |
 | `packages/server/src/leased-runs.ts` | D4 `leasedRunRegistry(lease, { ttlMs, owner, warn })`：在 `InMemoryRunRegistry` 外套一层 core `RunLease`——create 先本进程再 acquire、每 ttl/3 心跳 renew、renew 为 false 告警 + abort、renew 抛错只告警、结束 release 失败只告警 |
 | `packages/server/src/node.ts` | `./node` 子路径：`nodeListener(handler, ctx?)` 把 `IncomingMessage/ServerResponse` 翻成 `Request`/写回响应流；唯一允许出现 `node:*` 的位置（只是 `import type`），`res.on("close")` 时 `reader.cancel()` 让 handler 感知客户端断开 |
+| `packages/server/src/replay-state.test.ts` | 补发带续跑状态（AdRate 建议 8）：GET 的 end 带的 state 与 live result 逐字相同并能续跑到 done、零补发与 lastSeq 越界也带、续跑后不带且旧状态 409 `pending_mismatch`、两窗口同一状态一个在跑另一个 409 `run_in_progress` 且工具只执行一次、补发读完后末尾前移不带、停止后带停止收尾那份且 pending 为空（旧状态 409）、已追平且末尾是未登记 ext.* 时照旧正常 end、没暂停过的会话不带 |
 | `packages/server/src/test-utils.ts` | 测试辅助（只被 `*.test.ts` 引用）：`parseFrames`、逐帧读的 `FrameReader`、可控闸门 `gate()`、`postRequest` / `getRequest` / `openReader` 与断言小工具 |
 | `packages/server/src/workers.fixture.ts` | Workers 测试用的 Worker 脚本，也是"在 Workers 上怎么用"的最小示例：模块级 `log` 跨请求存活，`fetch(request, env, ctx)` 直接转交 handler 并统计 `waitUntil` 次数 |
 | `packages/server/src/leased-runs.test.ts` | D4 用例：两实例共用 `InMemoryRunLease`（第二个 POST 409 且文案说"别的实例"、跑完释放后可再起）、GET 只认本进程（远端 `live:false` + end）、时钟拨快模拟冻结 → 心跳发现丢租约 → paused(host) 且只告警一次、renew / release 抛错只告警、同进程并发 create 只一个成功且租约归先到者、`done` 等 release 而删项同步、ttlMs 非正数拒绝 |
@@ -96,7 +97,7 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 2. `pump()`：有 run 就**先 subscribe 再补发**，补发期间 run 推出的信号先攒在 `Channel` 里。
 3. `fromSeq = Math.min(plan.fromSeq, tailSeq + 1)` —— 客户端报的 lastSeq 超过日志末尾（换了会话、存储被清）就钳到末尾，否则之后的实时事件会被当成"已补发过"静默丢掉。
 4. `start` 帧（`sessionId` / `fromSeq` / `live`）→ `readEvents(log, sessionId, { registry, fromSeq })` 逐条 `event` 帧（`replay: true`），记录 `maxSeq`。
-5. 无 run：`end` 帧（带 `lastSeq`）后关闭。
+5. 无 run：`resumableTailState` 再取一次日志末尾，末尾 seq 等于 `maxSeq` 且 `pausedStateOf` 有值（零补发时从 tail 读出，只对 `run_paused` 过注册表，读不出也只是不给，免得已追平的客户端撞未登记 ext.* 变成 error 帧）才给 state；`end` 帧带 `lastSeq` 与可选 `state` 后关闭。复核放在补发之后：读完之后又落了事件（别处续跑、停止收尾）就不给，end 的 `lastSeq` 与 `state` 永远说同一刻（AdRate 建议 8）。
 6. 有 run：`begun = true`、`plan.begin?.()` 起跑 —— 补发期间客户端就算走了也照跑。先 `sub.drain()` 把攒下的信号推出（`seq <= maxSeq` 的事件跳过，delta 全部丢弃），再 `for await` 实时转发；收到 `result` 或 `error` 即收尾关闭。
 7. `pump()` 抛错（补发读日志失败等）→ `error` 帧 + 关闭；若本连接是发起者且 run 还没开跑，`run.abandon(code, message)` 把名额还回去，否则这条会话会永久 409。
 8. `cancel()`（客户端断开）：清心跳、退订；发起者 + `onDisconnect === "abort"` 时 `run.controller.abort()`（还没开跑也没关系，`runLoop` 拿到的是已中止的 signal → `paused(host)`）。缺省 `"continue"`，run 跑完为止。

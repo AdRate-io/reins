@@ -20,7 +20,7 @@ The umbrella `@reinsjs/agent` package already uses `aguiEncoding()` as the defau
 
 | timeline | AG-UI |
 | --- | --- |
-| run start / `result` | `RUN_STARTED`, `RUN_FINISHED` (`outcome: success` or `interrupt` with one entry per `Interruption`, the full `RunResult` — including the signed `state` — in `result`), `RUN_ERROR` |
+| run start / `result` | `RUN_STARTED`, `RUN_FINISHED` (`outcome: success` or `interrupt` with one entry per `Interruption`, the full `RunResult` — including the signed `state` — in `result`), `RUN_ERROR`. A replay-only stream ends with `RUN_FINISHED` (`outcome: success`, `result: { status: "replayed", sessionId, lastSeq }`); when the session is paused at its last event the `result` also carries the signed `state` to resume with — the latest pause of any reason, so show an approval card only for ids in `state.pendingToolCallIds` that have a `core.approval_request` |
 | `model_text` (+ streaming deltas) | `TEXT_MESSAGE_START` / `_CONTENT` / `_END` |
 | `model_thinking` | `REASONING_*` |
 | `tool_call`, `tool_result` | `TOOL_CALL_START` / `_ARGS` / `_END`, `TOOL_CALL_RESULT` |

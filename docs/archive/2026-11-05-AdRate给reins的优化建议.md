@@ -1,7 +1,7 @@
 # AdRate 对 reins 的优化建议（2026-11-05）
 
 > **来源**：AdRate（投放工具，reins 的 dogfood 宿主）在正式接入前，对照 reins `main@11c160f`（core 0.9.0 / server 0.4.3 / brain 0.8.2）核实出的问题。由 Boss 带到 reins 项目评估、实施、发版；AdRate 侧不写兜底代码，等发版后再调整接入方案。
-> **编号**：「AdRate 建议 N」，各批顺序编号（第一批 1～4、第二批 5、第三批 6～7），与 reins 文档中的「OnSet 建议 N」同一用法。
+> **编号**：「AdRate 建议 N」，各批顺序编号（第一批 1～4、第二批 5、第三批 6～7、第四批 8），与 reins 文档中的「OnSet 建议 N」同一用法。
 > **公开性**：已按 reins `docs/README.md` 的公开性规则撰写，不含真实业务数据，可以直接移入 reins 仓库。
 > **宿主背景**：AdRate 是 TikTok 广告投放 SaaS，站内 Agent 的写工具会直接改动用户的广告（建广告、改预算、开关计划），**重复执行意味着重复花用户的广告费**。会话与 run 存活在服务端：用户断开后 run 继续跑完，前端只同步状态并提供"停止"按钮。
 
@@ -464,3 +464,83 @@ AdRate 必须每个请求组装一次 agent，所以每个请求都是新的 han
 - 收投递的 handler 没开 `midRunInput` 时回 409。
 
 新用例在旧实现上失败、新实现上通过。不选"handler 按请求解析工具"的另一条路：改动面大，而且共用 `runs` 本来就是公开的多 handler 用法。AdRate 升级后路由不用改代码，前提是各请求的 handler 传的是进程级同一个 `runs`（`createAgent` 每次调用会自建一份，按请求调用必须显式传 `handler: { runs }`，README 已写明）。另在 README 写明共用 `runs` 的 handler 是同一个信任域：投递由收件 handler 鉴权，却以起 run 的 handler 的工具与 log 执行。
+
+### AdRate 发版后核实（2026-11-06）
+
+npm 官方源 `@reinsjs/agent` 0.6.2（精确依赖 server 0.6.1 / ui-agui 0.4.1 / core 0.11.0）：
+
+- `dist` 中 `mailboxes` 已移到模块级 `WeakMap<ActiveRun, Mailbox>`，`openMailbox` / `deliver` 都经它查，CHANGELOG 与 README 已写明"按请求新建 handler 须共用同一个 `runs`"。
+- **答复 reins 的确认项**：AdRate 各请求的 handler 传入的是进程级同一个 `runs`。接入方案 3.7 从定稿起就要求 `leasedRunRegistry(store.runLease)` 只建一次、挂 `globalThis`，经 `handler: { runs }` 传入；停止请求与 409 判定原本就靠它。已核 agent 0.6.2 的 `createAgent`：handler 选项按 `{ encode, ...自建 runs, ...handlerOptions }` 合并，显式传入的 `runs` 会覆盖每次自建的那份。这一条在 M1-2 实施（尚未写代码），路由单测会覆盖"两个按请求新建的 handler 共用 `runs`，投递回 202"，防止日后漏传。
+- 信任域前提满足：各请求共用同一个 log（`getAgentStores()` 进程级单例）、同一套 principal id（`u:<userId>`）、同一个 `authorizeSession` 与入场检查。
+- 已回填：接入方案（3.5～3.11、第六、八～十一节，第十节新增 10.10"第一期支持运行中插话"）与接入简报（版本表、2.1、2.5、3.8）。
+
+---
+
+# 第四批建议（2026-11-06）
+
+> 来自 AdRate 对运行中插话方案的独立审查，核实时发现的既有缺口，与插话无关，但插话的"停在审批时连同拒绝一起重发"也要用到它。依据 npm 官方源 core 0.11.0 / server 0.6.1 / ui-agui 0.4.1 的 `dist` 源码。
+
+## 总览
+
+| # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 8 | 等审批的会话在补发时也能拿到可续跑的 `resume` | core / server（+ ui-agui） | 宪法二：续跑凭据目前只活在一条连接里，不在时间线上 | 高，AdRate 第一期确认卡依赖它 |
+
+## AdRate 建议 8：补发时也给出可续跑的暂停状态
+
+### 现状
+
+- 签名的暂停状态（`SerializedRunState`）只在 `runLoop` 暂停时算一次，放进 `RunResult.state`，经 live 流的 `result` 帧发给**当时挂在流上的**客户端。
+- 时间线里的 `core.run_paused` 只有 `{ reason }`。GET（或带 `lastSeq` 的 POST）补发以 `end` 帧结束，只带 `sessionId` / `lastSeq`。ui-agui 把它编码成 `RUN_FINISHED`，`result: { status: "replayed" }`，没有 `state`。
+- 续跑审批（`resume` + `decisions`）要求带这份状态。不带 `resume` 只带 `decisions` 的口子是 BUG-261105-2，AdRate 按约定不依赖它。
+
+### 问题
+
+"关页后 run 在服务端继续，回来接着看"是 reins 的缺省形态（`onDisconnect: "continue"`），而等审批恰恰是最常见的"用户走开了"的时刻。以下几种情况都会碰到：
+
+- run 停在审批时，用户已经关了页；
+- 刷新页面；
+- 第二个窗口打开同一会话；
+- 换一台设备打开。
+
+客户端都能从补发里看到 `approval_request`，画出确认卡，却拿不到 `resume`。结果是：
+
+- 无法批准或拒绝；
+- 也无法按建议 1 回复的口径"不批而发新消息"（同样要带 `resume` + `decisions`）；
+- 唯一能走的是停止请求：把待审批调用落成"没执行"，再让用户重说一遍。正确，但对"回来点批准"这个最常见的动作太绕。
+
+宿主自己补救只有两条路，都不对：
+
+- 把 `state` 存进浏览器：换设备、换浏览器无效，还要处理过期；
+- 截流自存一份：要在 handler 外面解析 SSE，等于又写一份传输层。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- **暂停当时就把状态落进时间线**：例如 `core.run_paused` 的 payload 带上签名后的 `state`，或带上算它所需的摘要。模型不可见，投影本就过滤这类运维事件。
+- **补发结束时给出它**：会话末尾是"暂停且仍有 pending"时，`end` 帧带上这份 `state`，ui-agui 的 `RUN_FINISHED`（`replayed`）一并带出。末尾之后已有别的事件（例如已经续跑、已停止收尾）就不给。
+- **注意不要在 GET 时现场重算**：`configHash` / `modelDigest` / `pendingToolsDigest` 若按补发时的配置算，暂停后改过的工具也会被签成"一致"，配置漂移校验就失效了。状态必须反映暂停那一刻。
+- 多个窗口拿到同一份 `state` 各自续跑：AdRate 推断现有的租约与续跑校验（`pendingDigest` 比对、`unknown_tool_call`）会让后到者回 409，这一点未逐行核实，请 reins 确认。
+
+### 边界
+
+- 不改 `SerializedRunState` 形状，也不改续跑校验，只是让它多一个获取途径。
+- 子代理暂停（`Interruption(kind=subagent)`）同理：父会话末尾的暂停状态就够续跑，子会话的决定照旧经 `decisions` 下传。
+
+### AdRate 侧依赖
+
+| 发版前 | 发版后 |
+| --- | --- |
+| 关页、刷新、换设备后回到等审批的会话：确认卡只读，提示"请回到发起的页面处理，或点停止后重新说" | 确认卡与"不批而发新消息"统一从补发结束帧取 `resume`；亲历流与补发两条路径同一份逻辑 |
+
+### reins 处置（2026-11-06）
+
+接受，按建议形态的第一种做，core / server / ui-agui 各发一个 minor。方案见 `docs/implementation-plans/2026-11-06-补发带续跑状态.md`。
+
+- **状态落进时间线**：暂停时先签状态，再写 `core.run_paused { reason, state }`。`RunResult.state` 与这条事件里的是同一个对象，`state.lastSeq` 就是这条 `run_paused` 自己的 seq。只存签好的成品，不存摘要、补发时再签：这样只有一份来源。
+- **补发结束时给出**：补发读完后再取一次日志末尾。末尾 seq 等于本次 `end.lastSeq`，且是带状态的 `run_paused`，才在 `end` 帧带 `state`。缺省 AG-UI 编码下是 `RUN_FINISHED.result.state`，与 `status: "replayed"` 并列，`outcome` 仍是 `success`：补发只有日志，拼不出 live result 的 `interruptions`，确认卡从补发里的 `approval_request` 画。客户端 `lastSeq` 已在末尾、一条不用补发时也给。给的是**最近一次暂停**的状态，不论原因：续跑之后、再次暂停之前不给；用户停止、预算暂停、中止各自又落一条带状态的 `run_paused`，其中停止后 `pendingToolCallIds` 为空。所以"有 state"不等于"要审批"，确认卡只对 `pendingToolCallIds` 里、补发中有 `core.approval_request` 的调用画。
+- **不在 GET 时重算**：采纳。状态是暂停那一刻签的，暂停后改了 pending 调用涉及的工具，续跑照样 409 `config_mismatch`。
+- **多窗口确认**：推断成立，已有用例锁住。一个窗口在续跑时，另一个回 409 `run_in_progress`（跨实例靠租约）。前一个跑完后，另一个回 409 `pending_mismatch`。若前一个只续跑、没给结论，又停在同一批调用上，旧状态仍有效，批的还是那一批。极窄的竞态（预校验通过后前一个才跑完）会以 200 + `error` 帧收口。各种情况下工具都不会重复执行。
+- **子代理**：续跑用父会话末尾的状态就够，子的结论照旧经 `decisions[].sessionId` 下传。但子的 `approval_request` 在子会话日志里，父会话的补发里没有。缺省 `childSessionId`（`父会话:调用id`）可以推出子会话，再去 GET 它；自定义了 `childSessionId` 就推不出来，确认卡画不出。**请确认 AdRate 第一期是否用 `asTool`**，用的话我们再议。
+- **安全**：能 GET 挂到进行中 run 的主事人，今天本来就会收到带状态的 `result` 帧。这次只是把可得时间延长到暂停之后，范围仍由 `authorizeSession` 定。
+- **BUG-261105-2**：本次不修。状态能从补发取到之后，"带 `decisions` 必须带 `resume`"已经可行，会另行通知 AdRate / OnSet 后收紧。AdRate 已按约定总带 `resume`，不受影响。
+- **升级前已暂停的会话**：`run_paused` 里没有状态，补发不给。AdRate 尚未上线，没有影响。

@@ -39,7 +39,16 @@ export const rawEncoder: StreamEncoder = (item: StreamItem) => {
     case "result":
       return [{ event: "result", data: item.result }]
     case "end":
-      return [{ event: "end", data: { sessionId: item.sessionId, lastSeq: item.lastSeq } }]
+      return [
+        {
+          event: "end",
+          data: {
+            sessionId: item.sessionId,
+            lastSeq: item.lastSeq,
+            ...(item.state !== undefined ? { state: item.state } : {}),
+          },
+        },
+      ]
     case "error":
       return [{ event: "error", data: { code: item.code, message: item.message } }]
   }

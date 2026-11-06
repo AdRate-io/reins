@@ -23,7 +23,7 @@
         ├─ event   ─► onEvent ─┬─ 与 open 同类 → 只补 END（沿用增量的 messageId）
         │                      └─ 否则 closeOpen() + mapEvent(event, { parentMessageId })
         ├─ result  ─► closeOpen() + RUN_FINISHED(success|interrupt) / RUN_ERROR
-        ├─ end     ─► closeOpen() + RUN_FINISHED(success, result=replayed)
+        ├─ end     ─► closeOpen() + RUN_FINISHED(success, result=replayed[+state])
         └─ error   ─► closeOpen() + RUN_ERROR
         │
         ▼
@@ -40,7 +40,7 @@
 | `src/encoder.ts` | 有状态编码器：增量与完整事件接成同一条消息、`parentMessageId` 维护、run 四态收尾、`interruptsOf` 把 core 的 `Interruption` 翻成 AG-UI interrupt、SSE 帧的 id 归属 |
 | `demo/index.html` | 无依赖的最小页面：直连 SSE、按 AG-UI 事件渲染 |
 | `demo/serve.mjs` | 最小演示服务（node:http + `createAgentHandler` + `aguiEncoding()`），无密钥时用 core testing 的剧本假模型离线跑 |
-| 测试（2 个 `*.test.ts`） | `map-event.test.ts` 逐种事件核对映射表与字段细节；`encoder.test.ts` 测增量与完整事件接成同一条消息、run 结束的三种翻译、以及接上 `@reinsjs/server` 的端到端 |
+| 测试（2 个 `*.test.ts`） | `map-event.test.ts` 逐种事件核对映射表与字段细节；`encoder.test.ts` 测增量与完整事件接成同一条消息、run 结束的三种翻译、补发结束带续跑状态（有才出键）、以及接上 `@reinsjs/server` 的端到端 |
 
 ## 3 核心流程
 
@@ -73,7 +73,7 @@
 
 1. `result` 帧：`status === "error"` → `RUN_ERROR`（message 取 `r.error.payload.message`，code 取 `payload.category`）；`paused` → `RUN_FINISHED` 且 `outcome = { type: "interrupt", interrupts }`；其余（`done` / `handoff`）→ `RUN_FINISHED` + `outcome.success`。**完整的 `RunResult`（含 paused 的 state）原样放在 `result` 字段里**，供前端回传续跑。
 2. `interruptsOf` 一一对应 core 的 `Interruption`：`approval` 带 `toolCallId` / `request.summary` / `metadata.policyId`，`client_tool` 带 `toolCallId` 与 `call`，`subagent`（子代理冒泡）带 `toolCallId` 与 `metadata.{ childSessionId, childReason, interruptions, state }`——前端答子的审批时把 `childSessionId` 放进 `decisions[].sessionId`，其余种类（budget / host…）合成 `id = "<kind>:<lastSeq>:<n>"`。
-3. `end` 帧（GET 补发、本进程没有在跑的 run）也翻成 `RUN_FINISHED(success)`，`result` 是一条合成的 `{ status: "replayed", sessionId, lastSeq }`。
+3. `end` 帧（GET 补发、本进程没有在跑的 run）也翻成 `RUN_FINISHED(success)`，`result` 是一条合成的 `{ status: "replayed", sessionId, lastSeq }`；server 给了 `state`（会话停在带状态的 `run_paused`）就原样并进 `result`，outcome 仍是 success——补发只有日志，拼不出 live result 的 interruptions，确认卡从补发里的 `approval_request` 画（AdRate 建议 8）。
 4. `frames()` 只给一批事件的**最后一帧**挂 `id: String(seq)`，这样 `Last-Event-ID` 永远指向已完整送达的时间线事件，重连不会从半条消息中间接上。控制帧（RUN_STARTED / RUN_FINISHED / RUN_ERROR）不带 id。
 
 ## 4 核心设计决策

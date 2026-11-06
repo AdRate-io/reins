@@ -92,7 +92,8 @@ export interface StopResponse {
  * 流里的每一项。编码器把它翻译成零到多个 SSE 帧。
  * 一条流的形状：start → (event | delta)* → (result | end | error)，最后一项之后连接关闭。
  * - result：本流挂着一个 run，run 结束后给出四态之一（paused 时含可回传的 state）
- * - end：本流只是补发（没有 run 在跑），补发完即结束
+ * - end：本流只是补发（没有 run 在跑），补发完即结束；会话末尾是带状态的 run_paused 时带 state（与当时 live result 的同一份），
+ *   客户端关页 / 换设备回来照样能 resume（AdRate 建议 8）。末尾之后已有别的事件就不带
  * - error：run 在写第一条日志前就失败（恢复校验不过、存储并发冲突等）；日志里已有的 core.error 仍以 event 推出
  */
 export type StreamItem =
@@ -100,7 +101,7 @@ export type StreamItem =
   | { kind: "event"; event: Event; replay: boolean }
   | { kind: "delta"; delta: LoweringDelta }
   | { kind: "result"; result: RunResult }
-  | { kind: "end"; sessionId: string; lastSeq: number }
+  | { kind: "end"; sessionId: string; lastSeq: number; state?: SerializedRunState }
   | { kind: "error"; code: string; message: string }
 
 /** 一个 SSE 帧。data 会被 JSON.stringify（字符串也一样，客户端统一 JSON.parse） */

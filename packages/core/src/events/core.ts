@@ -7,6 +7,7 @@
  * - 改字段语义、删字段、改必填 → 升版本，并在注册表登记 upcast 函数
  * 当前全部为 v1，见 ./registry.ts 的 CORE_SCHEMAS。
  */
+import type { SerializedRunState } from "../loop/types.js"
 import type { ContentPart, Event } from "./base.js"
 
 // ---- 对话内容 ----
@@ -204,6 +205,12 @@ export interface RunPausedPayload {
   reason: "approval" | "budget" | "host"
   /** 序列化 run 状态的外部引用（宿主 KV 键、URL 参数等），可选 */
   stateRef?: string
+  /**
+   * 暂停那一刻签好的可续跑状态，与 `RunResult.state` 是同一份（AdRate 建议 8）。模型不可见（投影过滤 run_paused）。
+   * 补发结束时若这条事件就是会话末尾，server 在 end 帧带出它，关页 / 换设备回来也能续跑；判据只走 `pausedStateOf`。
+   * 配置摘要反映暂停那一刻，绝不在读取时重算（否则暂停后改过的工具也会被签成一致）。TanStack 适配器写的 run_paused 不带
+   */
+  state?: SerializedRunState
 }
 
 export interface RunResumedPayload {

@@ -6,7 +6,7 @@
  * 任何一处不一致都拒绝（fail-closed），且拒绝发生在写日志之前。
  */
 import type { Event } from "../events/base.js"
-import type { CoreEvent } from "../events/core.js"
+import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import type { ModelRef } from "../lowering/types.js"
 import type { SerializedRunState, Tool, ToolCallEvent } from "./types.js"
 
@@ -199,6 +199,23 @@ export function assertRunStateShape(raw: unknown): asserts raw is SerializedRunS
     (s.pendingToolsDigest === undefined || typeof s.pendingToolsDigest === "string") &&
     (s.sig === undefined || typeof s.sig === "string")
   if (!ok) throw new RunStateError("malformed", "run state is not in the v1 shape")
+}
+
+/**
+ * 一条事件里可续跑的暂停状态（AdRate 建议 8）：是 `core.run_paused` 且带合规形状的 `state` 才返回，否则 undefined（不抛）。
+ * 调用方传的必须是**会话末尾**那条事件——末尾之后有任何事件（续跑、停止收尾、新 run）这份状态就已过时。
+ * server 补发判"end 帧带不带 state"只走这里（真源）。返回的状态续跑时照常过 `validateResume`，这里不验签
+ */
+export function pausedStateOf(event: Event | undefined): SerializedRunState | undefined {
+  if (event?.type !== "core.run_paused") return undefined
+  const state = (event as CoreEventOf<"core.run_paused">).payload.state
+  if (state === undefined) return undefined
+  try {
+    assertRunStateShape(state)
+  } catch {
+    return undefined
+  }
+  return state
 }
 
 /**

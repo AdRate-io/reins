@@ -6,7 +6,8 @@ import { createCoreRegistry } from "../events/registry.js"
 import { InMemoryEventLog } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, say } from "../testing/scripted-lowering.js"
 import { runLoop } from "./run-loop.js"
-import { type RunStateError, signRunState, verifyRunState } from "./state.js"
+import { pausedStateOf, type RunStateError, signRunState, verifyRunState } from "./state.js"
+import { RunStop } from "./stop.js"
 import type { LoopConfig, RunResult, SerializedRunState, Tool } from "./types.js"
 
 const registry = createCoreRegistry()
@@ -364,5 +365,91 @@ describe("RunState：恢复校验 fail-closed，拒绝发生在写日志之前",
     delete cfg.secret
     const { result } = await drain(runLoop(cfg))
     expect(result.status).toBe("done")
+  })
+})
+
+describe("RunState 随 run_paused 进时间线（AdRate 建议 8）", () => {
+  it("run_paused.payload.state 与 RunResult.state 逐字相同，lastSeq 就是这条事件自己的 seq；从日志取出照样能续跑", async () => {
+    const { log, result } = await processA()
+    if (result.status !== "paused") throw new Error("expected paused")
+    const tail = (await all(log)).at(-1) as CoreEventOf<"core.run_paused">
+    expect(tail.type).toBe("core.run_paused")
+    expect(tail.payload).toEqual({ reason: "approval", state: result.state })
+    expect(tail.seq).toBe(result.state.lastSeq)
+    expect(pausedStateOf(tail)).toEqual(result.state)
+
+    // 另一个进程只凭日志末尾拿到凭据（经 JSON 往返，与存储里读出来的一样）
+    const fromLog = JSON.parse(JSON.stringify(pausedStateOf(tail))) as SerializedRunState
+    const { result: resumed } = await drain(
+      runLoop(
+        processB(log, { resume: fromLog, decisions: [{ toolCallId: "c1", approved: true, by: "boss" }] }),
+      ),
+    )
+    expect(resumed.status).toBe("done")
+  })
+
+  it("用户停止收尾：run_paused 照样带状态，pending 为空（与 live result 同口径）", async () => {
+    const { log } = await processA()
+    const { result } = await drain(runLoop(processB(log, { signal: AbortSignal.abort(new RunStop()) })))
+    expect(result).toMatchObject({ status: "paused", reason: "host" })
+    if (result.status !== "paused") return
+    const tail = (await all(log)).at(-1) as CoreEventOf<"core.run_paused">
+    expect(tail.payload).toEqual({ reason: "host", state: result.state })
+    expect(result.state.pendingToolCallIds).toEqual([])
+  })
+
+  it("maxTurns 兜底暂停：日志里的状态与 RunResult.state 相同，从日志取出可续跑", async () => {
+    const log = new InMemoryEventLog()
+    const ping: Tool = {
+      name: "ping",
+      description: "探活",
+      inputSchema: {},
+      risk: "low",
+      execute: () => "pong",
+    }
+    const loop = (lowering: ScriptedLowering, extra: Partial<LoopConfig> = {}) =>
+      runLoop({ sessionId: SESSION, log, lowering, model: MODEL, tools: [ping], secret: SECRET, ...extra })
+    const busy = new ScriptedLowering([
+      { drafts: [callTool("p1", "ping", {})] },
+      { drafts: [callTool("p2", "ping", {})] },
+    ])
+    const { result } = await drain(loop(busy, { input: "一直探", maxTurns: 1 }))
+    expect(result).toMatchObject({ status: "paused", reason: "budget" })
+    if (result.status !== "paused") return
+    const tail = (await all(log)).at(-1)
+    expect(tail?.seq).toBe(result.state.lastSeq)
+    expect(pausedStateOf(tail)).toEqual(result.state)
+    const fromLog = JSON.parse(JSON.stringify(pausedStateOf(tail))) as SerializedRunState
+    const { result: resumed } = await drain(
+      loop(new ScriptedLowering([{ drafts: [say("好了")] }]), { resume: fromLog }),
+    )
+    expect(resumed.status).toBe("done")
+  })
+
+  it("宿主中止（非用户停止）：pending 留着，日志里的状态可续跑并批准执行", async () => {
+    const { log } = await processA()
+    const { result } = await drain(runLoop(processB(log, { signal: AbortSignal.abort() })))
+    expect(result).toMatchObject({ status: "paused", reason: "host" })
+    if (result.status !== "paused") return
+    const tail = (await all(log)).at(-1)
+    expect(pausedStateOf(tail)).toEqual(result.state)
+    expect(result.state.pendingToolCallIds).toEqual(["c1"])
+    const fromLog = JSON.parse(JSON.stringify(pausedStateOf(tail))) as SerializedRunState
+    const { result: resumed } = await drain(
+      runLoop(
+        processB(log, { resume: fromLog, decisions: [{ toolCallId: "c1", approved: true, by: "boss" }] }),
+      ),
+    )
+    expect(resumed.status).toBe("done")
+  })
+
+  it("pausedStateOf：不是 run_paused、没带 state、state 形状坏、没有事件 → undefined", () => {
+    const at = 0
+    const mk = (type: "core.run_paused" | "core.run_resumed", payload: Record<string, unknown>) =>
+      ({ id: "e", sessionId: SESSION, seq: 1, at, type, actor: "system", schemaVersion: 1, payload }) as Event
+    expect(pausedStateOf(undefined)).toBeUndefined()
+    expect(pausedStateOf(mk("core.run_resumed", { state: { v: 1 } }))).toBeUndefined()
+    expect(pausedStateOf(mk("core.run_paused", { reason: "approval" }))).toBeUndefined()
+    expect(pausedStateOf(mk("core.run_paused", { reason: "approval", state: { v: 2 } }))).toBeUndefined()
   })
 })

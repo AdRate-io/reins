@@ -153,6 +153,32 @@ describe("流式增量与完整事件接成同一条消息", () => {
     assertValidAgui(frames)
   })
 
+  it("补发结束带续跑状态：原样进 RUN_FINISHED(replayed).result.state，outcome 仍是 success（AdRate 建议 8）", () => {
+    const state = {
+      v: 1 as const,
+      sessionId: "s1",
+      lastSeq: 2,
+      pendingToolCallIds: ["c1"],
+      configHash: "h",
+      pendingDigest: "d",
+      sig: "x",
+    }
+    const frames = feed([start, { kind: "end", sessionId: "s1", lastSeq: 2, state }])
+    expect(data(frames).at(-1)).toEqual({
+      type: "RUN_FINISHED",
+      threadId: "s1",
+      runId: expect.any(String),
+      result: { status: "replayed", sessionId: "s1", lastSeq: 2, state },
+      outcome: { type: "success" },
+    })
+    assertValidAgui(frames)
+    // 不带 state 时 result 里也没有这个键
+    const plain = data(feed([start, { kind: "end", sessionId: "s1", lastSeq: 2 }])).at(-1) as {
+      result: Record<string, unknown>
+    }
+    expect("state" in plain.result).toBe(false)
+  })
+
   it("半截块遇到别的事件先到：先收尾再翻译，不留没有 END 的消息", () => {
     const frames = feed([
       start,

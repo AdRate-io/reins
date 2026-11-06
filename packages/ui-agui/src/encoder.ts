@@ -181,6 +181,8 @@ export function createAguiEncoder(options: AguiEncoderOptions = {}): StreamEncod
             : { type: "success" as const }
         return frames([...closeOpen(), { type: "RUN_FINISHED", threadId, runId, result: r, outcome }])
       }
+      // 补发结束：会话末尾是带状态的 run_paused 时 server 给出 state，原样放进 result 供客户端 resume（AdRate 建议 8）。
+      // outcome 仍是 success 不是 interrupt：补发只有日志，拼不出 live result 的 interruptions，确认卡从补发里的 approval_request 画
       case "end":
         return frames([
           ...closeOpen(),
@@ -188,7 +190,12 @@ export function createAguiEncoder(options: AguiEncoderOptions = {}): StreamEncod
             type: "RUN_FINISHED",
             threadId,
             runId,
-            result: { status: "replayed", sessionId: item.sessionId, lastSeq: item.lastSeq },
+            result: {
+              status: "replayed",
+              sessionId: item.sessionId,
+              lastSeq: item.lastSeq,
+              ...(item.state !== undefined ? { state: item.state } : {}),
+            },
             outcome: { type: "success" },
           },
         ])

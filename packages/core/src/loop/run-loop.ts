@@ -325,21 +325,23 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       ? [{ kind: "host", note: texts.note }]
       : requestedInterruptions
     const settled = texts ? await settleStopped(texts) : []
-    const events = [
-      ...settled,
-      ...(await append([{ type: "core.run_paused", actor: "system", payload: { reason } }])),
-    ]
-    // pending 以日志为准（而不是本轮内存里的列表），恢复时对账的也是日志
+    // 先签后写（AdRate 建议 8）：状态随 run_paused 一起落进时间线，补发也能交出续跑凭据。
+    // pending 以日志为准（而不是本轮内存里的列表），恢复时对账的也是日志；run_paused 本身不改变 pending。
+    // lastSeq + 1 就是即将落下的 run_paused 自己的 seq——与此前"写完再算"得到的值逐字相同
     const pending = pendingToolCalls(await readTimeline(log, sessionId, { registry }))
     const state = await serializeRunState({
       sessionId,
-      lastSeq,
+      lastSeq: lastSeq + 1,
       pending,
       configHash,
       model,
       tools: baseTools,
       ...(cfg.secret !== undefined ? { secret: cfg.secret } : {}),
     })
+    const events = [
+      ...settled,
+      ...(await append([{ type: "core.run_paused", actor: "system", payload: { reason, state } }])),
+    ]
     return { events, result: { status: "paused", sessionId, lastSeq, reason, interruptions, state } }
   }
 
