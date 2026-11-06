@@ -247,6 +247,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 工具入参二次编码：fetch / pi 降级层 vs TanStack 适配器 | 前者读侧多解一层并标 `meta.argumentsUnwrapped`；后者不解——它的历史按 `JSON.stringify(args)` 送回，模型看到的就是自己写的二次编码，与执行一致，没有"说法不一"，代价只是多一轮往返（要补走 `transformArgs`，OPT-261102-2） |
 | 用户停止：runLoop vs TanStack 适配器 | runLoop 在所有暂停出口把 pending 收尾成"没执行"等结果；TanStack 引擎自己处理中止，适配器在它的边界上做不到对等，停止后 pending 照旧留着 |
 | 续跑校验：runLoop / server vs TanStack 适配器 | 前两者调同一个 `validateResume`（D4 收窄）；TanStack 路径本来就不做续跑校验，只为 `tools_bound` 算 configHash |
+| `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、TanStack 适配器 | 只有进程内 run 能拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列 |
+| 输入校验不合规：起步 `input` vs 中途 `pullInput` | 起步抛 RangeError、一条不写；中途已有半个 run 的日志，走 `fail()` 落 `core.error(input)` 收口。同一回调里抛错却是 fail-open（多半是宿主瞬时故障） |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表
@@ -261,10 +263,12 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | `trustMarkers: false` | 不给 untrusted 内容包标记 | 宿主自担风险（例如已在别处处理注入） |
 | handler `onEvent` 钩子抛错 | 只经 `warn` 报一次，不进日志、不影响 run | 旁路观测不能拖垮主路径（但挂住不返回会让 run 永不结束，见服务端节） |
 | 流开后的 SSE `error` 帧原样带出厂商响应体 | 不截断、不脱敏 | `HttpError` 文案与 SDK 同款是刻意的（瞬断判据靠其中状态码）；面向公网时由宿主 `encode` 或网关截断 |
+| `pullInput` 回调抛错 | 记一条模型不可见的 `core.error(host)`，当这次没有、run 照跑 | 后果只是晚一个空档送达，消息仍在宿主队列；返回值不合规不在此列（fail-closed） |
 | lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限） | 价目只用于报告，不影响请求正确性 |
 
 ### 循环与时间线（core）
 
+- **`pullInput` 只在调模型前拉，拉到的排在本轮 beforeModel 说明之前；补跑轮、触顶 `maxTurns`、收尾时都不拉** — 宿主须在处理到写入事件时 await 完认领再迭代，否则下一空档重复写；run 结束后宿主仍要再查一次队列。拉到后 `timeline` 整体重绑，新增读本轮时间线的代码别用旧引用。中途 user_message 会让 compact 只保附言、handoff 的 `triggerMessage` 取附言而非起步任务。
 - **`toolSpecOf` 刻意单参，别加第二个参数** — examples 里 `tools.map(toolSpecOf)`，多一参就把数组下标当参数吃进去；要带标记用 `deferredToolSpecOf(tool, deferred)`。
 - **`runLoop` 里的 `append` 是全包唯一分配 seq 的地方** — 任何在循环外自己 `log.append` 的代码（投影 emitted、handoff 开场）必须同步 `lastSeq`，漏一处后续整轮 `seq_conflict`。
 - **`resolveSocketContributions` 是 async，各 Socket 依次 await 不并发** — 同名去重以先到者为准，并发会让顺序不定、configHash 抖动；MCP 的 `tools/list` 就在这里发生。

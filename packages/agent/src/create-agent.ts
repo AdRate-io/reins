@@ -46,6 +46,8 @@ export interface RunOptions {
   sessionId?: string
   /** 与 `runLoop` 同一类型：进程内可传草稿数组（如 `[system_note(kind: "host"), user_message]`）；HTTP 请求体不收草稿数组 */
   input?: NonNullable<LoopConfig["input"]>
+  /** run 进行中的新输入（拉），语义同 `runLoop` 的 `pullInput`；每次 run 才传，不进 definition */
+  pullInput?: NonNullable<LoopConfig["pullInput"]>
   resume?: SerializedRunState
   decisions?: readonly ApprovalDecisionInput[]
   principal?: Principal

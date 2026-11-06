@@ -127,6 +127,41 @@ describe("createAgent", () => {
     expect(agent.definition.memory).toBe(store.memory)
   })
 
+  it("run({ pullInput })：透传给 runLoop，第 2 轮调模型前拉到的输入落日志；definition 上不能写", async () => {
+    const store = memoryStore()
+    const agent = createAgent({ model: scripted(), tools: [add], store })
+    const turns: number[] = []
+    const gen = agent.run({
+      input: "2+3",
+      pullInput: ({ turn }) => {
+        turns.push(turn)
+        return turn === 2
+          ? [
+              {
+                type: "core.user_message",
+                actor: "user",
+                payload: { content: [{ type: "text", text: "改成 2+4" }] },
+              },
+            ]
+          : []
+      },
+    })
+    let result = await gen.next()
+    while (!result.done) result = await gen.next()
+    expect(result.value.status).toBe("done")
+    expect(turns).toEqual([1, 2])
+    const logged = await store.log.tail(result.value.sessionId, 20)
+    expect(logged.filter((e) => e.type === "core.user_message")).toHaveLength(2)
+
+    // 每次 run 的字段：不进 definition（否则 HTTP run 与 asTool 子 run 会拿父宿主的回调拉父的队列）
+    createAgent({
+      model: scripted(),
+      store: memoryStore(),
+      // @ts-expect-error pullInput 只经 agent.run() 传
+      pullInput: () => [],
+    })
+  })
+
   it("run() 收草稿数组（as const 也行）：背景说明与任务按序落日志", async () => {
     const store = memoryStore()
     const agent = createAgent({ model: scripted(), tools: [add], store })

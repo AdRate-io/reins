@@ -61,6 +61,42 @@ runLoop({ ...config, input: briefedInput("Ticket #12 was edited by Ana an hour a
 
 Every draft goes through the same checks — type whitelist (`core.user_message`, `core.tool_result`, `core.system_note`, `ext.*`), a valid actor, the basic payload shape of the three core types, and registration in your registry — and one bad draft rejects the whole batch before anything is written; content parts cannot be mixed with drafts. The envelope (`actor`, `trust`) and the shape of your own `ext.*` payloads are yours to get right: in-process input is trusted host code. Keep one user message per batch: compaction keeps only the most recent one verbatim, while background notes fold like any other note (put what must stay in a pin). Lowering keeps the order on Chat and Responses; on Anthropic models that accept mid-conversation system messages the note lands right after the user message, because a system message may not come first or follow an assistant one. The HTTP handler in `@reinsjs/server` does not accept draft arrays — this is for in-process hosts.
 
+## Input that arrives mid-run
+
+A run can take minutes. Messages that reach your host meanwhile (a teammate changed direction, someone signed off a plan) can be handed to the model before its next call instead of waiting for the run to end. Pass `pullInput`: the loop calls it before every model call — not on a turn that only finishes leftover tool calls, and not once `maxTurns` is reached — and appends whatever drafts it returns, ahead of that turn's socket notes. Your queue stays the source of truth: offer what is waiting, and claim a delivery only when its event comes back out of the loop.
+
+```ts
+/** A host mailbox: offer everything unclaimed at each gap; claim when the loop has written it. */
+function mailbox() {
+  const waiting = new Map<string, string>()
+  return {
+    post(id: string, text: string) {
+      waiting.set(id, text)
+    },
+    pullInput: (): EventDraft[] =>
+      [...waiting].map(([id, text]) => ({
+        type: "core.user_message",
+        actor: "user",
+        provenance: { source: "mailbox", ref: id },
+        payload: { content: [{ type: "text", text }] },
+      })),
+    claim(event: Event) {
+      if (event.provenance?.source === "mailbox" && event.provenance.ref) waiting.delete(event.provenance.ref)
+    },
+  }
+}
+
+const box = mailbox()
+for await (const event of runLoop({ ...config, input: "Plan the shoot.", pullInput: box.pullInput })) box.claim(event)
+```
+
+- Claim while handling the event, before asking the loop for the next one. If you only claim later, the next gap offers the same drafts again and they are written twice.
+- Only `core.user_message`, `core.system_note` and `ext.*` are accepted here (no `core.tool_result`: there is no open call to answer at that point). A return value that is not an array, or holds anything else, ends the run with `status: "error"` and writes none of the batch. If the callback throws, the loop records a `core.error` the model cannot see and carries on; the messages are still in your queue. If the run is aborted while you were pulling, the drafts are not written.
+- Anything that arrives after the last pull is not part of this run: check your queue once more when the run returns. A callback that never settles stalls the run, so put your own timeout on it.
+- A run that absorbs follow-ups lives longer: per-run budget limits (turns, wall time, tokens) trip sooner.
+- On Anthropic models that accept mid-conversation system messages, a mid-run `system_note` follows a tool result, so it becomes a real system message placed after the user message; at the start of a run it usually follows an assistant reply and is sent as tagged user text instead.
+- `pullInput` is per run: `runLoop` and `agent.run()` take it; agent definitions, the HTTP handler and `asTool` sub-agents do not.
+
 ## Tools
 
 ```ts

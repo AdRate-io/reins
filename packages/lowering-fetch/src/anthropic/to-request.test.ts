@@ -625,6 +625,37 @@ describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿�
   })
 })
 
+describe("run 进行中拉到的输入批 [宿主背景说明, 用户消息]（运行中拉取新输入方案）", () => {
+  // 与起步输入不同形：前一条是 tool_result（user 角色），不是 assistant
+  const batch = () => {
+    const bg = ev("core.system_note", "host", { kind: "host", text: "背景" })
+    return { bg, events: [user("q"), call("c1"), result("c1"), bg, user("新消息")] }
+  }
+
+  it("中途 system 开：背景成了真中途 system，攒到新消息之后——user(tool_result + 新消息) → system(背景)", () => {
+    const { bg, events } = batch()
+    const r = encode(events)
+    expect(roles(r.body.messages)).toEqual(["user", "assistant", "user", "system"])
+    expect(r.body.messages[2]?.content.map((b) => b.type)).toEqual(["tool_result", "text"])
+    expect((r.body.messages[2]?.content[1] as { text: string } | undefined)?.text).toBe("新消息")
+    expect((r.body.messages[3]?.content[0] as { text: string } | undefined)?.text).toBe("背景")
+    expect(landingOf(r, bg)).toMatchObject({ kind: "exact", landing: "system" })
+  })
+
+  it("中途 system 关：并进 tool_result 之后的同一条 user，背景标签在新消息前", () => {
+    const { bg, events } = batch()
+    const r = encode(events, haiku)
+    expect(roles(r.body.messages)).toEqual(["user", "assistant", "user"])
+    const blocks = r.body.messages[2]?.content ?? []
+    expect(blocks[0]?.type).toBe("tool_result")
+    const texts = blocks.slice(1).map((b) => (b as { text: string }).text)
+    expect(texts[0]).toContain('<system_note kind="host">')
+    expect(texts[0]).toContain("背景")
+    expect(texts[1]).toBe("新消息")
+    expect(landingOf(r, bg)).toMatchObject({ kind: "lossy", landing: "user-role" })
+  })
+})
+
 describe("run 输入批遇到 pending 工具调用（输入多条草稿方案）", () => {
   it("背景与任务随 tool_result 一起后移、两者相对顺序不变", () => {
     const flatOf = (r: ReturnType<typeof encode>) => JSON.stringify(r.body.messages)

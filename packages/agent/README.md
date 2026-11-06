@@ -39,6 +39,8 @@ for await (const event of agent.run({ input: "Ship staging" })) console.log(even
 
 `run()` yields every event as it is appended and returns `done | paused | handoff | error`. A `paused` result carries a small signed `state`; resume from any process with `agent.run({ sessionId, resume: state, decisions: [{ toolCallId, approved: true, by: "alice" }] })`.
 
+Messages that reach your host while a run is going can be handed to the model before its next call: pass `agent.run({ input, pullInput })` (see "Input that arrives mid-run" in `@reinsjs/core`). It is a per-run option — `createAgent` does not take it, so the HTTP handler and `asTool` sub-agents never pull.
+
 ## Agents as tools
 
 ```ts

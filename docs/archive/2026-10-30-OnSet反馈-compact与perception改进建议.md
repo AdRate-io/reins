@@ -240,3 +240,5 @@ reins 已提的方案（2026-11-06 讨论）：run 里加收件箱，在每次�
 3. 收尾"收件箱非空就再给一轮"在拉模式下就是"收尾前再拉一次"，不会和 OnSet 现有的"空闲后唤醒、处理积压"重复投递：没被拉走的照旧排队，下个 run 带走。
 
 优先级高：这是试拍里角色返工和对外误导的主要来源之一，Boss 的拍板晚十几分钟生效在流水线里很常见。OnSet 这边跟着做的（reins 发版后）：调度器接上回调，按会话游标组装中途输入，复用"看到输入即标已送达"；协作规则补一句"中途收到的消息与手上的事冲突时先停下改向"；`pnpm stats` 加"中途送达"条数与等待时长，与本条数据对照。
+
+> **处置（reins，2026-11-06）**：照做拉模式，去掉"收尾前再拉一次"。core `LoopConfig.pullInput(ctx: { sessionId, turn })` 只在每次调模型前调（补跑轮与触顶 `maxTurns` 不调），返回的草稿在投影前写入、排在本轮 beforeModel 说明（pin、感知）之前；`agent.run({ pullInput })` 透传，`createAgent` 不收（per-run）。收尾前不拉：要推翻 Socket 的 stop（`end_run` 已发出收尾发言）、触顶时把 done 变成没人回答的 paused，而 run 一结束 OnSet 本来就用积压起新 run，收益近零——**OnSet 调度器在 run 结束后仍要查一次队列**（最后一次拉取到结束之间来的消息不会进本 run）。只收 `user_message` / `system_note` / `ext.*`；返回值不合规以 error 收口；回调抛错记模型不可见的 `core.error(host)`、run 照跑；拉完已中止就不写。认领：在 for-await 里处理到写入事件时 await 完再继续，推荐草稿带 `provenance.ref` 记投递 id 幂等认领。注意 Anthropic 线：中途写入时前一条是 tool_result，`midConversationSystem` 开的模型上背景会变成真中途 system、排在 user_message 之后（起步时是带标签 user 文本），中转站送达情况真模型验证时单独核。方案 `docs/implementation-plans/2026-11-06-运行中拉取新输入.md`，样本 `docs/archive/2026-11-06-OnSet样本-run中途消息/`。

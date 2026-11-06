@@ -391,6 +391,13 @@ export type ErrorEventPayload = ErrorPayload
 
 // ---- 循环配置 ----
 
+/** `LoopConfig.pullInput` 的参数 */
+export interface PullInputContext {
+  sessionId: string
+  /** 将要进行的轮次（本 run 内从 1 起）：拉到的输入就给这一轮的模型看 */
+  turn: number
+}
+
 export interface LoopConfig {
   sessionId: string
   log: EventLog
@@ -409,6 +416,18 @@ export interface LoopConfig {
    * 缺省不追加（续跑：日志里有未完成的工具调用就先补齐，再问模型）。
    */
   input?: string | ContentPart[] | EventDraft | readonly EventDraft[]
+  /**
+   * run 进行中的新输入（拉，OnSet 建议 13）。循环在每次调模型前调一次——补跑 pending 的那轮与已触顶 `maxTurns` 时不调；
+   * 返回非空即一次 append 写入时间线，排在本轮 beforeModel 说明之前，空数组表示没有。
+   * 只收 `core.user_message` / `core.system_note` / `ext.*`（比 `input` 窄：拉取点上没有可回答的 pending 调用，不收 tool_result）。
+   * - 返回值不合规（非数组、白名单外类型、未登记的 ext.*）：run 以 error 结束（`core.error` category "input"），这一批一条不写。
+   * - 回调抛错：记一条模型不可见的 `core.error`（category "host"），当这次没有、run 照跑（fail-open：消息还在宿主队列里）。
+   * - 拉完发现已中止：拉到的不写，按"本轮开始前中止"暂停。
+   * 宿主须在处理到写入事件时（await 完）完成认领再继续迭代，否则下一次会再拉到同一批；推荐草稿带 `provenance.ref` 记投递 id。
+   * 最后一次拉取到 run 结束之间来的消息不会进本 run：run 结束后宿主仍须查一次队列。回调挂住不返回 run 就挂住，超时由宿主自带。
+   * 每次 run 的字段：不进 `AgentDefinition`（HTTP run、asTool 子 run 不拉）。
+   */
+  pullInput?: (ctx: PullInputContext) => MaybePromise<readonly EventDraft[]>
   principal?: Principal
   projection?: {
     strategies?: readonly ProjectionStrategy[]

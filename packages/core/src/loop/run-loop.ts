@@ -31,7 +31,7 @@ import type {
 } from "../events/core.js"
 import { createEvent, type EventDraft } from "../events/create.js"
 import { uuidv7 } from "../events/id.js"
-import { createCoreRegistry } from "../events/registry.js"
+import { createCoreRegistry, type EventSchemaRegistry } from "../events/registry.js"
 import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../lowering/types.js"
 import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
@@ -185,6 +185,38 @@ export function inputDrafts(input: NonNullable<LoopConfig["input"]>): EventDraft
     return (input as readonly EventDraft[]).map(checkInputDraft)
   }
   return [checkInputDraft(input)]
+}
+
+/**
+ * run 进行中拉到的草稿（`pullInput`）可写的类型：比 INPUT_DRAFT_TYPES 少 tool_result——
+ * 拉取点只在本轮没有 pending 时出现，此时写进来的 tool_result 不是孤儿就是重复 id
+ */
+const PULLED_DRAFT_TYPES: ReadonlySet<string> = new Set(["core.user_message", "core.system_note"])
+
+/**
+ * 校验 `pullInput` 的返回值：是数组 → 逐条过收窄白名单与 `checkInputDraft` → 逐条查注册表。
+ * 全部通过才返回；不合规抛 RangeError（循环据此以 error 结束，这一批一条不写）
+ */
+function checkPulledDrafts(value: unknown, registry: EventSchemaRegistry): EventDraft[] {
+  if (!Array.isArray(value)) {
+    throw new RangeError(`pullInput must return an array of event drafts, got ${describe(value)}`)
+  }
+  return value.map((raw: unknown) => {
+    const draft = (typeof raw === "object" && raw !== null ? raw : {}) as EventDraft
+    const type = draft.type
+    if (typeof type !== "string" || (!PULLED_DRAFT_TYPES.has(type) && !type.startsWith("ext."))) {
+      throw new RangeError(
+        `pullInput draft rejects event type ${String(type)}: only core.user_message, core.system_note or ext.* are accepted`,
+      )
+    }
+    checkInputDraft(draft)
+    if (!registry.has(type)) throw new RangeError(`pullInput draft type ${type} is not registered`)
+    return draft
+  })
+}
+
+function describe(value: unknown): string {
+  return value === null ? "null" : typeof value
 }
 
 /** Array.isArray 对 readonly 数组收窄不够，单独写一个守卫 */
@@ -402,7 +434,61 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       return result
     }
     const turnStartedAt = now()
-    const timeline = await readTimeline(log, sessionId, { registry })
+    let timeline: readonly Event[] = await readTimeline(log, sessionId, { registry })
+
+    // ---- 拉取 run 进行中的新输入（OnSet 建议 13）：只在要问模型的轮次、投影之前 ----
+    // 补跑轮不问模型，拉了会把新输入夹在 tool_call 与补出的 tool_result 之间；触顶即暂停，拉了没人回答
+    if (cfg.pullInput !== undefined && turns < maxTurns && pendingToolCalls(timeline).length === 0) {
+      let raw: unknown = []
+      let threw = false
+      let thrown: unknown
+      try {
+        raw = await cfg.pullInput({ sessionId, turn: turns + 1 })
+      } catch (err) {
+        threw = true
+        thrown = err
+      }
+      let pulled: EventDraft[] = []
+      if (!threw) {
+        try {
+          pulled = checkPulledDrafts(raw, registry)
+        } catch (err) {
+          // 返回值形状不对是确定性的宿主代码错误：fail-closed，以 error 收口（中途已有半个 run 的日志，回放看得见断在哪）
+          const { events, result } = await fail({
+            category: "input",
+            message: err instanceof Error ? err.message : String(err),
+            retryable: false,
+            detail: { phase: "pullInput" },
+          })
+          yield* events
+          return result
+        }
+      } else {
+        // 回调抛错多半是宿主读库之类的瞬时失败：只记一条（模型不可见），当这次没有、run 照跑；消息还在宿主队列里
+        const errors = await append([
+          {
+            type: "core.error",
+            actor: "system",
+            payload: {
+              category: "host",
+              message: `pullInput threw: ${thrown instanceof Error ? thrown.message : String(thrown)}`,
+              retryable: true,
+              detail: { phase: "pullInput" },
+            },
+          },
+        ])
+        yield* errors
+        timeline = [...timeline, ...errors]
+      }
+      // 拉取期间被中止：拉到的不写（宿主没见到写入事件就不认领，消息仍在队列），回顶部按"本轮开始前中止"暂停
+      if (cfg.signal?.aborted) continue
+      if (pulled.length > 0) {
+        const written = await append(pulled)
+        yield* written
+        // 整体重绑：本轮后面的投影、ctx.timeline、executeToolCalls 的拼接都要看到拉进来的事件
+        timeline = [...timeline, ...written]
+      }
+    }
     // 上一次模型请求的真实用量：日志最后一条 budget_usage（续跑时上次 run 的也算）。感知用它校准估算，预算用它算上下文大小
     const lastUsage = lastBudgetUsage(timeline)?.payload.tokens
 
