@@ -1,0 +1,24 @@
+[
+  {
+    "delivery_id": "01a1ac81-cfac-7c3c-b025-a4652d539de2",
+    "sender": "system",
+    "reason": "signoff_approved",
+    "created_at_local": "2026-11-06 00:19:10",
+    "created_at": 1793895550891,
+    "channel": "group",
+    "kind": "system",
+    "text": "Boss 通过了方案「国内生存经营漫剧-故事方向与画风方案」的定稿。Boss 附言：同意方案 A 跟画风方案 A。同步下美术，后面生图可以多尝试 Nano banana 或者 image2.5，没必要选最贵的 seedream5Pro",
+    "mentions": "[]"
+  },
+  {
+    "delivery_id": "01a1ac8a-a8a1-7c5f-87c8-2e646d8d1377",
+    "sender": "boss",
+    "reason": "boss_dm",
+    "created_at_local": "2026-11-06 00:28:50",
+    "created_at": 1793896130720,
+    "channel": "dm:producer",
+    "kind": "text",
+    "text": "出品人口径那条团队记忆，你跟林晚都建了一条，建重复了",
+    "mentions": "[\"producer\"]"
+  }
+]

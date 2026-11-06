@@ -1,0 +1,912 @@
+[
+  {
+    "name": "fs_list",
+    "description": "列出自己工作区（/me）里的文件和文件夹。recursive 为 true 时递归列出子目录。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "default": "/me",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md",
+          "type": "string"
+        },
+        "recursive": {
+          "default": false,
+          "description": "是否递归列出子目录",
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "fs_read",
+    "description": "读取自己工作区（/me）里的文件。文本按行分段读取（offset 从 1 开始）；图片直接返回缩放后的图给你看；视频 / 音频返回时长、尺寸等信息；其他二进制文件不能读。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md"
+        },
+        "offset": {
+          "default": 1,
+          "description": "从第几行开始（1 起），只对文本有效",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "default": 400,
+          "description": "读多少行，最多 2000",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
+    "name": "fs_write",
+    "description": "在自己工作区（/me）写文本文件，父目录不存在会自动创建。mode=overwrite 覆盖（默认），append 追加到末尾。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md"
+        },
+        "content": {
+          "type": "string",
+          "description": "文本内容"
+        },
+        "mode": {
+          "default": "overwrite",
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "append"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "fs_edit",
+    "description": "改自己工作区（/me）里文本文件的一段：把 old_str 原文换成 new_str（new_str 为空即删掉这段）。old_str 必须与文件里的原文一字不差且只出现一次，不带 fs_read 显示的行号；不唯一就多带几句上下文。只改一两处时用它，不要用 fs_write 整份重写。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md"
+        },
+        "old_str": {
+          "type": "string",
+          "minLength": 1,
+          "description": "要替换的原文，须在文件里唯一"
+        },
+        "new_str": {
+          "type": "string",
+          "description": "替换成的内容；空字符串即删除"
+        }
+      },
+      "required": [
+        "path",
+        "old_str",
+        "new_str"
+      ]
+    }
+  },
+  {
+    "name": "fs_move",
+    "description": "在自己工作区（/me）里移动或重命名文件 / 文件夹。目标已存在时拒绝，除非 overwrite 为 true（只能覆盖文件）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md"
+        },
+        "to": {
+          "type": "string",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md"
+        },
+        "overwrite": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    }
+  },
+  {
+    "name": "fs_delete",
+    "description": "删除自己工作区（/me）里的文件或文件夹（文件夹连同内容一起删，不可恢复）。已发布到公共区的资源不受影响。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
+    "name": "fs_search",
+    "description": "在自己工作区（/me）里按关键字搜索：文件名和文本内容都会匹配（不区分大小写）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "关键字（普通文本，不是正则）"
+        },
+        "path": {
+          "default": "/me",
+          "description": "工作区路径，以 /me 开头，如 /me/drafts/剧本.md",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "publish",
+    "description": "把自己工作区里的一个文件发布到项目公共区，别人才能看到。同名再发布会成为该资源的新版本（旧版本保留）。返回引用 res://名字@vN，在消息和制作板里用它指向这份交付物。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "要发布的文件，以 /me 开头"
+        },
+        "name": {
+          "type": "string",
+          "description": "资源名：文字、数字和 - _ . ·，不能有空格，如「林晚-定妆照」「第一集-剧本」"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "一句话标题，别人在引用卡片上看到的"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "摘要：这是什么、这一版改了什么，让别人不读全文也知道要不要读"
+        }
+      },
+      "required": [
+        "src",
+        "name",
+        "title",
+        "summary"
+      ]
+    }
+  },
+  {
+    "name": "read_resource",
+    "description": "读取公共区资源。ref 写 res://名字（最新版）或 res://名字@v2（指定版本）。文本按行分段读取；图片直接返回缩放后的图；视频返回时长、尺寸、封面帧和这一版的看片记录索引；音频返回时长。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "资源引用，如 res://第一集-剧本 或 res://第一集-剧本@v2"
+        },
+        "offset": {
+          "default": 1,
+          "description": "从第几行开始（1 起），只对文本有效",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "default": 400,
+          "description": "读多少行，最多 2000",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        }
+      },
+      "required": [
+        "ref"
+      ]
+    }
+  },
+  {
+    "name": "resource_list",
+    "description": "浏览项目公共区：列出资源的引用、最新版本、类型、标题、摘要和作者（不含正文，要看内容用 read_resource）。可按关键字或类型筛选。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "关键字，匹配资源名、标题、摘要",
+          "type": "string"
+        },
+        "kind": {
+          "description": "只看某一类",
+          "type": "string",
+          "enum": [
+            "text",
+            "image",
+            "video",
+            "audio",
+            "file"
+          ]
+        },
+        "trashed": {
+          "default": false,
+          "description": "为 true 时只列回收站",
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "resource_delete",
+    "description": "把公共区的一个资源（连同全部版本）移进回收站。回收站里的资源仍占着名字，别人引用到它时会看到它已被删除；Boss 可以在界面上恢复。只想更新内容时不要删，直接用同名 publish 发新版本。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "资源名（不带 res:// 和版本号）"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "project_memory_read",
+    "description": "只读查看你自己在另一个项目里的项目记忆（/memories/project/ 下的内容）。不传 path 列出目录；传文件路径读内容。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目名或项目 id"
+        },
+        "path": {
+          "default": "/memories/project",
+          "description": "/memories/project 下的路径",
+          "type": "string"
+        },
+        "view_range": {
+          "description": "读文件时的行范围 [起, 止]，止为 -1 表示到末尾",
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "project"
+      ]
+    }
+  },
+  {
+    "name": "chat_send",
+    "description": "发一条消息。channel：group（群聊，出品人会议室，只报关键节点）、dm（私聊 Boss，不会唤醒任何角色）、item:<条目 id>（在条目下就事论事）。要谁动手就把它写进 mentions（角色 id），只有 mentions 里的人会被唤醒；正文里顺带提到某人不会唤醒对方。正文里的 res:// 引用会固定为当时的版本。正文上限 800 字；群聊里带 mentions 的消息上限 300 字（给 Boss 的汇报不点名、派活另发一条）。长内容先 publish 到公共区、消息里附引用。对方已经给出结论时不必回复“收到 / 好的”。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "group / dm / item:<条目 id>"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mentions": {
+          "description": "要唤醒的角色 id",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "producer",
+              "planner",
+              "writer",
+              "script-doctor",
+              "director",
+              "art",
+              "cinematographer",
+              "editor"
+            ]
+          }
+        },
+        "refs": {
+          "description": "另附的资源引用 res://名字@vN",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "channel",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "chat_react",
+    "description": "对一条消息表态（如 👍 表示认同、已知悉），不会唤醒任何人。用它代替“收到 / 好的”这类回复。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "消息 id（chat_read 里方括号中的那串）"
+        },
+        "emoji": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8
+        }
+      },
+      "required": [
+        "messageId",
+        "emoji"
+      ]
+    }
+  },
+  {
+    "name": "chat_read",
+    "description": "翻看频道历史（按时间正序）。channel：group / dm（你与 Boss 的私聊）/ item:<条目 id>。要更早的，把 before 设为本页第一条消息的 id。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string"
+        },
+        "before": {
+          "description": "从这条消息之前往前翻",
+          "type": "string"
+        },
+        "limit": {
+          "description": "默认 20",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "channel"
+      ]
+    }
+  },
+  {
+    "name": "board_view",
+    "description": "看制作板：返回紧凑表（id、rev、状态、负责人、选定版本 / 选用片段数、是否卡住），按类型和所属集、场次分组。用 fields 一次列出指定字段（如看全一场段落的 shots、duration），不必逐条 board_read。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "只看某类条目",
+          "type": "string",
+          "enum": [
+            "proposal",
+            "script",
+            "doc",
+            "character",
+            "location",
+            "prop",
+            "episode",
+            "scene",
+            "segment",
+            "music",
+            "cut"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "todo",
+            "doing",
+            "review",
+            "done",
+            "rework"
+          ]
+        },
+        "assignee": {
+          "description": "负责人角色 id",
+          "type": "string"
+        },
+        "parent": {
+          "description": "只看某个父条目下的（如某集的剧本、场次和成片，某场次的全部段落）",
+          "type": "string"
+        },
+        "fields": {
+          "description": "额外列出的字段名",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "board_read",
+    "description": "读一个条目：全部字段、最近动态、条目讨论的最近消息。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "条目 id"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "board_create",
+    "description": "批量新建制作板条目（如一次建出一场的全部段落），新条目状态为 todo、没有负责人（用 board_assign 分派）。段落必须挂在场次下，场次、剧本和成片必须挂在集下，一集只有一个剧本；集号（episodeNo）在项目内不能重复。字段里的 res:// 引用会固定为当时的版本。一条不合法则整批不建。\n类型与字段（字段都可选，只认下列字段名；board_update 改字段同样按这张表）：\n- proposal（方案）：draft=方案正文：res://名字@vN（改编方案、故事大纲等定方向的文档）；note=版本说明；pitch=出品人摘要·一句话：这是什么（写给不懂影视的出品人，不用术语）；recommendation=出品人摘要·团队建议：推荐通过还是改，为什么；risks=出品人摘要·风险：通过后可能出什么问题，没有就写「无」；cost=出品人摘要·花费：已花多少积分、通过后预计还要花多少\n- script（剧本）：draft=当前稿：res://名字@vN；note=版本说明；carryOver=本集留给后面的：人物状态、关系变化、揭开或埋下的信息、道具与服装状态，200 字内；最后一集或短片写「无」。下一集开工时全队会在背景里看到它\n- doc（规范文档）：draft=文档正文：res://名字@vN（风格说明、物证清单、执行规范等）；note=版本说明\n- character（角色设定）：description=人物描述；refImages=标准参考图组，数组\n- location（场景设定）：description=场景描述；refImages=参考图组，数组；layout=全局图：美术照布局坐标（blocking_plan 出的平面图）生成的斜俯视整屋图，不放人；布局坐标写在场景描述里，导演的站位图照它抄。生成视频时挂它当空间参考\n- prop（道具设定）：description=道具描述；refImages=标准参考图组，数组\n- episode（集）：episodeNo=集号，从 1 起，项目内不能重复；不填时按集的排列顺序编号；synopsis=本集梗概；function=本集功能：分集大纲 / 节奏表里这一集负责什么；hook=本集结尾的钩子\n- scene（场次）：sceneNo=剧本场号；synopsis=内容概要；script=依据的剧本：本集剧本 draft 的 res://名字@vN（新建时本集剧本已定稿会自动填上；剧本重新定稿后要对版）；design=戏的设计（导演写）：res://名字@vN，戏核、视点、场面调度、机位、分镜、节奏；views=站位图（导演用 blocking_plan 出，一屋多人、多机位的戏才有）：每项 {name「站位图」或「站位图（走位后）」, image res://名字@vN, faces 这张图画的是哪一刻}，数组\n- segment（段落）：design=依据的戏的设计：所属场次 design 的 res://名字@vN（新建时场次已定稿会自动填上；场次重新定稿后要对版）；duration=段落时长（秒），4–30，一次生成拍完；所选模型的上限以模型技能为准，数字；shots=这条生成要拍的镜头（摄影师从设计里摘，1–12 个按顺序）：每项 {content 画面内容（必填，开头标设计里的镜号）, size 景别, camera 机位 / 运镜, dialogue 对白或字幕, share 时长占比 %, transition 切到下一镜的转场}，数组；prompt=最终提示词（摄影师写）：先 publish 到公共区，填 res://名字@vN；characters=出场角色设定条目 id，数组；location=场景设定条目 id；refImages=参考图，数组；candidates=候选版本（生成产物自动追加），数组；cuts=选用片段（剪辑选条、定入出点后填，填好即可定稿）：每项 {source 素材 res://名字@vN, in 入点秒, out 出点秒, shot 对应第几个镜头, note 备注}；整条能用就写一项 0 到全长，坏镜头补拍后把补拍的那段接进来，数组\n- music（配乐）：mood=情绪；duration=时长（秒），数字；candidates=候选版本，数组；selected=选定版本（必须是候选之一）\n- cut（成片）：current=当前版；duration=时长（秒），数字；pitch=出品人摘要·一句话：这是什么（写给不懂影视的出品人，不用术语）；recommendation=出品人摘要·团队建议：推荐通过还是改，为什么；risks=出品人摘要·风险：通过后可能出什么问题，没有就写「无」；cost=出品人摘要·花费：已花多少积分、通过后预计还要花多少\n条目上没有放要求、背景、交付标准的字段：交代这些写在 board_assign 的 note 里，或发到条目讨论（chat_send 频道 item:<条目 id>）；正文、图片等内容先 publish 到公共区，再把引用填进字段。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "条目类型"
+              },
+              "title": {
+                "type": "string",
+                "description": "标题"
+              },
+              "parent": {
+                "description": "父条目 id（段落填所属场次，场次、剧本和成片填所属集）",
+                "type": "string"
+              },
+              "fields": {
+                "description": "类型字段，字段名见上方类型表",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "kind",
+              "title"
+            ],
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "items"
+      ]
+    }
+  },
+  {
+    "name": "board_update",
+    "description": "批量修改条目（一次最多 50 条），逐条生效、逐条回报：某条失败不影响其他条。每条必须带上次读到的 rev，对不上就不写并返回最新内容。每条写 id、rev 加要改的项：title 标题、status 状态、fields 字段（字段名见 board_create 的类型表；只写要改的，值为 null 清空）、parent 父条目、after 排序；deleted: true 删除（限未定稿、没有候选版本的条目）。例：{\"updates\": [{\"id\": \"…\", \"rev\": 3, \"status\": \"review\", \"fields\": {\"note\": \"…\"}}]}。只有定稿人能把 review 改成 done；Boss 拍板的条目置为 review 即可。已定稿的条目不能改，用 board_request_rework；定稿人自己返工时把 status 改成 rework，要改的字段放在同一次 update 里。负责人只能用 board_assign 改；待办（todo）条目写了字段即转为进行中，没有负责人的同时记你为负责人（认领）。例外是对版：上游重新定稿后，确认不受影响的下游只把依据字段（如段落的 design）改成上游的新定稿值，已定稿的也能直接改（负责人、定稿人、制作者或上游定稿人可做），和上游定稿放在同一次 update 里也行。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "updates": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "条目 id"
+              },
+              "rev": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "上次读到的 rev（board_view / board_read 里有）"
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "todo",
+                  "doing",
+                  "review",
+                  "done",
+                  "rework"
+                ]
+              },
+              "fields": {
+                "description": "要改的字段；值为 null 表示清空",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "parent": {
+                "type": "string"
+              },
+              "after": {
+                "description": "排到这个同级条目之后；null 排到最前",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "deleted": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "id",
+              "rev"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "updates"
+      ]
+    }
+  },
+  {
+    "name": "board_assign",
+    "description": "把条目分派给某个角色（改负责人的唯一方式），同时唤醒对方。note 写清要对方做什么，它会作为一条消息进入条目讨论。分派给自己不会唤醒任何人。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "条目 id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "producer",
+            "planner",
+            "writer",
+            "script-doctor",
+            "director",
+            "art",
+            "cinematographer",
+            "editor"
+          ],
+          "description": "负责人角色 id"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "交代给对方的话"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "note"
+      ]
+    }
+  },
+  {
+    "name": "board_request_rework",
+    "description": "对已定稿的条目申请返工：Boss 拍板的条目会在群聊出返工卡片等 Boss 决定；其他条目转交定稿人决定（定稿人同意就把状态改成 rework）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "条目 id"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "为什么要返工"
+        }
+      },
+      "required": [
+        "id",
+        "reason"
+      ]
+    }
+  },
+  {
+    "name": "review_start",
+    "description": "发起评审会：系统同时邀请全部评审人，邀请只带材料和问题；意见互不可见，收齐后交拍板人。subject 填条目 id 或 res://资源（固定为当时的版本）；同一条目同时只能有一场进行中的评审，想评第二轮等上一场结束再发起。评审人至少 1 人，不能包含你自己和拍板人；拍板人填角色（专业判断不交给 Boss，要 Boss 定的事走方案 / 成片条目的拍板卡片）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "description": "条目 id 或 res://名字[@vN]"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "description": "要评审人回答的问题，写清评什么、按什么标准"
+        },
+        "reviewers": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "producer",
+              "planner",
+              "writer",
+              "script-doctor",
+              "director",
+              "art",
+              "cinematographer",
+              "editor"
+            ]
+          },
+          "description": "评审人角色 id"
+        },
+        "decider": {
+          "type": "string",
+          "enum": [
+            "producer",
+            "planner",
+            "writer",
+            "script-doctor",
+            "director",
+            "art",
+            "cinematographer",
+            "editor"
+          ],
+          "description": "拍板人：角色 id"
+        }
+      },
+      "required": [
+        "subject",
+        "question",
+        "reviewers",
+        "decider"
+      ]
+    }
+  },
+  {
+    "name": "review_submit",
+    "description": "提交你对一场评审的意见（每人一次，提交后不能改）。意见只有拍板人看得到，不要在任何频道讨论它。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reviewId": {
+          "type": "string",
+          "description": "评审 id（邀请里写着）"
+        },
+        "opinion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "你的意见：结论先行，理由跟上"
+        }
+      },
+      "required": [
+        "reviewId",
+        "opinion"
+      ]
+    }
+  },
+  {
+    "name": "review_conclude",
+    "description": "拍板人给出评审结论：结论写进条目讨论（资源评审写进群聊）。结论不会唤醒任何人：要人接手就用 board_assign 或 chat_send 的 mentions；要改条目自己用 board_update。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reviewId": {
+          "type": "string",
+          "description": "评审 id"
+        },
+        "conclusion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "结论：采纳什么、不采纳什么、下一步"
+        }
+      },
+      "required": [
+        "reviewId",
+        "conclusion"
+      ]
+    }
+  },
+  {
+    "name": "media_contact_sheet",
+    "description": "把视频（或其中一段）均匀取若干帧拼成一张联系表给你看，每格的时刻写在结果文字里。看画面内容、人物动作、构图、穿帮、画面上的字幕和文字，都用它自己看（比音画看片可靠）。缺省每秒 2 格、4–12 格；格子越多每格越小，要看清字幕就缩短区间、减少格数。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "视频：/me 路径或 res://名字@vN"
+        },
+        "start_sec": {
+          "description": "从第几秒开始看，缺省从头",
+          "type": "number",
+          "minimum": 0
+        },
+        "end_sec": {
+          "description": "看到第几秒，缺省到结尾",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "frames": {
+          "description": "取多少格，缺省按每秒 2 格",
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 24
+        }
+      },
+      "required": [
+        "ref"
+      ]
+    }
+  },
+  {
+    "name": "media_watch",
+    "description": "把一段视频（画面连声音）或纯音频（配乐候选、抽出来的台词）直接给你自己看、自己听。用于要音画一起判断、或要听的事：节奏与切点、对白与口型、表情语气、配乐与画面合不合拍。画面按每秒约 1 帧、较低清晰度送进来：画面上的小字、细小穿帮用 media_contact_sheet 看更清楚。一次最多 180 秒，更长的用 start_sec / end_sec 分段。看过的片段会一直占着上下文（每秒约 100 token），看完把结论记下，整理上下文时可以放掉。别人对公共区视频问过的结论可以先用 media_notes 看。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "视频：/me 路径或 res://名字@vN"
+        },
+        "start_sec": {
+          "description": "从第几秒开始看，缺省从头",
+          "type": "number",
+          "minimum": 0
+        },
+        "end_sec": {
+          "description": "看到第几秒，缺省到结尾",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "ref"
+      ]
+    }
+  },
+  {
+    "name": "media_notes",
+    "description": "读公共区视频某一版的看片记录：大家用 media_inspect 问过的问题和审片助手的结论（全文）。音画看片之前先看这里，别人问过的不必重看；交活时写「看片结论见 res://…@vN 的看片记录」，不必把结论贴进消息。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "公共区视频引用 res://名字@vN（不写版本即最新版）"
+        }
+      },
+      "required": [
+        "ref"
+      ]
+    }
+  },
+  {
+    "name": "credits_balance",
+    "description": "查 AIReiter 积分余额与各模型的免费额度（1 美元 = 100 积分）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "batch",
+    "description": "按顺序执行多个工具调用，一次拿回全部结果，适合互不依赖的读写（读几个文件、更新几个条目、发布几个资源）。前一步的结果不能传给后一步；任一步出错立即停止，返回已完成的结果和出错那一步的错误。可用工具：fs_list、fs_read、fs_write、fs_edit、fs_move、fs_delete、fs_search、publish、read_resource、resource_list、resource_delete、board_view、board_read、board_create、board_update、media_contact_sheet、media_notes、credits_balance。发消息、分派、评审和记忆（memory）不能放进 batch；要读几份记忆，在同一轮里并行调用 memory。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "minItems": 1,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string",
+                "description": "工具名"
+              },
+              "args": {
+                "description": "该工具的入参",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "tool"
+            ],
+            "additionalProperties": {}
+          },
+          "description": "按顺序执行的步骤"
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    }
+  },
+  {
+    "name": "fork",
+    "description": "进入专注模式：带着到此为止的全部上下文，在分支里专注做一件过程很长、但你只需要结论的事（如通读一批材料出摘要、试写一版草稿）。分支做完用 fork_done 交总结，总结回到这里，过程不占主会话的上下文。分支里不能发消息、分派、评审，也不能再分支。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "description": "要专注做的事和要交回什么：写清楚，分支只做这一件"
+        }
+      },
+      "required": [
+        "task"
+      ]
+    }
+  },
+  {
+    "name": "end_run",
+    "description": "结束这次运行：把最后一批动作和它放在同一次回复里发出，本轮结束后就停下，不用再单独写一段收尾。note 写一句话：这次做了什么、交给了谁。你这次没调 chat_send / board_assign 的，note 会作为你的发言发到唤醒你的那个频道；带着评审邀请或要拍板而没调 review_submit / review_conclude 的，note 会被当作你的意见 / 结论，这时写意见或结论本身。同一轮里其他调用都成功才会结束；有失败的不结束，你会看到失败结果，处理完再结束。要先看结果再决定下一步的（看片、读回执、新建条目要用它的 id）不要带它。提交生成后不必等：生成完成会叫醒你。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "一句话：这次做了什么、交给了谁；评审 / 拍板时写意见或结论"
+        }
+      },
+      "required": [
+        "note"
+      ]
+    }
+  }
+]
