@@ -341,7 +341,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 - **`SESSION_ID_RE = /^[\x21-\x7e]+$/` 挡的是 500 不是注入** — CRLF 本就被 `Response` 挡住；`é` 能进 header 也照样拒，换"一句话说得清 + 回写值不被 trim 改变"。
 - **POST 不读 `Last-Event-ID`，只认 `body.lastSeq`；错误响应里只有 409 `run_in_progress` 与 429 `mailbox_full` 带 `X-Reins-Session`** — 客户端别统一从错误头取会话 id。
-- **`midRunInput` 信箱只在本进程内存、取出不删写入才删、投递者须是 run 的发起人、从 `runs.get` 到入箱不能有 await** — `pullInput` 回快照，`claiming` 见到带 ref 的 user_message 才删（拉完发现已中止 core 不写，取出即删就丢了）；发起人比 `principal?.id`（run 以发起人身份执行）；`deliver` 必须整段同步，否则 run 在空隙里结束、202 进了已关的箱。登记后开箱前（`runs.create` 的 await）到达的投递 409 是刻意的。信箱挂在 handler 内的 WeakMap，不上 `ActiveRun` 公开形状。
+- **`midRunInput` 信箱只在本进程内存、取出不删写入才删、投递者须是 run 的发起人、从 `runs.get` 到入箱不能有 await** — `pullInput` 回快照，`claiming` 见到带 ref 的 user_message 才删（拉完发现已中止 core 不写，取出即删就丢了）；发起人比 `principal?.id`（run 以发起人身份执行）；`deliver` 必须整段同步，否则 run 在空隙里结束、202 进了已关的箱。登记后开箱前（`runs.create` 的 await）到达的投递 409 是刻意的。信箱挂在 handler.ts **模块级** WeakMap（键是 `ActiveRun` 对象），不上公开形状、也不能挪回 handler 闭包——宿主按请求新建 handler（按会话凭据装配工具）时，投递只能靠共用 `runs` 找到信箱。
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
 - **handler 对 `decisions` 的预校验必须与 runLoop 同一口径** — 只有本会话的结论对照本会话 pending，带子会话 id 的原样下传；两处不是同一函数，靠跨包用例锁住（踩坑 20）。
 - **停止请求 `POST { sessionId, stop: true }` 回 JSON 不开流、不等 run 结束；鉴权 `method` 是 "STOP"** — 空闲但有 pending 时起的收尾 run 没有流驱动，handler 自己 drive 并 `waitUntil(run.done)`；只认本进程的 run（跨实例 OPT-261105-5）。

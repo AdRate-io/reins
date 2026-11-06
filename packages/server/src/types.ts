@@ -242,13 +242,14 @@ export interface HandlerOptions {
   /**
    * run 进行中到达的用户消息交给正在跑的 run（AdRate 建议 6）。缺省 false：进行中再 POST 回 409 `run_in_progress`。
    *
-   * 开启后，会话的 run 正在**本进程**跑、由本 handler 的普通 POST 起、且投递者与发起人是同一主事人（`principal?.id` 相同，
+   * 开启后，会话的 run 正在**本进程**跑、由开了本选项的 handler 的普通 POST 起（共用同一个 `runs` 的任一 handler 都算，
+   * 按请求新建 handler 的宿主只要共用 `runs` 即可）、且投递者与发起人是同一主事人（`principal?.id` 相同，
    * 两边都匿名也算）时，只带用户消息（不带 resume / decisions）的 POST 入这个 run 的内存信箱、回 202 `QueuedResponse`（不开流）；
    * run 在下一次调模型前把它写进时间线（core `pullInput` 语义：补跑轮与触顶 `maxTurns` 不拉，拉完发现已中止不写），
    * 草稿带 `provenance: { source: USER_DELIVERY_SOURCE, ref: deliveryId }`。
    *
    * **送达判据只有一条：时间线里出现这条消息**。流以 result / error 结束仍没出现即未送达，信箱随 run 丢弃（不持久化、不自动起下一个 run）。
-   * 其余情形落回普通路径：run 刚结束 → 起新 run（SSE 200）；停止中 / 已中止、别的实例、别的发起人、停止收尾 run、
+   * 其余情形落回普通路径：run 刚结束 → 起新 run（SSE 200）；停止中 / 已中止、别的实例、别的发起人、停止收尾 run、没开本选项的 handler 起的 run、
    * 登记后开箱前的空隙 → 409；每个 run 至多 16 条未写入，满了 429 `mailbox_full`。
    * 投递请求不进 `onEvent` 的观测上下文（`principal` / `request` 仍是发起 run 的那个 POST）。
    */

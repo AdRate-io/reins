@@ -1,7 +1,7 @@
 # AdRate 对 reins 的优化建议（2026-11-05）
 
 > **来源**：AdRate（投放工具，reins 的 dogfood 宿主）在正式接入前，对照 reins `main@11c160f`（core 0.9.0 / server 0.4.3 / brain 0.8.2）核实出的问题。由 Boss 带到 reins 项目评估、实施、发版；AdRate 侧不写兜底代码，等发版后再调整接入方案。
-> **编号**：「AdRate 建议 N」，各批顺序编号（第一批 1～4、第二批 5、第三批 6），与 reins 文档中的「OnSet 建议 N」同一用法。
+> **编号**：「AdRate 建议 N」，各批顺序编号（第一批 1～4、第二批 5、第三批 6～7），与 reins 文档中的「OnSet 建议 N」同一用法。
 > **公开性**：已按 reins `docs/README.md` 的公开性规则撰写，不含真实业务数据，可以直接移入 reins 仓库。
 > **宿主背景**：AdRate 是 TikTok 广告投放 SaaS，站内 Agent 的写工具会直接改动用户的广告（建广告、改预算、开关计划），**重复执行意味着重复花用户的广告费**。会话与 run 存活在服务端：用户断开后 run 继续跑完，前端只同步状态并提供"停止"按钮。
 
@@ -334,7 +334,8 @@ AdRate 接入时注意：
 
 | # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
 | --- | --- | --- | --- | --- |
-| 6 | HTTP handler 接住 run 进行中到达的用户消息，交给正在跑的 run 拉取 | server | 宪法一：中途来的话要不要改方向，由模型读到后自己决定；不进 `AgentDefinition`，不触及 `pullInput`"每次 run 才传"的取舍 | 中，可选；不是 AdRate 第一期前置 |
+| 6 | HTTP handler 接住 run 进行中到达的用户消息，交给正在跑的 run 拉取 | server | 宪法一：中途来的话要不要改方向，由模型读到后自己决定；不进 `AgentDefinition`，不触及 `pullInput`"每次 run 才传"的取舍 | 中；Boss 2026-11-06 定第一期就接（已发版，见处置） |
+| 7 | 信箱跟着共享的 `runs` 走，按请求组装 handler 的宿主也能投递（建议 6 发版后核实时追加） | server | 无冲突，与停止请求跨 handler 生效同一条路 | 高，AdRate 第一期"运行中插话"依赖它 |
 
 ## AdRate 建议 6：HTTP handler 接住 run 进行中到达的用户消息
 
@@ -398,3 +399,68 @@ AdRate 接入时注意：
 ### reins 处置（2026-11-06）
 
 已做，server minor + ui-agui minor（方案 `docs/implementation-plans/2026-11-06-HTTP进行中投递.md`）。按建议保留：每 run 一个内存信箱、`handler: { midRunInput: true }` 开启（缺省 409）、202 JSON 不开流、只收用户消息、`resume` / `decisions` / `tool_result` 仍走原路径（409 或原有校验错误）、跨实例仍 409、不持久化、不自动起下一个 run、不改预算、草稿 `provenance.ref = deliveryId`。改了三处：① 取出不删，写进时间线才删；② **result 帧不带未投递列表**，送达判据只有"时间线里出现带该 `deliveryId` 的 `core.user_message`"，流结束仍没见到即未送达；③ 鉴权沿用 `method: "POST"`，不新增方法。补了两处：投递者必须与 run 的发起人同一 `principal?.id`（否则 409）；`@reinsjs/ui-agui` 在 user_message 的 `TEXT_MESSAGE_START.metadata.reins.provenance` 带出 deliveryId。`deliveryId` 可由客户端给（同 run 内幂等）、普通 POST 起 run 时也带；未写入满 16 条回 429 `mailbox_full`。客户端四种应答（202 / SSE 200 / 409 / 429）见 server README "Messages during a run"。
+
+### AdRate 发版后核实（2026-11-06）
+
+从 npm 官方源取 `@reinsjs/agent` 0.6.1（精确依赖 server 0.6.0 / ui-agui 0.4.0 / core 0.11.0），对照 `dist` 源码与 server README "Messages during a run" 核实：
+
+- 处置所述行为与源码一致：
+  - `handlePost` 在 `authorizeSession`（`method: "POST"`）之后才判投递；
+  - 投递条件：带 `sessionId`、不带 `resume` / `decisions`、用户消息形态；
+  - `Mailbox` 取出不删、写进时间线才删，且记下发起人 `principal?.id`；
+  - 满 16 条回 429；run 结束时 `close()` 丢弃。
+- 三处改动 AdRate 都接受：
+  - 送达只看时间线，比 result 帧带列表更简单，前端只需一种判据；
+  - 沿用 `"POST"` 正合 AdRate 的鉴权口径（模拟登录只放行 GET，投递自然被拒）；
+  - 同发起人校验 AdRate 本就需要：run 以发起人的身份执行。
+- **发现一处 AdRate 用不上的地方，见下面建议 7**：信箱登记在 `createAgentHandler` 闭包里的 `mailboxes`（`WeakMap<ActiveRun, Mailbox>`），每个 handler 实例各有一份。
+
+## AdRate 建议 7：信箱跟着共享的 `runs` 走，而不是跟着 handler 实例走
+
+### 现状
+
+- `runs` 可以由多个 handler 共用。`HandlerOptions.runs` 的注释写明"多个 handler 共用同一个进程时可传同一个实例"。停止请求就是这样跨 handler 生效的：`runs.get(sessionId)` 拿到 `ActiveRun`，再 `controller.abort(...)`。
+- 信箱不同：`openMailbox` / `deliver` 用的是本 handler 闭包里的 `mailboxes`。投递请求如果落到另一个 handler 实例上，会出现以下情况：
+  - `runs.get` 能拿到 run，但 `mailboxes.get(active)` 是 `undefined`，`deliver` 返回 `undefined`；
+  - 请求于是落回普通路径，`runs.create` 撞上 `RunConflictError`，回 409 `run_in_progress`；
+  - 不报错、不告警，宿主看到的只是"投递永远 409"。
+
+### 问题
+
+AdRate 必须每个请求组装一次 agent，所以每个请求都是新的 handler：
+
+- 会话的 TikTok MCP 工具来自"按会话身份取的 MCP socket"（按凭据缓存）。不同会话的 socket 不同，`definition` 无法做成进程级常量。
+- 同一 socket 内也无法按会话切 token：`tools-mcp` 的 `auth.token()` 不带调用上下文，拿不到当前会话。
+- 停止请求与 409 判定靠共享的 `runs` 已经能跨 handler 工作，AdRate 方案一直是这样设计的。
+
+结果是：开了 `midRunInput: true`，AdRate 的投递在任何情况下都回 409，功能等于没开。按会话装配工具的宿主（多租户、每会话不同凭据）都会遇到同样的问题。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- 信箱随 `ActiveRun` 走，例如挂成 `ActiveRun` 上的字段，或由 `runs` 登记表持有 `ActiveRun → Mailbox` 映射。凡是共用同一个 `runs` 的 handler 都能投递，与停止请求同一条路。
+- 保持现有约束：
+  - 只有开了 `midRunInput` 的 handler 起的 run 才有信箱；
+  - 收到投递的 handler 自己也要开 `midRunInput`，否则走原来的 409；
+  - 发起人校验、16 条上限、不持久化都不变。
+- 补一条测试：两个 handler 实例共用一个 `runs`，A 起 run、B 收投递，回 202，消息写进时间线。
+
+### 边界
+
+- 不涉及跨实例（`leasedRunRegistry` 的 `get` 只认本进程，跨实例照旧 409）。
+- 若 reins 更倾向"宿主应当只用一个 handler"，那就需要 `createAgentHandler` 支持按请求解析工具 / socket（例如定义里允许一个按 `sessionId` + `principal` 返回工具表的回调）。这个改动面更大，AdRate 倾向上面的做法。
+
+### AdRate 侧依赖
+
+| 发版前 | 发版后 |
+| --- | --- |
+| AdRate 照常接 `midRunInput: true` 与前端投递逻辑。投递回 409 时，前端把消息放回输入框，提示"Agent 正在处理，稍后再发"，体验退化为"运行中不能发送"，不出错。M1-3 的"运行中插话"验收项等这一条 | 升级后路由不改代码，"运行中插话"验收项转为可测；补一条"两个 handler 共用 runs 时投递回 202"的回归测试 |
+
+### reins 处置（2026-11-06）
+
+接受建议，按"信箱随共用的 `runs` 走"做，server patch。信箱表从 `createAgentHandler` 闭包挪到 handler 模块级（`WeakMap<ActiveRun, Mailbox>`），没有挂成 `ActiveRun` 的字段，公开形状不变。凡是共用同一个 `runs` 的 handler 都能找到这个 run 的信箱，可达范围与停止请求一样。约束保持不变：起 run 的 handler 与收投递的 handler 都要开 `midRunInput`，任一方没开都回 409；发起人校验、16 条上限、不持久化、跨实例 409 都照旧。原方案里"两个 handler 共用 `runs`、打到另一个 handler 起的 run → 409"的用例改成三格：
+
+- 每个请求新建 handler、共用 `runs` 时回 202，消息写进发起 run 的时间线，第 2 次模型请求能看到，同 `deliveryId` 跨 handler 幂等；
+- 起 run 的 handler 没开 `midRunInput` 时回 409；
+- 收投递的 handler 没开 `midRunInput` 时回 409。
+
+新用例在旧实现上失败、新实现上通过。不选"handler 按请求解析工具"的另一条路：改动面大，而且共用 `runs` 本来就是公开的多 handler 用法。AdRate 升级后路由不用改代码。

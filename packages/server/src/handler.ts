@@ -390,6 +390,15 @@ interface StreamPlan {
   starter: boolean
 }
 
+/**
+ * 开了 midRunInput 的 handler 起的普通 POST run → 它的信箱。**模块级**而不是每个 handler 一份（AdRate 建议 7）：
+ * 能拿到这个 ActiveRun 的（共用同一个 `runs` 的任一 handler）就能投递，与停止请求同一条路——按会话装配工具、
+ * 每个请求新建 handler 的宿主靠这个。WeakMap 而不挂在 ActiveRun 上：ActiveRun 是公开形状、宿主自定义登记表也会构造它；
+ * 以对象同一性为键，不共用 `runs` 的 handler 根本拿不到别人的 ActiveRun，不会串。
+ * 进程里装了两份本包时各有一张表，查不到就落回 409（安全）。
+ */
+const mailboxes = new WeakMap<ActiveRun, Mailbox>()
+
 export function createAgentHandler(definition: AgentDefinition, options: HandlerOptions = {}): AgentHandler {
   const agent = withoutPerRunFields(definition)
   const makeEncoder: StreamEncoderFactory = options.encode ?? (() => rawEncoder)
@@ -402,12 +411,6 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
   const { log } = agent
   // 补发与预校验读日志都经注册表升级（P9），与循环看到的形状一致；宿主有 ext.* 事件时在 definition 里给自己的注册表
   const registry = agent.registry ?? createCoreRegistry()
-  /**
-   * 本 handler 起的普通 POST run → 它的信箱（midRunInput）。WeakMap 而不挂在 ActiveRun 上：ActiveRun 是公开形状、
-   * 宿主自定义登记表也会构造它，信箱只对"由这个 handler 驱动的 run"有意义；共用 `runs` 的另一个 handler 查不到，落回 409
-   */
-  const mailboxes = new WeakMap<ActiveRun, Mailbox>()
-
   /** 普通路径登记到 run 之后**同步**开箱；run 结束（收尾钩子同步跑）即关箱，之后的 POST 一定落回普通路径 */
   function openMailbox(run: ActiveRun, principal: Principal | undefined, startDeliveryId?: string): Mailbox {
     const box = new Mailbox(principal?.id, startDeliveryId)
@@ -417,7 +420,7 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
   }
 
   /**
-   * 进行中投递（midRunInput）：能入箱就回 202 / 429，不能（没有本进程的 run、没有本 handler 的信箱、箱已关、run 已中止、
+   * 进行中投递（midRunInput）：能入箱就回 202 / 429，不能（没有本进程的 run、run 没有信箱、箱已关、run 已中止、
    * 投递者不是发起人）返回 undefined，调用方落回普通路径——那里该 409 的照旧 409、run 恰好结束的起新 run。
    *
    * **整个函数同步**：从 `runs.get` 到入箱之间有 await 的话，run 可能在空隙里结束，消息就入了一个已关的箱、回了 202 却必丢。

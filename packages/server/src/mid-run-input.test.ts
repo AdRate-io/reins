@@ -313,6 +313,30 @@ describe("投递进正在跑的 run", () => {
     await starter.rest()
     expect(seen).toEqual(["d1"])
   })
+
+  it("每个请求新建 handler、共用 runs（AdRate 建议 7）：另一个 handler 收投递 202，写进发起 run 的时间线", async () => {
+    const w = waitTool()
+    const { log, lowering, runs, agent } = setup(WAIT_THEN_ANSWER, [w.tool])
+    // 宿主按请求组装：每次新的定义对象、新的 handler，只有 log 与 runs 是进程级共享的
+    const perRequest = () => createAgentHandler({ ...agent }, { heartbeatMs: 0, midRunInput: true, runs })
+    const starter = await busy(perRequest())
+    const res = await perRequest()(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))
+    expect(res.status).toBe(202)
+    expect(await res.json()).toEqual({ status: "queued", sessionId: "s1", deliveryId: "d1" })
+    // 同一 run 内幂等，跨 handler 也一样
+    expect(
+      (await perRequest()(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))).status,
+    ).toBe(202)
+    w.g.open()
+    const frames = await starter.rest()
+    expect(resultOf(frames)?.status).toBe("done")
+    const events = await logged(log, "s1")
+    expect(refsIn(events)).toEqual(["d1"])
+    const types = events.map((e) => e.type)
+    expect(types.indexOf("core.user_message", types.indexOf("core.tool_result"))).toBeGreaterThan(-1)
+    // 第 2 次模型请求看得到这条
+    expect(refsIn(lowering.requests[1]?.events ?? [])).toEqual(["d1"])
+  })
 })
 
 describe("请求校验", () => {
@@ -668,16 +692,24 @@ describe("落回普通路径", () => {
     await runs.get("s1")?.done
   })
 
-  it("两个 handler 共用 runs，打到另一个 handler 起的 run：409", async () => {
-    const w = waitTool()
-    const { handler, log, runs, agent } = setup(WAIT_THEN_ANSWER, [w.tool])
-    const other = createAgentHandler(agent, { heartbeatMs: 0, midRunInput: true, runs })
-    const starter = await busy(handler)
-    const res = await other(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))
-    expect(res.status).toBe(409)
-    w.g.open()
-    await starter.rest()
-    expect(refsIn(await logged(log, "s1"))).toEqual([])
+  it("共用 runs：发起的 handler 没开 midRunInput → 409（run 没有信箱）；收投递的 handler 没开 → 409", async () => {
+    const w1 = waitTool()
+    const a = setup(WAIT_THEN_ANSWER, [w1.tool], { midRunInput: false })
+    const onA = createAgentHandler(a.agent, { heartbeatMs: 0, midRunInput: true, runs: a.runs })
+    const r1 = await busy(a.handler)
+    expect((await onA(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))).status).toBe(409)
+    w1.g.open()
+    await r1.rest()
+    expect(refsIn(await logged(a.log, "s1"))).toEqual([])
+
+    const w2 = waitTool()
+    const b = setup(WAIT_THEN_ANSWER, [w2.tool])
+    const offB = createAgentHandler(b.agent, { heartbeatMs: 0, midRunInput: false, runs: b.runs })
+    const r2 = await busy(b.handler)
+    expect((await offB(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))).status).toBe(409)
+    w2.g.open()
+    await r2.rest()
+    expect(refsIn(await logged(b.log, "s1"))).toEqual([])
   })
 
   it("投递者与发起人不同（含一方匿名）：409、信箱无变化；两边都匿名：202", async () => {
