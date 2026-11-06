@@ -1,5 +1,12 @@
 # @reinsjs/ui-agui
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [61eacbb]
+  - @reinsjs/server@0.6.1
+
 ## 0.4.0
 
 ### Minor Changes
