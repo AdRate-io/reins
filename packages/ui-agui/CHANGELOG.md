@@ -1,5 +1,13 @@
 # @reinsjs/ui-agui
 
+## 0.3.8
+
+### Patch Changes
+
+- Updated dependencies [b79d193]
+  - @reinsjs/core@0.11.0
+  - @reinsjs/server@0.5.1
+
 ## 0.3.7
 
 ### Patch Changes
