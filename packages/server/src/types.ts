@@ -27,7 +27,7 @@ import type { RunRegistry } from "./runs.js"
  * 一个 agent = 一份跨请求不变的循环配置：模型、工具、脑子（sockets）、存储、密钥……
  * 每次请求才知道的字段（sessionId、input、resume、decisions、signal、onDelta、principal）由 handler 按请求填。
  * `pullInput` 也是每次 run 的：放进定义会让 HTTP run、停止收尾 run、asTool 子 run 都拿父宿主的回调去拉父的队列，
- * 只经进程内 `runLoop` / `agent.run({ pullInput })` 传；HTTP run 只在开 `HandlerOptions.midRunInput` 时从 handler 自己的信箱拉（刻意不对称）。
+ * 只经进程内 `runLoop` / `agent.run({ pullInput })` 传；HTTP run 只在开 `HandlerOptions.midRunInput` 时从该 run 的信箱拉（刻意不对称）。
  */
 export type AgentDefinition = Omit<
   LoopConfig,

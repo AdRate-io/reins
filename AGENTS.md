@@ -247,7 +247,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 工具入参二次编码：fetch / pi 降级层 vs TanStack 适配器 | 前者读侧多解一层并标 `meta.argumentsUnwrapped`；后者不解——它的历史按 `JSON.stringify(args)` 送回，模型看到的就是自己写的二次编码，与执行一致，没有"说法不一"，代价只是多一轮往返（要补走 `transformArgs`，OPT-261102-2） |
 | 用户停止：runLoop vs TanStack 适配器 | runLoop 在所有暂停出口把 pending 收尾成"没执行"等结果；TanStack 引擎自己处理中止，适配器在它的边界上做不到对等，停止后 pending 照旧留着 |
 | 续跑校验：runLoop / server vs TanStack 适配器 | 前两者调同一个 `validateResume`（D4 收窄）；TanStack 路径本来就不做续跑校验，只为 `tools_bound` 算 configHash |
-| `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从 handler 自己的信箱拉，asTool 子 run 与停止收尾 run 仍不拉 |
+| `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从该 run 的信箱拉（共用 `runs` 的 handler 都能往里投），asTool 子 run 与停止收尾 run 仍不拉 |
 | run 结束时未拉走的中途消息：进程内宿主 vs HTTP handler（`midRunInput`） | 进程内宿主须再查一次自己的队列（消息在它手里）；handler 随 run 直接丢弃信箱，靠客户端按时间线判未送达后重发——不在 result 帧带未投递列表，送达判据只有时间线一条 |
 | 输入校验不合规：起步 `input` vs 中途 `pullInput` | 起步抛 RangeError、一条不写；中途已有半个 run 的日志，走 `fail()` 落 `core.error(input)` 收口。同一回调里抛错却是 fail-open（多半是宿主瞬时故障） |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
