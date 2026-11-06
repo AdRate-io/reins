@@ -692,6 +692,38 @@ describe("落回普通路径", () => {
     await runs.get("s1")?.done
   })
 
+  it("共用一个租约登记表（AdRate 生产形态）：另一个 handler 收投递 202；登记表 get 须返回同一个 ActiveRun", async () => {
+    const w = waitTool()
+    const runs = leasedRunRegistry(new InMemoryRunLease())
+    const { log, agent } = setup(WAIT_THEN_ANSWER, [w.tool], { runs })
+    const perRequest = () => createAgentHandler({ ...agent }, { heartbeatMs: 0, midRunInput: true, runs })
+    const starter = await busy(perRequest())
+    expect(
+      (await perRequest()(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))).status,
+    ).toBe(202)
+    w.g.open()
+    expect(resultOf(await starter.rest())?.status).toBe("done")
+    expect(refsIn(await logged(log, "s1"))).toEqual(["d1"])
+  })
+
+  it("共用 runs：收件 handler 自己的 authorizeSession 拒绝 → 404、不入箱", async () => {
+    const w = waitTool()
+    const { handler, log, runs, agent } = setup(WAIT_THEN_ANSWER, [w.tool])
+    const strict = createAgentHandler(agent, {
+      heartbeatMs: 0,
+      midRunInput: true,
+      runs,
+      authorizeSession: () => false,
+    })
+    const starter = await busy(handler)
+    expect((await strict(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))).status).toBe(
+      404,
+    )
+    w.g.open()
+    await starter.rest()
+    expect(refsIn(await logged(log, "s1"))).toEqual([])
+  })
+
   it("共用 runs：发起的 handler 没开 midRunInput → 409（run 没有信箱）；收投递的 handler 没开 → 409", async () => {
     const w1 = waitTool()
     const a = setup(WAIT_THEN_ANSWER, [w1.tool], { midRunInput: false })

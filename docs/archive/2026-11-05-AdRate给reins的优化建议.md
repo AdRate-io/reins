@@ -463,4 +463,4 @@ AdRate 必须每个请求组装一次 agent，所以每个请求都是新的 han
 - 起 run 的 handler 没开 `midRunInput` 时回 409；
 - 收投递的 handler 没开 `midRunInput` 时回 409。
 
-新用例在旧实现上失败、新实现上通过。不选"handler 按请求解析工具"的另一条路：改动面大，而且共用 `runs` 本来就是公开的多 handler 用法。AdRate 升级后路由不用改代码。
+新用例在旧实现上失败、新实现上通过。不选"handler 按请求解析工具"的另一条路：改动面大，而且共用 `runs` 本来就是公开的多 handler 用法。AdRate 升级后路由不用改代码，前提是各请求的 handler 传的是进程级同一个 `runs`（`createAgent` 每次调用会自建一份，按请求调用必须显式传 `handler: { runs }`，README 已写明）。另在 README 写明共用 `runs` 的 handler 是同一个信任域：投递由收件 handler 鉴权，却以起 run 的 handler 的工具与 log 执行。

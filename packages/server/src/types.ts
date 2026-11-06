@@ -217,7 +217,11 @@ export interface HandlerOptions {
   newSessionId?(): string
   /**
    * 正在跑的 run 的登记表。同一会话同时只允许一个 run（第二个 POST 得 409）；
-   * GET 重连撞上本进程正在跑的 run 时，补发之后继续实时推。多个 handler 共用同一个进程时可传同一个实例。
+   * GET 重连撞上本进程正在跑的 run 时，补发之后继续实时推。多个 handler 共用同一个进程时可传同一个实例
+   * （按请求新建 handler / 按请求调 `createAgent` 的宿主必须在进程级建一份传进来：否则停止与进行中投递不跨请求生效；有 RunLease 时第二个请求仍 409
+   * 但文案是 another instance，没有 RunLease 时连"同一会话一个 run"也失效）。
+   * 共用一个登记表的 handler 是同一个信任域：投递由收件 handler 的 `principal` / `authorizeSession` 放行，却以起 run 的 handler 的
+   * 工具、log、`onEvent` 执行——只在同一份 log、同一主事人 id 命名空间、同一鉴权口径的 handler 之间共用。
    *
    * 缺省 `new InMemoryRunRegistry()`，**只认本进程**——多实例部署下两台机器可以同时对一条会话起 run，
    * 第二个浪费一次模型调用后撞 `seq_conflict`。多实例必须传 `leasedRunRegistry(store.runLease)`（D4），
