@@ -47,9 +47,11 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 | `packages/server/package.json` | 包元数据：两个 exports（`.` 与 `./node`）、运行时只依赖 `@reinsjs/core`、devDep 里 miniflare pin 在 `4.20260730.0` |
 | `packages/server/tsconfig.json` | 加了 `types: ["node"]`（供 tsup 为 `./node` 子路径出声明），引用 `../core` |
 | `packages/server/tsup.config.ts` | 两个入口打 ESM + `.d.ts`；打声明时清空 `paths`，否则 core 的类型会被内联而不是保留 import |
-| `packages/server/src/index.ts` | 公开面：`createAgentHandler` / `DEFAULT_HEARTBEAT_MS` / `SESSION_HEADER`、runs 五件套（`ActiveRun` / `Channel` / `InMemoryRunRegistry` / `RunConflictError` / `RunRegistry` 类型）+ `leasedRunRegistry`、sse 四件套、`export type * from "./types.js"` |
-| `packages/server/src/types.ts` | 全部公开类型：`AgentDefinition`（= `LoopConfig` 去掉八个按 run 填的字段，含 `pullInput`——HTTP run 不拉；`createAgentHandler` 入口 `withoutPerRunFields` 运行时再剥一次，挡变量传参与 JS 宿主）、`AgentRequestBody`、`StreamItem` / `SseFrame` / `StreamEncoder(Factory)`、`HandlerContext`、`SessionAuthzInput`、`EventObserverInput`、`HandlerOptions` |
-| `packages/server/src/handler.ts` | 主体（581 行）：`createAgentHandler` 以及 `SESSION_ID_RE`、`parseBody`、`checkInput`、`lastSeqOf`、`observed`（D2 旁路观测的生成器包装）、`openStream`、`denyBySessionAuthz`、`handleGet`、`handlePost` |
+| `packages/server/src/index.ts` | 公开面：`createAgentHandler` / `DEFAULT_HEARTBEAT_MS` / `SESSION_HEADER`、runs 五件套（`ActiveRun` / `Channel` / `InMemoryRunRegistry` / `RunConflictError` / `RunRegistry` 类型）+ `leasedRunRegistry`、`MAILBOX_LIMIT` / `USER_DELIVERY_SOURCE`、sse 四件套、`export type * from "./types.js"` |
+| `packages/server/src/types.ts` | 全部公开类型：`AgentDefinition`（= `LoopConfig` 去掉八个按 run 填的字段，含 `pullInput`——HTTP run 只从 handler 自己的信箱拉；`createAgentHandler` 入口 `withoutPerRunFields` 运行时再剥一次，挡变量传参与 JS 宿主）、`AgentRequestBody`、`StreamItem` / `SseFrame` / `StreamEncoder(Factory)`、`HandlerContext`、`SessionAuthzInput`、`EventObserverInput`、`HandlerOptions`（含 `midRunInput`）、`AgentRequestBody.deliveryId`、`QueuedResponse` |
+| `packages/server/src/handler.ts` | 主体（834 行）：`createAgentHandler` 以及 `SESSION_ID_RE`、`parseBody`、`userMessageDraft`、`checkInput`、`openMailbox` / `deliver`（进行中投递）、`lastSeqOf`、`observed`（D2 旁路观测的生成器包装）、`openStream`、`denyBySessionAuthz`、`handleGet`、`handlePost` |
+| `packages/server/src/mailbox.ts` | 进行中投递的内存信箱：`Mailbox`（发起人 id、按到达顺序的未写入草稿、本 run 见过的 deliveryId、`offer` / `snapshot` 不删 / `claim` / `close`）、`claiming` 认领包装（yield 出带 ref 的 user_message 即删）、`USER_DELIVERY_SOURCE`、`MAILBOX_LIMIT = 16` |
+| `packages/server/src/mid-run-input.test.ts`、`src/mid-run-input.recipe.test.ts` | 进行中投递验证矩阵（缺省 409 回归、202 与送达位置、服务端生成 id、片段 / 草稿重建、幂等、一批写入与认领、补发期间到达、开箱前空隙 409、run 结束后起新 run、最后一次拉取后到达、审批 / maxTurns / handoff 不写、停止 / 拉取期间停止 / abort 断开 / 收尾 run / 别的 handler / 别的发起人 / 别的实例 409、authorizeSession、429、seq_conflict 后 GET 核对、onEvent 恰一次）；README 客户端配方逐字一致 |
 | `packages/server/src/sse.ts` | `encodeSseFrame`（WHATWG SSE 帧格式，data 一律 `JSON.stringify` 故只需一行）、`SSE_HEARTBEAT`（`": ping"` 注释行）、`SSE_HEADERS`（含 `x-accel-buffering: no` 让 nginx 不缓冲）、`rawEncoder` |
 | `packages/server/src/runs.ts` | run 登记：`Channel<T>`（单生产者多消费者、可 `drain()`）、`ActiveRun`（`subscribe` / `broadcast` / `drive` / `abandon` / `onFinish` 收尾钩子 / `done` 等钩子落定）、`RunRegistry` **接口**（`get` 只认本进程、`create` 异步）、`InMemoryRunRegistry`（缺省，一张 Map，结束时只删自己）、`RunConflictError`（code `run_in_progress`，`heldBy: "process" \| "lease"`） |
 | `packages/server/src/leased-runs.ts` | D4 `leasedRunRegistry(lease, { ttlMs, owner, warn })`：在 `InMemoryRunRegistry` 外套一层 core `RunLease`——create 先本进程再 acquire、每 ttl/3 心跳 renew、renew 为 false 告警 + abort、renew 抛错只告警、结束 release 失败只告警 |
@@ -111,12 +113,21 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 | --- | --- | --- |
 | 400 | `bad_request` | 请求体不是合法 JSON；`parseBody` 任一壳校验不过；sessionId 越界字符（GET query / POST body 两条路）；GET 缺 `sessionId`；`lastSeq` 不是非负整数；input 草稿类型不在白名单 / content 形状不对 / 想回填服务端工具的结果 |
 | 404 | `not_found` | `authorizeSession` 没有显式返回 `true`（`false` 或 `undefined`）。刻意不用 403 |
+| 202 | `queued` | 开 `midRunInput` 时投递进本进程正在跑的 run（JSON，带 `X-Reins-Session`） |
+| 429 | `mailbox_full` | 投递时该 run 已有 16 条未写入（带 `X-Reins-Session`） |
 | 405 | `method_not_allowed` | GET / POST 之外的方法，带 `allow` 头 |
 | 409 | `unknown_tool_call` | `decisions` 或 `tool_result` 草稿指向的调用不在 pending 里 |
 | 409 | `RunStateError.code` | `validateResume` 不过（会话不符、state 被篡改、密钥不同、配置漂移等），码由 core 给 |
 | 409 | `run_in_progress` | 同一会话已有 run 在本进程跑，或（`leasedRunRegistry`）租约被别的实例持有且未过期；EventLog 的 `seq_conflict` 仍是最后一道闸 |
 | 200 + `error` 帧 | — | 流已经开了才出的错（补发读日志失败、run 在写第一条日志前失败）。日志里已有的 `core.error` 仍以 `event` 帧推出 |
 | 抛出的 `Response` | 宿主自定 | `principal` 与 `authorizeSession` 抛 `Response` 一律原样返回 |
+
+**进行中投递**（`midRunInput`，2026-11-06）
+
+1. 位置：`denyBySessionAuthz`（POST、isNew=false）之后、续跑预校验之前。条件：开关开、带 `sessionId`、input 是用户消息形态、无 `resume` / `decisions`（含空数组）。
+2. `userMessageDraft(input, deliveryId ?? uuidv7())` 重建草稿，不合规 400（先 400 后 409，与普通路径同序）。
+3. `deliver` 整段同步：`runs.get` → `mailboxes`（handler 内 WeakMap）→ 未关、未中止、`principal?.id` 等于发起人 → `offer`：已见过回 202（幂等）、满 16 条 429 `mailbox_full`、否则入箱回 202 `QueuedResponse`。任一条件不满足返回 undefined，落回普通路径。
+4. 普通路径：带 `deliveryId` 时起步 input 换成带 provenance 的草稿；`runs.create` 之后同步 `openMailbox`（起步的 deliveryId 记为见过，`onFinish` 关箱）；`begin` 给 `runLoop` 传 `pullInput: () => mailbox.snapshot()`，生成器经 `claiming` 包一层再进 `observed`。
 
 **停止**（`handleStop`，2026-11-05）
 
@@ -125,6 +136,8 @@ Request ──▶ options.principal(request)?            抛 Response → 原样
 3. 没有 run：日志无 pending → 200 `{ status: "idle" }`；有 pending → 用预先 abort(RunStop) 的 controller `runs.create`（409 照常）→ `waitUntil(run.done)` → 自己 `drive(runLoop(...))`（同样经 `observed` 包 onEvent）→ 200 `stopping`。收尾 run 在一轮开头即暂停，只收尾不问模型。
 
 ## 4 核心设计决策
+
+- **进行中投递：handler 内存信箱，取出不删、写入才删**（2026-11-06）— 取舍见全景图「核心设计决策 · 服务端」同名条目；盘点只记实现约束：信箱挂 WeakMap 不上 `ActiveRun`（公开形状、宿主自建登记表也构造它），共用 `runs` 的另一个 handler 查不到即 409；`deliver` 不能有 await。
 
 - **T12 缺省推原始时间线事件，AG-UI 只是可插编码器** — SSE 的 `id:` 直接用事件 `seq`，控制帧不带 id，所以 `Last-Event-ID` 永远指向真实事件。理由是宪法二：时间线是唯一真源，前端协议只是翻译，server 不该绑死一种。边界：编码器与请求体形状 DECISIONS 标注"发布前可调"。
 - **T12 重连补发零额外状态** — 客户端记住最后一个 `id`，服务端从 EventLog 读 `(lastSeq, 末尾]`。不需要 Redis、不需要消息队列。边界：只在 EventLog 里的东西补得回来，`delta` 补不回（补发期间攒下的 delta 直接丢弃，因为它们所属的内容块要么已在补发里完整出现，要么不久后会完整到达）。

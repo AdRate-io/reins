@@ -100,7 +100,12 @@ export function mapEvent(event: Event, ctx: MapContext = {}): AguiEvent[] {
           ? partsToText((event.payload as P<"core.user_message">).content)
           : { text: (event.payload as P<"core.model_text">).text, dropped: [] }
       const messageId = event.id
-      const out: AguiEvent[] = [{ type: "TEXT_MESSAGE_START", messageId, role, ...meta(dropped) }]
+      const startMeta = meta(dropped)
+      // 只有 user_message 带出 provenance（server 进行中投递的对账键），其余事件输出不变
+      if (event.type === "core.user_message" && event.provenance !== undefined) {
+        startMeta.metadata.reins.provenance = { ...event.provenance }
+      }
+      const out: AguiEvent[] = [{ type: "TEXT_MESSAGE_START", messageId, role, ...startMeta }]
       if (text.length > 0) out.push({ type: "TEXT_MESSAGE_CONTENT", messageId, delta: text, ...meta() })
       out.push({ type: "TEXT_MESSAGE_END", messageId, ...meta() })
       return out

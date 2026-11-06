@@ -35,9 +35,10 @@ The umbrella package `@reinsjs/agent` wraps this as `createAgent(...).handler` w
 | `POST` | `{ sessionId, input }` | continue a session |
 | `POST` | `{ sessionId, resume, decisions }` | resume a paused run with approval decisions (`resume` is the `state` from the previous `result` frame; a decision for a sub-agent's call carries `sessionId: childSessionId`) |
 | `POST` | `{ sessionId, stop: true }` | the user pressed stop. Answers JSON `{ status: "stopping" | "idle", sessionId }` right away (no stream). A run active in this process is aborted with `RunStop` and its stream still ends with the `result` frame; an idle session with pending calls gets a short run that only closes them as not executed; otherwise `idle`. Must not be combined with `input` / `resume` / `decisions`. Only runs of this process can be stopped |
+| `POST` | `{ sessionId, input, deliveryId? }` while a run is active, with `midRunInput: true` | the message is queued into that run and answers JSON `202 { status: "queued", sessionId, deliveryId }` (no stream); see "Messages during a run" |
 | `POST` / `GET` | `lastSeq` | replay `(lastSeq, tail]` first, then continue live. `GET` also honours the `Last-Event-ID` header (so a plain `EventSource` reconnects correctly); `POST` reads `body.lastSeq` only |
 
-Frames: `start`, one frame per event, `delta` (optional streaming increments), `result` (the `RunResult`, including a signed `state` when paused), `error`. One run per session at a time: a second `POST` while a run is active answers `409 run_in_progress` (see "Multiple instances" for what "active" means across processes).
+Frames: `start`, one frame per event, `delta` (optional streaming increments), `result` (the `RunResult`, including a signed `state` when paused), `error`. One run per session at a time: a second `POST` while a run is active answers `409 run_in_progress` unless `midRunInput` queues it (see "Multiple instances" for what "active" means across processes).
 
 ## Security defaults
 
@@ -60,8 +61,55 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 | `authorizeSession(input)` | — | whether they may touch this session (see above) |
 | `onEvent(event, input)` | — | side-channel observer: called once per event a run appends (see below) |
 | `warn(message)` | `console.warn` | where an `onEvent` failure is reported |
+| `midRunInput` | `false` | queue user messages that arrive while a run is active into that run instead of answering `409` (see below) |
 | `runs` | `new InMemoryRunRegistry()` | run registry — one run per session at a time. The default only knows this process; multi-instance deployments pass `leasedRunRegistry(store.runLease)` (below) |
 | `newSessionId()` | uuidv7 | id factory for new sessions |
+
+## Messages during a run
+
+With `midRunInput: true`, a user who types while the agent is working ("only account A", "keep the budget under 100") does not have to wait for the run or stop it. The message goes into a per-run, in-memory mailbox, and the run writes it into the timeline right before its next model call (the `pullInput` semantics of `@reinsjs/core`). The draft carries `provenance: { source: USER_DELIVERY_SOURCE, ref: deliveryId }`; `@reinsjs/ui-agui` copies that onto the user message's `TEXT_MESSAGE_START` as `metadata.reins.provenance`.
+
+**Delivered means one thing: the timeline holds a `core.user_message` whose `provenance.ref` is your `deliveryId`.** There is no list of undelivered messages in the `result` frame; whatever is still in the mailbox when the run ends is dropped.
+
+A message is queued only when all of these hold: the body has `sessionId` and a user-message `input` (text, content parts or a `core.user_message` draft) and no `resume` / `decisions`; the session's run is active **in this process**, was started by a plain `POST` through this handler, and has not been aborted; and the sender is the run's starter (same `principal?.id`, or both anonymous) — a run executes as the principal it started with, so someone else's words must not run under that identity. Otherwise the request takes the normal path, so the answer is one of:
+
+| answer | meaning | what the client does |
+| --- | --- | --- |
+| `202 queued` | in the current run's mailbox | watch the stream that carries the run; if it ends (`result` / `error`) without the message, it was not delivered. If the stream had already ended when the `202` arrived, it was not delivered |
+| SSE `200` | the run had just ended, so this message started a new run | read it like any `POST`; the message is the run's input, with the same provenance |
+| `409 run_in_progress` | stopping or aborted, another instance, another principal, a stop clean-up run, or the instant between the run being registered and its mailbox opening | resend later, or tell the user |
+| `429 mailbox_full` | 16 messages are waiting to be written | resend later |
+
+- Generate the `deliveryId` before sending and **always** send it with `lastSeq` (`deliveryId`: printable ASCII without spaces, at most 128 characters; it may be omitted, then the server makes one and returns it in the `202`). A plain `POST` that starts a run carries it too, so every message is checked the same way. A retry with the same id is idempotent within one run; across runs, look for the ref in the events you already have before resending.
+- You need a stream attached to the run to see the message arrive: the `POST` that started it, or `GET ?sessionId&lastSeq` to reconnect.
+- If the stream ends with an `error` frame (for example a `seq_conflict` or a storage timeout while writing), whether the message was written is unknown: replay with `GET` and look for the ref before putting the text back in the input box.
+- Typical reasons a queued message is not delivered: it arrived after the run's last model call; the run paused (approval, budget, stop, `maxTurns`) or failed; it was aborted right after taking the message; it ended with a **handoff** (send to `toSessionId` instead); a resumed run's catch-up turn does not take new input. When the run paused for approval, send the undelivered text together with your `decisions` — only the client knows how to combine them; the handler never starts a run by itself.
+- Mid-run messages make runs longer: `maxTurns` and budgets are reached sooner, nothing resets them.
+- The mailbox lives in this process only: a crash loses undelivered messages (the client sees them missing and resends). Limit request body size at your gateway; the mailbox caps the count, not the size. `authorizeSession` sees `method: "POST"` for a queued message — a host that counts `POST`s as runs counts these too — and `onEvent` keeps reporting the starting request's `principal` / `request`.
+
+```ts
+/** Send one message; the caller keeps the deliveryId (and reuses it when retrying). */
+async function send(endpoint: string, sessionId: string, deliveryId: string, text: string, lastSeq: number) {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, input: text, deliveryId, lastSeq }),
+  })
+  if (res.status === 202) return { kind: "queued" } as const // watch the run's stream for it
+  if (res.status === 200) return { kind: "started", stream: res } as const // a new run, read as usual
+  if (res.status === 409 || res.status === 429) return { kind: "retry-later" } as const
+  throw new Error(`send failed with ${res.status}`)
+}
+
+/** Delivered ⟺ the timeline holds the user message carrying this deliveryId. */
+const delivered = (events: readonly Event[], deliveryId: string) =>
+  events.some(
+    (e) =>
+      e.type === "core.user_message" &&
+      e.provenance?.source === USER_DELIVERY_SOURCE &&
+      e.provenance.ref === deliveryId,
+  )
+```
 
 ## Multiple instances
 

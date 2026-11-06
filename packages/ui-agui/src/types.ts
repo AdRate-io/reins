@@ -53,4 +53,10 @@ export interface ReinsMetadata {
   type: string
   /** 翻译有损时列出丢了什么（如图片内容片段），不静默 */
   dropped?: string[]
+  /**
+   * 事件来源（时间线的 `provenance` 原样）。**只在 `core.user_message` 的 TEXT_MESSAGE_START 上出现**：
+   * server 进行中投递的送达判据是 `provenance.ref === deliveryId`，缺省 AG-UI 编码下客户端靠它对账。
+   * 不扩到其余事件——tool_result 与脑子写的事件都带 provenance，全量带出会改变线上每条 TOOL_CALL_RESULT 的形状
+   */
+  provenance?: { source: string; ref?: string }
 }

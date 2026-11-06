@@ -394,3 +394,7 @@ AdRate 接入时注意：
 | 发版前 AdRate 方案的状态 | 发版后 AdRate 要做的 |
 | --- | --- |
 | 第一期前端在 run 进行中不允许发送，提示"可先停止再发"；路由继续整个交给 handler，不绕开它自建 run 驱动 | 前端 run 进行中照常可发：消息显示"发送中"，以带 `deliveryId` 的 `core.user_message` 出现在流里为送达；result 帧里未投递的放回输入框（停在等审批时，按建议 1 的口径连同 `decisions` 拒绝一起重发）；`authorizeSession` 按 reins 定下的 `method` 放行会话主人，模拟登录照旧只读；每 run 预算视实测上调 |
+
+### reins 处置（2026-11-06）
+
+已做，server minor + ui-agui minor（方案 `docs/implementation-plans/2026-11-06-HTTP进行中投递.md`）。按建议保留：每 run 一个内存信箱、`handler: { midRunInput: true }` 开启（缺省 409）、202 JSON 不开流、只收用户消息、`resume` / `decisions` / `tool_result` 仍走原路径（409 或原有校验错误）、跨实例仍 409、不持久化、不自动起下一个 run、不改预算、草稿 `provenance.ref = deliveryId`。改了三处：① 取出不删，写进时间线才删；② **result 帧不带未投递列表**，送达判据只有"时间线里出现带该 `deliveryId` 的 `core.user_message`"，流结束仍没见到即未送达；③ 鉴权沿用 `method: "POST"`，不新增方法。补了两处：投递者必须与 run 的发起人同一 `principal?.id`（否则 409）；`@reinsjs/ui-agui` 在 user_message 的 `TEXT_MESSAGE_START.metadata.reins.provenance` 带出 deliveryId。`deliveryId` 可由客户端给（同 run 内幂等）、普通 POST 起 run 时也带；未写入满 16 条回 429 `mailbox_full`。客户端四种应答（202 / SSE 200 / 409 / 429）见 server README "Messages during a run"。

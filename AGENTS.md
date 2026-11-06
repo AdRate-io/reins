@@ -247,7 +247,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 工具入参二次编码：fetch / pi 降级层 vs TanStack 适配器 | 前者读侧多解一层并标 `meta.argumentsUnwrapped`；后者不解——它的历史按 `JSON.stringify(args)` 送回，模型看到的就是自己写的二次编码，与执行一致，没有"说法不一"，代价只是多一轮往返（要补走 `transformArgs`，OPT-261102-2） |
 | 用户停止：runLoop vs TanStack 适配器 | runLoop 在所有暂停出口把 pending 收尾成"没执行"等结果；TanStack 引擎自己处理中止，适配器在它的边界上做不到对等，停止后 pending 照旧留着 |
 | 续跑校验：runLoop / server vs TanStack 适配器 | 前两者调同一个 `validateResume`（D4 收窄）；TanStack 路径本来就不做续跑校验，只为 `tools_bound` 算 configHash |
-| `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、TanStack 适配器 | 只有进程内 run 能拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列 |
+| `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从 handler 自己的信箱拉，asTool 子 run 与停止收尾 run 仍不拉 |
+| run 结束时未拉走的中途消息：进程内宿主 vs HTTP handler（`midRunInput`） | 进程内宿主须再查一次自己的队列（消息在它手里）；handler 随 run 直接丢弃信箱，靠客户端按时间线判未送达后重发——不在 result 帧带未投递列表，送达判据只有时间线一条 |
 | 输入校验不合规：起步 `input` vs 中途 `pullInput` | 起步抛 RangeError、一条不写；中途已有半个 run 的日志，走 `fail()` 落 `core.error(input)` 收口。同一回调里抛错却是 fail-open（多半是宿主瞬时故障） |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
@@ -339,7 +340,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 ### 服务端与总包
 
 - **`SESSION_ID_RE = /^[\x21-\x7e]+$/` 挡的是 500 不是注入** — CRLF 本就被 `Response` 挡住；`é` 能进 header 也照样拒，换"一句话说得清 + 回写值不被 trim 改变"。
-- **POST 不读 `Last-Event-ID`，只认 `body.lastSeq`；409 `run_in_progress` 是唯一带 `X-Reins-Session` 的错误响应** — 客户端别统一从错误头取会话 id。
+- **POST 不读 `Last-Event-ID`，只认 `body.lastSeq`；错误响应里只有 409 `run_in_progress` 与 429 `mailbox_full` 带 `X-Reins-Session`** — 客户端别统一从错误头取会话 id。
+- **`midRunInput` 信箱只在本进程内存、取出不删写入才删、投递者须是 run 的发起人、从 `runs.get` 到入箱不能有 await** — `pullInput` 回快照，`claiming` 见到带 ref 的 user_message 才删（拉完发现已中止 core 不写，取出即删就丢了）；发起人比 `principal?.id`（run 以发起人身份执行）；`deliver` 必须整段同步，否则 run 在空隙里结束、202 进了已关的箱。登记后开箱前（`runs.create` 的 await）到达的投递 409 是刻意的。信箱挂在 handler 内的 WeakMap，不上 `ActiveRun` 公开形状。
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
 - **handler 对 `decisions` 的预校验必须与 runLoop 同一口径** — 只有本会话的结论对照本会话 pending，带子会话 id 的原样下传；两处不是同一函数，靠跨包用例锁住（踩坑 20）。
 - **停止请求 `POST { sessionId, stop: true }` 回 JSON 不开流、不等 run 结束；鉴权 `method` 是 "STOP"** — 空闲但有 pending 时起的收尾 run 没有流驱动，handler 自己 drive 并 `waitUntil(run.done)`；只认本进程的 run（跨实例 OPT-261105-5）。

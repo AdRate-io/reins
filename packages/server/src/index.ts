@@ -3,12 +3,14 @@
  *
  * - POST 起 run，SSE 实时推时间线事件（`id:` = seq），结束给 result 帧（paused 时含可回传的 state）
  * - GET 带 lastSeq / Last-Event-ID 重连，从 EventLog 补发，撞上本进程正在跑的 run 则继续实时推
+ * - 进行中投递（`midRunInput`）：run 跑着时再 POST 用户消息，入这个 run 的信箱、回 202，下一次调模型前写进时间线
  * - 同会话同时只允许一个 run：缺省进程内登记；多实例传 `runs: leasedRunRegistry(store.runLease)`（D4）
  * - 编码可换：缺省原样推事件；AG-UI 编码器见 @reinsjs/ui-agui
  * - 零运行时私有依赖：Node / Bun / Workers / Deno 同一份代码
  */
 export { createAgentHandler, DEFAULT_HEARTBEAT_MS, SESSION_HEADER } from "./handler.js"
 export { type LeasedRunRegistryOptions, leasedRunRegistry } from "./leased-runs.js"
+export { MAILBOX_LIMIT, USER_DELIVERY_SOURCE } from "./mailbox.js"
 export {
   ActiveRun,
   Channel,

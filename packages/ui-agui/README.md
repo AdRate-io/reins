@@ -29,6 +29,8 @@ The umbrella `@reinsjs/agent` package already uses `aguiEncoding()` as the defau
 
 Interrupts carry what a UI needs to answer them: an `approval` has `toolCallId`, the request summary and the policy id; a `subagent` interrupt (a nested agent waiting for approval) has `metadata.childSessionId` plus the child's own interruptions — send the decision back with `sessionId: childSessionId`.
 
+Every emitted event carries `metadata.reins` with the timeline `seq`, `eventId` and `type` (plus `dropped` when content had no AG-UI slot). A user message's `TEXT_MESSAGE_START` also carries the event's `provenance` when it has one — that is how a client sees the `deliveryId` of a message it sent while a run was in progress (`midRunInput` in `@reinsjs/server`). Other events do not copy `provenance`; `CUSTOM` events already hold the whole event in `value`.
+
 `mapEvent` / `AGUI_MAPPING` are exported for hosts that want the pure per-event translation without the streaming encoder. `@reinsjs/ui-agui/demo/index.html` is a dependency-free page that talks to `@reinsjs/server` and renders the stream; `examples/minimal` serves it.
 
 ## Documentation

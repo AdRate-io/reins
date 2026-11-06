@@ -4,6 +4,8 @@
  *   POST  body: { sessionId?, input?, lastSeq?, resume?, decisions? }
  *         → 补发 (lastSeq, 末尾] 的事件 → 起一个 run → 实时推每条刚 append 的事件 → result 帧 → 关闭
  *   POST  body: { sessionId, stop: true } → 停止（JSON 应答，不开流；见 AgentRequestBody.stop）
+ *   POST  body: { sessionId, input, deliveryId? } 打在本进程正在跑的 run 上且开了 midRunInput
+ *         → 入这个 run 的信箱，回 202 JSON（不开流）；run 在下一次调模型前写进时间线（见 HandlerOptions.midRunInput）
  *   GET   ?sessionId=…&lastSeq=N   （或 Last-Event-ID 头，EventSource 重连时自动带）
  *         → 补发 (N, 末尾] → 若本进程正有该会话的 run 在跑则继续实时推到 result；否则 end 帧 → 关闭
  *
@@ -33,6 +35,7 @@ import {
   uuidv7,
   validateResume,
 } from "@reinsjs/core"
+import { claiming, MAILBOX_LIMIT, Mailbox, USER_DELIVERY_SOURCE } from "./mailbox.js"
 import {
   type ActiveRun,
   type Channel,
@@ -49,6 +52,7 @@ import type {
   EventObserverInput,
   HandlerContext,
   HandlerOptions,
+  QueuedResponse,
   SessionAuthzInput,
   StopResponse,
   StreamEncoder,
@@ -87,6 +91,22 @@ const SESSION_ID_RE = /^[\x21-\x7e]+$/
 
 function isValidSessionId(x: unknown): x is string {
   return typeof x === "string" && SESSION_ID_RE.test(x)
+}
+
+/** deliveryId 与 sessionId 同一字符规则（可能被客户端拿去当 header / 选择器），另加长度上限 */
+const DELIVERY_ID_MAX = 128
+
+function isValidDeliveryId(x: unknown): x is string {
+  return isValidSessionId(x) && x.length <= DELIVERY_ID_MAX
+}
+
+/** 用户消息形态的 input：字符串、内容片段（parseBody 已重建）、或 `core.user_message` 草稿 */
+function isUserMessageInput(
+  input: AgentRequestBody["input"],
+): input is NonNullable<AgentRequestBody["input"]> {
+  if (input === undefined) return false
+  if (typeof input === "string" || Array.isArray(input)) return true
+  return (input as EventDraft).type === "core.user_message"
 }
 
 /**
@@ -145,8 +165,25 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
   if (b.stop !== undefined) {
     if (b.stop !== true) return { ok: false, error: "stop must be true" }
     if (b.sessionId === undefined) return { ok: false, error: "stop requires a sessionId" }
-    if (b.input !== undefined || b.resume !== undefined || b.decisions !== undefined)
-      return { ok: false, error: "stop cannot be combined with input, resume or decisions" }
+    if (
+      b.input !== undefined ||
+      b.resume !== undefined ||
+      b.decisions !== undefined ||
+      b.deliveryId !== undefined
+    )
+      return { ok: false, error: "stop cannot be combined with input, resume, decisions or deliveryId" }
+  }
+  if (b.deliveryId !== undefined) {
+    if (!isValidDeliveryId(b.deliveryId))
+      return {
+        ok: false,
+        error: `deliveryId must be a non-empty printable ASCII string with no spaces, at most ${DELIVERY_ID_MAX} characters`,
+      }
+    if (!isUserMessageInput(b.input as AgentRequestBody["input"]))
+      return {
+        ok: false,
+        error: "deliveryId requires a user message input (text, content parts or a core.user_message draft)",
+      }
   }
   return { ok: true, body: b as AgentRequestBody }
 }
@@ -191,6 +228,30 @@ function rebuildContentParts(x: unknown): ContentPart[] | undefined {
   return out
 }
 
+/**
+ * 用户消息形态的 input → 一条服务端重建的 `core.user_message` 草稿；普通路径与投递分支共用这一份。
+ * 壳字段（actor / trust / provenance）一律服务端定：给了 deliveryId 才带 `provenance: { source: USER_DELIVERY_SOURCE, ref }`。
+ * 草稿的 content 按白名单重建，不合规返回 undefined（调用方回 400）
+ */
+function userMessageDraft(
+  input: NonNullable<AgentRequestBody["input"]>,
+  deliveryId?: string,
+): EventDraft | undefined {
+  let content: ContentPart[] | undefined
+  if (typeof input === "string") content = [{ type: "text", text: input }]
+  else if (Array.isArray(input)) content = rebuildContentParts(input)
+  else content = rebuildContentParts(((input as EventDraft).payload as { content?: unknown } | null)?.content)
+  if (!content) return undefined
+  return {
+    type: "core.user_message",
+    actor: "user",
+    ...(deliveryId !== undefined ? { provenance: { source: USER_DELIVERY_SOURCE, ref: deliveryId } } : {}),
+    payload: { content },
+  }
+}
+
+const BAD_USER_MESSAGE = "content of user_message must be a non-empty array of content parts"
+
 type InputCheck =
   | { ok: true; input: LoopConfig["input"] }
   | { ok: false; status: 400 | 409; error: string; message: string }
@@ -212,18 +273,9 @@ function checkInput(
   const draft = raw as EventDraft
   const payload = (draft.payload ?? {}) as Record<string, unknown>
   if (draft.type === "core.user_message") {
-    const content = rebuildContentParts(payload.content)
-    if (!content)
-      return {
-        ok: false,
-        status: 400,
-        error: "bad_request",
-        message: "content of user_message must be a non-empty array of content parts",
-      }
-    return {
-      ok: true,
-      input: { type: "core.user_message", actor: "user", payload: { content } },
-    }
+    const rebuilt = userMessageDraft(draft)
+    if (!rebuilt) return { ok: false, status: 400, error: "bad_request", message: BAD_USER_MESSAGE }
+    return { ok: true, input: rebuilt }
   }
   if (draft.type === "core.tool_result") {
     const call = pending.find((c) => c.payload.toolCallId === payload.toolCallId)
@@ -350,6 +402,51 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
   const { log } = agent
   // 补发与预校验读日志都经注册表升级（P9），与循环看到的形状一致；宿主有 ext.* 事件时在 definition 里给自己的注册表
   const registry = agent.registry ?? createCoreRegistry()
+  /**
+   * 本 handler 起的普通 POST run → 它的信箱（midRunInput）。WeakMap 而不挂在 ActiveRun 上：ActiveRun 是公开形状、
+   * 宿主自定义登记表也会构造它，信箱只对"由这个 handler 驱动的 run"有意义；共用 `runs` 的另一个 handler 查不到，落回 409
+   */
+  const mailboxes = new WeakMap<ActiveRun, Mailbox>()
+
+  /** 普通路径登记到 run 之后**同步**开箱；run 结束（收尾钩子同步跑）即关箱，之后的 POST 一定落回普通路径 */
+  function openMailbox(run: ActiveRun, principal: Principal | undefined, startDeliveryId?: string): Mailbox {
+    const box = new Mailbox(principal?.id, startDeliveryId)
+    mailboxes.set(run, box)
+    run.onFinish(() => box.close())
+    return box
+  }
+
+  /**
+   * 进行中投递（midRunInput）：能入箱就回 202 / 429，不能（没有本进程的 run、没有本 handler 的信箱、箱已关、run 已中止、
+   * 投递者不是发起人）返回 undefined，调用方落回普通路径——那里该 409 的照旧 409、run 恰好结束的起新 run。
+   *
+   * **整个函数同步**：从 `runs.get` 到入箱之间有 await 的话，run 可能在空隙里结束，消息就入了一个已关的箱、回了 202 却必丢。
+   */
+  function deliver(
+    sessionId: string,
+    deliveryId: string,
+    draft: EventDraft,
+    principal: Principal | undefined,
+  ): Response | undefined {
+    const active = runs.get(sessionId)
+    if (active === undefined) return undefined
+    const box = mailboxes.get(active)
+    if (box === undefined || box.closed || active.controller.signal.aborted) return undefined
+    // 发起人校验：run 的 principal 起步时定死、工具拿到的是它；别的主事人的话不能以发起人身份被执行（匿名两边都是 undefined）
+    if (box.starterId !== principal?.id) return undefined
+    if (box.offer(deliveryId, draft) === "full") {
+      return json(
+        429,
+        {
+          error: "mailbox_full",
+          message: `the run in session ${sessionId} already holds ${MAILBOX_LIMIT} undelivered messages; retry after some are written`,
+        },
+        { [SESSION_HEADER]: sessionId },
+      )
+    }
+    const queued: QueuedResponse = { status: "queued", sessionId, deliveryId }
+    return json(202, queued, { [SESSION_HEADER]: sessionId })
+  }
 
   /** 组装 SSE 响应。补发 + （可选）实时推，全部在 ReadableStream 内部异步进行，Response 立刻返回 */
   function openStream(plan: StreamPlan): Response {
@@ -542,6 +639,23 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       isNew: body.sessionId === undefined,
     })
     if (denied !== undefined) return denied
+
+    // ---- 进行中投递（midRunInput）：只带用户消息、不带 resume / decisions 的续聊才可能入箱 ----
+    // 鉴权、JSON 解析、草稿重建都在这之前做完；deliver 内部从 runs.get 到入箱全同步。内容不合规先 400（与普通路径同一顺序）
+    if (
+      options.midRunInput === true &&
+      body.sessionId !== undefined &&
+      body.resume === undefined &&
+      body.decisions === undefined &&
+      isUserMessageInput(body.input)
+    ) {
+      const deliveryId = body.deliveryId ?? uuidv7()
+      const draft = userMessageDraft(body.input, deliveryId)
+      if (!draft) return json(400, { error: "bad_request", message: BAD_USER_MESSAGE })
+      const delivered = deliver(sessionId, deliveryId, draft, principal)
+      if (delivered !== undefined) return delivered
+    }
+
     const fromSeq = (body.lastSeq ?? 0) + 1
     const inputIsDraft =
       body.input !== undefined && typeof body.input !== "string" && !Array.isArray(body.input)
@@ -594,6 +708,13 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
         throw err
       }
     }
+    // 带 deliveryId 的普通路径：起步 input 换成带 provenance 的重建草稿，客户端对每条消息只用一种送达判据。
+    // 不带时 input 原样不动，日志与此前逐字相同。parseBody 已保证此时 input 是用户消息形态
+    if (body.deliveryId !== undefined && body.input !== undefined) {
+      const draft = userMessageDraft(body.input, body.deliveryId)
+      if (!draft) return json(400, { error: "bad_request", message: BAD_USER_MESSAGE })
+      input = draft
+    }
 
     let run: ActiveRun
     try {
@@ -607,6 +728,9 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     }
     // 客户端断开后 run 继续；Workers 需要 waitUntil 才不会在响应结束时被回收
     ctx?.waitUntil?.(run.done)
+    // 登记与开箱之间隔着 runs.create 的 await：那个空隙里到达的投递查不到信箱、落回普通路径 409（安全，README 不承诺）。
+    // 补发期间、begin 之前到达的在第 1 轮拉到，排在起步 input 之后
+    const mailbox = options.midRunInput === true ? openMailbox(run, principal, body.deliveryId) : undefined
 
     const begin = () => {
       const gen = runLoop({
@@ -618,8 +742,10 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
         ...(body.decisions !== undefined ? { decisions: body.decisions } : {}),
         ...(principal !== undefined ? { principal } : {}),
         ...(deltas ? { onDelta: (delta) => run.broadcast({ kind: "delta", delta }) } : {}),
+        // 快照不删；写进时间线由 claiming 认领（取出即删会让"拉完发现已中止"的消息凭空消失）
+        ...(mailbox !== undefined ? { pullInput: () => mailbox.snapshot() } : {}),
       })
-      drive(run, gen, { sessionId, principal, request })
+      drive(run, mailbox !== undefined ? claiming(gen, mailbox) : gen, { sessionId, principal, request })
     }
     return openStream({ sessionId, fromSeq, log, run, begin, starter: true })
   }

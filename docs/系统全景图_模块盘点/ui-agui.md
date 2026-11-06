@@ -35,7 +35,7 @@
 | 路径 | 职责 |
 | --- | --- |
 | `src/index.ts` | 公共出口：`mapEvent` / `AGUI_MAPPING` / `partsToText` / `reinsMetadata`、`createAguiEncoder` / `aguiEncoding`、以及 `types.ts` 的全部类型 |
-| `src/types.ts` | AG-UI 协议事件的本地类型（本包用到的子集）、`AguiInterrupt` / `AguiRunOutcome`、挂在每条事件上的 `ReinsMetadata` |
+| `src/types.ts` | AG-UI 协议事件的本地类型（本包用到的子集）、`AguiInterrupt` / `AguiRunOutcome`、挂在每条事件上的 `ReinsMetadata`（`provenance?` 只在 user_message 的 START 上出现） |
 | `src/map-event.ts` | 映射表 `AGUI_MAPPING` 与纯函数 `mapEvent`；`partsToText` 把内容片段压成文本并记 dropped，`reinsMetadata` 生成 `metadata.reins` |
 | `src/encoder.ts` | 有状态编码器：增量与完整事件接成同一条消息、`parentMessageId` 维护、run 四态收尾、`interruptsOf` 把 core 的 `Interruption` 翻成 AG-UI interrupt、SSE 帧的 id 归属 |
 | `demo/index.html` | 无依赖的最小页面：直连 SSE、按 AG-UI 事件渲染 |
@@ -60,6 +60,7 @@
 3. 空正文不造空帧：`model_text` / `user_message` 文本为空时不发 `TEXT_MESSAGE_CONTENT`；`model_thinking` 文本为空（加密 reasoning 只有 replay 没正文）时只发 `REASONING_START` + `REASONING_END`，让前端知道"这里想过"。
 4. 内容片段只有文本能进 AG-UI 正文：`partsToText` 把图片 / 视频 / 音频换成 `[<类型> <mime>]` 占位并在 `metadata.reins.dropped` 里记 `<类型>:<mime>`（P7 有损必声明）。
 5. `tool_result` 的 `isError` / `spilled` 在 AG-UI 没有对应字段，塞进 `metadata.reins` 不丢。
+6. `user_message` 有 `provenance` 时只在它的 `TEXT_MESSAGE_START` 上带 `metadata.reins.provenance`（2026-11-06，server 进行中投递的对账键 `deliveryId`）；其余事件不带——tool_result 与脑子写的事件都有 provenance，全量带出会改变每条 `TOOL_CALL_RESULT` 的形状，`CUSTOM` 的 `value` 本就是整条事件。
 
 ### 3.2 流式：增量与完整事件接成一条消息
 

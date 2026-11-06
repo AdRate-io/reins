@@ -27,7 +27,7 @@ import type { RunRegistry } from "./runs.js"
  * 一个 agent = 一份跨请求不变的循环配置：模型、工具、脑子（sockets）、存储、密钥……
  * 每次请求才知道的字段（sessionId、input、resume、decisions、signal、onDelta、principal）由 handler 按请求填。
  * `pullInput` 也是每次 run 的：放进定义会让 HTTP run、停止收尾 run、asTool 子 run 都拿父宿主的回调去拉父的队列，
- * 只经进程内 `runLoop` / `agent.run({ pullInput })` 传（HTTP 不接，刻意不对称）。
+ * 只经进程内 `runLoop` / `agent.run({ pullInput })` 传；HTTP run 只在开 `HandlerOptions.midRunInput` 时从 handler 自己的信箱拉（刻意不对称）。
  */
 export type AgentDefinition = Omit<
   LoopConfig,
@@ -43,6 +43,7 @@ export type AgentDefinition = Omit<
  * - 审批后续跑：sessionId + resume（上次 result 帧里的 state）+ decisions（子代理的审批带 `sessionId: childSessionId`，见 Interruption(kind=subagent)）
  * - 补发缺口：任何一种加 lastSeq —— 先把 (lastSeq, 当前末尾] 的事件补给客户端，再开始新的 run
  * - 停止：`{ sessionId, stop: true }`（2026-11-05）——回 JSON（`StopResponse`）而不是 SSE，见 `stop` 字段
+ * - 进行中投递：开了 `HandlerOptions.midRunInput` 时，续聊打在本进程正在跑的 run 上回 202 JSON（`QueuedResponse`），见该选项
  */
 export interface AgentRequestBody {
   sessionId?: string
@@ -62,6 +63,21 @@ export interface AgentRequestBody {
    * 只认本进程的 run（`runs.get`）；跨实例停止未做（OPT-261105-5）。
    */
   stop?: true
+  /**
+   * 这条用户消息的投递 id（可选，幂等键）。只能与用户消息形态的 input 同用（字符串 / 内容片段 / `core.user_message` 草稿），
+   * 缺 input、与 tool_result 草稿或 stop 同用回 400；字符规则同 sessionId（可打印 ASCII 无空格）且不超过 128 字符。
+   * 给了就原样作为 `provenance.ref`（`source` 为 `USER_DELIVERY_SOURCE`），**普通路径起 run 时也带**——客户端对每条消息只用一种
+   * 送达判据：时间线里出现带这个 ref 的 `core.user_message`。进行中投递没给时由服务端生成（uuidv7），回在 `QueuedResponse` 里。
+   * ref 只进 provenance，模型看不到、不进 configHash。同一 run 内幂等；跨 run 不去重（客户端先查时间线）
+   */
+  deliveryId?: string
+}
+
+/** 进行中投递的应答（202）：消息已入当前 run 的信箱，送达与否看时间线里有没有 `provenance.ref === deliveryId` 的用户消息 */
+export interface QueuedResponse {
+  status: "queued"
+  sessionId: string
+  deliveryId: string
 }
 
 /** 停止请求的应答。`stopping`：已发出停止 / 已起收尾 run；`idle`：没有可停的东西 */
@@ -131,7 +147,8 @@ export interface SessionAuthzInput {
   request: Request
   /**
    * GET 是重连读流，POST 是起 run，STOP 是停止请求（`POST { sessionId, stop: true }`）。宿主可以只对写放行给部分人。
-   * 按 `method === "POST"` 放行写操作的宿主会拒掉 STOP——fail-closed，要放行停止就显式认 "STOP"
+   * 按 `method === "POST"` 放行写操作的宿主会拒掉 STOP——fail-closed，要放行停止就显式认 "STOP"。
+   * 开 `midRunInput` 时 POST 也可能是对进行中 run 的投递（不起新 run），按 POST 计 run 配额的宿主会把投递算进去
    */
   method: "GET" | "POST" | "STOP"
   /**
@@ -222,6 +239,20 @@ export interface HandlerOptions {
    * - **出错不上抛**：钩子 throw 或 reject 一律不影响 run，经 `warn` 报出，一次 run 只报一次。观测者挂了不该让模型的工作跟着挂。
    */
   onEvent?(event: Event, input: EventObserverInput): MaybePromise<void>
+  /**
+   * run 进行中到达的用户消息交给正在跑的 run（AdRate 建议 6）。缺省 false：进行中再 POST 回 409 `run_in_progress`。
+   *
+   * 开启后，会话的 run 正在**本进程**跑、由本 handler 的普通 POST 起、且投递者与发起人是同一主事人（`principal?.id` 相同，
+   * 两边都匿名也算）时，只带用户消息（不带 resume / decisions）的 POST 入这个 run 的内存信箱、回 202 `QueuedResponse`（不开流）；
+   * run 在下一次调模型前把它写进时间线（core `pullInput` 语义：补跑轮与触顶 `maxTurns` 不拉，拉完发现已中止不写），
+   * 草稿带 `provenance: { source: USER_DELIVERY_SOURCE, ref: deliveryId }`。
+   *
+   * **送达判据只有一条：时间线里出现这条消息**。流以 result / error 结束仍没出现即未送达，信箱随 run 丢弃（不持久化、不自动起下一个 run）。
+   * 其余情形落回普通路径：run 刚结束 → 起新 run（SSE 200）；停止中 / 已中止、别的实例、别的发起人、停止收尾 run、
+   * 登记后开箱前的空隙 → 409；每个 run 至多 16 条未写入，满了 429 `mailbox_full`。
+   * 投递请求不进 `onEvent` 的观测上下文（`principal` / `request` 仍是发起 run 的那个 POST）。
+   */
+  midRunInput?: boolean
   /** 告警出口（目前只有 `onEvent` 出错这一种）；缺省 console.warn */
   warn?: (message: string) => void
 }

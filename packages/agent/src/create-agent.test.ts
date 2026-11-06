@@ -8,6 +8,7 @@ import {
   InMemoryRunRegistry,
   memoryStore,
   rawEncoder,
+  USER_DELIVERY_SOURCE,
 } from "./index.js"
 
 const add = defineTool<{ a: number; b: number }>({
@@ -97,6 +98,60 @@ describe("createAgent", () => {
     expect(seen[0]).toBe("s1:core.tools_bound")
     expect(seen).toContain("s1:core.tool_result")
     expect(seen.at(-1)).toBe("s1:core.budget_usage")
+  })
+
+  it("handler.midRunInput 经 createAgent 透传：进行中 POST 回 202，缺省 AG-UI 编码下 TEXT_MESSAGE_START 带出 deliveryId", async () => {
+    let release!: () => void
+    const released = new Promise<void>((r) => {
+      release = r
+    })
+    let entered!: () => void
+    const inTool = new Promise<void>((r) => {
+      entered = r
+    })
+    const wait = defineTool<Record<string, never>>({
+      name: "wait",
+      description: "等闸门",
+      risk: "low",
+      inputSchema: { type: "object" },
+      execute: async () => {
+        entered()
+        await released
+        return "放行"
+      },
+    })
+    const agent = createAgent({
+      model: {
+        model: { provider: "scripted", id: "scripted" },
+        lowering: new ScriptedLowering([{ drafts: [callTool("c1", "wait", {})] }, { drafts: [say("好的")] }]),
+      },
+      tools: [wait],
+      store: memoryStore(),
+      handler: { heartbeatMs: 0, midRunInput: true },
+    })
+    const post = (body: unknown) =>
+      agent.handler(
+        new Request("http://t/agent", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      )
+    const starter = await post({ sessionId: "s1", input: "查一下" })
+    const text = starter.text()
+    await inTool
+    const queued = await post({ sessionId: "s1", input: "只看 A", deliveryId: "d1" })
+    expect(queued.status).toBe(202)
+    expect(await queued.json()).toEqual({ status: "queued", sessionId: "s1", deliveryId: "d1" })
+    release()
+    const starts = frames(await text).filter((f) => f.type === "TEXT_MESSAGE_START") as unknown as {
+      role: string
+      metadata: { reins: { provenance?: { source: string; ref?: string } } }
+    }[]
+    expect(starts.filter((f) => f.role === "user").map((f) => f.metadata.reins.provenance)).toEqual([
+      undefined,
+      { source: USER_DELIVERY_SOURCE, ref: "d1" },
+    ])
   })
 
   it("run()：不经 HTTP 直接跑，缺省新建会话，事件都落在 store.log 里", async () => {

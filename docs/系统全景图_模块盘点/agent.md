@@ -34,7 +34,7 @@ CreateAgentOptions { model: BoundModel, store: Stores, handler?: HandlerOptions,
 | `packages/agent/src/as-tool.ts` | `asTool(agent, opts)`：把 `Agent` 包成 `Tool`；子 run 暂停 → 返回 core `subagentPause`（审批冒泡），子 `budget_usage` → `ctx.spend`（预算合算），principal / signal（`abort`）下传，结果 JSON `SubagentOutcome` 带 childSessionId；`usageOf` 从子时间线算用量，`subagentOutcomesOf` 从父时间线找子会话 |
 | `packages/agent/src/as-tool.test.ts` | 4 个用例：子等审批 → 父 paused(kind=subagent) 且父日志无 tool_result → 新实例同一存储、结论带子 sessionId 续跑，子先续跑父再拿结果；拒绝；`spend` 合算（onTurnEnd 看到父 + 子总账，父 budget_usage 不掺）；自定义 childSessionId 的多轮 |
 | `packages/agent/src/create-agent.ts` | 全部实现：`CreateAgentOptions`、`RunOptions`（`input` 取 core `LoopConfig["input"]` 去 undefined，类型单源，含草稿数组；`pullInput` 同法取，per-run，`CreateAgentOptions` 经 `AgentDefinition` 排除它，`createAgent` 解构时运行时也摘掉，否则 asTool 子 run 会继承）、`Agent` 三个接口，`createAgent` 与内部的 `stripUndefined` |
-| `packages/agent/src/create-agent.test.ts` | 测试。覆盖：handler 缺省 AG-UI 编码（POST 一次拿到 `RUN_STARTED … RUN_FINISHED`）、`handler` 选项可覆盖编码改推原始事件、`run()` 不经 HTTP 直接跑且缺省新建会话、`run({ pullInput })` 透传且 `createAgent` 上写它类型报错、事件都落进 `store.log`、`store.runLease` 自动装租约登记表（别处占着即 409、跑完释放）而宿主自传 `runs` 时不碰租约 |
+| `packages/agent/src/create-agent.test.ts` | 测试。覆盖：handler 缺省 AG-UI 编码（POST 一次拿到 `RUN_STARTED … RUN_FINISHED`）、`handler` 选项可覆盖编码改推原始事件、`run()` 不经 HTTP 直接跑且缺省新建会话、`run({ pullInput })` 透传且 `createAgent` 上写它类型报错、`handler: { midRunInput: true }` 透传（进行中 POST 202、缺省 AG-UI 下 `TEXT_MESSAGE_START` 带出 deliveryId）、事件都落进 `store.log`、`store.runLease` 自动装租约登记表（别处占着即 409、跑完释放）而宿主自传 `runs` 时不碰租约 |
 
 ## 3 核心流程
 

@@ -178,6 +178,34 @@ describe("字段细节", () => {
     assertValidAgui(out)
   })
 
+  it("user_message 带 provenance：只在 TEXT_MESSAGE_START 的 metadata.reins 原样带出（server 进行中投递的对账键）", () => {
+    const plain = ev("core.user_message", SAMPLES["core.user_message"])
+    const delivered: Event = { ...plain, provenance: { source: "reins.delivery", ref: "d1" } }
+    const out = mapEvent(delivered)
+    expect(out[0]).toMatchObject({
+      type: "TEXT_MESSAGE_START",
+      role: "user",
+      metadata: { reins: { provenance: { source: "reins.delivery", ref: "d1" } } },
+    })
+    // CONTENT / END 不带；不带 provenance 的 user_message 输出与此前逐字相同
+    for (const e of out.slice(1)) expect(e.metadata?.reins).not.toHaveProperty("provenance")
+    expect(mapEvent(plain)).toEqual(
+      out.map((e, i) =>
+        i === 0 ? { ...e, metadata: { reins: { seq: 1, eventId: "e1", type: "core.user_message" } } } : e,
+      ),
+    )
+    assertValidAgui(out)
+  })
+
+  it("带 provenance 的 tool_result 等其余事件：输出与不带时逐字相同（只有 user_message 带出）", () => {
+    // CUSTOM 帧的 value 本就是整条事件（含 provenance），不在此列
+    for (const type of ["core.tool_result", "core.model_text", "core.tool_call"] as const) {
+      const plain = ev(type, SAMPLES[type] as never)
+      const withSource: Event = { ...plain, provenance: { source: "add", ref: "client" } }
+      expect(mapEvent(withSource)).toEqual(mapEvent(plain))
+    }
+  })
+
   it("approval_request → CUSTOM 带完整事件，前端据此弹窗", () => {
     const e = ev("core.approval_request", SAMPLES["core.approval_request"], 7)
     const out = mapEvent(e)
