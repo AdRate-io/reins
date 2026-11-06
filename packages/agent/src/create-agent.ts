@@ -65,7 +65,16 @@ export interface Agent {
 }
 
 export function createAgent(options: CreateAgentOptions): Agent {
-  const { model, store, handler: handlerOptions, ...rest } = options
+  // pullInput 是每次 run 的字段：类型上 CreateAgentOptions 不收，运行时也摘掉（JS 宿主 / 变量传参），否则 asTool 子 run 会继承它
+  const {
+    model,
+    store,
+    handler: handlerOptions,
+    pullInput: _perRun,
+    ...rest
+  } = options as CreateAgentOptions & {
+    pullInput?: unknown
+  }
   const definition: AgentDefinition = {
     ...rest,
     model: model.model,

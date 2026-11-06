@@ -11,7 +11,7 @@ import type { EventDraft } from "../events/create.js"
 import { InMemoryEventLog } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "../testing/scripted-lowering.js"
 import { runLoop } from "./run-loop.js"
-import { RunStop } from "./stop.js"
+import { RunStop, STOPPED_NOTE } from "./stop.js"
 import { defineTool } from "./tools.js"
 import type { LoopConfig, PullInputContext, RunResult, Socket, Tool } from "./types.js"
 
@@ -245,7 +245,68 @@ describe("pullInput 中止与失败", () => {
       }),
     )
     expect(result.status).toBe("paused")
+    if (result.status === "paused") {
+      expect(result.reason).toBe("host")
+      expect(result.interruptions).toEqual([{ kind: "host", note: STOPPED_NOTE }])
+    }
     expect((await all(log)).filter((e) => e.type === "core.user_message")).toHaveLength(1)
+  })
+
+  it("中止期间回调 reject（宿主把同一个 signal 传给读库）：不记 core.error，直接按中止暂停", async () => {
+    const { log, base } = setup()
+    const controller = new AbortController()
+    const { result } = await drain(
+      runLoop({
+        ...base,
+        input: "go",
+        signal: controller.signal,
+        pullInput: ({ turn }) => {
+          if (turn === 2) {
+            controller.abort()
+            throw new Error("aborted")
+          }
+          return []
+        },
+      }),
+    )
+    expect(result.status).toBe("paused")
+    expect((await all(log)).filter((e) => e.type === "core.error")).toHaveLength(0)
+  })
+
+  it("中止期间返回值不合规：按中止暂停，不以 error 收场", async () => {
+    const { base } = setup()
+    const controller = new AbortController()
+    const { result } = await drain(
+      runLoop({
+        ...base,
+        input: "go",
+        signal: controller.signal,
+        pullInput: ({ turn }) => {
+          if (turn === 2) controller.abort()
+          return (turn === 2 ? undefined : []) as unknown as readonly EventDraft[]
+        },
+      }),
+    )
+    expect(result.status).toBe("paused")
+  })
+
+  it("回调抛出连 String() 都会抛的值：照样 fail-open，run 照跑", async () => {
+    const { log, base } = setup()
+    const { result } = await drain(
+      runLoop({
+        ...base,
+        input: "go",
+        pullInput: ({ turn }) => {
+          if (turn === 2) throw Object.create(null)
+          return []
+        },
+      }),
+    )
+    expect(result.status).toBe("done")
+    const err = (await all(log)).find((e) => e.type === "core.error")
+    expect(err?.type === "core.error" && err.payload.message).toBe(
+      "pullInput threw: a value that cannot be printed",
+    )
   })
 
   it("回调抛错：记一条 core.error（host、retryable），模型看不到，run 照跑", async () => {
@@ -290,6 +351,10 @@ describe("pullInput 中止与失败", () => {
           payload: { toolCallId: "c1", approved: true, by: "x" },
         },
       ],
+    ],
+    [
+      "core 载荷畸形（content 不是数组）",
+      [{ type: "core.user_message", actor: "user", payload: { content: "hi" } }],
     ],
     ["非法 actor", [{ type: "core.user_message", actor: "boss", payload: { content: [] } }]],
     ["未登记的 ext.*", [{ type: "ext.unknown", actor: "host", payload: {} }]],

@@ -215,6 +215,16 @@ function checkPulledDrafts(value: unknown, registry: EventSchemaRegistry): Event
   })
 }
 
+/** 把宿主抛出的任意值变成一句话；String() 本身会抛（如 Object.create(null)）时也不能让 fail-open 变成 run 崩溃 */
+function describeThrown(value: unknown): string {
+  if (value instanceof Error) return value.message
+  try {
+    return String(value)
+  } catch {
+    return "a value that cannot be printed"
+  }
+}
+
 function describe(value: unknown): string {
   return value === null ? "null" : typeof value
 }
@@ -440,30 +450,16 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // 补跑轮不问模型，拉了会把新输入夹在 tool_call 与补出的 tool_result 之间；触顶即暂停，拉了没人回答
     if (cfg.pullInput !== undefined && turns < maxTurns && pendingToolCalls(timeline).length === 0) {
       let raw: unknown = []
-      let threw = false
-      let thrown: unknown
+      let thrown: { value: unknown } | undefined
       try {
         raw = await cfg.pullInput({ sessionId, turn: turns + 1 })
       } catch (err) {
-        threw = true
-        thrown = err
+        thrown = { value: err }
       }
-      let pulled: EventDraft[] = []
-      if (!threw) {
-        try {
-          pulled = checkPulledDrafts(raw, registry)
-        } catch (err) {
-          // 返回值形状不对是确定性的宿主代码错误：fail-closed，以 error 收口（中途已有半个 run 的日志，回放看得见断在哪）
-          const { events, result } = await fail({
-            category: "input",
-            message: err instanceof Error ? err.message : String(err),
-            retryable: false,
-            detail: { phase: "pullInput" },
-          })
-          yield* events
-          return result
-        }
-      } else {
+      // 拉取期间被中止：不论回调返回什么、抛了什么（宿主常把同一个 signal 传给读库，回调因此 reject），一条都不写，
+      // 回顶部按"本轮开始前中止"暂停——宿主没见到写入事件就不认领，消息仍在队列
+      if (cfg.signal?.aborted) continue
+      if (thrown !== undefined) {
         // 回调抛错多半是宿主读库之类的瞬时失败：只记一条（模型不可见），当这次没有、run 照跑；消息还在宿主队列里
         const errors = await append([
           {
@@ -471,7 +467,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
             actor: "system",
             payload: {
               category: "host",
-              message: `pullInput threw: ${thrown instanceof Error ? thrown.message : String(thrown)}`,
+              message: `pullInput threw: ${describeThrown(thrown.value)}`,
               retryable: true,
               detail: { phase: "pullInput" },
             },
@@ -479,14 +475,27 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         ])
         yield* errors
         timeline = [...timeline, ...errors]
-      }
-      // 拉取期间被中止：拉到的不写（宿主没见到写入事件就不认领，消息仍在队列），回顶部按"本轮开始前中止"暂停
-      if (cfg.signal?.aborted) continue
-      if (pulled.length > 0) {
-        const written = await append(pulled)
-        yield* written
-        // 整体重绑：本轮后面的投影、ctx.timeline、executeToolCalls 的拼接都要看到拉进来的事件
-        timeline = [...timeline, ...written]
+      } else {
+        let pulled: EventDraft[]
+        try {
+          pulled = checkPulledDrafts(raw, registry)
+        } catch (err) {
+          // 返回值形状不对是确定性的宿主代码错误：fail-closed，以 error 收口（中途已有半个 run 的日志，回放看得见断在哪）
+          const { events, result } = await fail({
+            category: "input",
+            message: describeThrown(err),
+            retryable: false,
+            detail: { phase: "pullInput" },
+          })
+          yield* events
+          return result
+        }
+        if (pulled.length > 0) {
+          const written = await append(pulled)
+          yield* written
+          // 整体重绑：本轮后面的投影、ctx.timeline、executeToolCalls 的拼接都要看到拉进来的事件
+          timeline = [...timeline, ...written]
+        }
       }
     }
     // 上一次模型请求的真实用量：日志最后一条 budget_usage（续跑时上次 run 的也算）。感知用它校准估算，预算用它算上下文大小

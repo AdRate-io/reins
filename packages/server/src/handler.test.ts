@@ -70,6 +70,21 @@ const resultOf = (frames: Frame[]) => frames.find((f) => f.event === "result")?.
 const ids = (frames: Frame[]) => frames.filter((f) => f.id !== undefined).map((f) => Number(f.id))
 
 describe("POST：起 run 并流式推时间线", () => {
+  it("pullInput 是每次 run 的字段：即使绕过类型塞进定义，HTTP run 也不拉", async () => {
+    let pulled = 0
+    // 变量传参 / JS 宿主：类型挡不住，运行时剥掉
+    const leaky = {
+      pullInput: () => {
+        pulled++
+        return []
+      },
+    } as unknown as Partial<AgentDefinition>
+    const { handler } = setup(TWO_TURNS, [addTool], leaky)
+    const frames = parseFrames(await (await handler(postRequest({ input: "2+3" }))).text())
+    expect(resultOf(frames)?.status).toBe("done")
+    expect(pulled).toBe(0)
+  })
+
   it("新会话：会话 id 在响应头与 start 帧；事件按 seq 推、id = seq；delta 在前；最后 result done", async () => {
     const { handler, log } = setup(TWO_TURNS)
     const res = await handler(postRequest({ input: "2+3" }))

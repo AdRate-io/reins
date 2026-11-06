@@ -781,6 +781,28 @@ describe("compact 纯函数层", () => {
     expect(plan.payload.pinsKept).toEqual(["e2"])
   })
 
+  it("planCompaction：一次 run 里起步任务 + 中途拉到的附言同在折叠区时，只有附言原样幸存（锁现状，OPT-261106-4）", () => {
+    seq = 0
+    const task = user("起步任务") // e1
+    const t1 = text("a") // e2
+    const u1 = usage() // e3
+    const followUp = user("中途附言") // e4
+    const t2 = text("b") // e5
+    const u2 = usage() // e6
+    const t3 = text("c") // e7
+    const plan = planCompaction([task, t1, u1, followUp, t2, u2, t3], {
+      summary: "S",
+      keep: [],
+      keepRecentTurns: 1,
+    })
+    expect(plan.ok).toBe(true)
+    if (!plan.ok) return
+    expect(plan.folded).toContain(task)
+    expect(plan.folded).toContain(followUp)
+    // 起步任务靠模型写的摘要承接，不原样保留
+    expect(plan.payload.pinsKept).toEqual(["e4"])
+  })
+
   it("planCompaction 清单：入参在时间线里找、幸存者不列、超过 maxItems 折成一行、manifest:false 不列", () => {
     seq = 0
     const call = (id: string, name: string, args: unknown) =>

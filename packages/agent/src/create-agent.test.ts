@@ -162,6 +162,26 @@ describe("createAgent", () => {
     })
   })
 
+  it("JS 宿主把 pullInput 塞进 createAgent：运行时摘掉，definition 上没有，run() / handler 都不拉", async () => {
+    let pulled = 0
+    const options = {
+      model: scripted(),
+      tools: [add],
+      store: memoryStore(),
+      pullInput: () => {
+        pulled++
+        return []
+      },
+    }
+    const agent = createAgent(options as unknown as Parameters<typeof createAgent>[0])
+    expect("pullInput" in agent.definition).toBe(false)
+    const gen = agent.run({ input: "2+3" })
+    let result = await gen.next()
+    while (!result.done) result = await gen.next()
+    expect(result.value.status).toBe("done")
+    expect(pulled).toBe(0)
+  })
+
   it("run() 收草稿数组（as const 也行）：背景说明与任务按序落日志", async () => {
     const store = memoryStore()
     const agent = createAgent({ model: scripted(), tools: [add], store })

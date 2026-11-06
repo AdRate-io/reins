@@ -338,7 +338,8 @@ interface StreamPlan {
   starter: boolean
 }
 
-export function createAgentHandler(agent: AgentDefinition, options: HandlerOptions = {}): AgentHandler {
+export function createAgentHandler(definition: AgentDefinition, options: HandlerOptions = {}): AgentHandler {
+  const agent = withoutPerRunFields(definition)
   const makeEncoder: StreamEncoderFactory = options.encode ?? (() => rawEncoder)
   const deltas = options.deltas ?? true
   const onDisconnect = options.onDisconnect ?? "continue"
@@ -695,4 +696,13 @@ export function createAgentHandler(agent: AgentDefinition, options: HandlerOptio
       { allow: "GET, POST" },
     )
   }
+}
+
+/**
+ * 运行时剥掉每次 run 才该有的 `pullInput`：类型上 `AgentDefinition` 已排除它，但变量传参、`as` 断言与 JS 宿主挡不住；
+ * 漏进来的话每个 HTTP run 与停止收尾 run 都会拿进程内宿主的回调去拉队列（fail-closed）
+ */
+function withoutPerRunFields(definition: AgentDefinition): AgentDefinition {
+  const { pullInput: _perRun, ...rest } = definition as AgentDefinition & { pullInput?: unknown }
+  return rest
 }
