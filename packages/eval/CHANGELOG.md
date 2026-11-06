@@ -1,5 +1,12 @@
 # @reinsjs/eval
 
+## 0.4.7
+
+### Patch Changes
+
+- Updated dependencies [e820efb]
+  - @reinsjs/core@0.12.0
+
 ## 0.4.6
 
 ### Patch Changes

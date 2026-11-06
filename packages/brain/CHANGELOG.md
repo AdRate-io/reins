@@ -1,5 +1,12 @@
 # @reinsjs/brain
 
+## 0.8.5
+
+### Patch Changes
+
+- Updated dependencies [e820efb]
+  - @reinsjs/core@0.12.0
+
 ## 0.8.4
 
 ### Patch Changes

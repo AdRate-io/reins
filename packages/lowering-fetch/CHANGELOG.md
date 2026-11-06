@@ -1,5 +1,12 @@
 # @reinsjs/lowering-fetch
 
+## 0.6.3
+
+### Patch Changes
+
+- Updated dependencies [e820efb]
+  - @reinsjs/core@0.12.0
+
 ## 0.6.2
 
 ### Patch Changes

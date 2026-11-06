@@ -1,5 +1,14 @@
 # @reinsjs/agent
 
+## 0.6.3
+
+### Patch Changes
+
+- Updated dependencies [e820efb]
+  - @reinsjs/core@0.12.0
+  - @reinsjs/server@0.7.0
+  - @reinsjs/ui-agui@0.5.0
+
 ## 0.6.2
 
 ### Patch Changes

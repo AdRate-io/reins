@@ -1,5 +1,12 @@
 # @reinsjs/store-pg
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [e820efb]
+  - @reinsjs/core@0.12.0
+
 ## 0.4.1
 
 ### Patch Changes
