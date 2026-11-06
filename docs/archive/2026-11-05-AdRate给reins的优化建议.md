@@ -1,7 +1,7 @@
 # AdRate 对 reins 的优化建议（2026-11-05）
 
 > **来源**：AdRate（投放工具，reins 的 dogfood 宿主）在正式接入前，对照 reins `main@11c160f`（core 0.9.0 / server 0.4.3 / brain 0.8.2）核实出的问题。由 Boss 带到 reins 项目评估、实施、发版；AdRate 侧不写兜底代码，等发版后再调整接入方案。
-> **编号**：「AdRate 建议 1～4」，与 reins 文档中的「OnSet 建议 N」同一用法。
+> **编号**：「AdRate 建议 N」，各批顺序编号（第一批 1～4、第二批 5、第三批 6），与 reins 文档中的「OnSet 建议 N」同一用法。
 > **公开性**：已按 reins `docs/README.md` 的公开性规则撰写，不含真实业务数据，可以直接移入 reins 仓库。
 > **宿主背景**：AdRate 是 TikTok 广告投放 SaaS，站内 Agent 的写工具会直接改动用户的广告（建广告、改预算、开关计划），**重复执行意味着重复花用户的广告费**。会话与 run 存活在服务端：用户断开后 run 继续跑完，前端只同步状态并提供"停止"按钮。
 
@@ -323,3 +323,74 @@ AdRate 接入时注意：
 | 方案中"reins 存储接入"标为依赖 reins，排在 M1 开头；M0 三项前置改造不受影响 | 直接把现有 postgres.js 连接交给适配器，不引入 `pg`、不另开连接池；M1 开头在真实库上做一次往返验证 |
 
 发版后核实（2026-11-06）：空目录从 npm 官方源安装 `@reinsjs/store-pg@0.4.0` + postgres.js 4.0.0，对真库冒烟 9/9——库内 `json_typeof = object` 且逐字、读回、fork、并发同 seq 报 `seq_conflict`、blob、租约、记忆、camel 实例被拒。reins CI 每次推送都对 `postgres:16.13-alpine`（与 AdRate 生产同版本）跑 pg、postgres.js 3 / 4、Drizzle 包过的 postgres.js 3 / 4 五列。
+
+---
+
+# 第三批建议（2026-11-06）
+
+> 来自 AdRate 对 reins `pullInput` 发版（core 0.11.0 / server 0.5.1 / agent 0.6.0，npm 官方源）的接入评估。依据各包 CHANGELOG、README 与 `dist` 源码（`@reinsjs/server` 的 `createAgentHandler` / `handlePost`、`@reinsjs/core` 的 `runLoop` 拉取段）。
+
+## 总览
+
+| # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 6 | HTTP handler 接住 run 进行中到达的用户消息，交给正在跑的 run 拉取 | server | 宪法一：中途来的话要不要改方向，由模型读到后自己决定；不进 `AgentDefinition`，不触及 `pullInput`"每次 run 才传"的取舍 | 中，可选；不是 AdRate 第一期前置 |
+
+## AdRate 建议 6：HTTP handler 接住 run 进行中到达的用户消息
+
+### 现状
+
+- core 0.11 的 `pullInput` 只能经进程内 `runLoop` / `agent.run({ pullInput })` 传。`AgentDefinition` 刻意去掉了它，`createAgentHandler` 也会把它从定义里剥掉（`withoutPerRunFields`），HTTP 起的 run 从不拉取。
+- 浏览器宿主的消息都从 HTTP 进来。会话已有 run 在跑时再 `POST { sessionId, input }`，`handlePost` 在 `runs.create` 处撞上 `RunConflictError`，回 409 `run_in_progress`。
+- 所以要在 Web 上用 `pullInput`，宿主只能绕开 handler 的 POST，自己起 run，然后把以下几件再实现一遍：
+  - 补发与实时流的拼接（`openStream`）、心跳、编码器；
+  - 增量推送（`onDelta` → `broadcast`）；
+  - `onEvent` 观测；
+  - 续跑校验。
+  
+  这正是建议 3 当时要避免的"两份实现"。宿主自建的信箱还要自己处理跨请求定位 run、进程死亡丢消息、最后一次拉取之后到达的消息。
+
+### 问题
+
+对话式的 Agent 前端，用户在 run 进行中补一句话是很自然的操作，例如"只看 A 账户""预算别超过 100"。目前只有两条路：
+
+- **等 run 结束再发**：模型可能已经在错的方向上多走了几轮，烧了 token，也可能已经发出了需要审批的写调用。
+- **先停止再发**：停止语义是对的（遗留调用落"没执行"），但它是粗粒度的。正在排队的只读查询也一起作废，模型要重新规划。用户的本意只是"补充一句"，不是"推翻重来"。
+
+`pullInput` 已经在循环里解决了"什么时候交给模型"这件难事：每次调模型前拉、有 pending 调用不拉、中止后不写。缺的只是 HTTP 这一侧"消息怎么送到正在跑的 run"。每个 Web 宿主各自补这一段，就会各自踩一遍上面那些坑。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- **每个 run 一个信箱，挂在 `ActiveRun` 上**。handler 为普通 POST（新话 / 续跑）起的 run 传入 `pullInput`，只从这个 run 自己的信箱取：
+  - 不进 `AgentDefinition`，和 `pullInput`"每次 run 才传"的取舍一致；
+  - 停止收尾的 run 与 `asTool` 子 run 没有信箱，自然不拉，正好避开 server 注释里列出的那个问题。
+- **投递**：会话的 run 正在本进程跑时，`POST { sessionId, input }` 不再回 409，而是：
+  - 入信箱，立即回 `202 { status: "queued", sessionId, deliveryId }`（JSON，不开新流，同停止请求）；
+  - 被拉取后，这条 `core.user_message` 照常从原来的流和 GET 观看者那里推出；
+  - 草稿带 `provenance.ref = deliveryId`，客户端凭它把"发送中"的消息对上时间线里的事件。
+- **鉴权与校验**：
+  - 走同一个 `principal` + `authorizeSession`。`method` 沿用 `"POST"`，还是像 STOP 那样单列新值（如 `"INPUT"`，宿主要显式放行），由 reins 定；AdRate 两种都能接；
+  - 只收用户消息（字符串、ContentPart 数组、`core.user_message` 草稿）；
+  - 带 `resume` / `decisions` / `tool_result` 的请求打在忙碌的会话上，仍回 409。
+- **没被拉走的消息必须让客户端知道**。以下几种情况，消息都可能没进这个 run：
+  - run 结束前最后一次拉取之后才到；
+  - run 以 `paused`（审批 / 预算 / 停止）或 `error` 结束；
+  - 拉取后发现已中止，按 core 语义不写。
+
+  建议在 result 帧里带上未投递的 `deliveryId` 列表，客户端把这些消息放回输入框或自动重发。不建议由 handler 自动起下一个 run：
+  - run 停在等审批时，按建议 1 回复的宿主职责，这条新话要和 `decisions` 拒绝一起发，只有宿主知道怎么拼；
+  - 自动续起的 run 没有发起请求，归属与观测都不清楚。
+- **跨实例**：会话的 run 在别的实例上跑时，照常 409 `run_in_progress`。这与跨实例停止（OPT-261105-5）是同一类问题，可以一起排。
+
+### 边界
+
+- **不挡正在执行的工具**：消息要等当前工具批跑完、下一次调模型前才进时间线。这符合 core 现有语义，也是 AdRate 想要的：写调用不会因为用户插话被打断在半路。
+- **信箱在内存里**，进程死亡时未投递的消息会丢失。客户端以"时间线里出现了带 `deliveryId` 的那条消息"为送达判据。连接断开或流结束都没等到这条消息，就当作未投递、放回输入框，用户最多重发一次，不会静默丢失。这就够了，不需要持久化信箱。
+- **预算**：吸收了中途消息的 run 会更长，每 run 的轮数与 token 上限会更早触顶。是否要让新到的用户消息重置或延长 run 预算，由 reins 判断。AdRate 这边会照实调预算，不要求库改。
+- **不影响不用它的宿主**：没有并发 POST 的宿主行为不变。担心"409 变 202"影响现有宿主的话，可以用 handler 选项开启（如 `handler: { midRunInput: true }`），缺省保持 409。
+
+### AdRate 侧依赖
+
+| 发版前 AdRate 方案的状态 | 发版后 AdRate 要做的 |
+| --- | --- |
+| 第一期前端在 run 进行中不允许发送，提示"可先停止再发"；路由继续整个交给 handler，不绕开它自建 run 驱动 | 前端 run 进行中照常可发：消息显示"发送中"，以带 `deliveryId` 的 `core.user_message` 出现在流里为送达；result 帧里未投递的放回输入框（停在等审批时，按建议 1 的口径连同 `decisions` 拒绝一起重发）；`authorizeSession` 按 reins 定下的 `method` 放行会话主人，模拟登录照旧只读；每 run 预算视实测上调 |
