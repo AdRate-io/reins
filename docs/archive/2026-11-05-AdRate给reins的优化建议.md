@@ -545,6 +545,17 @@ npm 官方源 `@reinsjs/agent` 0.6.2（精确依赖 server 0.6.1 / ui-agui 0.4.1
 - **BUG-261105-2**：本次不修。状态能从补发取到之后，"带 `decisions` 必须带 `resume`"已经可行，会另行通知 AdRate / OnSet 后收紧。AdRate 已按约定总带 `resume`，不受影响。
 - **升级前已暂停的会话**：`run_paused` 里没有状态，补发不给。AdRate 尚未上线，没有影响。
 
+### AdRate 发版后核实（2026-11-06）
+
+npm 官方源 `@reinsjs/agent` 0.6.4（精确依赖 core 0.12.0 / server 0.7.1 / ui-agui 0.5.1），AdRate 整体升级后本机真模型（DeepSeek `deepseek-flash`）实测：
+
+- 起 run 停在审批后丢掉亲历流的状态，GET 补发的 `RUN_FINISHED.result` 为 `replayed`，`state` 与亲历流的逐字相同，`pendingToolCallIds` 与补发里的 `core.approval_request` 对得上；
+- 用补发拿到的 `state` 续跑（拒绝），200 正常收尾；
+- 同一份旧 `state` 再续跑一次，回 409 `pending_mismatch`，工具没有重复执行；
+- 续跑跑完后再补发，结束帧不再带 `state`。
+
+处置的其他几条 AdRate 都接受：确认卡按 `pendingToolCallIds` + `approval_request` 画，不以"有 state"判断；`pending_mismatch` 前端不重试、补发刷新。**子代理**：AdRate 第一期不用 `asTool`，子会话确认卡的问题暂不涉及，用到时再议。方案 3.5 / 3.10 / 第八节与接入简报 3.6 已回填。
+
 ---
 
 > 来自 AdRate M1-2 本机真模型验收（DeepSeek `deepseek-flash`，2026-11-06）。依据 npm 官方源 ui-agui 0.4.1 的 `dist/index.js`（`createAguiEncoder`）与实际抓到的 SSE 帧。
@@ -631,3 +642,51 @@ TEXT_MESSAGE_START         01a1afd0-a6b4…   metadata.reins.seq=14 core.model_t
   每段只有一组 `_START` / `_CONTENT…` / `_END`，认领的 `_END` 带 `metadata.reins`，SSE `id` 挂在收尾帧上。server 新增一个"块中间挂上"的用例。原实现上这些用例全部失败。初版"按顺序认领"的实现，在 redacted 与后半截两格上也失败（独立审查发现）。另用真 lowering-fetch Chat 线做了一次端到端（假 fetch 回放 DeepSeek 风格的 SSE）：思考一块、正文一块，收尾帧分别带 `core.model_thinking` / `core.model_text` 的 seq。
 - **AdRate 升级后**：渲染按 AG-UI 帧原样累加即可。帧序会变成 `REASONING_START…CONTENT` → `TEXT_MESSAGE_START…CONTENT` → `REASONING_END` → `TEXT_MESSAGE_END`，也就是正文开始时思考还没收尾。前端如果用"收到 `_END` 才算思考结束"来折叠思考区，这段时间会显示两块都在进行中，属于预期行为。redacted 思考仍会以一条完整的思考消息出现，正文是占位串。
 - **README 顺带改正**：原文"每个事件都带 `metadata.reins`"不准确，增量开出的 `_START` / `_CONTENT` 帧本来就不带，只有收尾帧带。现已写明。
+
+### AdRate 发版后核实（2026-11-06）
+
+同一次升级后本机真模型实测：拒绝审批后的续跑轮带思考，流里思考、正文各只有一组 `_START` / `_CONTENT…` / `_END`，两段收尾帧分别带 `core.model_thinking` / `core.model_text` 的 `metadata.reins`，按 messageId 拼出的各段正文无重复。AdRate 前端按帧原样累加，不写去重；思考区折叠以正文 `TEXT_MESSAGE_START` 为准（方案 3.10、简报 3.7 已回填）。
+
+## AdRate 建议 10：「结果未知」的工具结果带上这次调用开始执行的时间
+
+### 现状
+
+core 0.12 给被中断的不可重放调用补的结果是固定文案 `OUTCOME_UNKNOWN_TEXT`（"Execution was interrupted before a result was recorded; the outcome is unknown. Check the current state before retrying."），不带任何时间。模型看不到事件的 `at`，也就不知道这次调用是什么时候发出的。
+
+### 问题
+
+「先查再动」要求模型在查回来的业务对象里认出「是不是这次提交」。AdRate 本机真模型（M3-3a 剧本 6e'，2026-11-08）：复制提交在 `tool_started` 之后、建任务之前被打断（任务未建成），模型调 `adrate_list_tasks` 后，两次都把列表里**更早一次参数完全相同**的任务认成了这次提交，汇报「那次提交其实已经执行了」。参数相同的情况下，唯一能区分的就是创建时间，而模型拿不到这次调用的时间锚点。方向是安全的（没有重提），但汇报事实错误。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- `OUTCOME_UNKNOWN_TEXT` 拼上该调用 `core.tool_started`（没有则 `core.tool_call`）的 `at`，用 UTC ISO 串，例如 "…the outcome is unknown. The call started at 2026-11-08T16:08:02Z. Check the current state before retrying."；
+- 同理可用于 `INTERRUPTED_IN_PROGRESS_TEXT` / `STOPPED_IN_PROGRESS_TEXT`。
+
+### 边界
+
+只改给模型看的文案，不改事件结构；时间取自日志里已有的事件，不新增状态。
+
+### AdRate 侧依赖
+
+无代码依赖。AdRate 的 `campaign-copy` Skill 已改成「参数都对得上也只说"看起来是那次提交"、无论如何不自己重提」；上游带上时间后，Skill 可以改回按创建时间判定。
+
+### reins 处置（2026-11-09）
+
+采纳。core `outcomeUnknownText` 给"结果未知"句末缀开始时间：
+
+```
+Execution was interrupted before a result was recorded; the outcome is unknown. Check the current state before retrying. This call started at 2026-11-08T16:08:02.123Z.
+```
+
+- **时间**：取该调用 `core.tool_started` 的 `at`，`toISOString()` 原样输出（UTC、带 `Z`、毫秒），与 AdRate 任务时间同一格式，可直接比较。
+- **范围**："结果未知"的三处落点（停止收尾、续跑见 started、感知 signal 的写工具被掐断），TanStack 适配器两处同样带。条件是工具已知且不可重放，这时 started 写在执行之前，`at` 才是真实的开始时间。**两句"做了一半"不缀**（与建议不同）：它们只落给子代理，而子代理的 started 是子 run 暂停之后才补写的，`at` 是暂停时刻，比子 run 里建出的对象还晚。把它说成开始时间，会让模型把这次建出的对象当成旧的、再做一遍（独立审查发现，踩坑 50）。工具已不在表里时同样判不出 started 是何时写的，也不缀。两句"没执行"不缀，因为调用没开始，就没有开始时间。
+- **与建议形态的两点差异**：① 时间句缀在句末，而不是放在 "Check…" 之前，这样常量仍是实际文案的逐字前缀，宿主判断改用 `startsWith`，规则只有一条。② 不取 `core.tool_call` 的 `at` 兜底：落这几句的路径前提都是已有 started，取不到说明前提不成立，宁可不给也不给一个错的锚点。
+- **真模型核实**（`spikes/outcome-unknown-time`，复原剧本 6e'：复制写调用开始后进程死亡，`list_tasks` 回一条 37 分钟前的同参数任务）：
+
+  | 情形 | 带时间 | 改前文案 |
+  | --- | --- | --- |
+  | 这次没建成（正确答案"没有"） | DeepSeek 5/5、Opus 5.5 5/5 | 两族都 0/5，全部认成旧任务 |
+  | 这次建成（另有开始后 1.4 秒的同参数任务） | 两族 5/5 | 两族 5/5 |
+
+  两族都没有擅自重提；让模型逐字复述工具结果，时间句原样到达。同日停止 / 中断旧探针 DeepSeek 40/40，旧行为不受影响。Claude 走的是号池中转，官方 CF 网关余额待充值，充值后可补测。
+- **AdRate 升级后**：前端或测试如果拿 `=== OUTCOME_UNKNOWN_TEXT` 判断，要改成 `startsWith`。`campaign-copy` Skill 可以改回按创建时间判定。探针里模型的自然说法已经是"开始时间之前创建的是旧任务"，不需要额外教。

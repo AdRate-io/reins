@@ -282,6 +282,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **没声明 `risk` 的工具缺省不可重放：execute 前多落一条 `core.tool_started`** — 断言日志长度 / seq 的用例要算进去（纯计算的测试工具标 `risk: "low"`）；TanStack 宿主工具视图不带 risk，每次执行都会写。续跑见到"有 started 无结果"落"结果未知"不执行；任何工具返回 `subagentPause` 后补写 started，asTool 靠它判"父在补跑同一个调用"。
 - **`validateResume` 只有在状态带 `modelDigest` / `pendingToolsDigest` 且调用方传了 `model` 与基础工具表时才走收窄比对** — 漏传就退回 configHash 整体比对（更严，不会放过）；两个摘要在场即进签名材料，旧状态材料不变。工具摘要取基础工具表，别传 beforeModel 补丁改过的本轮工具表。
 - **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠父日志里本调用是否已有 `core.tool_started` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
+- **"结果未知"句末缀调用开始时间，只经 `outcomeUnknownText(tool, at)`、且只在工具已知且不可重放时缀** — 子代理的 `tool_started` 是暂停后补写的、`at` 不是开始时间（踩坑 50），所以"做了一半"与工具已不在表里的不缀；断言与宿主判断用 `startsWith` 或按 started 的 `at` 拼期望值，别 `===` 常量。改这几句文案先复跑 `spikes/stop-and-interrupt` 与 `spikes/outcome-unknown-time`。
 - **工具返回 `subagentPause` 是暂停不是失败，`ctx.spend` 只加 `tokensSpent` 不追加 `budget_usage`** — 抛错会被 execute 的 catch 吞成 isError；父的 budget_usage 是感知校准上下文的依据，掺入子用量会污染。
 
 ### 脑子模块（brain）

@@ -7,7 +7,8 @@
  * - `RunStop` / `isStopReason`：停止是中止的一种原因。宿主 `controller.abort(new RunStop())`，循环在暂停时把 pending 收尾成
  *   "没执行"等结果，下一个 run 直接问模型；其它中止原因（丢租约、断线）照旧留 pending、恢复时补跑。
  * - `isReplayable`：调用开始动手后中断了，能不能再跑一遍。缺省口径与 approval 的 byRisk 一致：只有 `risk: "low"` 的算可重放。
- * - `startedToolCallIds`：时间线里已经开始动手的调用（`core.tool_started`）。
+ * - `startedToolCallIds` / `toolStartedAt`：时间线里已经开始动手的调用（`core.tool_started`）及其开始时间。
+ * - `outcomeUnknownText` / `withStartedAt`："结果未知"缀上调用开始时间（2026-11-09，AdRate 建议 10）。
  *
  * 模型可见的文案在 2026-11-05 用 DeepSeek 与 Claude 实测过（spikes/stop-and-interrupt；"中断"口径两句同日 DeepSeek 补测），改字前先复跑。
  */
@@ -97,10 +98,47 @@ export function isReplayable(tool: Tool): boolean {
 
 /** 时间线里已经开始动手（有 `core.tool_started`）的 toolCallId */
 export function startedToolCallIds(timeline: Iterable<Event>): Set<string> {
-  const started = new Set<string>()
+  return new Set(toolStartedAt(timeline).keys())
+}
+
+/**
+ * 时间线里已经开始动手的调用 → 其 `core.tool_started` 的 `at`（循环时钟，毫秒）；同一调用若有多条 started，取第一条。
+ * 注意：只有不可重放的调用 started 写在 execute 之前、`at` 才是开始时间；可重放的（子代理）是返回 subagentPause 后补写的，
+ * `at` 是暂停时刻。拿它当开始时间对外说只能经 `outcomeUnknownText`
+ */
+export function toolStartedAt(timeline: Iterable<Event>): Map<string, number> {
+  const started = new Map<string, number>()
   for (const raw of timeline) {
     const e = raw as CoreEvent
-    if (e.type === "core.tool_started") started.add(e.payload.toolCallId)
+    if (e.type === "core.tool_started" && !started.has(e.payload.toolCallId))
+      started.set(e.payload.toolCallId, e.at)
   }
   return started
+}
+
+/**
+ * 给收尾文案句末缀上调用开始时间（AdRate 建议 10）。纯拼接，不判断 `at` 是不是真的开始时间——那是 `outcomeUnknownText` 的事。
+ *
+ * 缀在句末：常量仍是实际文案的逐字前缀，宿主按 `startsWith` 判断不受影响。时间用 `toISOString()` 原样（UTC、毫秒）；
+ * `at` 缺失或超出 Date 可表示范围时原样返回——没有锚点就不编一个，也不能因此让收尾抛错
+ */
+export function withStartedAt(text: string, at: number | undefined): string {
+  if (at === undefined) return text
+  const date = new Date(at)
+  if (Number.isNaN(date.getTime())) return text
+  return `${text} This call started at ${date.toISOString()}.`
+}
+
+/**
+ * "结果未知"的完整文案（真源索引）：runLoop 三处与 TanStack 适配器两处只经这里。
+ *
+ * 模型"先查再定"时要在查回的业务对象里认出哪条是这次调用产生的；参数相同的旧对象只能靠创建时间区分，而模型看不到事件的 `at`。
+ * 只在工具已知且不可重放时缀时间：这时 started 写在 execute 之前，`at` 才是开始时间。工具不在表里时 started 可能是子代理
+ * 暂停后补写的（`at` 是暂停时刻，比它建出的对象还晚），说错的锚点会让模型把这次建出的对象当成旧的、再做一遍，宁可不给。
+ * 同理"做了一半"两句（只落给可重放的调用）不缀
+ */
+export function outcomeUnknownText(tool: Tool | undefined, startedAt: number | undefined): string {
+  return tool !== undefined && !isReplayable(tool)
+    ? withStartedAt(OUTCOME_UNKNOWN_TEXT, startedAt)
+    : OUTCOME_UNKNOWN_TEXT
 }

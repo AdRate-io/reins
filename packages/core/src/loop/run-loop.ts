@@ -49,10 +49,10 @@ import { resolveSocketContributions } from "./static.js"
 import {
   isReplayable,
   isStopped,
-  OUTCOME_UNKNOWN_TEXT,
+  outcomeUnknownText,
   type StopTexts,
-  startedToolCallIds,
   stopTextsOf,
+  toolStartedAt,
 } from "./stop.js"
 import { isSubagentPause } from "./subagent.js"
 import {
@@ -289,16 +289,19 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     const timeline = await readTimeline(log, sessionId, { registry })
     const pending = pendingToolCalls(timeline)
     if (pending.length === 0) return []
-    const started = startedToolCallIds(timeline)
+    const started = toolStartedAt(timeline)
     return append(
       pending.map((call): ToolResultDraft => {
         const { toolCallId, name } = call.payload
         const tool = baseTools.find((t) => t.name === name)
-        const text = !started.has(toolCallId)
-          ? texts.notExecuted
-          : tool !== undefined && isReplayable(tool)
-            ? texts.inProgress
-            : OUTCOME_UNKNOWN_TEXT
+        const startedAt = started.get(toolCallId)
+        // "结果未知"按条件缀开始时间（AdRate 建议 10，口径见 outcomeUnknownText）；"做了一半"不缀——子代理的 started 是暂停后补写的
+        const text =
+          startedAt === undefined
+            ? texts.notExecuted
+            : tool !== undefined && isReplayable(tool)
+              ? texts.inProgress
+              : outcomeUnknownText(tool, startedAt)
         return {
           type: "core.tool_result",
           actor: "tool",
@@ -938,8 +941,8 @@ async function* executeToolCalls(
   }
   const decisions = new Map<string, ApprovalDecisionPayload>()
   const requested = new Set<string>()
-  /** 已开始动手的调用（D2）：续跑时据它判"结果未知"，本批写下 started 也登记进来，避免重复写 */
-  const started = startedToolCallIds(timeline)
+  /** 已开始动手的调用 → 开始时间（D2）：续跑时据它判"结果未知"并给文案缀时间，本批写下 started 也登记进来，避免重复写 */
+  const started = toolStartedAt(timeline)
   for (const raw of timeline) {
     const e = raw as CoreEvent
     if (e.type === "core.approval_decision") decisions.set(e.payload.toolCallId, e.payload)
@@ -967,7 +970,7 @@ async function* executeToolCalls(
     // 中断不重放（D2）：开始动手后中断、没留下结果的不可重放调用，不再执行，落"结果未知"让模型先查再定。
     // 工具不在表里时判不出能不能重放，按不可重放处理（fail-closed）
     if (started.has(toolCallId) && (tool === undefined || !isReplayable(tool))) {
-      yield* await settle(errorResult(OUTCOME_UNKNOWN_TEXT))
+      yield* await settle(errorResult(outcomeUnknownText(tool, started.get(toolCallId))))
       continue
     }
 
@@ -1068,11 +1071,14 @@ async function* executeToolCalls(
     const replayable = isReplayable(tool)
     const markStarted = async function* (): AsyncGenerator<Event, void> {
       if (started.has(toolCallId)) return
-      started.add(toolCallId)
       yield* await flush()
-      yield* await append([
+      const [ev] = await append([
         { type: "core.tool_started", actor: "system", parentId: call.id, payload: { toolCallId } },
       ])
+      if (ev) {
+        started.set(toolCallId, ev.at)
+        yield ev
+      }
     }
     if (!replayable) yield* markStarted()
 
@@ -1104,7 +1110,7 @@ async function* executeToolCalls(
       // 感知 signal 的不可重放工具被中止掐断（如 MCP 把 ctx.signal 传给 callTool）：写请求可能已经到了上游，落"结果未知"而不是"失败"
       result = errorResult(
         !replayable && cfg.signal?.aborted
-          ? OUTCOME_UNKNOWN_TEXT
+          ? outcomeUnknownText(tool, started.get(toolCallId))
           : `Tool execution failed: ${errorMessageOf(err)}`,
       )
     }

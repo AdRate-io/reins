@@ -325,6 +325,7 @@ describe("asTool：停止（2026-11-05 停止语义）", () => {
     const childEvents = await all(store, `${r.result.sessionId}:p1`)
     expect(textOf(childEvents, "c1")).toBe("w1 ok")
     expect(textOf(childEvents, "c2")).toBe(STOPPED_NOT_EXECUTED_TEXT)
+    // 不缀开始时间：子代理的 started 是暂停后补写的，at 是暂停时刻，说成开始时间会误导模型
     expect(textOf(await all(store, r.result.sessionId), "p1")).toBe(STOPPED_IN_PROGRESS_TEXT)
   })
 

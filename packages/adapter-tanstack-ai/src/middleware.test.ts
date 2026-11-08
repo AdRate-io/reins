@@ -28,6 +28,8 @@ import {
   OUTCOME_UNKNOWN_TEXT,
   type Socket,
   type ToolBatch,
+  toolStartedAt,
+  withStartedAt,
 } from "@reinsjs/core"
 import {
   type AnyTool,
@@ -697,10 +699,13 @@ describe("reinsMiddleware：审批", () => {
     const result = (await all(shared.log)).find((e) => e.type === "core.tool_result") as
       | CoreEventOf<"core.tool_result">
       | undefined
+    // "结果未知"缀上这次调用开始动手的时间（AdRate 建议 10），取自日志里那条 tool_started
+    const startedAt = toolStartedAt(await all(shared.log)).get("c1")
+    expect(startedAt).toBeTypeOf("number")
     expect(result?.payload).toMatchObject({
       toolCallId: "c1",
       isError: true,
-      content: [{ type: "text", text: OUTCOME_UNKNOWN_TEXT }],
+      content: [{ type: "text", text: withStartedAt(OUTCOME_UNKNOWN_TEXT, startedAt) }],
     })
     expect(types(await all(shared.log)).filter((t) => t === "tool_started")).toHaveLength(1)
   })

@@ -76,6 +76,12 @@ const MODELS = {
     }),
 }
 
+/** "结果未知"自 2026-11-09 起句末缀开始时间（AdRate 建议 10）：基础句是逐字前缀，后面必须跟时间句 */
+const isOutcomeUnknown = (text) =>
+  typeof text === "string" &&
+  text.startsWith(`${OUTCOME_UNKNOWN_TEXT} This call started at `) &&
+  /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\.$/.test(text)
+
 async function drain(gen) {
   while (true) {
     const step = await gen.next()
@@ -234,7 +240,8 @@ async function trial(modelName, scenario) {
   }
   if (expected) {
     const got = await resultText(log, sessionId, expected[0])
-    if (got !== expected[1]) throw new Error(`stage 1 landed ${JSON.stringify(got)} for ${expected[0]}`)
+    const ok = expected[1] === OUTCOME_UNKNOWN_TEXT ? isOutcomeUnknown(got) : got === expected[1]
+    if (!ok) throw new Error(`stage 1 landed ${JSON.stringify(got)} for ${expected[0]}`)
   }
 
   // ---- 第二段：真模型接着跑 ----
@@ -261,7 +268,7 @@ async function trial(modelName, scenario) {
     }),
   )
   // 崩溃场景：核对"结果未知"确是续跑时循环自己落的
-  if (crashed && (await resultText(log, sessionId, "c1")) !== OUTCOME_UNKNOWN_TEXT)
+  if (crashed && !isOutcomeUnknown(await resultText(log, sessionId, "c1")))
     throw new Error("resume did not land the outcome-unknown result for c1")
   // 审批场景：新的改预算会再次挂起审批，挂起的调用也算"提出了"
   if (result.status === "paused")

@@ -45,7 +45,7 @@ import {
   type MaybePromise,
   type MemoryStore,
   type ModelRef,
-  OUTCOME_UNKNOWN_TEXT,
+  outcomeUnknownText,
   type Principal,
   type ProjectionStrategy,
   pendingToolCalls,
@@ -53,7 +53,6 @@ import {
   readTimeline,
   resolveSocketContributions,
   type Socket,
-  startedToolCallIds,
   type TokenEstimator,
   type TokenUsage,
   type Tool,
@@ -65,6 +64,7 @@ import {
   type TurnDecision,
   toolBatchOf,
   toolResultTrust,
+  toolStartedAt,
   toolsBoundDrafts,
   uuidv7,
 } from "@reinsjs/core"
@@ -163,8 +163,8 @@ type Verdict =
   | { kind: "rewrite"; args: unknown }
   | { kind: "block"; text: string }
   | { kind: "await" }
-  /** 开始动手后中断、没留下结果的不可重放调用（与 runLoop 同一判据）：不执行，落"结果未知" */
-  | { kind: "unknown" }
+  /** 开始动手后中断、没留下结果的不可重放调用（与 runLoop 同一判据）：不执行，落"结果未知"（判定时就定稿，两处落点同一句） */
+  | { kind: "unknown"; text: string }
 
 interface TurnState {
   ctx: TurnContext
@@ -567,7 +567,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (e.type === "core.approval_request") requested.add(e.payload.toolCallId)
     }
 
-    const started = startedToolCallIds(timeline)
+    const started = toolStartedAt(timeline)
     const interrupts: ReturnType<ReinsApprovalInterrupt["interrupt"]>[] = []
     for (const call of pending) {
       const { toolCallId, name } = call.payload
@@ -575,7 +575,10 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       const tool = tctx.tools.find((t) => t.name === name)
       // 中断不重放（与 runLoop 同一判据）：工具不在表里按不可重放处理
       if (started.has(toolCallId) && (tool === undefined || !isReplayable(tool))) {
-        s.verdicts.set(toolCallId, { kind: "unknown" })
+        s.verdicts.set(toolCallId, {
+          kind: "unknown",
+          text: outcomeUnknownText(tool, started.get(toolCallId)),
+        })
         continue
       }
       const decided = decisions.get(toolCallId)
@@ -723,7 +726,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
 
     if (verdict?.kind === "block" || verdict?.kind === "unknown") {
       // 拦截：不经 afterTool，留痕（如 approval_decision）先落
-      const text = verdict.kind === "block" ? `Tool call blocked: ${verdict.text}` : OUTCOME_UNKNOWN_TEXT
+      const text = verdict.kind === "block" ? `Tool call blocked: ${verdict.text}` : verdict.text
       await settle(ctx, s, resultDraft(call, info.toolCallId, info.toolName, errorResult(text)))
       return
     }
@@ -922,7 +925,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       const v = s?.verdicts.get(hookCtx.toolCallId)
       if (!s || !v) return undefined
       if (v.kind === "block") return { type: "skip", result: { error: `Tool call blocked: ${v.text}` } }
-      if (v.kind === "unknown") return { type: "skip", result: { error: OUTCOME_UNKNOWN_TEXT } }
+      if (v.kind === "unknown") return { type: "skip", result: { error: v.text } }
       // 引擎逐个 await 本钩子后立刻执行该工具，所以这里就是"execute 之前"：不可重放的先记开始动手（与 runLoop 同一判据；
       // TanStack 宿主工具的视图不带 risk，按缺省口径一律算写工具）
       const tool = toolNamed(s, hookCtx.toolName)

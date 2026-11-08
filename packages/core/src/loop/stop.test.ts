@@ -19,12 +19,15 @@ import {
   isReplayable,
   isStopReason,
   OUTCOME_UNKNOWN_TEXT,
+  outcomeUnknownText,
   RunStop,
   STOPPED_IN_PROGRESS_TEXT,
   STOPPED_NOT_EXECUTED_TEXT,
   STOPPED_NOTE,
   startedToolCallIds,
   stopTextsOf,
+  toolStartedAt,
+  withStartedAt,
 } from "./stop.js"
 import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
@@ -65,6 +68,13 @@ async function resultTexts(log: InMemoryEventLog): Promise<Record<string, string
     out[e.payload.toolCallId] = first?.type === "text" ? first.text : ""
   }
   return out
+}
+
+/** "动过手"的收尾文案应有的样子：基础句 + 该调用 tool_started 的 at（AdRate 建议 10）。没有 started 即用例前提不成立，直接失败 */
+async function startedText(log: InMemoryEventLog, toolCallId: string, base: string): Promise<string> {
+  const at = toolStartedAt(await all(log)).get(toolCallId)
+  expect(at, `${toolCallId} 应有 tool_started`).toBeTypeOf("number")
+  return withStartedAt(base, at)
 }
 
 /** 写工具（没声明 risk，即不可重放），记下执行过的入参 */
@@ -128,6 +138,40 @@ describe("RunStop / isStopReason / isReplayable", () => {
     )
     for (const t of [INTERRUPTED_NOT_EXECUTED_TEXT, INTERRUPTED_IN_PROGRESS_TEXT])
       expect(t).not.toMatch(/user/)
+  })
+
+  it("withStartedAt：句末缀 UTC 毫秒 ISO 时间，常量仍是逐字前缀；没有锚点原样返回", () => {
+    const at = Date.UTC(2026, 10, 8, 16, 8, 2, 123)
+    const text = withStartedAt(OUTCOME_UNKNOWN_TEXT, at)
+    expect(text).toBe(`${OUTCOME_UNKNOWN_TEXT} This call started at 2026-11-08T16:08:02.123Z.`)
+    expect(text.startsWith(OUTCOME_UNKNOWN_TEXT)).toBe(true)
+    // 超出 Date 可表示范围（宿主注入了离谱的 now）也原样返回，不能让收尾抛错
+    for (const missing of [undefined, Number.NaN, Number.POSITIVE_INFINITY, 8.64e15 + 1])
+      expect(withStartedAt(OUTCOME_UNKNOWN_TEXT, missing)).toBe(OUTCOME_UNKNOWN_TEXT)
+  })
+
+  it("outcomeUnknownText：只有工具已知且不可重放时缀时间（此时 started 写在 execute 之前）", () => {
+    const at = Date.UTC(2026, 10, 8, 16, 8, 2, 123)
+    const write: Tool = { name: "w", description: "", inputSchema: {} }
+    const expert: Tool = { name: "e", description: "", inputSchema: {}, replayable: true }
+    expect(outcomeUnknownText(write, at)).toBe(withStartedAt(OUTCOME_UNKNOWN_TEXT, at))
+    expect(outcomeUnknownText(write, at)).not.toBe(OUTCOME_UNKNOWN_TEXT)
+    expect(outcomeUnknownText(write, undefined)).toBe(OUTCOME_UNKNOWN_TEXT)
+    expect(outcomeUnknownText(undefined, at)).toBe(OUTCOME_UNKNOWN_TEXT)
+    expect(outcomeUnknownText(expert, at)).toBe(OUTCOME_UNKNOWN_TEXT)
+  })
+
+  it("toolStartedAt：取 tool_started 的 at，同一调用多条取第一条；startedToolCallIds 由它派生", () => {
+    const started = (toolCallId: string, at: number) =>
+      ({ type: "core.tool_started", at, payload: { toolCallId } }) as unknown as Event
+    const timeline = [started("a", 10), started("b", 20), started("a", 30)]
+    expect(toolStartedAt(timeline)).toEqual(
+      new Map([
+        ["a", 10],
+        ["b", 20],
+      ]),
+    )
+    expect(startedToolCallIds(timeline)).toEqual(new Set(["a", "b"]))
   })
 
   it("缺省只有 risk: low 可重放；replayable 显式覆盖", () => {
@@ -244,6 +288,7 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
     expect(result.interruptions[0]?.kind === "host" && result.interruptions[0].note).not.toMatch(/user/)
     expect(await resultTexts(log)).toEqual({
       c1: INTERRUPTED_NOT_EXECUTED_TEXT,
+      // 子代理"做了一半"不缀时间：它的 started 是暂停后补写的，at 不是开始时间
       c2: INTERRUPTED_IN_PROGRESS_TEXT,
     })
   })
@@ -455,7 +500,7 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
     const stop = new AbortController()
     stop.abort(new RunStop())
     await drain(runLoop(cfgOf(lowering, log, { tools: [hang], signal: stop.signal })))
-    expect((await resultTexts(log)).c1).toBe(OUTCOME_UNKNOWN_TEXT)
+    expect((await resultTexts(log)).c1).toBe(await startedText(log, "c1", OUTCOME_UNKNOWN_TEXT))
 
     // 子代理：返回 subagentPause 后补写了 started，父被停止时落"做了一半"
     const log2 = new InMemoryEventLog()
@@ -547,14 +592,16 @@ describe("D2：中断后写工具不重放", () => {
     const { result } = await drain(runLoop(cfgOf(lowering, log, { tools: [budget] })))
     expect(result.status).toBe("done")
     expect(calls).toBe(1)
-    expect((await resultTexts(log)).c1).toBe(OUTCOME_UNKNOWN_TEXT)
-    // 模型看到的是"结果未知"那条 isError 结果
+    const unknown = await startedText(log, "c1", OUTCOME_UNKNOWN_TEXT)
+    expect((await resultTexts(log)).c1).toBe(unknown)
+    // 模型看到的是"结果未知"那条 isError 结果，带这次调用开始动手的时间
+    expect(unknown).toMatch(/ This call started at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\.$/)
     const seen = lowering.requests[1]?.events.find((e) => e.type === "core.tool_result") as
       | CoreEventOf<"core.tool_result">
       | undefined
     expect(seen?.payload).toMatchObject({
       isError: true,
-      content: [{ type: "text", text: OUTCOME_UNKNOWN_TEXT }],
+      content: [{ type: "text", text: unknown }],
     })
   })
 
@@ -598,6 +645,7 @@ describe("D2：中断后写工具不重放", () => {
     const lowering = new ScriptedLowering([{ drafts: [callTool("c1", "hang", {})] }, { drafts: [say("ok")] }])
     await crashDuringTool(cfgOf(lowering, log, { tools: [hang], input: "go" }))
     await drain(runLoop(cfgOf(lowering, log, { tools: [] })))
+    // 工具不在表里：判不出 started 是不是执行前写的（子代理是暂停后补写），不缀时间
     expect((await resultTexts(log)).c1).toBe(OUTCOME_UNKNOWN_TEXT)
   })
 
@@ -619,7 +667,7 @@ describe("D2：中断后写工具不重放", () => {
       await drain(runLoop(cfgOf(lowering, log, { tools: [aware], input: "go", signal: ac.signal })))
       const text = (await resultTexts(log)).c1
       if (risk) expect(text).toMatch(/^Tool execution failed/)
-      else expect(text).toBe(OUTCOME_UNKNOWN_TEXT)
+      else expect(text).toBe(await startedText(log, "c1", OUTCOME_UNKNOWN_TEXT))
     }
   })
 
