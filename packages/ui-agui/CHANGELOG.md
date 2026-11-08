@@ -1,5 +1,13 @@
 # @reinsjs/ui-agui
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies [fba2410]
+  - @reinsjs/core@0.13.0
+  - @reinsjs/server@0.7.2
+
 ## 0.5.1
 
 ### Patch Changes

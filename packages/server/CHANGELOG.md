@@ -1,5 +1,12 @@
 # @reinsjs/server
 
+## 0.7.2
+
+### Patch Changes
+
+- Updated dependencies [fba2410]
+  - @reinsjs/core@0.13.0
+
 ## 0.7.1
 
 ### Patch Changes

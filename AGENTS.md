@@ -132,7 +132,7 @@
                           └── @reinsjs/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。当前版本：core 0.12.0、brain 0.8.5、lowering-fetch 0.6.3、eval / lowering-pi 0.4.7、agent 0.6.4、server 0.7.1、ui-agui 0.5.1、store-pg 0.4.2、其余 0.3.9。
+脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。当前版本：core 0.13.0、brain 0.8.6、lowering-fetch 0.6.4、eval / lowering-pi 0.4.8、agent 0.6.5、server 0.7.2、ui-agui 0.5.2、store-pg 0.4.3、其余 0.3.10。
 
 ## 技术栈
 

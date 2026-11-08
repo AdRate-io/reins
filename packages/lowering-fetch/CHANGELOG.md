@@ -1,5 +1,12 @@
 # @reinsjs/lowering-fetch
 
+## 0.6.4
+
+### Patch Changes
+
+- Updated dependencies [fba2410]
+  - @reinsjs/core@0.13.0
+
 ## 0.6.3
 
 ### Patch Changes

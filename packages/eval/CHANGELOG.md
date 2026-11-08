@@ -1,5 +1,12 @@
 # @reinsjs/eval
 
+## 0.4.8
+
+### Patch Changes
+
+- Updated dependencies [fba2410]
+  - @reinsjs/core@0.13.0
+
 ## 0.4.7
 
 ### Patch Changes

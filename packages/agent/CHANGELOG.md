@@ -1,5 +1,14 @@
 # @reinsjs/agent
 
+## 0.6.5
+
+### Patch Changes
+
+- Updated dependencies [fba2410]
+  - @reinsjs/core@0.13.0
+  - @reinsjs/server@0.7.2
+  - @reinsjs/ui-agui@0.5.2
+
 ## 0.6.4
 
 ### Patch Changes

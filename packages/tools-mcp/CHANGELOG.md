@@ -1,5 +1,12 @@
 # @reinsjs/tools-mcp
 
+## 0.3.10
+
+### Patch Changes
+
+- Updated dependencies [fba2410]
+  - @reinsjs/core@0.13.0
+
 ## 0.3.9
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @reinsjs/store-pg
 
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies [fba2410]
+  - @reinsjs/core@0.13.0
+
 ## 0.4.2
 
 ### Patch Changes
