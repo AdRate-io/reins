@@ -808,6 +808,13 @@ describe("input 草稿的服务端白名单（上线前审查修复）", () => {
       content: [{ type: "text", text: "a.txt" }],
       isError: false,
     })
+    // 同一结果重发（客户端没收到响应而重试）：已不在 pending → 409，日志里恰一条（README 写明的送达口径）
+    const dup = await handler(fill("c1"))
+    expect(dup.status).toBe(409)
+    expect(await dup.json()).toMatchObject({ error: "unknown_tool_call" })
+    expect(
+      (await logged(log, "s1")).filter((e) => e.type === "core.tool_result" && e.payload.toolCallId === "c1"),
+    ).toHaveLength(1)
 
     // 服务端工具的 pending 调用不许由客户端回填 → 400
     const serverPending: ScriptedTurn[] = [{ drafts: [callTool("c9", "danger", { x: 1 })] }]
