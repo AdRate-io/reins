@@ -1,5 +1,12 @@
 # @reinsjs/eval
 
+## 0.4.9
+
+### Patch Changes
+
+- Updated dependencies [884c840]
+  - @reinsjs/core@0.14.0
+
 ## 0.4.8
 
 ### Patch Changes
