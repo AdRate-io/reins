@@ -690,3 +690,113 @@ Execution was interrupted before a result was recorded; the outcome is unknown. 
 
   两族都没有擅自重提；让模型逐字复述工具结果，时间句原样到达。同日停止 / 中断旧探针 DeepSeek 40/40，旧行为不受影响。Claude 走的是号池中转，官方 CF 网关余额待充值，充值后可补测。
 - **AdRate 升级后**：前端或测试如果拿 `=== OUTCOME_UNKNOWN_TEXT` 判断，要改成 `startsWith`。`campaign-copy` Skill 可以改回按创建时间判定。探针里模型的自然说法已经是"开始时间之前创建的是旧任务"，不需要额外教。
+
+### AdRate 发版后核实（2026-11-09）
+
+升级到 core 0.13.0（agent 0.6.5 / brain 0.8.6 / tools-mcp 0.3.10 等，单一 core）。npm 官方源发布包对比：core 只改「结果未知」三处落点与新导出，其余包 `dist` 逐字未变；AdRate 无 `=== OUTCOME_UNKNOWN_TEXT`，无代码改动。eval 复原剧本 6e'（DeepSeek）：5/5 据时间判定「列表里的同参数任务早于本次开始、这次没建成」，改前同一夹具全部认成旧任务。`campaign-copy` Skill §7 已改回按时间判定；确认没建成且用户已要求继续时允许按原参数重提一次（AdRate 产品取舍）。
+
+## AdRate 建议 11：`RunLease` 提供只读的「是否持有中」查询
+
+### 现状
+
+`RunLease` 只有 `acquire` / `renew` / `release`（store-pg 0.4.3 `PgRunLease` 同此，2026-11-09 按 npm 官方源核对）。宿主想知道「这个会话现在有没有 run 在跑」，没有不占锁的办法：拿 `acquire` 探测，探测成功就真把锁占了，还得立刻 `release`，期间正好有 run 要起步就会被挡掉一次。
+
+### 问题
+
+AdRate 的会话删除要求「运行中拒绝，提示先停止」（删除与 run 收尾抢跑会留下半截计费与审计）。现在只能宿主直接读 `reins_runs`，按 store-pg 的抢占条件自己写互补判据：持有中 ⇔ `expires_at >= (extract(epoch from now()) * 1000)::bigint`。这让宿主依赖了存储表结构和 acquire 的内部 SQL，升级 store-pg 时要人工 diff。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- `RunLease` 加一个可选方法，例如 `isHeld(sessionId): Promise<boolean>`（或返回 `{ owner, expiresAt } | null`），语义是「此刻 acquire 会因别人持有而失败」，与 acquire 的抢占条件同源、同一时钟；
+- 内存实现与 store-pg 实现各补一份，契约测试覆盖「刚过期」「同 owner 续租」两个边界。
+
+### 边界
+
+只读，不改租约语义，不承诺查询后状态不变（调用方自己接受查询与后续动作之间的窗口）。
+
+### AdRate 侧依赖
+
+`agentSessionService.isRunActive`（`src/services/agent/agent-session.service.ts`）目前直读 `reins_runs`，注释已标明与 store-pg 口径同源、升级时一并 diff。上游提供后改调该方法、删掉直读 SQL；之前不写兜底。
+
+### reins 回复（2026-11-15）
+
+采纳，并入建议 12 一起做：`RunLease` 加可选的批量只读方法 `held(sessionIds): Promise<Set<string>>`，判定与 renew 的"未过期"同一表达式、同一库时钟；内存版与 pg 版各一份，一致性套件覆盖"刚过期""同 owner 续租"。删除会话前的检查改调 `held([id])`。
+
+---
+
+# 会话运行状态建议（2026-11-15）
+
+> 来自 AdRate 灰度前体验优化（会话列表要显示「进行中 / 等你处理 / 异常 / 未读」）的方案评估。依据 npm 官方源 core 0.13.0 / server 0.7.2 / store-pg 0.4.3 / brain 0.8.6 的 `dist` 源码。
+
+## 总览
+
+| # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 12 | 持久化每个会话最近一次 run 的结果，并提供按一批会话查询运行状态的接口 | core / server / store-pg（+ 内存实现） | 宪法二：run 怎么结束的是运行事实，目前只活在内存信号里，不在任何存储上 | 中，AdRate 会话列表状态标识依赖它（建议 11 可并入） |
+
+## AdRate 建议 12：会话运行状态可持久查询
+
+### 现状
+
+- **是否在跑**：只有 `reins_runs` 租约行，run 结束时 `release` 直接 `DELETE`。
+- **怎么结束的**：只能 `run.subscribe()` 等最终信号（`result.status` 为 `done` / `paused`（带 `reason` 与 `interruptions`）/ `handoff` / `error`，或 `kind: "error"`）。这个信号只推给当时在订阅的人，**不写进任何存储**；时间线里也没有对应的「run 结束」事件。
+- **等审批的起点**：`approval_request` 事件的 `at` 在时间线上，但宿主要知道「这个会话现在有没有未决审批、从什么时候开始等」，只能自己读日志尾部去推。
+
+### 问题
+
+多会话界面普遍要在列表上标出每个会话的状态（正在跑、等人确认、出错了、跑完没看）。宿主现在只能在 run 登记表外包一层，自己订阅最终信号、自己写一张状态表。AdRate 按这个思路写方案时，碰到的几处问题都源于状态不在框架里：
+
+1. **假异常窗口**：`ActiveRun.finish` 先广播终态、随即释放租约，订阅方要等微任务才醒，所以租约几乎一定先于宿主的终态写入消失。中间这段时间去查，会看到「不在跑、也没有终态」，被判成异常（中途被打断）。宿主只能靠「最后一个运行中的会话消失后再多查一次」来纠正。
+2. **新旧 run 互相覆盖**：同一会话上一个 run 的终态写得晚、下一个 run 已经起跑时，宿主要靠「起跑时刻相等」做条件更新来防止覆盖；而数据库时间是微秒、JS 是毫秒，两处都要截到毫秒，否则条件恒不成立。宿主拿不到 run 自己的标识，只能用时刻冒充。
+3. **终态分类跟着版本漂**：宿主把信号翻译成自己的终态枚举（`paused` 再按 `reason` / `interruptions` 拆），reins 增减暂停原因或调整结构时，宿主的映射静默失准。
+4. **审批等待起点对不上**：宿主拿不到未决审批的请求时刻，只能用 run 结束时刻近似，同一轮审批请求之后还有慢工具时，列表上的「等你处理」比确认卡多挂一段时间。
+5. **进程被杀**：拿不到终态，只能约定「起跑时清空、到最后都没写上」= 被打断，语义靠宿主自己维持。
+
+这些都是 reins 自己掌握的运行事实，交给宿主在外面拼，每个宿主都要重新踩一遍。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- **结束时落一条会话级的运行结果**，与释放租约在同一步完成（同一事务或先写结果后删租约），保证任何时刻查询都处于「在跑」或「有结果」之一，不存在两者皆无的窗口（被进程杀死的除外，见下）。内容至少包括：
+  - `runId`（或其他能区分同会话前后两个 run 的标识）；
+  - `startedAt` / `endedAt`（毫秒，与事件 `at` 同一时钟）；
+  - `status`：`done` / `paused` / `handoff` / `error`；`paused` 带 `reason` 与是否有 `client_tool` 中断；`error` 带 `category`。
+- **起跑时也落一笔**（`runId` + `startedAt`，结果为空）。这样「有起跑记录、无结果、租约已过期」就是明确的「被打断」，宿主不用自己约定。
+- **未决审批**：当结果是停在审批时，带上最早一条未决 `approval_request` 的 `at`。有效期由宿主配置（`ttlMs`），宿主自己加。
+- **批量查询**：例如 `runStates(sessionIds): Promise<Map<sessionId, { running: boolean; lastRun: {...} | null }>>`，`running` 与 acquire 的抢占条件同源、同一时钟（即建议 11 的 `isHeld` 的批量版）。会话列表一次要查几十个会话，逐个查不现实。
+- 存储侧：store-pg 可以给 `reins_runs` 加列、不再删行，或另建一张表；内存实现同步。
+
+### 边界
+
+- 只记「最近一次 run」，不做历史；历史在时间线和宿主自己的事件里。
+- 不涉及「用户是否看过」：已读是宿主的产品概念（reins 没有用户），AdRate 自己存 `last_read_at`。
+- 不推送：宿主自己决定轮询频率，reins 只保证查询结果一致。
+- 状态表的 DDL 变化按 store-pg 惯例由宿主补迁移，AdRate 可以接受。
+
+### 与建议 11 的关系
+
+建议 11（`RunLease.isHeld`）解决的是单个会话「是否在跑」。如果本建议采纳，`running` 字段就覆盖了它；AdRate 的删除会话校验与会话列表都改调同一个接口，建议 11 可并入本条一起处置。
+
+### AdRate 侧依赖
+
+灰度前体验优化方案（`2026-11-15-灰度前体验优化方案.md`）第二节「会话列表状态标识」暂缓实施，等本建议发版后按新接口做：
+
+- `agent_session` 只加 `last_read_at` 一列，不再加 `last_run_outcome` / `last_run_at`；
+- 删掉方案 2.3 的起跑 / 终态写入外包层、毫秒截断与条件更新；`agent-product-events.ts` 的产品事件旁听保留不动；
+- 删掉方案 2.4 的「最后一个运行中会话消失后再多查一次」；
+- 方案 2.5 的「确认卡有效期起点」偏差随之消失；
+- `agentSessionService.isRunActive` 的 `reins_runs` 直读 SQL 一并删除。
+
+在发版之前，AdRate 不写兜底代码，其他四批照常推进。
+
+### reins 回复（2026-11-15）
+
+采纳需求，形态有调整（方案 `docs/implementation-plans/2026-11-15-会话运行状态.md`）。先更正一处现状：四种结局里暂停（`run_paused`，且一定是 run 的最后一条）、交接（`core.handoff`）已经在时间线上，出错有 `core.error` 但分不清是不是终结的那条；真正缺的是"正常跑完"的记号。所以修在时间线，不另建状态表：
+
+- **不变的**：建议里要的信息都给——是否在跑、结局分类（由 reins 维护）、审批等待起点（取 `approval_request` 自己的 `at`）、能区分前后两个 run 的标识、批量查询、进程被杀判"中断"、查询任何时刻都没有"不在跑也没结局"的空档；已读、推送仍不归 reins；AdRate 侧删外包层 / 毫秒截断 / 条件更新 / "再查一次" / `reins_runs` 直读的计划照旧。
+- **改了的**：
+  1. 每个 run 恰好以一条终结事件收尾：暂停仍是 `run_paused`，done / handoff / error 新增模型不可见的 `core.run_ended`。结局在时间线里，`agent.run()`、asTool 子会话、TanStack 路径也都覆盖。
+  2. 分类只走 core 纯函数 `runStatusOf`，结果是 `running` / `idle` / `unknown` / `interrupted` / `done` / `paused` / `handoff` / `error`；`paused` 带 `reason` 与 `awaiting`（每个等答复的调用：审批带 `requestedAt`，客户端工具单列 `client_tool`，子代理带 `childSessionId`）。
+  3. 批量查询是 store-pg 的 `pgRunStates(client, sessionIds)`：一条 SQL 取租约与每个会话最后一条 run 标记，单语句即快照；终结事件一定在释放租约前写入，所以没有空档。依赖 run 经租约登记（`createAgent` + `pgStores` 缺省即是）。
+  4. **不建状态表、不加列，AdRate 不用做 DDL 迁移。**
+  5. 不提供 `startedAt` / `runId`：区分前后 run 用结局事件的 `seq`，"跑完没看"拿 `endedAt` 与 `last_read_at` 比。
+- **AdRate 需要知道**：升级前跑完的老会话判 `unknown`（不是"中断"），列表可显示为无状态；含 `run_ended` 的会话老版本 core 读不了，多实例要同时升级、不能回滚到 0.13。发版后在此补"reins 处置"。
