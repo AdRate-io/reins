@@ -7,10 +7,13 @@ import { type Event, StoreError } from "@reinsjs/core"
 export const DB_NOW_MS = "(extract(epoch from now()) * 1000)::bigint"
 
 /**
- * 租约"持有中"的判据（真源索引）：`reins_runs` 行未过期。renew 与 `pgRunStates` 共用；acquire 的抢占条件是它的取反
- * （`expires_at < now`），写法不同、口径由用例锁住
+ * 租约"持有中"的判据（真源索引）：`reins_runs` 行未过期。renew、`pgRunStates` 与 acquire（抢占条件是 `NOT (…)`）都调它，
+ * 别名在这一处拼上，调用方不做字符串拼接。
+ * @param table 表名或别名（包内常量，不来自外部输入）
  */
-export const HELD_SQL = `expires_at >= ${DB_NOW_MS}`
+export function heldSql(table: string): string {
+  return `${table}.expires_at >= ${DB_NOW_MS}`
+}
 
 /**
  * 读侧拿到的是 `data::text`，由本包自己解析——驱动的 json 解析器与宿主 transform 都碰不到事件（踩坑 47）。

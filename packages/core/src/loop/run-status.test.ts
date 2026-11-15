@@ -230,6 +230,60 @@ describe("终结事件不变式：每个出口恰好一条终结事件", () => {
     }
   })
 
+  it("宿主中止的四个暂停出口：连接阶段被掐 / 重试等待中 / 流里 aborted / 补跑批中途", async () => {
+    // 连接阶段被掐：降级层抛出时 signal 已中止
+    const c1 = new AbortController()
+    const connect = await runOnce(new InMemoryEventLog(), [], {
+      input: "hi",
+      signal: c1.signal,
+      lowering: new ScriptedLowering(() => {
+        c1.abort()
+        return { drafts: [], throws: new Error("aborted") }
+      }),
+    })
+    // 重试等待中被中止
+    const c2 = new AbortController()
+    const waiting = await runOnce(new InMemoryEventLog(), [{ drafts: [], throws: new Error("ECONNRESET") }], {
+      input: "hi",
+      signal: c2.signal,
+      retry: { sleep: async () => c2.abort() },
+    })
+    // 流里 stopReason: "aborted"
+    const streamed = await runOnce(
+      new InMemoryEventLog(),
+      [{ drafts: [say("半")], outcome: { stopReason: "aborted" } }],
+      { input: "hi" },
+    )
+    // 补跑批中途：上个 run 在工具批中途被中止留下 pending，新 run 补跑时又被中止
+    let current = new AbortController()
+    const halt = defineTool<Record<string, never>>({
+      name: "halt",
+      risk: "low",
+      description: "",
+      inputSchema: {},
+      execute: () => {
+        current.abort()
+        return "ok"
+      },
+    })
+    const log = new InMemoryEventLog()
+    const first = await runOnce(log, [{ drafts: [callTool("c1", "halt", {}), callTool("c2", "halt", {})] }], {
+      input: "hi",
+      tools: [halt],
+      signal: current.signal,
+    })
+    expect(first.result.status).toBe("paused")
+    current = new AbortController()
+    const replay = await runOnce(log, [], { tools: [halt], signal: current.signal })
+    expect(replay.added.some((e) => e.type === "core.tool_result")).toBe(true)
+
+    for (const { result, added } of [connect, waiting, streamed, first, replay]) {
+      expect(result).toMatchObject({ status: "paused", reason: "host" })
+      expectInvariant(added)
+      expect(tail(added).payload).not.toHaveProperty("stopped")
+    }
+  })
+
   it("续跑 run：第一条是 tools_bound，排在 run_resumed / approval_decision 之前", async () => {
     const log = new InMemoryEventLog()
     const first = await pausedOnApproval(log)

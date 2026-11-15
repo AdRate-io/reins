@@ -223,7 +223,8 @@ export interface RunPausedPayload {
 /**
  * 暂停那一刻在等外部答复的一个调用：
  * - approval：有 approval_request、还没有 approval_decision；`requestedAt` 是那条请求的 `at`（每个调用只写一次，跨 run 不变）；
- * - client_tool：客户端工具（`isClientTool`），等宿主回填 tool_result；
+ * - client_tool：pending 且是客户端工具（`isClientTool`），等宿主回填 tool_result。只说"在等"，不保证已下发：
+ *   工具批中途被非停止原因中止时，排在后面的客户端调用宿主还没收到，续跑时循环才会再发出；
  * - subagent：本次 run 里子代理暂停冒泡，按 `childSessionId` 再查子会话的状态。
  */
 export type AwaitingCall =

@@ -33,6 +33,7 @@ import {
   toolStartedAt,
   withStartedAt,
 } from "@reinsjs/core"
+import type { AnyChatMiddleware } from "@tanstack/ai"
 import {
   type AnyTool,
   chat,
@@ -109,6 +110,8 @@ interface Fixture {
     abortController?: AbortController
     /** 每收到一个 chunk 调一次（取消时机用） */
     onChunk?: (chunk: StreamChunk) => void
+    /** 宿主自己的中间件，排在 reins 之后 */
+    hostMiddleware?: AnyChatMiddleware[]
   }): Promise<StreamChunk[]>
 }
 
@@ -148,7 +151,7 @@ function fixture(
           messages: input.messages ?? [],
           tools: input.tools ?? [addTool],
           systemPrompts: input.systemPrompts ?? ["你是计算器"],
-          middleware: [middleware],
+          middleware: [middleware, ...(input.hostMiddleware ?? [])],
           // 漏登记在类型层就会被 ReinsChatMiddleware 的第二个类型参数报出来，这里靠 unknown 绕过去只为测运行时那道闸
           ...(input.withoutInterrupts ? {} : { interrupts: [reinsApprovalInterrupt] }),
           agentLoopStrategy: maxIterations(10),
@@ -692,6 +695,25 @@ describe("reinsMiddleware：审批", () => {
     expect(f2.adapter.calls[0]?.messages?.map((m) => m.role)).toEqual(["user", "assistant", "tool"])
   })
 
+  it("宿主中间件按 stop 策略结束续跑：引擎调 onFinish 但批准的调用没执行，不写 run_ended(done)、判 unknown", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    const sockets = [approval({ ask: ["deploy"] })]
+    const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "prod" })] }], sockets, {}, shared)
+    const chunks = await f.run({ messages: [user("上线")], tools: [deployTool], runId: "run1" })
+    const { interrupt, runId } = interruptOf(chunks)
+    const f2 = fixture([{ blocks: [say("never")] }], sockets, {}, shared)
+    await f2.run({
+      messages: history(),
+      tools: [deployTool],
+      parentRunId: runId,
+      resume: [resumeItem(interrupt, { approved: true, by: "boss" })],
+      hostMiddleware: [{ name: "host-stop", onInterruptResolution: () => ({ toolResume: "stop" }) }],
+    })
+    const events = await all(f.log)
+    expect(types(events).slice(6)).toEqual(["tools_bound", "approval_decision", "run_resumed"])
+    expect(runStatusOf({ held: false, lastMarker: lastRunMarker(events) })).toEqual({ state: "unknown" })
+  })
+
   it("中断不重放（与 runLoop 同一判据）：批准后执行途中进程死亡（日志有 tool_started 无结果），续跑不再执行、落'结果未知'", async () => {
     const shared = { log: new InMemoryEventLog() }
     const sockets = [approval({ ask: ["deploy"] })]
@@ -1149,6 +1171,21 @@ describe("reinsMiddleware：终结记号（会话运行状态）", () => {
     expect(terminals(events)).toHaveLength(1)
     expect(types(events).slice(-2)).toEqual(["handoff", "run_ended"])
     expect(events.at(-1)?.payload).toEqual({ status: "handoff", toSessionId: "s2" })
+  })
+
+  it("客户端工具：适配器落 run_paused(host)，恰好一条终结事件", async () => {
+    const pickTool = toolDefinition({
+      name: "pick",
+      description: "让用户选",
+      inputSchema: { type: "object", properties: {} },
+    })
+    const f = fixture([{ blocks: [callTool("c1", "pick", {})] }, { blocks: [say("never")] }])
+    await f.run({ messages: [user("选一个")], tools: [pickTool] })
+    const events = await all(f.log)
+    expect(events.some((e) => e.type === "core.tool_call")).toBe(true)
+    expect(events.some((e) => e.type === "core.tool_result")).toBe(false)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ type: "core.run_paused", payload: { reason: "host" } })
   })
 
   it("Socket 要求暂停：run_paused 之后 onFinish 不再写 run_ended", async () => {

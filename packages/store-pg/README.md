@@ -64,7 +64,7 @@ async function canDelete(client: PgClient, sessionId: string): Promise<boolean> 
 }
 ```
 
-`paused.awaiting` lists the calls waiting on an answer from outside: an approval (with `requestedAt`, the time the request was written), a client tool, or a sub-agent (with its `childSessionId` — query that session for its own status). A user stop sets `stopped: true` and leaves `awaiting` empty. Use `seq` to tell one run's outcome from the next.
+`paused.awaiting` lists the calls waiting on an answer from outside: an approval (with `requestedAt`, the time the request was written), a client tool (pending — not a promise the client has already received it), or a sub-agent (with its `childSessionId` — query that session for its own status). A user stop sets `stopped: true` and leaves `awaiting` empty. Use `seq` to tell one run's outcome from the next.
 
 "Running" is only known for runs started through `@reinsjs/server`'s handler with a lease registry — `createAgent` with `pgStores` sets that up. `agent.run()`, sub-agent runs and the TanStack adapter take no lease: their outcomes show up, but while they run the session reads as `interrupted` or `unknown`. Other windows where the answer is briefly wrong:
 
@@ -73,6 +73,7 @@ async function canDelete(client: PgClient, sessionId: string): Promise<boolean> 
 - After a process is killed mid-run, the session reads `running` until its lease expires, then `interrupted`.
 - A session forked from the middle of a run inherits the unfinished run and reads `interrupted`.
 - A resume that was already aborted when it started records your approval decisions but no `core.tools_bound`; if the process dies in the single write between those and its `core.run_paused`, the session still reads as the earlier `paused` approval.
+- If a parent run that paused on a sub-agent is resumed and aborted (not stopped) before it starts, the new pause lists no sub-agent: the parent reads `paused` with reason `host` while the child session is still waiting.
 - A session whose last run finished before this feature reads `unknown` (there was no end marker yet); one that paused reads `paused` with `awaiting` undefined.
 
 ## Layout and two deliberate choices

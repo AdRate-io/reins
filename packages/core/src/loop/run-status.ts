@@ -14,7 +14,9 @@
  * - 进程被杀：要等租约到期才显示 interrupted；
  * - run 中途 fork 出来的会话继承"未收尾"，判 interrupted；
  * - 起步时已中止的续跑 run 不写 tools_bound 却照写 approval_decision：进程恰好死在它与 run_paused 之间时，
- *   状态仍是上一个 paused(approval)（窗口只有一次 append）。
+ *   状态仍是上一个 paused(approval)（窗口只有一次 append）；
+ * - 子代理冒泡暂停后，下一个父 run 起步即被非停止原因中止：新的 run_paused 里没有子代理那条（父日志查不到 childSessionId），
+ *   判 paused(host) 而子会话其实还在等，与"不往父会话上浮子状态"同一边界。
  */
 import type { Event } from "../events/base.js"
 import type { AwaitingCall, CoreEvent } from "../events/core.js"

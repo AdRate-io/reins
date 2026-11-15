@@ -1,6 +1,6 @@
 import type { RunLease } from "@reinsjs/core"
 import type { PgClient } from "./client.js"
-import { DB_NOW_MS, HELD_SQL } from "./sql.js"
+import { DB_NOW_MS, heldSql } from "./sql.js"
 
 /**
  * Postgres run 租约（D4）：一张 `reins_runs(session_id PK, owner, expires_at)`，三条都是**单条语句**，不开事务、不借连接，
@@ -24,7 +24,7 @@ export class PgRunLease implements RunLease {
        VALUES ($1, $2, ${DB_NOW_MS} + $3::bigint)
        ON CONFLICT (session_id) DO UPDATE
          SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at
-         WHERE reins_runs.expires_at < ${DB_NOW_MS} OR reins_runs.owner = EXCLUDED.owner
+         WHERE NOT (${heldSql("reins_runs")}) OR reins_runs.owner = EXCLUDED.owner
        RETURNING owner`,
       [sessionId, owner, Math.round(ttlMs)],
     )
@@ -34,7 +34,7 @@ export class PgRunLease implements RunLease {
   async renew(sessionId: string, owner: string, ttlMs: number): Promise<boolean> {
     const res = await this.client.query(
       `UPDATE reins_runs SET expires_at = ${DB_NOW_MS} + $3::bigint
-       WHERE session_id = $1 AND owner = $2 AND ${HELD_SQL}
+       WHERE session_id = $1 AND owner = $2 AND ${heldSql("reins_runs")}
        RETURNING owner`,
       [sessionId, owner, Math.round(ttlMs)],
     )

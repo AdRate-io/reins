@@ -3,7 +3,7 @@
  */
 import { createCoreRegistry, RUN_MARKER_TYPES, type RunStatus, runStatusOf, StoreError } from "@reinsjs/core"
 import type { PgClient } from "./client.js"
-import { eventOf, HELD_SQL } from "./sql.js"
+import { eventOf, heldSql } from "./sql.js"
 
 /** 标记只会是 core 事件，一个注册表全包共用 */
 const registry = createCoreRegistry()
@@ -26,7 +26,8 @@ export const PG_RUN_STATES_MAX = 500
  * - 释放失败只告警：最多 ttl（缺省 30 s）内误判 running，删除会话的"运行中拒绝"也会多拒这么久；
  * - 进程被杀：要等租约到期才显示 interrupted；
  * - run 中途 fork 出来的会话继承"未收尾"，判 interrupted；
- * - 起步时已中止的续跑 run 若恰好死在 approval_decision 与 run_paused 之间，仍显示上一个 paused(approval)。
+ * - 起步时已中止的续跑 run 若恰好死在 approval_decision 与 run_paused 之间，仍显示上一个 paused(approval)；
+ * - 子代理冒泡暂停后下一个父 run 起步即被中止（非停止）：判 paused(host)、awaiting 里没有子代理，子会话其实还在等。
  *
  * 删除会话前的"运行中拒绝"（建议 11）：`(await pgRunStates(client, [id])).get(id)?.state === "running"`。
  */
@@ -58,7 +59,7 @@ export async function pgRunStates(
             (r.session_id IS NOT NULL) AS held,
             m.data AS marker
        FROM unnest($1::text[]) AS ids(session_id)
-       LEFT JOIN reins_runs r ON r.session_id = ids.session_id AND r.${HELD_SQL}
+       LEFT JOIN reins_runs r ON r.session_id = ids.session_id AND ${heldSql("r")}
        LEFT JOIN LATERAL (
          SELECT e.data::text AS data FROM reins_events e
           WHERE e.session_id = ids.session_id AND e.type = ANY($2::text[])
