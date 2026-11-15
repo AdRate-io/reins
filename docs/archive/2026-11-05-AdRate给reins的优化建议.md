@@ -720,7 +720,7 @@ AdRate 的会话删除要求「运行中拒绝，提示先停止」（删除与 
 
 ### reins 回复（2026-11-15）
 
-采纳，并入建议 12 一起做：`RunLease` 加可选的批量只读方法 `held(sessionIds): Promise<Set<string>>`，判定与 renew 的"未过期"同一表达式、同一库时钟；内存版与 pg 版各一份，一致性套件覆盖"刚过期""同 owner 续租"。删除会话前的检查改调 `held([id])`。
+采纳需求，并入建议 12：不单独给 `RunLease` 加方法，删除会话前查 `pgRunStates(client, [id])` 是否 `running`。判定与 renew 的"未过期"同一表达式、同一库时钟，store-pg 内只写一处；用例覆盖"刚过期""同 owner 续租"。
 
 ---
 
@@ -794,9 +794,9 @@ AdRate 的会话删除要求「运行中拒绝，提示先停止」（删除与 
 
 - **不变的**：建议里要的信息都给——是否在跑、结局分类（由 reins 维护）、审批等待起点（取 `approval_request` 自己的 `at`）、能区分前后两个 run 的标识、批量查询、进程被杀判"中断"、查询任何时刻都没有"不在跑也没结局"的空档；已读、推送仍不归 reins；AdRate 侧删外包层 / 毫秒截断 / 条件更新 / "再查一次" / `reins_runs` 直读的计划照旧。
 - **改了的**：
-  1. 每个 run 恰好以一条终结事件收尾：暂停仍是 `run_paused`，done / handoff / error 新增模型不可见的 `core.run_ended`。结局在时间线里，`agent.run()`、asTool 子会话、TanStack 路径也都覆盖。
-  2. 分类只走 core 纯函数 `runStatusOf`，结果是 `running` / `idle` / `unknown` / `interrupted` / `done` / `paused` / `handoff` / `error`；`paused` 带 `reason` 与 `awaiting`（每个等答复的调用：审批带 `requestedAt`，客户端工具单列 `client_tool`，子代理带 `childSessionId`）。
-  3. 批量查询是 store-pg 的 `pgRunStates(client, sessionIds)`：一条 SQL 取租约与每个会话最后一条 run 标记，单语句即快照；终结事件一定在释放租约前写入，所以没有空档。依赖 run 经租约登记（`createAgent` + `pgStores` 缺省即是）。
+  1. 每个 run 恰好以一条终结事件收尾：暂停仍是 `run_paused`，done / handoff / error 新增模型不可见的 `core.run_ended`。结局在时间线里，`agent.run()`、asTool 子会话、TanStack 路径的结局也都有记录；但"在跑"只对经 handler 起的 run 成立（它们才占租约），请确认 AdRate 列表里的会话都经 handler 起 run。
+  2. 分类只走 core 纯函数 `runStatusOf`，结果是 `running` / `idle` / `unknown` / `interrupted` / `done` / `paused` / `handoff` / `error`；`paused` 带 `reason`、`stopped`（用户停止与断线 / 丢租约中止区分）与 `awaiting`（以 pending 为准列每个等答复的调用：审批带 `requestedAt`，客户端工具单列 `client_tool`，子代理带 `childSessionId`）。
+  3. 批量查询是 store-pg 的 `pgRunStates(client, sessionIds)`：一条 SQL 取租约与每个会话最后一条 run 标记，单语句即快照；终结事件一定在释放租约前写入，所以没有空档。依赖 run 经 handler 的租约登记（`createAgent` + `pgStores` 缺省即是）。已知误判窗口：释放租约失败时最多 30 s 内仍显示在跑；进程被杀要等租约到期才显示中断。
   4. **不建状态表、不加列，AdRate 不用做 DDL 迁移。**
   5. 不提供 `startedAt` / `runId`：区分前后 run 用结局事件的 `seq`，"跑完没看"拿 `endedAt` 与 `last_read_at` 比。
 - **AdRate 需要知道**：升级前跑完的老会话判 `unknown`（不是"中断"），列表可显示为无状态；含 `run_ended` 的会话老版本 core 读不了，多实例要同时升级、不能回滚到 0.13。发版后在此补"reins 处置"。
