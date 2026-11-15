@@ -168,6 +168,7 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     },
     { label: "tools_bound", events: [user(), mk("core.tools_bound", { toolNames: ["f"], configHash: "h" })] },
     { label: "tool_started", events: [user(), mk("core.tool_started", { toolCallId: "c" })] },
+    { label: "run_ended", events: [user(), mk("core.run_ended", { status: "done" })] },
     {
       label: "error",
       events: [user(), mk("core.error", { category: "provider", message: "m", retryable: false })],

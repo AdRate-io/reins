@@ -1,5 +1,15 @@
 import { PGlite } from "@electric-sql/pglite"
-import { type Event, InMemoryEventLog, type Stores } from "@reinsjs/core"
+import {
+  type CoreEventPayloads,
+  type CoreEventType,
+  createCoreEvent,
+  createCoreRegistry,
+  type Event,
+  InMemoryEventLog,
+  RUN_MARKER_TYPES,
+  runLoop,
+  type Stores,
+} from "@reinsjs/core"
 import {
   blobStoreConformance,
   collect,
@@ -7,6 +17,8 @@ import {
   makeEvents,
   memoryStoreConformance,
   runLeaseConformance,
+  ScriptedLowering,
+  say,
 } from "@reinsjs/core/testing"
 import { drizzle } from "drizzle-orm/postgres-js"
 import pg from "pg"
@@ -16,12 +28,14 @@ import { afterAll, describe, expect, it } from "vitest"
 import {
   isUniqueViolation,
   migratePg,
+  PG_RUN_STATES_MAX,
   PG_SCHEMA_SQL,
   PG_SCHEMA_STATEMENTS,
   type PgClient,
   PgEventLog,
   PgMemoryStore,
   PgRunLease,
+  pgRunStates,
   pgStores,
   postgresJsClient,
 } from "./index.js"
@@ -71,6 +85,25 @@ if (realUrl) {
 afterAll(async () => {
   for (const b of backends) await b.close()
 })
+
+const registry = createCoreRegistry()
+/** 手写一条事件（会话运行状态用例） */
+function mkEvent<T extends CoreEventType>(
+  sessionId: string,
+  seq: number,
+  type: T,
+  payload: CoreEventPayloads[T],
+) {
+  return createCoreEvent(registry, {
+    type,
+    payload,
+    sessionId,
+    seq,
+    at: 1_800_000_000_000 + seq,
+    id: `${sessionId}-${seq}`,
+    actor: "system",
+  })
+}
 
 for (const backend of backends) {
   /** 每个用例一套干净的表：建表幂等，之后清空 */
@@ -134,6 +167,144 @@ for (const backend of backends) {
         const stores = await fresh()
         expect(stores.runLease).toBeInstanceOf(PgRunLease)
         expect(PG_SCHEMA_SQL).toContain("reins_runs")
+      })
+    })
+
+    describe("会话运行状态：pgRunStates（一条 SQL 的快照）", () => {
+      it("入参白名单：非数组、超上限、空串、非字符串在碰库之前就抛；空数组回空 Map", async () => {
+        await fresh()
+        const sent: string[] = []
+        const spy: PgClient = {
+          query: (text, params) => {
+            sent.push(text)
+            return backend.client.query(text, params)
+          },
+        }
+        const bad: unknown[] = [
+          "s1",
+          null,
+          Array.from({ length: PG_RUN_STATES_MAX + 1 }, (_, i) => `s${i}`),
+          [""],
+          [1],
+          ["ok", undefined],
+        ]
+        for (const ids of bad) {
+          await expect(pgRunStates(spy, ids as string[])).rejects.toMatchObject({ code: "invalid_argument" })
+        }
+        expect(sent).toEqual([])
+        expect(await pgRunStates(spy, [])).toEqual(new Map())
+        expect(sent).toEqual([])
+      })
+
+      it("每个入参都有结果：不存在的会话为 idle，重复 id 合并；$2 绑的就是 RUN_MARKER_TYPES", async () => {
+        const stores = await fresh()
+        await stores.log.append([
+          mkEvent("done", 1, "core.tools_bound", { toolNames: [], configHash: "h", marksEnd: true }),
+          mkEvent("done", 2, "core.run_ended", { status: "done" }),
+          // 标记之后的非标记事件不影响结果
+          mkEvent("done", 3, "core.budget_usage", {
+            tokens: { input: 1, output: 1 },
+            toolCalls: 0,
+            wallMs: 0,
+          }),
+        ])
+        const params: unknown[][] = []
+        const spy: PgClient = {
+          query: (text, p) => {
+            params.push([...(p ?? [])])
+            return backend.client.query(text, p)
+          },
+        }
+        const states = await pgRunStates(spy, ["done", "ghost", "done"])
+        expect([...states.keys()].sort()).toEqual(["done", "ghost"])
+        expect(states.get("done")).toEqual({ state: "done", seq: 2, endedAt: 1_800_000_000_002 })
+        expect(states.get("ghost")).toEqual({ state: "idle" })
+        expect(params).toHaveLength(1)
+        expect(params[0]?.[1]).toEqual([...RUN_MARKER_TYPES])
+      })
+
+      it("真 runLoop 写在 pg 上：跑完 → done；暂停 → paused 带 awaiting", async () => {
+        const stores = await fresh()
+        const model = { provider: "scripted", id: "scripted" }
+        for await (const _ of runLoop({
+          sessionId: "a",
+          log: stores.log,
+          lowering: new ScriptedLowering([{ drafts: [say("好")] }]),
+          model,
+          input: "hi",
+        })) {
+          // 跑到底
+        }
+        for await (const _ of runLoop({
+          sessionId: "b",
+          log: stores.log,
+          lowering: new ScriptedLowering([]),
+          model,
+          signal: AbortSignal.abort(new Error("idle")),
+        })) {
+          // 起步即中止
+        }
+        const states = await pgRunStates(backend.client, ["a", "b"])
+        expect(states.get("a")).toMatchObject({ state: "done" })
+        expect(states.get("b")).toMatchObject({
+          state: "paused",
+          reason: "host",
+          stopped: false,
+          awaiting: [],
+        })
+      })
+
+      it("旧行二次编码（库里存成 JSON 字符串标量）照样读得出", async () => {
+        await fresh()
+        const ended = mkEvent("old", 1, "core.run_ended", { status: "error", category: "provider" })
+        await backend.client.query(
+          "INSERT INTO reins_events (session_id, seq, id, type, at, data) VALUES ($1, 1, $2, $3, $4, to_json($5::text))",
+          ["old", ended.id, ended.type, ended.at, JSON.stringify(ended)],
+        )
+        const typeOf = await backend.client.query(
+          "SELECT json_typeof(data) AS t FROM reins_events WHERE session_id = $1",
+          ["old"],
+        )
+        expect(typeOf.rows[0]?.t).toBe("string")
+        expect((await pgRunStates(backend.client, ["old"])).get("old")).toEqual({
+          state: "error",
+          seq: 1,
+          endedAt: ended.at,
+          category: "provider",
+        })
+      })
+
+      it("租约口径与 renew 同一判据：持有中 running；同 owner 续租仍 running；刚过期退回按标记判", async () => {
+        const stores = await fresh()
+        await stores.log.append([mkEvent("s1", 1, "core.run_ended", { status: "done" })])
+        const lease = new PgRunLease(backend.client)
+        expect(await lease.acquire("s1", "A", 60_000)).toBe(true)
+        expect((await pgRunStates(backend.client, ["s1"])).get("s1")).toEqual({ state: "running" })
+        expect(await lease.renew("s1", "A", 60_000)).toBe(true)
+        expect((await pgRunStates(backend.client, ["s1"])).get("s1")).toEqual({ state: "running" })
+        await lease.release("s1", "A")
+        expect(await lease.acquire("s1", "A", 1)).toBe(true)
+        await new Promise((r) => setTimeout(r, 30))
+        // 过期行还在表里，但 renew 已判丢租约；pgRunStates 与它同口径
+        expect(await lease.renew("s1", "A", 60_000)).toBe(false)
+        expect((await pgRunStates(backend.client, ["s1"])).get("s1")).toMatchObject({ state: "done" })
+      })
+
+      it("被杀：起了步（tools_bound 带 marksEnd）不收尾，租约未过期 running、过期后 interrupted", async () => {
+        const stores = await fresh()
+        await stores.log.append([
+          mkEvent("k", 1, "core.tools_bound", { toolNames: [], configHash: "h", marksEnd: true }),
+          mkEvent("k", 2, "core.user_message", { content: [{ type: "text", text: "go" }] }),
+        ])
+        await stores.log.append([mkEvent("old", 1, "core.tools_bound", { toolNames: [], configHash: "h" })])
+        const lease = new PgRunLease(backend.client)
+        expect(await lease.acquire("k", "A", 60_000)).toBe(true)
+        expect((await pgRunStates(backend.client, ["k"])).get("k")).toEqual({ state: "running" })
+        await backend.client.query("UPDATE reins_runs SET expires_at = 0 WHERE session_id = $1", ["k"])
+        const states = await pgRunStates(backend.client, ["k", "old"])
+        expect(states.get("k")).toEqual({ state: "interrupted", seq: 1, startedAt: 1_800_000_000_001 })
+        // 升级前的老会话：tools_bound 不带 marksEnd，判 unknown 而不是 interrupted
+        expect(states.get("old")).toEqual({ state: "unknown" })
       })
     })
 

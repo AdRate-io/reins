@@ -156,7 +156,7 @@ describe("投递进正在跑的 run", () => {
     const types = events.map((e) => e.type.replace("core.", ""))
     const at = types.indexOf("user_message", 2)
     expect(at).toBeGreaterThan(types.indexOf("tool_result"))
-    expect(types.slice(at + 1)).toEqual(["model_text", "budget_usage"])
+    expect(types.slice(at + 1)).toEqual(["model_text", "budget_usage", "run_ended"])
     const delivered = events[at] as CoreEvent
     expect(delivered.provenance).toEqual({ source: USER_DELIVERY_SOURCE, ref: "d1" })
     expect(delivered.actor).toBe("user")

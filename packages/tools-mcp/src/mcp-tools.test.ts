@@ -324,14 +324,14 @@ describe("mcpTools：工具表按 run 绑定", () => {
     expect(result.status).toBe("done")
     // drop_table 没声明 readOnlyHint，是写工具：执行前先记 tool_started
     expect(types(events).slice(0, 6)).toEqual([
-      "run_resumed",
-      "approval_decision",
       "tools_bound",
       "system_note",
+      "run_resumed",
+      "approval_decision",
       "tool_started",
       "tool_result",
     ])
-    expect((events[3] as CoreEventOf<"core.system_note">).payload.text).toContain("Added: late")
+    expect((events[1] as CoreEventOf<"core.system_note">).payload.text).toContain("Added: late")
     expect(textOf(events[5] as CoreEventOf<"core.tool_result">)).toBe("dropped users")
     await socket.close()
   })

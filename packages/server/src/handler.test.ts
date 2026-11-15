@@ -104,8 +104,9 @@ describe("POST：起 run 并流式推时间线", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
-    expect(ids(frames)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(ids(frames)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     // 流里的事件与日志里的逐字相同：推的就是时间线本身
     expect(eventsOf(frames)).toEqual(await logged(log, "fresh"))
     // 文本增量在完整 model_text 之前到达
@@ -115,32 +116,34 @@ describe("POST：起 run 并流式推时间线", () => {
     expect(deltaIdx).toBeLessThan(textIdx)
     expect(frames.at(-1)).toEqual({
       event: "result",
-      data: { status: "done", sessionId: "fresh", lastSeq: 7 },
+      data: { status: "done", sessionId: "fresh", lastSeq: 8 },
     })
   })
 
   it("续聊带 lastSeq：先补发缺口（replay），再推新 run 的事件，不重复", async () => {
     const { handler } = setup([...TWO_TURNS, { drafts: [say("还有事吗")] }])
     const first = parseFrames(await (await handler(postRequest({ sessionId: "s1", input: "2+3" }))).text())
-    expect(ids(first)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(ids(first)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
 
-    // 客户端只收到前 4 条就断了，再来时带 lastSeq=4：补 5、6、7，然后是新 run 的 8～11
+    // 客户端只收到前 4 条就断了，再来时带 lastSeq=4：补 5～8，然后是新 run 的 9～13
     // 新 run 起步同样落一条 tools_bound（工具表没变，所以不再跟变化说明）
     const second = parseFrames(
       await (await handler(postRequest({ sessionId: "s1", input: "谢谢", lastSeq: 4 }))).text(),
     )
     expect(second[0]).toEqual({ event: "start", data: { sessionId: "s1", fromSeq: 5, live: true } })
-    expect(ids(second)).toEqual([5, 6, 7, 8, 9, 10, 11])
+    expect(ids(second)).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13])
     expect(typesOf(second)).toEqual([
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
       "tools_bound",
       "user_message",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
-    expect(resultOf(second)).toEqual({ status: "done", sessionId: "s1", lastSeq: 11 })
+    expect(resultOf(second)).toEqual({ status: "done", sessionId: "s1", lastSeq: 13 })
   })
 
   it("lastSeq 超过日志末尾（客户端记错 / 存储被清）：钳到末尾，实时事件一条不丢", async () => {
@@ -149,11 +152,11 @@ describe("POST：起 run 并流式推时间线", () => {
       await (await handler(postRequest({ sessionId: "s1", input: "2+3", lastSeq: 99 }))).text(),
     )
     expect(frames[0]).toEqual({ event: "start", data: { sessionId: "s1", fromSeq: 1, live: true } })
-    expect(ids(frames)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(ids(frames)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     const replay = parseFrames(await (await handler(getRequest({ sessionId: "s1", lastSeq: "99" }))).text())
     expect(replay).toEqual([
-      { event: "start", data: { sessionId: "s1", fromSeq: 8, live: false } },
-      { event: "end", data: { sessionId: "s1", lastSeq: 7 } },
+      { event: "start", data: { sessionId: "s1", fromSeq: 9, live: false } },
+      { event: "end", data: { sessionId: "s1", lastSeq: 8 } },
     ])
   })
 
@@ -177,20 +180,21 @@ describe("GET：重连补发", () => {
     const { handler } = setup(TWO_TURNS)
     await (await handler(postRequest({ sessionId: "s1", input: "2+3" }))).text()
 
-    // 日志共 7 条（起步的 tools_bound 占了 seq 1），从 5 补到 7
+    // 日志共 8 条（起步的 tools_bound 占了 seq 1，收尾的 run_ended 是 8），从 5 补到 8
     const byQuery = parseFrames(await (await handler(getRequest({ sessionId: "s1", lastSeq: "4" }))).text())
     expect(byQuery).toEqual([
       { event: "start", data: { sessionId: "s1", fromSeq: 5, live: false } },
       expect.objectContaining({ id: "5" }),
       expect.objectContaining({ id: "6" }),
       expect.objectContaining({ id: "7" }),
-      { event: "end", data: { sessionId: "s1", lastSeq: 7 } },
+      expect.objectContaining({ id: "8" }),
+      { event: "end", data: { sessionId: "s1", lastSeq: 8 } },
     ])
 
     const byHeader = parseFrames(
       await (await handler(getRequest({ sessionId: "s1", lastSeq: "0" }, { "last-event-id": "5" }))).text(),
     )
-    expect(ids(byHeader)).toEqual([6, 7])
+    expect(ids(byHeader)).toEqual([6, 7, 8])
 
     // 不存在的会话：空补发也是合法的
     const empty = parseFrames(await (await handler(getRequest({ sessionId: "nope" }))).text())
@@ -227,9 +231,9 @@ describe("GET：重连补发", () => {
     const starterFrames = [...starter.seen, ...(await starter.rest())]
 
     expect(lateFrames[0]).toEqual({ event: "start", data: { sessionId: "s1", fromSeq: 2, live: true } })
-    expect(ids(lateFrames)).toEqual([2, 3, 4, 5, 6, 7])
-    expect(ids(starterFrames)).toEqual([1, 2, 3, 4, 5, 6, 7])
-    expect(resultOf(lateFrames)).toEqual({ status: "done", sessionId: "s1", lastSeq: 7 })
+    expect(ids(lateFrames)).toEqual([2, 3, 4, 5, 6, 7, 8])
+    expect(ids(starterFrames)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(resultOf(lateFrames)).toEqual({ status: "done", sessionId: "s1", lastSeq: 8 })
     expect(resultOf(starterFrames)).toEqual(resultOf(lateFrames))
   })
 })
@@ -367,6 +371,7 @@ describe("并发与断开", () => {
           "budget_usage",
           "model_text",
           "budget_usage",
+          "run_ended",
         ])
       } else {
         expect(run?.controller.signal.aborted).toBe(true)
@@ -503,17 +508,18 @@ describe("审批暂停与跨请求恢复", () => {
         )
       ).text(),
     )
-    // tools_bound 排在校验事件（run_resumed / approval_decision）之后、补齐 pending 结果之前
+    // tools_bound 是每个 run 的第一条：排在 run_resumed / approval_decision 之前；收尾一条 run_ended
     expect(typesOf(frames)).toEqual([
+      "tools_bound",
       "run_resumed",
       "approval_decision",
-      "tools_bound",
       "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
-    expect(resultOf(frames)).toEqual({ status: "done", sessionId: "s1", lastSeq: 13 })
+    expect(resultOf(frames)).toEqual({ status: "done", sessionId: "s1", lastSeq: 14 })
     const res = (await logged(log, "s1")).find(
       (e) => e.type === "core.tool_result",
     ) as CoreEventOf<"core.tool_result">
@@ -687,14 +693,14 @@ describe("真实 Node HTTP 服务：经 TCP 用 fetch 读 SSE", () => {
     expect(typesOf(early)).toEqual(["tools_bound", "user_message", "tool_call"])
     g.open()
     const late = await reader.rest()
-    expect(typesOf(late)).toEqual(["tool_result", "budget_usage", "model_text", "budget_usage"])
-    expect(resultOf(late)).toEqual({ status: "done", sessionId: "s1", lastSeq: 7 })
+    expect(typesOf(late)).toEqual(["tool_result", "budget_usage", "model_text", "budget_usage", "run_ended"])
+    expect(resultOf(late)).toEqual({ status: "done", sessionId: "s1", lastSeq: 8 })
 
     // EventSource 风格的 GET 重连
     const again = await fetch(`${base}?sessionId=s1`, { headers: { "last-event-id": "4" } })
     const frames = parseFrames(await again.text())
-    expect(ids(frames)).toEqual([5, 6, 7])
-    expect(frames.at(-1)).toEqual({ event: "end", data: { sessionId: "s1", lastSeq: 7 } })
+    expect(ids(frames)).toEqual([5, 6, 7, 8])
+    expect(frames.at(-1)).toEqual({ event: "end", data: { sessionId: "s1", lastSeq: 8 } })
   })
 })
 
@@ -976,6 +982,7 @@ describe("R6 会话级鉴权：authorizeSession", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
   })
 
@@ -1289,6 +1296,7 @@ describe("D2 旁路观测：onEvent", () => {
       "core.budget_usage",
       "core.model_text",
       "core.budget_usage",
+      "core.run_ended",
     ])
     // 每条事件都调到了（失败不会让后面的事件被跳过），但只告警一次，且点明是第一条
     expect(calls).toBe(all.length)
@@ -1335,7 +1343,7 @@ describe("D2 旁路观测：onEvent", () => {
     const rest = await restPromise
     expect(resultOf(rest)?.status).toBe("done")
     // 全部事件按 seq 顺序完成观测，一条不少
-    expect(completed).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(completed).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     // run.done 在观测链之后才 resolve，名额随之释放
     await new Promise((r) => setTimeout(r, 0))
     expect(runs.get("fresh")).toBeUndefined()

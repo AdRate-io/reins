@@ -600,6 +600,7 @@ describe("接上 @reinsjs/server", () => {
       "TEXT_MESSAGE_CONTENT", // 增量
       "TEXT_MESSAGE_END", // 完整 model_text 只补 END
       "CUSTOM",
+      "CUSTOM", // run_ended：终结记号
       "RUN_FINISHED",
     ])
     // ScriptedLowering 的文本增量与完整事件接成一条：CONTENT 只有一次，id 一致
@@ -611,7 +612,7 @@ describe("接上 @reinsjs/server", () => {
       "TEXT_MESSAGE_CONTENT",
       "TEXT_MESSAGE_END",
     ])
-    // 多了起步的 tools_bound，日志共 8 条事件，帧 id 逐一对上 seq
+    // 起步的 tools_bound 与收尾的 run_ended，日志共 9 条事件，帧 id 逐一对上 seq
     expect(frames.filter((f) => f.id !== undefined).map((f) => f.id)).toEqual([
       "1",
       "2",
@@ -621,16 +622,17 @@ describe("接上 @reinsjs/server", () => {
       "6",
       "7",
       "8",
+      "9",
     ])
 
-    // 第二条流：新的 run id、状态不串（补发 8 条 + 结束）
+    // 第二条流：新的 run id、状态不串（补发 9 条 + 结束）
     const again = await handler(new Request("http://t/agent?sessionId=s1"))
     const replay = parseSse(await again.text())
     expect(data(replay)[0]).toMatchObject({ type: "RUN_STARTED", runId: "run2" })
     expect(data(replay).at(-1)).toMatchObject({
       type: "RUN_FINISHED",
       runId: "run2",
-      result: { status: "replayed", lastSeq: 8 },
+      result: { status: "replayed", lastSeq: 9 },
     })
     assertValidAgui(replay)
   })

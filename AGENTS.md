@@ -250,6 +250,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从该 run 的信箱拉（共用 `runs` 的 handler 都能往里投），asTool 子 run 与停止收尾 run 仍不拉 |
 | run 结束时未拉走的中途消息：进程内宿主 vs HTTP handler（`midRunInput`） | 进程内宿主须再查一次自己的队列（消息在它手里）；handler 随 run 直接丢弃信箱，靠客户端按时间线判未送达后重发——不在 result 帧带未投递列表，送达判据只有时间线一条 |
 | 输入校验不合规：起步 `input` vs 中途 `pullInput` | 起步抛 RangeError、一条不写；中途已有半个 run 的日志，走 `fail()` 落 `core.error(input)` 收口。同一回调里抛错却是 fail-open（多半是宿主瞬时故障） |
+| 会话运行状态：runLoop vs TanStack 适配器 | runLoop 的 `tools_bound` 带 `marksEnd`、`run_paused` 带 `awaiting` / `stopped`；TanStack 都不带（InterruptReplaySignal 等出口不调终结钩子，承诺不了收尾），只剩 tools_bound 时判 unknown 而不是 interrupted |
+| "在跑"：经 handler + 租约的 run vs `agent.run()` / asTool 子 run / TanStack | 只有前者占租约、`pgRunStates` 判得出 running；后者只有结局，在跑时显示为 interrupted 或 unknown |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表
@@ -273,7 +275,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`toolSpecOf` 刻意单参，别加第二个参数** — examples 里 `tools.map(toolSpecOf)`，多一参就把数组下标当参数吃进去；要带标记用 `deferredToolSpecOf(tool, deferred)`。
 - **`runLoop` 里的 `append` 是全包唯一分配 seq 的地方** — 任何在循环外自己 `log.append` 的代码（投影 emitted、handoff 开场）必须同步 `lastSeq`，漏一处后续整轮 `seq_conflict`。
 - **`resolveSocketContributions` 是 async，各 Socket 依次 await 不并发** — 同名去重以先到者为准，并发会让顺序不定、configHash 抖动；MCP 的 `tools/list` 就在这里发生。
-- **每次 run 起步都 append 一条 `tools_bound`，有增删再 append 一条模型可见说明** — 断言日志开头 / seq / lastSeq 的测试都要算进去；说明缺省开（`announceToolChanges: false` 关），首次 run 与工具表不变时不出。例外：起步时 signal 已中止的 run（空闲停止、asTool 收尾子会话）两条都不写——只跳说明会让下一个真 run 比对不出变化。
+- **每个 run 以 `tools_bound`（带 `marksEnd`）开头、以恰好一条终结事件收尾：暂停是 `run_paused`，done / handoff / error 是 `run_ended`** — 断言日志开头 / 末尾 / seq / lastSeq 的测试都要算进去；`tools_bound` 排在 `run_resumed` / `approval_decision` 之前；新增任何返回出口都要落终结事件（error 走 `fail()` 与 `core.error` 同批），会话状态只经 `runStatusOf` 从"租约 + 最后一条标记"判。工具表有增删再 append 一条模型可见说明（`announceToolChanges: false` 关）。例外：起步时 signal 已中止的 run（空闲停止、asTool 收尾子会话）不写 tools_bound 与说明，只写 run_paused——只跳说明会让下一个真 run 比对不出变化。
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
 - **阈值兜底按"估算 + 固定开销"比 `contextLimit − reserveTokens`，开销是 core `contextOverheadOf(timeline)`** — `reserveTokens` 实际只给输出留；告诉模型的阈值要有用例锁住"报过线 ⟺ 真的动作"（踩坑 40）。触发后裁到回落线 `cutToRatio`（缺省 0.6）而不是触发线下，测切点合法性的用例要显式 `cutToRatio: 1`。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试；判定先看状态码（408/409/429/5xx），有状态码就只按它定，文案关键词只在没有状态码时兜底且不匹配裸数字——SDK 文案固定 "<status> <body>"，正文里的 "timeout" / "429" 不是信号。
@@ -359,6 +361,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **store-pg 的 pg / postgres.js / Drizzle 列只对真服务端测：CI 起 `postgres:16.13-alpine`（AdRate 生产同版本）并设 `REINS_PG_URL`，CI 里没设 `pg.test.ts` 直接失败** — 本地没设只跑 PGlite 直连；不要再用 pglite-socket 之类进程内服务端代替（多连接交错、报错后返回空结果，踩坑 48）。Drizzle 列挡不住二次编码回归（它把 json serializer 换成透传），挡这个的是普通 postgres.js 列。
 - **含 `node:*` 的包 tsup 必须 `removeNodeProtocol: false`** — tsup 8 缺省剥 `node:` 前缀，源码与 vitest 全绿、只有跑 dist 才炸；新 `/node` 入口登记进 `check:dist` 的 `NODE_ALLOWED`（踩坑 5）。
 - **`memoryTable` / `table` 是字面拼进 SQL 的，`assertTableName` 白名单是唯一防注入闸，两包各一份同一正则** — 标识符绑不了参数。
+- **`pgRunStates` 无空档靠"终结事件先于释放租约" + 一条 SQL 取快照** — release 在 `ActiveRun` 收尾钩子里、生成器返回之后；别把租约与日志拆成两次查询，也别在 release 之后补写事件（跨包用例在 release 那一刻断言）。
 - **pg 侧刻意不开事务，每个写是单条语句** — 传连接池就是对的；任何"先查后写"两步逻辑都破坏这个前提。run 租约过期只比数据库 `now()`、`acquire` 对同一 owner 幂等；不用 advisory lock（会话级锁绑连接，池里解不了）。
 
 ### TanStack 适配器

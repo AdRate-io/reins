@@ -377,7 +377,9 @@ describe("pullInput 中止与失败", () => {
       }
       const tl = await all(log)
       expect(tl.filter((e) => e.type === "core.user_message")).toHaveLength(1)
-      expect(tl.at(-1)?.type).toBe("core.error")
+      // 终结 error：core.error 与 run_ended(error) 同批收尾
+      expect(tl.at(-2)?.type).toBe("core.error")
+      expect(tl.at(-1)?.payload).toEqual({ status: "error", category: "input" })
     })
   }
 })

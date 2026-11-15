@@ -16,6 +16,14 @@ export function toolResultTrust(tool: Tool | undefined, isError: boolean): Trust
 }
 
 /**
+ * 客户端工具：本循环不执行，等宿主回填 tool_result（真源索引）。没有 execute 或声明 `side: "client"` 的都算。
+ * 循环执行工具批与暂停时算 `awaiting` 共用这一个判定
+ */
+export function isClientTool(tool: Tool): boolean {
+  return !tool.execute || tool.side === "client"
+}
+
+/**
  * 定义一个带入参类型的工具并擦成 Tool：对象字面量里 execute / validate / needsApproval 的 input 都按 TInput 推断，
  * 返回值却能直接放进 Tool[]。不用它也行，只是 needsApproval 写成函数时 TS 会因参数逆变拒绝放进数组。
  */

@@ -62,10 +62,20 @@ export function toolsBoundDrafts(input: {
   toolNames: readonly string[]
   configHash: string
   announce: boolean
+  /** 写入方承诺本 run 以终结事件收尾（只有 runLoop 传 true，见 `ToolsBoundPayload.marksEnd`） */
+  marksEnd?: boolean
 }): CoreEventDraft[] {
   const toolNames = [...input.toolNames].sort()
   const drafts: CoreEventDraft[] = [
-    { type: "core.tools_bound", actor: "system", payload: { toolNames, configHash: input.configHash } },
+    {
+      type: "core.tools_bound",
+      actor: "system",
+      payload: {
+        toolNames,
+        configHash: input.configHash,
+        ...(input.marksEnd ? { marksEnd: true as const } : {}),
+      },
+    },
   ]
   const previous = lastToolsBound(input.timeline)
   if (!input.announce || previous === undefined) return drafts

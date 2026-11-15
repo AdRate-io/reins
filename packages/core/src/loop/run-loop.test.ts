@@ -82,7 +82,7 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
       runLoop(baseConfig(lowering, log, { input: "2+3 再加 4 等于几？" })),
     )
 
-    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 11 })
+    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 12 })
     const logged = await all(log)
     // 起步先记一条模型不可见的 tools_bound（本次 run 的工具表快照），其后才是用户这次的话
     expect(types(logged)).toEqual([
@@ -97,10 +97,12 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      // 终结记号：跑完了（会话运行状态）
+      "run_ended",
     ])
     // 时间线上的每一条都经 yield 交给了宿主，顺序与 seq 一致
     expect(events.map((e) => e.seq)).toEqual(logged.map((e) => e.seq))
-    expect(logged.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(logged.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
   })
 
   it("工具结果带因果链、来源与 untrusted，且答案正确", async () => {
@@ -946,7 +948,7 @@ describe("runLoop：工具表变化说明（announceToolChanges）", () => {
       const extra = announce === undefined ? {} : { announceToolChanges: announce }
       await drain(runLoop({ ...base, ...extra, input: "第一次" }))
       await drain(runLoop({ ...base, ...extra, input: "第二次", tools: [addTool, extraTool] }))
-      return types(await all(log)).slice(4) // 第一次 run 的四条之后
+      return types(await all(log)).slice(5) // 第一次 run 的五条之后
     }
     expect(await run(undefined)).toEqual([
       "tools_bound",
@@ -954,6 +956,7 @@ describe("runLoop：工具表变化说明（announceToolChanges）", () => {
       "user_message",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     expect(await run(true)).toEqual([
       "tools_bound",
@@ -961,8 +964,15 @@ describe("runLoop：工具表变化说明（announceToolChanges）", () => {
       "user_message",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
-    expect(await run(false)).toEqual(["tools_bound", "user_message", "model_text", "budget_usage"])
+    expect(await run(false)).toEqual([
+      "tools_bound",
+      "user_message",
+      "model_text",
+      "budget_usage",
+      "run_ended",
+    ])
   })
 })
 
@@ -1116,7 +1126,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
     if (result.status !== "error") return
     expect(result.error.payload).toMatchObject({ category: "provider", message: "529 overloaded" })
     // 说了一半的内容仍在日志里 —— 记录发生过什么
-    expect(types(await all(log))).toEqual(["tools_bound", "user_message", "model_text", "error"])
+    expect(types(await all(log))).toEqual(["tools_bound", "user_message", "model_text", "error", "run_ended"])
   })
 
   it("降级层抛异常（缺 key 等配置错）：不重试，记 error 事件而不是让生成器炸掉", async () => {
@@ -1155,7 +1165,14 @@ describe("runLoop：错误、中止、上限、交接", () => {
       expect(waits).toEqual([1000])
       expect(lowering.requests).toHaveLength(2)
       const logged = await all(log)
-      expect(types(logged)).toEqual(["tools_bound", "user_message", "error", "model_text", "budget_usage"])
+      expect(types(logged)).toEqual([
+        "tools_bound",
+        "user_message",
+        "error",
+        "model_text",
+        "budget_usage",
+        "run_ended",
+      ])
       expect((logged[2] as CoreEventOf<"core.error">).payload).toMatchObject({
         category: "lowering",
         message: "ECONNRESET",
@@ -1199,6 +1216,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
         "error",
         "model_text",
         "budget_usage",
+        "run_ended",
       ])
       expect((logged[3] as CoreEventOf<"core.error">).payload).toMatchObject({
         category: "provider",
@@ -1207,7 +1225,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
         detail: { attempts: 2, willRetry: true, delayMs: 2000, usage: { input: 5, output: 0 } },
       })
       // budget_usage 记的是成功那次请求的用量；累计（208 + 5 + 10 + 5）在 ctx.budget.tokensSpent
-      const usage = logged.at(-1) as CoreEventOf<"core.budget_usage">
+      const usage = logged.at(-2) as CoreEventOf<"core.budget_usage">
       expect(usage.payload.tokens).toEqual({ input: 10, output: 5 })
       expect(spent).toBe(228)
     })
@@ -1230,7 +1248,15 @@ describe("runLoop：错误、中止、上限、交接", () => {
       })
       expect(result.error.payload.detail).not.toHaveProperty("willRetry")
       expect(waits).toEqual([1000, 2000])
-      expect(types(await all(log))).toEqual(["tools_bound", "user_message", "error", "error", "error"])
+      // 前两条是重试前的非终结 error，只有最后一条与 run_ended 同批
+      expect(types(await all(log))).toEqual([
+        "tools_bound",
+        "user_message",
+        "error",
+        "error",
+        "error",
+        "run_ended",
+      ])
 
       const log2 = new InMemoryEventLog()
       const l2 = new ScriptedLowering([{ drafts: [], throws: new Error("ECONNRESET") }])
@@ -1254,7 +1280,13 @@ describe("runLoop：错误、中止、上限、交接", () => {
         detail: { attempts: 1, partialOutput: 1 },
       })
       expect(waits).toEqual([])
-      expect(types(await all(log))).toEqual(["tools_bound", "user_message", "model_thinking", "error"])
+      expect(types(await all(log))).toEqual([
+        "tools_bound",
+        "user_message",
+        "model_thinking",
+        "error",
+        "run_ended",
+      ])
     })
 
     it("重试等待期间宿主中止：以 paused(host) 返回，不再发请求", async () => {
@@ -1359,8 +1391,16 @@ describe("runLoop：错误、中止、上限、交接", () => {
     expect(handoffs).toEqual([[SESSION, result.toSessionId]])
 
     const old = await all(log)
-    expect(types(old)).toEqual(["tools_bound", "user_message", "model_text", "budget_usage", "handoff"])
-    const handoff = old.at(-1) as CoreEventOf<"core.handoff">
+    expect(types(old)).toEqual([
+      "tools_bound",
+      "user_message",
+      "model_text",
+      "budget_usage",
+      "handoff",
+      "run_ended",
+    ])
+    expect(old.at(-1)?.payload).toEqual({ status: "handoff", toSessionId: result.toSessionId })
+    const handoff = old.at(-2) as CoreEventOf<"core.handoff">
     expect(handoff.actor).toBe("model")
     expect(handoff.payload).toEqual({
       toSessionId: result.toSessionId,
@@ -1640,11 +1680,12 @@ describe("审查遗留 R1 / R2", () => {
       "approval_request",
       "budget_usage",
       "run_paused",
-      "approval_decision",
-      // 第二次起步的工具表快照：排在 approval_decision 之后、补齐 pending 之前
+      // 第二次起步的工具表快照：每个 run 的第一条，排在 approval_decision 之前
       "tools_bound",
+      "approval_decision",
       "tool_started",
       "tool_result",
+      "run_ended",
     ])
   })
 })
@@ -1730,11 +1771,12 @@ describe("子代理暂停冒泡（§10.1，asTool 的机制）", () => {
     expect(seen[1]).toEqual([decision])
     const events = await all(log)
     expect(types(events).slice(6)).toEqual([
-      "run_resumed",
       "tools_bound",
+      "run_resumed",
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     expect(events.some((e) => e.type === "core.approval_decision")).toBe(false)
     const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
@@ -2013,7 +2055,7 @@ describe("input 草稿数组（OnSet 建议 7）", () => {
     )
     expect(result.status).toBe("done")
     const added = (await all(log)).slice(before)
-    expect(types(added).slice(0, 4)).toEqual(["run_resumed", "tools_bound", "system_note", "tool_result"])
+    expect(types(added).slice(0, 4)).toEqual(["tools_bound", "run_resumed", "system_note", "tool_result"])
     expect(added[3]?.trust).toBe("system")
   })
 })

@@ -398,6 +398,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.memory_op":
       case "core.handoff":
       case "core.tool_started":
+      case "core.run_ended":
       case "core.error":
         land(e, "dropped", "none", "operational event, not sent (the default projection already filters it)")
         break

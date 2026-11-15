@@ -800,3 +800,11 @@ AdRate 的会话删除要求「运行中拒绝，提示先停止」（删除与 
   4. **不建状态表、不加列，AdRate 不用做 DDL 迁移。**
   5. 不提供 `startedAt` / `runId`：区分前后 run 用结局事件的 `seq`，"跑完没看"拿 `endedAt` 与 `last_read_at` 比。
 - **AdRate 需要知道**：升级前跑完的老会话判 `unknown`（不是"中断"），列表可显示为无状态；含 `run_ended` 的会话老版本 core 读不了，多实例要同时升级、不能回滚到 0.13。发版后在此补"reins 处置"。
+
+### reins 实施（2026-11-15，版本号发版后补）
+
+按上面的回复落地，形状没有变。AdRate 接入时补充三点：
+
+- **老会话的读法**：升级前最后一个 run 跑完的判 `unknown`；最后一个 run 是暂停的照旧判 `paused`，但 `awaiting` 为 `undefined`（老事件没有这个字段），`stopped` 为 `false`；完全没有 run 标记的会话判 `idle`。
+- **用法**：README（`@reinsjs/store-pg`「Session status for a session list」）给了列表徽标与删除前检查两个函数，用例与 README 逐字一致。单进程宿主不用 pg 时，`runs.get(id) !== undefined` 当 `held`、`lastRunMarker(timeline)` 当 `lastMarker`，直接调 `runStatusOf`。
+- **耗时**（PG 16.13，与 AdRate 生产同版本）：单个会话 20 万条事件、没有收尾标记（被杀的长 run 或老会话）约 15 ms；500 个会话一批 46～85 ms。没有加索引。

@@ -127,13 +127,14 @@ describe("handoff × runLoop", () => {
       "tool_result",
       "budget_usage",
       "handoff",
+      "run_ended", // 终结记号：交接
     ])
     const receipt = resultOf(old, "h1")
     expect(receipt.payload.isError).toBe(false)
     expect(textOf(receipt)).toContain("Handoff scheduled")
     expect(textOf(receipt)).toContain("3 next steps, 0 pinned notes, the message to act on")
 
-    const ho = old.at(-1) as Handoff
+    const ho = old.at(-2) as Handoff
     expect(ho.actor).toBe("model")
     expect(ho.payload).toEqual({
       toSessionId: result.toSessionId,
@@ -184,7 +185,7 @@ describe("handoff × runLoop", () => {
     ])
     const { result } = await drain(runLoop(config(lowering, log)))
     if (result.status !== "handoff") throw new Error(result.status)
-    const ho = (await all(log)).at(-1) as Handoff
+    const ho = (await all(log)).at(-2) as Handoff
     expect(ho.payload.reason).toBe("phase_boundary")
     expect(ho.payload.triggerMessage).toBe("Write the final report")
     expect(ho.payload.summary).not.toContain("## Next steps")
@@ -255,6 +256,7 @@ describe("handoff × runLoop", () => {
       "tools_bound", // 新会话由 handoff 直接建起，这次 runLoop 起步才留下第一条快照
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
   })
 
@@ -321,7 +323,7 @@ describe("handoff × runLoop", () => {
     expect(resultOf(old, "h2").payload.isError).toBe(true)
     expect(textOf(resultOf(old, "h2"))).toContain("already scheduled")
     expect(old.filter((e) => e.type === "core.handoff")).toHaveLength(1)
-    expect((old.at(-1) as Handoff).payload.summary).toBe(NOTE)
+    expect((old.at(-2) as Handoff).payload.summary).toBe(NOTE)
   })
 
   it("入参不合法 → isError、不交接、run 正常结束", async () => {
@@ -355,7 +357,8 @@ describe("handoff × runLoop", () => {
     expect(result.status).toBe("handoff")
     const old = await all(log)
     expect(old.some((e) => e.type === "core.compaction")).toBe(true)
-    expect(old.at(-1)?.type).toBe("core.handoff")
+    expect(old.at(-2)?.type).toBe("core.handoff")
+    expect(old.at(-1)?.type).toBe("core.run_ended")
   })
 
   it("构造选项：rules 可替换或关闭", () => {
@@ -423,15 +426,16 @@ describe("handoff × 审批同轮（R2）", () => {
     expect(handoffs).toEqual([[SESSION, second.result.toSessionId]])
     expect(lowering.requests).toHaveLength(1)
     const old = await all(log)
-    expect(types(old).slice(-6)).toEqual([
+    expect(types(old).slice(-7)).toEqual([
+      "tools_bound", // 续跑起步同样留快照：每个 run 的第一条，排在 run_resumed / 回执之前
       "run_resumed",
       "approval_decision",
-      "tools_bound", // 续跑起步同样留快照：排在回执之后、补齐的工具结果之前
       "tool_started", // deploy 是写工具：执行前先记开始动手
       "tool_result",
       "handoff",
+      "run_ended",
     ])
-    const ho = old.at(-1) as Handoff
+    const ho = old.at(-2) as Handoff
     expect(ho.payload).toMatchObject({ summary: NOTE, triggerMessage: "把库迁移到 pg，必须保留旧表" })
     expect(types(await all(log, second.result.toSessionId))).toEqual(["system_note", "user_message"])
   })

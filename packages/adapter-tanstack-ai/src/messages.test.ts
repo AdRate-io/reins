@@ -269,6 +269,7 @@ describe("toModelMessages", () => {
           "memory_op",
           "handoff",
           "tool_started",
+          "run_ended",
           "error",
         ].includes(type.slice(5))
       )

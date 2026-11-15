@@ -40,6 +40,7 @@ const DEFAULT_ACTOR: Record<CoreEventType, Actor> = {
   "core.run_paused": "system",
   "core.run_resumed": "host",
   "core.tools_bound": "system",
+  "core.run_ended": "system",
   "core.error": "system",
 }
 
@@ -176,12 +177,13 @@ describe("visibilityFilter", () => {
     ev(10, "core.tools_bound", { toolNames: ["add"], configHash: "h" }),
     text(11, "hello"),
     ev(12, "core.tool_started", { toolCallId: "t" }),
+    ev(13, "core.run_ended", { status: "done" }),
   ]
 
   it("默认剔除运维事件，保留对话事件", () => {
     const { events } = visibilityFilter().apply(timeline, ctxOf(timeline))
     expect(seqs(events)).toEqual([1, 11])
-    expect(DEFAULT_MODEL_INVISIBLE_TYPES.size).toBe(10)
+    expect(DEFAULT_MODEL_INVISIBLE_TYPES.size).toBe(11)
   })
 
   it("可覆盖不可见集合并追加宿主判定", () => {
@@ -189,7 +191,7 @@ describe("visibilityFilter", () => {
       invisibleTypes: ["core.error"],
       isVisible: (e) => e.seq !== 1,
     }).apply(timeline, ctxOf(timeline))
-    expect(seqs(events)).toEqual([2, 3, 4, 5, 6, 7, 8, 10, 11, 12])
+    expect(seqs(events)).toEqual([2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13])
   })
 })
 

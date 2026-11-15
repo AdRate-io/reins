@@ -97,7 +97,7 @@ describe("createAgent", () => {
     await res.text()
     expect(seen[0]).toBe("s1:core.tools_bound")
     expect(seen).toContain("s1:core.tool_result")
-    expect(seen.at(-1)).toBe("s1:core.budget_usage")
+    expect(seen.at(-1)).toBe("s1:core.run_ended")
   })
 
   it("handler.midRunInput 经 createAgent 透传：进行中 POST 回 202，缺省 AG-UI 编码下 TEXT_MESSAGE_START 带出 deliveryId", async () => {
@@ -174,6 +174,7 @@ describe("createAgent", () => {
       "core.budget_usage",
       "core.model_text",
       "core.budget_usage",
+      "core.run_ended",
     ])
     const logged = await store.log.tail(result.value.sessionId, 10)
     expect(logged.map((e) => e.type)).toEqual(seen)

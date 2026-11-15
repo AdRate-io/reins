@@ -96,7 +96,7 @@ describe("replayTurns：只凭日志重算每轮模型看到了什么", () => {
     expect(turns.map((t) => types(t.aftermath))).toEqual([
       ["tool_result", "budget_usage"],
       ["tool_result", "budget_usage"],
-      ["budget_usage"],
+      ["budget_usage", "run_ended"],
     ])
     expect(turns[1]?.usage?.tokens).toEqual({ input: 42, output: 7 })
     expect(turns[1]?.usage?.toolCalls).toBe(1)
@@ -131,10 +131,10 @@ describe("replayTurns：只凭日志重算每轮模型看到了什么", () => {
       "approval_request",
       "budget_usage",
       "run_paused",
+      // 续跑起步的工具表快照：每个 run 的第一条，排在 run_resumed / approval_decision 之前
+      "tools_bound",
       "run_resumed",
       "approval_decision",
-      // 续跑起步的工具表快照排在 approval_decision 之后、补齐 pending 之前
-      "tools_bound",
       "tool_started",
       "tool_result",
     ])

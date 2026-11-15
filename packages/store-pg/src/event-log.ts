@@ -1,5 +1,6 @@
 import { type Event, type EventLog, type ReadOptions, StoreError } from "@reinsjs/core"
 import { isUniqueViolation, type PgClient } from "./client.js"
+import { eventOf } from "./sql.js"
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = []
@@ -183,18 +184,4 @@ export class PgEventLog implements EventLog {
         toSessionId,
       })
   }
-}
-
-/**
- * 读侧拿到的是 `data::text`，由本包自己解析——驱动的 json 解析器与宿主 transform 都碰不到事件（踩坑 47）。
- *
- * 解出来还是字符串的，是旧行：早先把 postgres.js 裸包一层接入时，`$6::json[]` 让驱动把已序列化的文本又编码了一次，
- * 库里存成了 JSON 字符串标量。再解一层即得原事件；只读兼容，不回写。
- */
-function eventOf(text: unknown): Event {
-  if (typeof text !== "string") {
-    throw new StoreError("invalid_argument", `event data must be read back as text, got ${typeof text}`)
-  }
-  const value: unknown = JSON.parse(text)
-  return (typeof value === "string" ? JSON.parse(value) : value) as Event
 }

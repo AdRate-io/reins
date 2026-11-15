@@ -34,6 +34,47 @@ Tested against postgres.js 3.4 and 4.0. `postgresJsClient` only calls `sql.unsaf
 
 Writing your own wrapper for another driver: bind parameters as given and return rows keyed by the column names in the SQL, with `data` (selected as `data::text`) left as a string. The stores never rely on the driver's JSON encoding (see below).
 
+## Session status for a session list
+
+`pgRunStates(client, sessionIds)` tells you, for up to 500 sessions in one SQL statement, whether each one is running, waiting on someone, failed or finished — without a status table of your own. It combines two facts that reins already keeps: the run lease in `reins_runs`, and the last run marker in the session's timeline (every run starts with `core.tools_bound` — unless it was aborted before it started — and ends with exactly one `core.run_paused` or `core.run_ended`). The classification itself is `runStatusOf` from `@reinsjs/core`, so a single-process host can use it directly with `runs.get(id) !== undefined` and `lastRunMarker(timeline)`.
+
+```ts
+/** One badge per session in a list. `lastReadAt` is your own "user opened it" timestamp. */
+function badgeOf(status: RunStatus, lastReadAt: number): string {
+  switch (status.state) {
+    case "running":
+      return "running"
+    case "paused":
+      return status.awaiting && status.awaiting.length > 0 ? "needs you" : "paused"
+    case "error":
+    case "interrupted":
+      return "failed"
+    case "done":
+    case "handoff":
+      return status.endedAt > lastReadAt ? "unread" : ""
+    default:
+      return "" // idle, or unknown (written by an older version or the TanStack adapter)
+  }
+}
+
+/** Refuse to delete a session while a run holds it. */
+async function canDelete(client: PgClient, sessionId: string): Promise<boolean> {
+  const status = (await pgRunStates(client, [sessionId])).get(sessionId)
+  return status?.state !== "running"
+}
+```
+
+`paused.awaiting` lists the calls waiting on an answer from outside: an approval (with `requestedAt`, the time the request was written), a client tool, or a sub-agent (with its `childSessionId` — query that session for its own status). A user stop sets `stopped: true` and leaves `awaiting` empty. Use `seq` to tell one run's outcome from the next.
+
+"Running" is only known for runs started through `@reinsjs/server`'s handler with a lease registry — `createAgent` with `pgStores` sets that up. `agent.run()`, sub-agent runs and the TanStack adapter take no lease: their outcomes show up, but while they run the session reads as `interrupted` or `unknown`. Other windows where the answer is briefly wrong:
+
+- If the database stays unreachable until a lease expires while its run keeps going, the session reads `interrupted` until the next heartbeat renews it.
+- If releasing a lease fails, the session reads `running` (and `canDelete` refuses) for up to the lease TTL, 30 s by default.
+- After a process is killed mid-run, the session reads `running` until its lease expires, then `interrupted`.
+- A session forked from the middle of a run inherits the unfinished run and reads `interrupted`.
+- A resume that was already aborted when it started records your approval decisions but no `core.tools_bound`; if the process dies in the single write between those and its `core.run_paused`, the session still reads as the earlier `paused` approval.
+- A session whose last run finished before this feature reads `unknown` (there was no end marker yet); one that paused reads `paused` with `awaiting` undefined.
+
 ## Layout and two deliberate choices
 
 | table | keyed by | notes |

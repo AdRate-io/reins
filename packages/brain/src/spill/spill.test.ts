@@ -147,6 +147,7 @@ describe("spill × runLoop：结果外溢", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const r = resultOf(logged, "c1")
     expect(r.payload.isError).toBe(false)

@@ -55,5 +55,6 @@ export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>
   "core.memory_op": [OPS],
   "core.handoff": [OPS],
   "core.tool_started": [OPS],
+  "core.run_ended": [OPS],
   "core.error": [OPS],
 }

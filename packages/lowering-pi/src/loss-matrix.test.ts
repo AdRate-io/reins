@@ -159,6 +159,7 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     },
     { label: "memory_op", events: [user(), mk("core.memory_op", { op: "view", path: "/memories/a" })] },
     { label: "tool_started", events: [user(), mk("core.tool_started", { toolCallId: "c" })] },
+    { label: "run_ended", events: [user(), mk("core.run_ended", { status: "done" })] },
     {
       label: "handoff",
       events: [user(), mk("core.handoff", { toSessionId: "s2", summary: "s", reason: "r" })],

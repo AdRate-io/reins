@@ -387,6 +387,7 @@ describe("FetchLowering", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const usage1 = events[5]?.payload as { tokens: Record<string, number> }
     expect(usage1.tokens).toEqual({ input: 10, output: 8, cacheWrite: 20 })
@@ -575,6 +576,7 @@ describe("FetchLowering", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const usage1 = events[5]?.payload as { tokens: Record<string, number> }
     expect(usage1.tokens).toEqual({ input: 30, output: 8, cacheWrite: 20 })
@@ -663,6 +665,7 @@ describe("FetchLowering", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     // 第二个请求：历史里的 assistant 带 tool_calls 与回填的 reasoning_content，tool 消息紧跟，工具结果包了 untrusted 标记
     const second = captured[1]?.body.messages as Record<string, unknown>[]

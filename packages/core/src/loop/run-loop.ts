@@ -38,6 +38,7 @@ import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
 import { type ModelCallFailure, resolveRetry } from "./retry.js"
+import { awaitingOf } from "./run-status.js"
 import {
   computeConfigHash,
   pendingToolCalls,
@@ -58,6 +59,7 @@ import { isSubagentPause } from "./subagent.js"
 import {
   deferredToolSpecOf,
   errorMessageOf,
+  isClientTool,
   isContentPart,
   normalizeToolOutput,
   toolResultTrust,
@@ -331,7 +333,10 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // 先签后写（AdRate 建议 8）：状态随 run_paused 一起落进时间线，补发也能交出续跑凭据。
     // pending 以日志为准（而不是本轮内存里的列表），恢复时对账的也是日志；run_paused 本身不改变 pending。
     // lastSeq + 1 就是即将落下的 run_paused 自己的 seq——与此前"写完再算"得到的值逐字相同
-    const pending = pendingToolCalls(await readTimeline(log, sessionId, { registry }))
+    const timeline = await readTimeline(log, sessionId, { registry })
+    const pending = pendingToolCalls(timeline)
+    // 等外部答复的调用以日志 pending 为准（awaitingOf），停止收尾后 pending 已清空即 []
+    const awaiting = awaitingOf({ timeline, pending, tools: baseTools, interruptions })
     const state = await serializeRunState({
       sessionId,
       lastSeq: lastSeq + 1,
@@ -343,7 +348,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     })
     const events = [
       ...settled,
-      ...(await append([{ type: "core.run_paused", actor: "system", payload: { reason, state } }])),
+      ...(await append([
+        {
+          type: "core.run_paused",
+          actor: "system",
+          payload: { reason, state, awaiting, ...(texts ? { stopped: true as const } : {}) },
+        },
+      ])),
     ]
     return { events, result: { status: "paused", sessionId, lastSeq, reason, interruptions, state } }
   }
@@ -354,8 +365,12 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     ctx.budget.tokensSpent = tokensSpent
   }
 
+  /** 以 error 收尾：core.error 与终结记号 run_ended(error) 同批原子写入。非终结的 error（重试前、pullInput 抛错）不走这里 */
   const fail = async (payload: ErrorPayload): Promise<{ events: Event[]; result: RunResult }> => {
-    const events = await append([{ type: "core.error", actor: "system", payload }])
+    const events = await append([
+      { type: "core.error", actor: "system", payload },
+      { type: "core.run_ended", actor: "system", payload: { status: "error", category: payload.category } },
+    ])
     const error = events[0] as CoreEventOf<"core.error">
     return { events, result: { status: "error", sessionId, lastSeq, error } }
   }
@@ -368,7 +383,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   const forwardedDecisions: readonly ApprovalDecisionInput[] = (cfg.decisions ?? []).filter(
     (d) => d.sessionId !== undefined && d.sessionId !== sessionId,
   )
-  if (cfg.resume !== undefined || ownDecisions.length > 0) {
+  const resuming = cfg.resume !== undefined || ownDecisions.length > 0
+  if (resuming) {
     const timeline = await readTimeline(log, sessionId, { registry })
     if (cfg.resume !== undefined) {
       await validateResume({
@@ -395,6 +411,28 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         )
       }
     }
+  }
+
+  // ---- 工具表快照（P1）：每次 run 起步一条模型不可见的 tools_bound；与上一条比对有增删则再追加模型可见的说明 ----
+  // 放在校验之后（校验不过一条日志都不写）、run_resumed / approval_decision 与新输入之前：tools_bound 是每个 run 的第一条事件，
+  // 带 marksEnd 承诺本 run 以终结事件收尾（会话运行状态）。审批结论若排在它前面，进程死在两者之间时最后一条标记仍是旧的
+  // paused(approval)，而那个调用其实已有结论。说明先于用户这次的话，模型读到问题时已知道手里的工具变了。
+  // 起步时已中止的 run（server 空闲停止、asTool 收尾子会话）不问模型，快照与说明一起跳过：只跳说明的话，
+  // 下一个真 run 与这条快照比对不出变化，模型就永远收不到"工具变了"；这种 run 仍以 run_paused 收尾
+  if (!cfg.signal?.aborted) {
+    yield* await append(
+      toolsBoundDrafts({
+        timeline: await readTimeline(log, sessionId, { registry }),
+        toolNames: baseTools.map((t) => t.name),
+        configHash,
+        announce: cfg.announceToolChanges ?? true,
+        marksEnd: true,
+      }),
+    )
+  }
+
+  if (resuming) {
+    const decisions = ownDecisions
     if (cfg.resume !== undefined) {
       const by = decisions[0]?.by
       yield* await append([
@@ -413,21 +451,6 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
           ...(d.reason !== undefined ? { reason: d.reason } : {}),
         },
       })),
-    )
-  }
-
-  // ---- 工具表快照（P1）：每次 run 起步一条模型不可见的 tools_bound；与上一条比对有增删则再追加模型可见的说明 ----
-  // 放在校验之后（校验不过一条日志都不写）、新输入之前（说明先于用户这次的话，模型读到问题时已知道手里的工具变了）。
-  // 起步时已中止的 run（server 空闲停止、asTool 收尾子会话）不问模型，快照与说明一起跳过：只跳说明的话，
-  // 下一个真 run 与这条快照比对不出变化，模型就永远收不到"工具变了"
-  if (!cfg.signal?.aborted) {
-    yield* await append(
-      toolsBoundDrafts({
-        timeline: await readTimeline(log, sessionId, { registry }),
-        toolNames: baseTools.map((t) => t.name),
-        configHash,
-        announce: cfg.announceToolChanges ?? true,
-      }),
     )
   }
 
@@ -815,7 +838,11 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     yield* await flush()
 
     if (decision === "continue") return undefined
-    if (decision === "stop") return { status: "done", sessionId, lastSeq }
+    if (decision === "stop") {
+      // 终结记号：跑完了。RunResult.lastSeq 包含这一条
+      yield* await append([{ type: "core.run_ended", actor: "system", payload: { status: "done" } }])
+      return { status: "done", sessionId, lastSeq }
+    }
     if ("pause" in decision) {
       const note = decision.pause.note ?? `a socket requested a pause (${decision.pause.reason})`
       const kind = decision.pause.reason
@@ -856,6 +883,10 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     )
     await log.append(openingEvents)
     yield* openingEvents
+    // 新会话开场写成之后才在旧会话落终结记号：开场写失败时 run 抛错，旧会话判 interrupted，与"交接没完成"一致
+    yield* await append([
+      { type: "core.run_ended", actor: "system", payload: { status: "handoff", toSessionId } },
+    ])
     await cfg.onHandoff?.(sessionId, toSessionId)
     return { status: "handoff", sessionId, lastSeq, toSessionId }
   }
@@ -1057,7 +1088,8 @@ async function* executeToolCalls(
     }
 
     // 客户端工具：本循环不执行，等宿主回填 tool_result 后续跑
-    if (!tool.execute || tool.side === "client") {
+    // `!tool.execute` 与 isClientTool 重复，只为让后面的 tool.execute 收窄
+    if (isClientTool(tool) || !tool.execute) {
       summary.interruptions.push({ kind: "client_tool", toolCallId, call: call.payload })
       batch.held.push(toolCallId)
       continue

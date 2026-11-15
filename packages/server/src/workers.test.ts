@@ -62,15 +62,16 @@ describe("Cloudflare Workers（miniflare / workerd）", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
-    expect(frames.at(-1)).toEqual({ event: "result", data: { status: "done", sessionId: "w1", lastSeq: 7 } })
+    expect(frames.at(-1)).toEqual({ event: "result", data: { status: "done", sessionId: "w1", lastSeq: 8 } })
 
     const replay = await mf.dispatchFetch("http://worker/agent?sessionId=w1", {
       headers: { "last-event-id": "3" },
     })
     const replayed = parseFrames(await replay.text())
-    expect(replayed.map((f) => f.id).filter(Boolean)).toEqual(["4", "5", "6", "7"])
-    expect(replayed.at(-1)).toEqual({ event: "end", data: { sessionId: "w1", lastSeq: 7 } })
+    expect(replayed.map((f) => f.id).filter(Boolean)).toEqual(["4", "5", "6", "7", "8"])
+    expect(replayed.at(-1)).toEqual({ event: "end", data: { sessionId: "w1", lastSeq: 8 } })
 
     const stats = await (await mf.dispatchFetch("http://worker/stats")).json()
     expect(stats).toEqual({ waitUntilCalls: 1 })

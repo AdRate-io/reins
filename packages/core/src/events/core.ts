@@ -7,7 +7,7 @@
  * - 改字段语义、删字段、改必填 → 升版本，并在注册表登记 upcast 函数
  * 当前全部为 v1，见 ./registry.ts 的 CORE_SCHEMAS。
  */
-import type { SerializedRunState } from "../loop/types.js"
+import type { PauseReason, SerializedRunState } from "../loop/types.js"
 import type { ContentPart, Event } from "./base.js"
 
 // ---- 对话内容 ----
@@ -211,7 +211,35 @@ export interface RunPausedPayload {
    * 配置摘要反映暂停那一刻，绝不在读取时重算（否则暂停后改过的工具也会被签成一致）。TanStack 适配器写的 run_paused 不带
    */
   state?: SerializedRunState
+  /**
+   * pending 调用中等外部答复的那些（会话运行状态，AdRate 建议 12），按时间线算（`awaitingOf`），不从本次中断列表推。
+   * 用户停止收尾后为 []。可选字段，不升版本；老事件与 TanStack 适配器写的 run_paused 不带
+   */
+  awaiting?: AwaitingCall[]
+  /** 这次暂停是停止（RunStop：用户停止或宿主收尾遗留调用）造成的，与断线中止、丢租约中止（同为 reason host）区分。可选字段，不升版本 */
+  stopped?: true
 }
+
+/**
+ * 暂停那一刻在等外部答复的一个调用：
+ * - approval：有 approval_request、还没有 approval_decision；`requestedAt` 是那条请求的 `at`（每个调用只写一次，跨 run 不变）；
+ * - client_tool：客户端工具（`isClientTool`），等宿主回填 tool_result；
+ * - subagent：本次 run 里子代理暂停冒泡，按 `childSessionId` 再查子会话的状态。
+ */
+export type AwaitingCall =
+  | { kind: "approval"; toolCallId: string; name: string; requestedAt: number }
+  | { kind: "client_tool"; toolCallId: string; name: string }
+  | { kind: "subagent"; toolCallId: string; name: string; childSessionId: string; reason: PauseReason }
+
+/**
+ * run 的终结记号（暂停之外，会话运行状态）。写入方承诺收尾（tools_bound 带 `marksEnd`）的 run 恰好以一条终结事件收尾：
+ * 暂停是 core.run_paused，其余三种结局是这条。模型不可见。
+ * 暂停不写这条：server 补发判"末尾是带状态的 run_paused"才交出续跑凭据，暂停后再落一条会让关页回来的客户端拿不到 state。
+ */
+export type RunEndedPayload =
+  | { status: "done" }
+  | { status: "handoff"; toSessionId: string }
+  | { status: "error"; category: string }
 
 export interface RunResumedPayload {
   stateRef?: string
@@ -228,6 +256,11 @@ export interface ToolsBoundPayload {
   toolNames: string[]
   /** 与 SerializedRunState.configHash 同一算法（模型、工具名集合、系统提示） */
   configHash: string
+  /**
+   * 写入方承诺本 run 以终结事件（run_paused / run_ended）收尾（会话运行状态）。只有 runLoop 写 true；
+   * TanStack 适配器有不经终结钩子的出口，不写。没有这个字段 = 判不出是否中断。可选字段，不升版本
+   */
+  marksEnd?: true
 }
 
 export interface ErrorPayload {
@@ -258,6 +291,7 @@ export interface CoreEventPayloads {
   "core.run_paused": RunPausedPayload
   "core.run_resumed": RunResumedPayload
   "core.tools_bound": ToolsBoundPayload
+  "core.run_ended": RunEndedPayload
   "core.error": ErrorPayload
 }
 

@@ -14,7 +14,8 @@
  *   onToolPhaseComplete   TanStack 自己处理掉的调用（原生审批拒绝、未知工具、客户端回填）补记结果；原生审批请求入日志
  *   onShouldContinue      Socket.onTurnEnd：stop / pause / handoff 都让 TanStack 停下
  *   onInterruptResolution 审批答复 → approval_decision
- *   onAbort / onError     run_paused(host) / core.error
+ *   onFinish              run_ended(done)（已写过终结事件、或日志里还有没执行的调用时不写；handoff 在交接时就落 run_ended）
+ *   onAbort / onError     run_paused(host) / core.error + run_ended(error)
  *
  * 与默认循环的已知差异（有损声明，见技术方案 §11 / DECISIONS）：
  * - TanStack 消息无 system 角色，system_note 以 <system_note> 标签走 user；thinking 无同源签名不下发
@@ -22,6 +23,9 @@
  * - onTurnEnd 的 "continue" 只在 TanStack 自己也想继续时生效；pause 表现为 run 正常结束 + run_paused 事件
  * - handoff 只做记录与新会话开头，宿主在下一次请求里改用新 sessionId
  * - 模型看到的是日志投影（providerMessages），TanStack 自己的 messages 数组只给客户端 UI 与它的内部对账用
+ * - 终结记号（会话运行状态）：写 run_ended，但 tools_bound 不带 marksEnd——InterruptReplaySignal、其它中间件发起的
+ *   通用中断等出口不调任何终结钩子，承诺不了"每个 run 恰好一条终结事件"；这类 run 判 unknown 而不是 interrupted。
+ *   写的 run_paused 不带 awaiting / stopped（与 state 同）
  */
 import {
   type BeforeToolDecision,
@@ -212,6 +216,12 @@ interface RunState {
    * "not registered on this chat"，run 死在一条永远等不到答复的 run_paused 上；所以 init 就查，没登记则 defer 降级为拒绝
    */
   approvalInterruptRegistered: boolean
+  /**
+   * 本 run 已写过终结事件（run_paused / run_ended），在 append 里随落随记。三个终结钩子共用这一个守卫：
+   * wait 路径返回后若连接被取消，引擎会在 finally 里再调 onAbort，没有守卫就会在 run_paused(approval) 后面
+   * 再追加一条 run_paused(host)，把审批暂停盖掉
+   */
+  ended: boolean
 }
 
 function defaultCapabilities(partial: ReinsMiddlewareOptions["capabilities"]): LoweringCapabilities {
@@ -278,6 +288,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     )
     await log.append(events)
     s.lastSeq += events.length
+    if (events.some((e) => e.type === "core.run_paused" || e.type === "core.run_ended")) s.ended = true
     // 本批登记（与 runLoop 同一口径）：模型输出的 tool_call 进 calls、落日志的 tool_result 进 results
     if (s.turn) {
       for (const e of events) {
@@ -385,6 +396,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       assembler: new BlockAssembler({ provider: model.provider, api: TANSTACK_API, model: model.id }),
       wrapped: new Map(),
       approvalInterruptRegistered: approvalInterruptRegistered(ctx),
+      ended: false,
     }
     states.set(ctx, s)
     // ToolContext.spend（§10.1 ④）：工具代跑的子代理用量计入本 run 的预算，budget 模块按总账拦
@@ -833,6 +845,11 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     )
     await log.append(events)
     for (const e of events) options.onEvent?.(e)
+    // 新会话开场写成之后立即在旧会话落终结记号（与 runLoop 同序）。不能留给 onFinish：交接后连接被取消时引擎跳过 onFinish、
+    // 改调 onAbort，旧会话就会被记成 paused(host)
+    await append(ctx, s, [
+      { type: "core.run_ended", actor: "system", payload: { status: "handoff", toSessionId } },
+    ])
     await options.onHandoff?.(sessionId, toSessionId)
   }
 
@@ -982,9 +999,18 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       return false
     },
 
+    async onFinish(ctx) {
+      const s = states.get(ctx)
+      if (!s || s.ended) return
+      await append(ctx, s, s.assembler.finish())
+      // 引擎提前结束（如通用中断按 stop 策略续跑）时日志里可能还有没执行的调用：那不是"跑完了"，不写终结记号（判 unknown）
+      if (pendingToolCalls(await timelineOf()).length > 0) return
+      await append(ctx, s, [{ type: "core.run_ended", actor: "system", payload: { status: "done" } }])
+    },
+
     async onAbort(ctx) {
       const s = states.get(ctx)
-      if (!s) return
+      if (!s || s.ended) return
       await append(ctx, s, [
         ...s.assembler.finish(),
         { type: "core.run_paused", actor: "system", payload: { reason: "host" } },
@@ -1001,6 +1027,16 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
           actor: "system",
           payload: { category: TANSTACK_API, message: errorMessageOf(info.error), retryable: false },
         },
+        // 与 core.error 同批原子写入；本 run 已有终结事件时只记错误，不再收尾第二次
+        ...(s.ended
+          ? []
+          : [
+              {
+                type: "core.run_ended" as const,
+                actor: "system" as const,
+                payload: { status: "error" as const, category: TANSTACK_API },
+              },
+            ]),
       ])
     },
   }

@@ -25,7 +25,7 @@ The umbrella `@reinsjs/agent` package already uses `aguiEncoding()` as the defau
 | `model_thinking` | `REASONING_*` |
 | `tool_call`, `tool_result` | `TOOL_CALL_START` / `_ARGS` / `_END`, `TOOL_CALL_RESULT` |
 | `user_message` | `MESSAGES_SNAPSHOT`-compatible user message |
-| everything else (`system_note`, `compaction`, `approval_*`, `budget_usage`, `run_paused` …) | `CUSTOM` with `name` = event type and the event as `value` |
+| everything else (`system_note`, `compaction`, `approval_*`, `budget_usage`, `run_paused`, `run_ended` …) | `CUSTOM` with `name` = event type and the event as `value` |
 
 Interrupts carry what a UI needs to answer them: an `approval` has `toolCallId`, the request summary and the policy id; a `subagent` interrupt (a nested agent waiting for approval) has `metadata.childSessionId` plus the child's own interruptions — send the decision back with `sessionId: childSessionId`.
 

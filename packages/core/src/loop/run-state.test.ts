@@ -100,24 +100,25 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
       decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
     })
     const { events, result } = await drain(runLoop(cfgB))
-    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 13 })
+    expect(result).toEqual({ status: "done", sessionId: SESSION, lastSeq: 14 })
 
     const logged = await all(log)
     expect(types(logged.slice(before))).toEqual([
+      // 续跑起步的工具表快照：每个 run 的第一条，在 run_resumed / approval_decision 之前
+      "tools_bound",
       "run_resumed",
       "approval_decision",
-      // 续跑起步的工具表快照：在 run_resumed / approval_decision 之后、补齐 pending 之前
-      "tools_bound",
       // deploy 是写工具（没声明 risk）：执行前先记"开始动手"
       "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
-    const resumed = logged[before] as CoreEventOf<"core.run_resumed">
+    const resumed = logged[before + 1] as CoreEventOf<"core.run_resumed">
     expect(resumed.payload).toEqual({ by: "boss" })
     expect(resumed.actor).toBe("host")
-    const decision = logged[before + 1] as CoreEventOf<"core.approval_decision">
+    const decision = logged[before + 2] as CoreEventOf<"core.approval_decision">
     expect(decision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
     const res = logged[before + 4] as CoreEventOf<"core.tool_result">
     expect(res.payload).toMatchObject({
@@ -125,7 +126,7 @@ describe("RunState：进程 A 暂停、进程 B 恢复", () => {
       content: [{ type: "text", text: '已上线 {"env":"prod"}' }],
     })
     // 进程 B 也把新事件逐条 yield 出来了
-    expect(events.map((e) => e.seq)).toEqual([7, 8, 9, 10, 11, 12, 13])
+    expect(events.map((e) => e.seq)).toEqual([7, 8, 9, 10, 11, 12, 13, 14])
     // 模型看到的是干净的对话：审批与暂停/恢复事件不可见
     const b = cfgB.lowering as ScriptedLowering
     expect(types(b.requests[0]?.events ?? [])).toEqual(["user_message", "tool_call", "tool_result"])
@@ -374,7 +375,11 @@ describe("RunState 随 run_paused 进时间线（AdRate 建议 8）", () => {
     if (result.status !== "paused") throw new Error("expected paused")
     const tail = (await all(log)).at(-1) as CoreEventOf<"core.run_paused">
     expect(tail.type).toBe("core.run_paused")
-    expect(tail.payload).toEqual({ reason: "approval", state: result.state })
+    expect(tail.payload).toEqual({
+      reason: "approval",
+      state: result.state,
+      awaiting: [{ kind: "approval", toolCallId: "c1", name: "deploy", requestedAt: expect.any(Number) }],
+    })
     expect(tail.seq).toBe(result.state.lastSeq)
     expect(pausedStateOf(tail)).toEqual(result.state)
 
@@ -394,7 +399,7 @@ describe("RunState 随 run_paused 进时间线（AdRate 建议 8）", () => {
     expect(result).toMatchObject({ status: "paused", reason: "host" })
     if (result.status !== "paused") return
     const tail = (await all(log)).at(-1) as CoreEventOf<"core.run_paused">
-    expect(tail.payload).toEqual({ reason: "host", state: result.state })
+    expect(tail.payload).toEqual({ reason: "host", state: result.state, awaiting: [], stopped: true })
     expect(result.state.pendingToolCallIds).toEqual([])
   })
 

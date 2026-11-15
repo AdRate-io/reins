@@ -50,6 +50,9 @@ export const NOT_SENT: Readonly<Record<string, readonly LandingSpec[]>> = {
       "marks that a call began executing, for resume and stop handling; the model learns the outcome from tool_result",
     ),
   ],
+  "core.run_ended": [
+    dropped("none", "marks how a run ended, for hosts tracking session status; the model never sees it"),
+  ],
   "core.error": [
     dropped(
       "none",

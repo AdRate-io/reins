@@ -549,6 +549,7 @@ describe("skills() 与 runLoop 集成", () => {
       "budget_usage",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const skillRead = resultOf(events, "c1")
     expect(skillRead.trust).toBe("system")

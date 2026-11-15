@@ -3,11 +3,11 @@
  * 这就是"两台实例连同一个 Postgres"的形状。第二个实例的 POST 必须 409；第一个跑完释放后第二个能接着跑。
  */
 import { PGlite } from "@electric-sql/pglite"
-import { defineTool, type RunResult } from "@reinsjs/core"
+import { defineTool, RUN_MARKER_TYPES, type RunLease, type RunResult } from "@reinsjs/core"
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { createAgentHandler, leasedRunRegistry } from "@reinsjs/server"
 import { afterAll, describe, expect, it } from "vitest"
-import { pgStores } from "./index.js"
+import { pgRunStates, pgStores } from "./index.js"
 
 const pglite = new PGlite()
 afterAll(() => pglite.close())
@@ -108,5 +108,82 @@ describe("跨包：两个 handler + PGlite 租约", () => {
       ])
     ).rows.map((r) => r.seq)
     expect(seqs).toEqual(seqs.map((_, i) => i + 1))
+  })
+})
+
+describe("跨包：终结事件先于释放租约（pgRunStates 无空档）", () => {
+  it("真 handler + leasedRunRegistry：done / 审批暂停 / error / 停止收尾 run，release 被调用那一刻最后一条标记已是终结事件", async () => {
+    const store = await pgStores(pglite)
+    await pglite.query("TRUNCATE reins_events, reins_blobs, reins_memory, reins_runs")
+    const lease = store.runLease
+    if (lease === undefined) throw new Error("pgStores 应带 runLease")
+    /** release 被调用时（租约仍在）查到的最后一条标记类型 */
+    const atRelease: string[] = []
+    const watched: RunLease = {
+      acquire: (...a) => lease.acquire(...a),
+      renew: (...a) => lease.renew(...a),
+      release: async (sessionId, owner) => {
+        const row = (
+          await pglite.query<{ type: string }>(
+            "SELECT type FROM reins_events WHERE session_id = $1 AND type = ANY($2::text[]) ORDER BY seq DESC LIMIT 1",
+            [sessionId, [...RUN_MARKER_TYPES]],
+          )
+        ).rows[0]
+        // 此刻租约还在：快照判 running。release 失败只告警，所以这里只记录、最后统一断言
+        const state = (await pgRunStates(pglite, [sessionId])).get(sessionId)?.state
+        atRelease.push(`${row?.type ?? "none"}|${state}`)
+        await lease.release(sessionId, owner)
+      },
+    }
+    const deploy = defineTool<Record<string, never>>({
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: () => "ok",
+    })
+    const handlerOf = (script: ScriptedTurn[]) =>
+      createAgentHandler(
+        { log: store.log, lowering: new ScriptedLowering(script), model: MODEL, tools: [deploy] },
+        { heartbeatMs: 0, runs: leasedRunRegistry(watched, { owner: "A", ttlMs: 30_000, warn: () => {} }) },
+      )
+    /** 跑完并等 release 落定（result 帧之后 release 可能还差一个微任务） */
+    const settled = async (res: Response, n: number) => {
+      await res.text()
+      const start = Date.now()
+      while (atRelease.length < n) {
+        if (Date.now() - start > 1000) throw new Error("租约未释放")
+        await new Promise((r) => setTimeout(r, 5))
+      }
+    }
+
+    await settled(await handlerOf([{ drafts: [say("好")] }])(post({ sessionId: "done", input: "hi" })), 1)
+    await settled(
+      await handlerOf([{ drafts: [callTool("c1", "deploy", {})] }])(
+        post({ sessionId: "wait", input: "上线" }),
+      ),
+      2,
+    )
+    await settled(
+      await handlerOf([{ drafts: [], outcome: { stopReason: "error", errorMessage: "boom" } }])(
+        post({ sessionId: "err", input: "hi" }),
+      ),
+      3,
+    )
+    // 空闲但有 pending（等审批）时的停止：handler 自己起收尾 run 并 drive
+    const stop = await handlerOf([])(post({ sessionId: "wait", stop: true }))
+    expect(stop.status).toBe(200)
+    await settled(stop, 4)
+
+    expect(atRelease).toEqual([
+      "core.run_ended|running",
+      "core.run_paused|running",
+      "core.run_ended|running",
+      "core.run_paused|running",
+    ])
+    const states = await pgRunStates(pglite, ["done", "wait", "err"])
+    expect(states.get("done")).toMatchObject({ state: "done" })
+    expect(states.get("wait")).toMatchObject({ state: "paused", reason: "host", stopped: true, awaiting: [] })
+    expect(states.get("err")).toMatchObject({ state: "error", category: "provider" })
   })
 })

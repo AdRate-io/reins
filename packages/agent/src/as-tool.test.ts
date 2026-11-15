@@ -154,23 +154,25 @@ describe("asTool：审批冒泡", () => {
     expect(second.result.status).toBe("done")
     // 子：结论入账 → 补齐 deploy → 作答
     expect(types(await all(store, childId)).slice(6)).toEqual([
-      "approval_decision",
       "tools_bound",
+      "approval_decision",
       "tool_started",
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
-    const childDecision = (await all(store, childId))[6] as CoreEventOf<"core.approval_decision">
+    const childDecision = (await all(store, childId))[7] as CoreEventOf<"core.approval_decision">
     expect(childDecision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
-    // 父：run_resumed → 补齐 p1（拿到子的最终结果）→ 汇报；父日志里没有子的 approval_decision
+    // 父：tools_bound → run_resumed → 补齐 p1（拿到子的最终结果）→ 汇报；父日志里没有子的 approval_decision
     const parent = await all(store, sid)
     expect(types(parent).slice(6)).toEqual([
-      "run_resumed",
       "tools_bound",
+      "run_resumed",
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     expect(parent.some((e) => e.type === "core.approval_decision")).toBe(false)
     const outcome = outcomeOf(parent)

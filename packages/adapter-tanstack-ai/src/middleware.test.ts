@@ -25,7 +25,9 @@ import {
   InMemoryBlobStore,
   InMemoryEventLog,
   InMemoryMemoryStore,
+  lastRunMarker,
   OUTCOME_UNKNOWN_TEXT,
+  runStatusOf,
   type Socket,
   type ToolBatch,
   toolStartedAt,
@@ -68,9 +70,15 @@ const addTool = toolDefinition({
   return a + b
 })
 
-async function drain(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
+async function drain(
+  stream: AsyncIterable<StreamChunk>,
+  onChunk?: (chunk: StreamChunk) => void,
+): Promise<StreamChunk[]> {
   const out: StreamChunk[] = []
-  for await (const c of stream) out.push(c)
+  for await (const c of stream) {
+    out.push(c)
+    onChunk?.(c)
+  }
   return out
 }
 
@@ -98,6 +106,9 @@ interface Fixture {
     runId?: string
     /** 故意不登记 reinsApprovalInterrupt（R7 用例） */
     withoutInterrupts?: boolean
+    abortController?: AbortController
+    /** 每收到一个 chunk 调一次（取消时机用） */
+    onChunk?: (chunk: StreamChunk) => void
   }): Promise<StreamChunk[]>
 }
 
@@ -146,7 +157,9 @@ function fixture(
           ...(input.resume ? { resume: input.resume } : {}),
           ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
           ...(input.runId ? { runId: input.runId } : {}),
+          ...(input.abortController ? { abortController: input.abortController } : {}),
         }) as AsyncIterable<StreamChunk>,
+        input.onChunk,
       ),
   }
 }
@@ -174,6 +187,7 @@ describe("reinsMiddleware：基本流程", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const result = events[6] as CoreEventOf<"core.tool_result">
     expect(result.payload).toEqual({
@@ -219,7 +233,7 @@ describe("reinsMiddleware：基本流程", () => {
     expect(f.adapter.calls[0]?.systemPrompts).toEqual(["你是计算器"])
     expect(f.adapter.calls[0]?.tools?.map((t) => t.name)).toEqual(["add"])
     // onEvent 拿到每一条
-    expect(f.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(f.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
   })
 
   it("第二次请求只导入末尾新用户消息，历史以日志为准", async () => {
@@ -233,10 +247,12 @@ describe("reinsMiddleware：基本流程", () => {
       "user_message",
       "model_text",
       "budget_usage",
+      "run_ended",
       "tools_bound",
       "user_message",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     expect(f.adapter.calls[1]?.messages).toEqual([
       { role: "user", content: "hi" },
@@ -267,9 +283,11 @@ describe("reinsMiddleware：基本流程", () => {
       "user_message",
       "model_text",
       "budget_usage",
+      "run_ended",
       "tools_bound",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     expect(f2.adapter.calls[0]?.messages).toEqual([
       { role: "user", content: "hi" },
@@ -285,8 +303,14 @@ describe("reinsMiddleware：基本流程", () => {
     const f2 = fixture([{ blocks: [say("又见")] }], [], {}, shared)
     await f2.run({ messages: [user("hi"), { role: "assistant", content: "你好" }, user("hi")] })
     const events = await all(f.log)
-    expect(types(events).slice(4)).toEqual(["tools_bound", "user_message", "model_text", "budget_usage"])
-    expect(events[5]?.provenance).toEqual({ source: "tanstack-ai", ref: "import:2" })
+    expect(types(events).slice(5)).toEqual([
+      "tools_bound",
+      "user_message",
+      "model_text",
+      "budget_usage",
+      "run_ended",
+    ])
+    expect(events[6]?.provenance).toEqual({ source: "tanstack-ai", ref: "import:2" })
   })
 
   it("非正文事件以 CUSTOM chunk 推进流（name = 事件 type）", async () => {
@@ -374,6 +398,7 @@ describe("reinsMiddleware：脑子模块", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const pin = events[4] as CoreEventOf<"core.system_note">
     expect(pin.payload).toMatchObject({ kind: "pin", text: "总重 30kg" })
@@ -405,6 +430,7 @@ describe("reinsMiddleware：脑子模块", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const op = events[4] as CoreEventOf<"core.memory_op">
     expect(op.payload).toMatchObject({ op: "create", path: "/memories/a.md" })
@@ -430,6 +456,7 @@ describe("reinsMiddleware：脑子模块", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const result = events[4] as CoreEventOf<"core.tool_result">
     expect(result.trust).toBe("system")
@@ -552,9 +579,11 @@ describe("reinsMiddleware：脑子模块", () => {
     )
     await f.run({ messages: [user("交接")] })
     const events = await all(f.log)
-    expect(types(events).at(-1)).toBe("handoff")
+    expect(types(events).slice(-2)).toEqual(["handoff", "run_ended"])
     expect(handoffs).toHaveLength(1)
     const to = handoffs[0]?.[1] ?? ""
+    // 终结记号由 onFinish 落，排在新会话开场之后
+    expect(events.at(-1)?.payload).toEqual({ status: "handoff", toSessionId: to })
     const opened = await all(f.log, to)
     expect(types(opened)).toEqual(["system_note", "user_message"])
     expect(f.adapter.calls).toHaveLength(1)
@@ -653,6 +682,7 @@ describe("reinsMiddleware：审批", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const decision = events[7] as CoreEventOf<"core.approval_decision">
     expect(decision.payload).toEqual({ toolCallId: "c1", approved: true, by: "boss" })
@@ -779,6 +809,7 @@ describe("reinsMiddleware：审批", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     const decisions = events.filter(
       (e) => e.type === "core.approval_decision",
@@ -837,6 +868,7 @@ describe("reinsMiddleware：审批", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     expect((events[5] as CoreEventOf<"core.approval_decision">).payload).toEqual({
       toolCallId: "c1",
@@ -870,6 +902,7 @@ describe("reinsMiddleware：审批", () => {
       "tool_result",
       "model_text",
       "budget_usage",
+      "run_ended",
     ])
     expect((events[5] as CoreEventOf<"core.tool_result">).payload.isError).toBe(true)
     expect(f.adapter.calls[1]?.messages?.[2]).toMatchObject({
@@ -1025,5 +1058,104 @@ describe("reinsMiddleware：TurnContext.batch（2026-11-02）", () => {
     // 刻意不对称：TanStack 续跑补完遗留调用后直接问模型，中间没有 onShouldContinue，补跑批没有 onTurnEnd；
     // 所以"审批续跑后收尾"只在 runLoop 成立，这里模型会多被请求一轮（锁住现状，引擎形状决定）
     expect(f2.adapter.calls).toHaveLength(1)
+  })
+})
+
+describe("reinsMiddleware：终结记号（会话运行状态）", () => {
+  const TERMINAL = new Set(["core.run_paused", "core.run_ended"])
+  const terminals = (events: readonly Event[]) => events.filter((e) => TERMINAL.has(e.type))
+  const approvalTool = toolDefinition({
+    name: "deploy",
+    description: "上线",
+    inputSchema: { type: "object", properties: { env: { type: "string" } } },
+  }).server(async () => "deployed")
+
+  it("跑完：一条 run_ended(done)；tools_bound 不带 marksEnd（有不经终结钩子的出口，不承诺收尾）", async () => {
+    const f = fixture([{ blocks: [say("好")] }])
+    await f.run({ messages: [user("hi")] })
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ type: "core.run_ended", payload: { status: "done" } })
+    const bound = events[0] as CoreEventOf<"core.tools_bound">
+    expect(bound.type).toBe("core.tools_bound")
+    expect(bound.payload).not.toHaveProperty("marksEnd")
+    expect(runStatusOf({ held: false, lastMarker: lastRunMarker(events) })).toMatchObject({ state: "done" })
+    // 只剩 tools_bound 时（没调终结钩子的出口）判 unknown 而不是 interrupted
+    expect(runStatusOf({ held: false, lastMarker: bound })).toEqual({ state: "unknown" })
+  })
+
+  it("出错：core.error 与 run_ended(error) 同批", async () => {
+    const f = fixture([]) // 剧本为空：适配器第一次请求就抛
+    await f.run({ messages: [user("hi")] }).catch(() => {})
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    const [err, ended] = events.slice(-2)
+    expect(err?.type).toBe("core.error")
+    expect(ended?.payload).toEqual({ status: "error", category: "tanstack-ai" })
+    expect(ended?.at).toBe(err?.at)
+  })
+
+  it("中止：一条 run_paused(host)，onFinish 不再补 run_ended", async () => {
+    const controller = new AbortController()
+    const f = fixture([{ blocks: [say("说到一半")] }, { blocks: [say("never")] }])
+    await f
+      .run({
+        messages: [user("hi")],
+        abortController: controller,
+        onChunk: (c) => {
+          if (c.type === "TEXT_MESSAGE_CONTENT") controller.abort()
+        },
+      })
+      .catch(() => {})
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ type: "core.run_paused", payload: { reason: "host" } })
+  })
+
+  it("审批 wait 后连接被取消：引擎 finally 补调 onAbort，但不再追加 run_paused(host) 盖掉审批暂停", async () => {
+    const controller = new AbortController()
+    const f = fixture(
+      [{ blocks: [callTool("c1", "deploy", { env: "prod" })] }],
+      [approval({ ask: ["deploy"] })],
+    )
+    await f
+      .run({
+        messages: [user("上线")],
+        tools: [approvalTool],
+        abortController: controller,
+        onChunk: (c) => {
+          if (c.type === "RUN_FINISHED") controller.abort()
+        },
+      })
+      .catch(() => {})
+    expect(controller.signal.aborted).toBe(true)
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ type: "core.run_paused", payload: { reason: "approval" } })
+    // 适配器写的 run_paused 不带 awaiting / stopped（与 state 同）
+    expect(events.at(-1)?.payload).toEqual({ reason: "approval" })
+  })
+
+  it("交接后连接被取消：run_ended(handoff) 已随交接落下，onAbort 不再追加 run_paused(host)", async () => {
+    const controller = new AbortController()
+    const f = fixture(
+      [{ blocks: [say("交")] }, { blocks: [say("never")] }],
+      [{ onTurnEnd: () => ({ handoff: { toSessionId: "s2", summary: "sum", reason: "r" } }) }],
+      { onHandoff: () => controller.abort() },
+    )
+    await f.run({ messages: [user("hi")], abortController: controller }).catch(() => {})
+    expect(controller.signal.aborted).toBe(true)
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    expect(types(events).slice(-2)).toEqual(["handoff", "run_ended"])
+    expect(events.at(-1)?.payload).toEqual({ status: "handoff", toSessionId: "s2" })
+  })
+
+  it("Socket 要求暂停：run_paused 之后 onFinish 不再写 run_ended", async () => {
+    const f = fixture([{ blocks: [say("x")] }], [{ onTurnEnd: () => ({ pause: { reason: "budget" } }) }])
+    await f.run({ messages: [user("hi")] })
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-1)?.type).toBe("core.run_paused")
   })
 })

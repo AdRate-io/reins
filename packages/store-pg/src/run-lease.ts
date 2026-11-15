@@ -1,8 +1,6 @@
 import type { RunLease } from "@reinsjs/core"
 import type { PgClient } from "./client.js"
-
-/** 数据库时钟的 Unix 毫秒。每条语句自己算一次；单条语句内 now() 恒定，比较与写入用的是同一时刻 */
-const DB_NOW_MS = "(extract(epoch from now()) * 1000)::bigint"
+import { DB_NOW_MS, HELD_SQL } from "./sql.js"
 
 /**
  * Postgres run 租约（D4）：一张 `reins_runs(session_id PK, owner, expires_at)`，三条都是**单条语句**，不开事务、不借连接，
@@ -36,7 +34,7 @@ export class PgRunLease implements RunLease {
   async renew(sessionId: string, owner: string, ttlMs: number): Promise<boolean> {
     const res = await this.client.query(
       `UPDATE reins_runs SET expires_at = ${DB_NOW_MS} + $3::bigint
-       WHERE session_id = $1 AND owner = $2 AND expires_at >= ${DB_NOW_MS}
+       WHERE session_id = $1 AND owner = $2 AND ${HELD_SQL}
        RETURNING owner`,
       [sessionId, owner, Math.round(ttlMs)],
     )
