@@ -893,7 +893,7 @@ DeepSeek 官方通道（`deepseek()`，`deepseek-flash`，DeepSeek 方言回填 
 - **相邻情况**（`spikes/aborted-turn-replay/`，原始请求体两遍一致）：
   - 停在半个 tool_call：截断的入参原文照常送回，循环收尾时给它补"没执行"的结果。DeepSeek、OpenAI Chat、OpenAI Responses 都接受，不用改。
   - 停在思考、但本该接着调工具：与"只有思考"同一种情况，下一轮由模型重新思考。
-  - Anthropic 线：停在思考半截时还没有签名，这种思考本来就记 dropped，空 assistant 整条不发，不受影响。思考块刚结束、签名已到、正文第一个字还没出就被停的窄窗口，会发出只含一个 thinking 块的 assistant，厂商是否接受还没实测，登记为 OPT-261116-1。
+  - Anthropic 线：停在思考半截时还没有签名，这种思考本来就记 dropped，空 assistant 整条不发，不受影响。思考块刚结束、签名已到、正文第一个字还没出就被停的窄窗口，会发出只含一个 thinking 块的 assistant；`claude-haiku-5-5` 两遍实测厂商接受（直接接 user、停在工具结果之后两种都是），不用改。
   - Responses 线：加密项要等思考结束才给，停在半截的思考 dropped、不出任何项；思考已完整、停在后续项之前的，单独一条 reasoning 项后直接接 user，厂商实测接受。
   - lowering-pi：pi-ai 0.85.1 在 openai-completions 里自己跳过既无内容又无工具调用的 assistant，不受影响。
 - **复现与验证**：真 runLoop + DeepSeek `deepseek-flash`，思考流出 40 字时 `abort(new RunStop())`，再在同一会话发"继续"。修前 400（与测试服同一条错误），修后 3/3 正常收尾。
