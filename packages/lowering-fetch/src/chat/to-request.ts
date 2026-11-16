@@ -221,6 +221,12 @@ function liftedAttachment(
   return [header, ...(item.untrustedSource ? markUntrusted(body, item.untrustedSource).parts : body)]
 }
 
+/** 只有思考的一轮整条不发时，思考落点的说明 */
+const THINKING_ONLY_NOTE =
+  "the turn holds only thinking (it was cut off before any text or tool call), and an assistant message needs content or tool_calls, so the whole turn is not sent"
+/** 空正文段的落点说明（与另两条线同一处置：空段不下发） */
+const EMPTY_TEXT_NOTE = "the text segment is empty, so it is not sent"
+
 /** tool_call 入参回到线上是 JSON 字符串；读侧解析失败时存的是原始字符串，写侧原样送回 */
 function argumentsOf(args: unknown): string {
   return typeof args === "string" ? args : JSON.stringify(args ?? {})
@@ -253,7 +259,8 @@ export function encodeChatRequest(input: ChatEncodeInput): {
   if (input.systemPrompt) messages.push({ role: "system", content: input.systemPrompt })
 
   for (const item of input.ir) {
-    if (item.kind !== "tool_result" && item.kind !== "dropped") releaseLifted()
+    // assistant 可能整条不下发（只有思考的一轮），由它自己在确定下发时放出
+    if (item.kind !== "tool_result" && item.kind !== "dropped" && item.kind !== "assistant") releaseLifted()
     switch (item.kind) {
       case "user": {
         const c = userContent(item.parts, capabilities)
@@ -274,7 +281,10 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         break
       }
       case "assistant": {
-        messages.push(assistantMessage(item.blocks, item.origin, target, reasoningContent, landings))
+        const msg = assistantMessage(item.blocks, item.origin, target, reasoningContent, landings)
+        if (!msg) break
+        releaseLifted()
+        messages.push(msg)
         break
       }
       case "tool_result": {
@@ -385,7 +395,11 @@ export function encodeChatRequest(input: ChatEncodeInput): {
  * - 正文：Chat 的 assistant.content 是单个字符串，多段以空行合并，每段记 lossy(merged-text)；
  * - thinking：开了 reasoning_content 方言且来源同家 → 回填（多段以换行拼接），否则 dropped；
  *   方言开着时**字段必须在**（DeepSeek 带 tools 的请求缺它 400），没有可回填的就给空串；
- * - tool_call：`arguments` 是 JSON 字符串。
+ * - tool_call：`arguments` 是 JSON 字符串；
+ * - 空正文段 dropped（不算 content）；
+ * - 既无正文也无工具调用（中止或断流停在思考阶段的一轮）→ 整条不发、思考记 dropped，返回 undefined：
+ *   assistant 消息 content 与 tool_calls 至少要有一个，DeepSeek / OpenAI 都 400；而时间线只追加、每次整段回放，
+ *   这一轮一旦照发，会话之后每个请求都失败（AdRate 建议 13）。跳过后历史里 user → user 相邻，两家实测接受。
  */
 function assistantMessage(
   blocks: readonly IrBlock[],
@@ -393,11 +407,23 @@ function assistantMessage(
   target: { provider: string; api: string; model: string },
   reasoningContent: boolean,
   landings: LandingRecord[],
-): ChatMessage {
-  const texts = blocks.filter((b): b is Extract<IrBlock, { type: "text" }> => b.type === "text")
+): ChatMessage | undefined {
+  // 空正文段（四条内置流解析都不产，但适配器 / 宿主 / fixture 可能写入）不算 content：先剔除记 dropped，
+  // 否则 `content: ""` 又是一条"没有内容"的 assistant，厂商可能同样拒收
+  const texts: Extract<IrBlock, { type: "text" }>[] = []
+  for (const b of blocks) {
+    if (b.type !== "text") continue
+    if (b.text.length === 0) land(landings, b.event, "dropped", "none", EMPTY_TEXT_NOTE)
+    else texts.push(b)
+  }
   const thinkings = blocks.filter((b): b is Extract<IrBlock, { type: "thinking" }> => b.type === "thinking")
   const calls = blocks.filter((b): b is Extract<IrBlock, { type: "tool_call" }> => b.type === "tool_call")
   const foreign = foreignOrigin(origin, target)
+
+  if (texts.length === 0 && calls.length === 0) {
+    for (const t of thinkings) land(landings, t.event, "dropped", "none", THINKING_ONLY_NOTE)
+    return undefined
+  }
 
   for (const t of texts) {
     if (texts.length > 1)

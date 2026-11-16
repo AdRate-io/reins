@@ -170,6 +170,59 @@ describe("encodeChatRequest", () => {
     expect(landings[0]).toMatchObject({ kind: "dropped", landing: "none" })
   })
 
+  it("停在思考阶段的一轮（只有 thinking）整条不发、思考记 dropped；方言开关两种模型都一样（AdRate 建议 13）", () => {
+    for (const model of [deepseek, { ...deepseek, provider: "openai", id: "gpt-4o-mini", chat: {} }]) {
+      seq = 0
+      const own = { provider: model.provider, api: "openai-chat", model: model.id }
+      const { body, landings } = encode(model, [
+        ev("core.user_message", "user", { content: [{ type: "text", text: "查价" }] }),
+        ev("core.model_thinking", "model", { text: "User asks for the price. I need to" }, own),
+        ev("core.run_paused", "system", { reason: "host", awaiting: [], stopped: true }),
+        ev("core.user_message", "user", { content: [{ type: "text", text: "继续" }] }),
+      ])
+      // 回放里不能出现既无 content 也无 tool_calls 的 assistant（DeepSeek / OpenAI 都 400）；user → user 相邻两家实测接受
+      expect(roles(body.messages)).toEqual(["user", "user"])
+      expect(landings[1]).toMatchObject({ type: "core.model_thinking", kind: "dropped", landing: "none" })
+      expect(landings[1]?.note).toContain("holds only thinking")
+    }
+  })
+
+  it("空正文段不算 content：剔除记 dropped；一轮只剩空正文与思考时整条不发，有工具调用时 content 为 null", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "q" }] }),
+      ev("core.model_thinking", "model", { text: "想" }, origin),
+      ev("core.model_text", "model", { text: "" }, origin),
+      ev("core.user_message", "user", { content: [{ type: "text", text: "继续" }] }),
+      ev("core.model_text", "model", { text: "" }, origin),
+      ev("core.tool_call", "model", { toolCallId: "c1", name: "t", args: {} }, origin),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "user", "assistant"])
+    expect(body.messages[2]).toMatchObject({ content: null, tool_calls: [{ id: "c1" }] })
+    expect(landings[2]).toMatchObject({ type: "core.model_text", kind: "dropped", landing: "none" })
+    expect(landings[4]).toMatchObject({ type: "core.model_text", kind: "dropped", landing: "none" })
+  })
+
+  it("停在半个 tool_call（参数是截断的 JSON 原文）照常下发：arguments 原样送回，两家实测接受", () => {
+    seq = 0
+    const { body } = encode(deepseek, [
+      ev("core.model_thinking", "model", { text: "查" }, origin),
+      ev("core.tool_call", "model", { toolCallId: "c1", name: "t", args: '{"item": "pe' }, origin),
+      ev("core.tool_result", "tool", {
+        toolCallId: "c1",
+        name: "t",
+        content: [{ type: "text", text: "Not executed" }],
+        isError: true,
+      }),
+    ])
+    expect(body.messages[0]).toMatchObject({
+      role: "assistant",
+      content: null,
+      reasoning_content: "查",
+      tool_calls: [{ id: "c1", type: "function", function: { name: "t", arguments: '{"item": "pe' } }],
+    })
+  })
+
   it("同一轮多段正文合并成一个字符串并记 lossy(merged-text)", () => {
     seq = 0
     const { body, landings } = encode(deepseek, [
@@ -482,6 +535,21 @@ describe("工具结果图片上浮（2026-10-27，OnSet）", () => {
     ])
     expect(roles(body.messages)).toEqual(["user", "assistant", "tool", "tool", "user"])
     expect(landings[4]).toMatchObject({ kind: "dropped" })
+  })
+
+  it("工具结果之后停在思考阶段：那轮整条不发，附件仍在全部 tool 消息之后、下一条 user 之前", () => {
+    seq = 0
+    const { body, landings } = encode(deepseek, [
+      ev("core.user_message", "user", { content: [{ type: "text", text: "看" }] }),
+      call("c1"),
+      result("c1", [img("A")]),
+      ev("core.model_thinking", "model", { text: "图里是" }, origin),
+      ev("core.user_message", "user", { content: [{ type: "text", text: "继续" }] }),
+    ])
+    expect(roles(body.messages)).toEqual(["user", "assistant", "tool", "user", "user"])
+    expect(partsOf(body.messages[3]).some((p) => p.type === "image_url")).toBe(true)
+    expect(body.messages[4]).toEqual({ role: "user", content: "继续" })
+    expect(landings[3]).toMatchObject({ type: "core.model_thinking", kind: "dropped" })
   })
 
   it("isError 结果带图：前缀照加、图片照样上浮；resultTrust system 的结果不包 untrusted", () => {

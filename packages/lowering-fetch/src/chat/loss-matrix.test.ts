@@ -94,6 +94,10 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     { label: "user_message 只带音频", events: [mk("core.user_message", { content: [audio] })] },
     { label: "model_text", events: [user(), mk("core.model_text", { text: "ok" }, { replay: origin })] },
     {
+      label: "model_text 空段",
+      events: [user(), mk("core.model_text", { text: "" }, { replay: origin }), user()],
+    },
+    {
       label: "model_text 一轮多段",
       events: [
         user(),
@@ -103,7 +107,15 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     },
     {
       label: "model_thinking 同家",
-      events: [user(), mk("core.model_thinking", { text: "t" }, { replay: origin })],
+      events: [
+        user(),
+        mk("core.model_thinking", { text: "t" }, { replay: origin }),
+        mk("core.model_text", { text: "a" }, { replay: origin }),
+      ],
+    },
+    {
+      label: "只有 model_thinking 的一轮（停在思考阶段）",
+      events: [user(), mk("core.model_thinking", { text: "t" }, { replay: origin }), user()],
     },
     {
       label: "model_thinking 别家",

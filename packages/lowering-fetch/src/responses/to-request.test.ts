@@ -180,6 +180,16 @@ describe("encodeResponsesRequest", () => {
     expect(msg.content.map((c) => c.text)).toEqual(["答"])
   })
 
+  it("停在思考阶段的一轮（AdRate 建议 13）：没有加密项的整轮不出任何项；加密项已完整的照常放回、后面直接接 user（厂商实测接受）", () => {
+    const halfway = thinking("想到一半", origin)
+    const r = encode([user("q"), halfway, user("继续")])
+    expect(kinds(r.body.input)).toEqual(["user", "user"])
+    expect(landingOf(r, halfway)).toMatchObject({ kind: "dropped", landing: "none" })
+    const done = thinking("想完了", { ...origin, thinkingSignature: JSON.stringify(reasoningItem) })
+    const r2 = encode([user("q"), done, user("继续")])
+    expect(kinds(r2.body.input)).toEqual(["user", "reasoning", "user"])
+  })
+
   it("正文项 phase：本家读侧存的 replay.phase 回放时带回（裸 msg_ id + phase 两个字段，与 pi 版 JSON 签名等价）", () => {
     const own = text("a", { ...origin, textSignature: "msg_own", phase: "final_answer" })
     const r = encode([user("q"), own])

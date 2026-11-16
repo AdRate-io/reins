@@ -86,7 +86,7 @@
 
 - `systemPrompt` → 首条 `system`。`system_note` → 中途 `system`（缺省 exact），否则 `<system_note kind=…>` 框住走 user（lossy user-role）。三条线同一规则：`directive: true` 的说明（IR 带 `directive`）不看 `midConversationSystem`，一律走框住的 user，落点 note 为 `DIRECTIVE_NOTE`（OPT-261031-1）。`compaction` → `[Summary of earlier conversation]` user 文本（lossy user-text）。
 - user：单段文本用字符串，否则 content parts；模型收的图片 / 视频 / 音频都走 `image_url` 的 `data:` URL（视频音频是中转站方言，落点 exact 并带 `RELAY_DIALECT_NOTE`），不收的换占位文本并记 lossy。
-- assistant：正文多段合并成一个字符串（lossy merged-text）；`tool_calls[].function.arguments` 是 JSON 字符串；**方言开着时 `reasoning_content` 字段必在**。
+- assistant：正文多段合并成一个字符串（lossy merged-text）；`tool_calls[].function.arguments` 是 JSON 字符串；**方言开着时 `reasoning_content` 字段必在**。空正文段 dropped、不算 content；既无正文也无工具调用（停止或断流停在思考阶段的一轮）→ 整条不发、思考记 dropped，也不触发上浮附件放出——assistant 须有 `content` 或 `tool_calls`，DeepSeek / OpenAI 都 400，照发则会话此后每个请求都失败（AdRate 建议 13，与 Anthropic 线"全部块都发不出就整条不发"同一取向）。截断的入参原文照常送回，两家实测接受。
 - tool：只收文本；`isError` 以 `[tool error]\n` 前缀表达（lossy）。媒体两种处置：模型收该类型且 `chat.liftToolImages` 未关（缺省）→ 原位留 `[<类型> n attached in the next user message]`（一条结果内各类型连续编号），本体攒进 `lifted`，遇到第一个会下发的非 tool_result 条目（`dropped` 不算——它们原位夹在同批结果之间）或收尾时放成一条 user 消息（每条结果一行说明——只有图片写 "N image(s)"，混有视频音频写 "N attachment(s)"——+ 逐件 `<类型> n:`；只有图片时输出与 2026-11-05 前逐字节一致，快照用例锁住；untrusted 结果的图片段用 core `markUntrusted` 包），落点 lossy `tool+lifted-images`；否则换占位（lossy tool-text-only）：模型收但关了上浮写 tool 专用占位，模型不收的视频音频写 `mediaOmitted`，note 按原因分开写。IR 已把后移的用户消息排在整批结果之后，所以附件天然在它们之前。
 - 请求体：宿主 `requestOptions` 先铺（`tools` 剥掉），`model` / `messages` / `tools` / `stream` / `stream_options` 后盖。
 

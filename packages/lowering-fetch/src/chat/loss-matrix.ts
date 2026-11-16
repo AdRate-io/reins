@@ -86,6 +86,7 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
       "multiple text segments of one turn are merged into a single string (assistant.content can only be a string)",
       "the turn holds more than one text segment",
     ),
+    dropped("none", "an empty text segment is not sent (it does not count as content)"),
   ],
   "core.model_thinking": [
     exact(
@@ -95,7 +96,7 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
     ),
     dropped(
       "none",
-      "Chat Completions has no landing for replaying thinking (no signature, no encrypted item), or the source is another family",
+      "Chat Completions has no landing for replaying thinking (no signature, no encrypted item), the source is another family, or the turn holds only thinking (a turn cut off while thinking is not sent at all: an assistant message needs content or tool_calls)",
     ),
   ],
   "core.tool_call": [exact("tool_calls", "arguments is a JSON string")],

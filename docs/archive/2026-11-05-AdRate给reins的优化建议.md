@@ -722,6 +722,10 @@ AdRate 的会话删除要求「运行中拒绝，提示先停止」（删除与 
 
 采纳需求，并入建议 12：不单独给 `RunLease` 加方法，删除会话前查 `pgRunStates(client, [id])` 是否 `running`。判定与 renew 的"未过期"同一表达式、同一库时钟，store-pg 内只写一处；用例覆盖"刚过期""同 owner 续租"。
 
+### AdRate 发版后核实（2026-11-16）
+
+已升级 core 0.14.0 / store-pg 0.5.0，`isRunActive` 改调 `pgRunStates(client, [id])` 判 `running`，直读 `reins_runs` 的 SQL 已删；原有三条 db 用例（持有中 / 已过期 / 无租约）不改即通过。测试服真跑：会话运行中从侧栏删除被拒（`deleted_at` 未写），同一时刻 `pgRunStates` 读出 `running`。
+
 ---
 
 # 会话运行状态建议（2026-11-15）
@@ -808,3 +812,89 @@ AdRate 的会话删除要求「运行中拒绝，提示先停止」（删除与 
 - **老会话的读法**：升级前最后一个 run 跑完的判 `unknown`；最后一个 run 是暂停的照旧判 `paused`，但 `awaiting` 为 `undefined`（老事件没有这个字段），`stopped` 为 `false`；完全没有 run 标记的会话判 `idle`。
 - **用法**：README（`@reinsjs/store-pg`「Session status for a session list」）给了列表徽标与删除前检查两个函数，用例与 README 逐字一致。单进程宿主不用 pg 时，`runs.get(id) !== undefined` 当 `held`、`lastRunMarker(timeline)` 当 `lastMarker`，直接调 `runStatusOf`。
 - **耗时**（PG 16.13，与 AdRate 生产同版本）：单个会话 20 万条事件、没有收尾标记（被杀的长 run 或老会话）约 15 ms；500 个会话一批 46～85 ms。没有加索引。
+
+### AdRate 发版后核实（2026-11-16）
+
+升级 core 0.14.0 / agent 0.7.0 / store-pg 0.5.0 / server 0.8.0 / ui-agui 0.6.0（锁文件单一 core，`pgSchemaStatements` DDL 逐字未变，无迁移），测试服真跑逐项对照：
+
+- 新会话运行中读 `running`，跑完读 `done`；停在确认卡读 `paused` / `approval`，`awaiting` 带那条确认与 `requestedAt`；提问卡读 `paused` / `host`，`awaiting` 是 `client_tool`；用户点停止读 `paused` / `host`、`stopped: true`、`awaiting: []`。
+- 老会话与说明一致：升级前跑完的读 `unknown`；升级前停在确认卡的读 `paused`、无 `awaiting`。
+- 跨版本续跑：升级前停在确认卡（卡已过期）的会话发新消息，新版按「用户发新消息代替批准」关掉那条确认，模型正常回复，收尾 `run_ended: done`；事件顺序 `tools_bound` → `run_resumed` → `approval_decision`，与 CHANGELOG 一致。
+- 直播流里 `run_ended` 是 AG-UI `CUSTOM` 帧，前端时间线照常收尾；五个会话刷新重放无控制台错误。计费按 `budget_usage` 逐条记一行，多出来的事件不影响（一轮 14 次模型调用记 14 行）。
+
+---
+
+# 停止后续跑建议（2026-11-16）
+
+> 来自 AdRate 批 0（升级 core 0.14.0）测试服点验后 Boss 的手动测试。依据 npm 官方源 core 0.14.0 / lowering-fetch 0.6.5 的 `dist` 源码与测试服真实事件日志。
+
+## 总览
+
+| # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 13 | 模型思考到一半被停止后，会话再也续不上：只有思考、没有正文和工具调用的一轮被原样回放，DeepSeek 拒绝 | core / lowering-fetch | 宪法：时间线是唯一状态，记下的每一轮都必须能回放给模型；停止是正常操作，不应把会话写坏 | 高，灰度前阻断项（用户在「思考中」点停止很常见，一次即永久卡死） |
+
+## AdRate 建议 13：只有思考的一轮不能回放，会话永久卡死
+
+### 复现
+
+DeepSeek 官方通道（`deepseek()`，`deepseek-flash`，DeepSeek 方言回填 `reasoning_content`），经 handler 起 run：
+
+1. 模型调 `adrate_ask_user`（客户端工具）后暂停，用户答复，run 续跑；
+2. 模型开始流式输出思考，**在出正文或工具调用之前**，用户点停止（`controller.abort(new RunStop())`）；
+3. 用户在同一会话再发任何消息（或点重试）。
+
+结果：第 3 步每一次都 400，会话再也续不上，只能新开会话。
+
+### 证据（测试服会话 `692e7ebe-…`，事件 seq）
+
+```
+14 core.model_thinking   {"text":"User chose Ads. Now I need to ask what scope …"}   ← 停止时流到一半的思考
+15 core.run_paused       {"reason":"host","awaiting":[],"stopped":true,…}
+16 core.tools_bound
+17 core.user_message     "继续"
+18 core.error            {"category":"lowering","message":"400 … Invalid assistant message: content or tool_calls must be set"}
+19 core.run_ended        {"status":"error","category":"lowering"}
+（20～31 用户又试了三次，每次同样 tools_bound → user_message → error → run_ended:error）
+```
+
+### 原因
+
+- **core**：`runLoop` 在 `outcome.stopReason === "aborted"` 时先 `flush()` 本轮已产出的模型事件，再 `pause("host")`。停在思考阶段时，本轮只留下一条 `core.model_thinking`，没有 `model_text`、没有 `tool_call`。
+- **lowering-fetch**：`assistantMessage()` 对这一轮生成 `{ role: "assistant", content: null, reasoning_content: "…" }`，既无 `content` 也无 `tool_calls`。DeepSeek（以及 OpenAI Chat 规范）要求两者至少有一个，直接 400。
+- 时间线只追加、每次续跑都整段回放，这一轮永远在历史里，所以之后每次都失败；`category: "lowering"` 判为不可重试，前端只能显示通用错误。
+
+### 建议形态（供参考，形态由 reins 定）
+
+二选一或都做：
+
+- **lowering 侧**：一轮既无正文也无工具调用时，不生成 assistant 消息（思考按 `dropped` 记进损失矩阵，说明「被中止的一轮只有思考，无可回放的位置」）；或按方言要求补空串正文，以 DeepSeek / OpenAI 实测接受为准。
+- **core 侧**：停止落在模型输出阶段时，半截思考不作为一轮模型输出写入（或写成模型不可见的记录），从源头保证时间线里每一轮都可回放。
+
+请一并确认两种相邻情况：停止时只流出了半个 `tool_call`（参数不完整）；停止时只有思考、但同一请求后续本该带工具调用。以及 Anthropic / Responses 等其他 lowering 遇到「只有思考的一轮」是否同样被拒。
+
+### 边界
+
+- 不要求恢复被停止的那段思考，丢掉即可；用户停止后的下一轮由模型重新思考。
+- 已经卡死的存量会话：修复后回放时自然跳过那一轮即可恢复，AdRate 不做数据修补。
+
+### AdRate 侧依赖
+
+- core 0.14 的 CHANGELOG 没有提到改动「中止后先写本轮已产出事件」这条路径，判断不是 0.14 引入的，本次是测试服点验时偶然撞到；0.13 是否同样复现未单独核对。
+- AdRate 不在宿主侧改写或过滤时间线（时间线与回放归 reins），也不写兜底；灰度前等 reins 修复，修复后升级、重跑 eval，并用同一复现步骤在测试服验证，原会话 `692e7ebe` 应能续上。
+
+### reins 回复（2026-11-16）
+
+采纳，修在 lowering-fetch 的 Chat 线，core 不动，随 lowering-fetch 0.6.6（patch）发布，AdRate 只需升这一个包。
+
+- **为什么不改 core**：停止时那段思考确实发生过，照实写进时间线是对的（宪法二）。在 core 里不写或改写它，等于悄悄丢掉一条事实。问题在于 Chat 线没有为这种一轮给出能发出去的形状。Anthropic 线早有"全部块都发不出就整条不发"，这次是 Chat 线漏补了。
+- **改法**：一轮既无正文也无工具调用时，Chat 线整条不发，思考在损失矩阵里记 `dropped`（note 写明"这一轮只有思考"）。跳过后历史里会出现 user → user 相邻，DeepSeek 与 OpenAI 实测都接受。
+- **影响面比报告的大**：不只是点停止，思考流到一半断流（走 error 出口）也会留下同样的一轮，这次一并修了。
+- **相邻情况**（`spikes/aborted-turn-replay/`，原始请求体两遍一致）：
+  - 停在半个 tool_call：截断的入参原文照常送回，循环收尾时给它补"没执行"的结果。DeepSeek、OpenAI Chat、OpenAI Responses 都接受，不用改。
+  - 停在思考、但本该接着调工具：与"只有思考"同一种情况，下一轮由模型重新思考。
+  - Anthropic 线：停在思考半截时还没有签名，这种思考本来就记 dropped，空 assistant 整条不发，不受影响。思考块刚结束、签名已到、正文第一个字还没出就被停的窄窗口，会发出只含一个 thinking 块的 assistant，厂商是否接受还没实测，登记为 OPT-261116-1。
+  - Responses 线：加密项要等思考结束才给，停在半截的思考 dropped、不出任何项；思考已完整、停在后续项之前的，单独一条 reasoning 项后直接接 user，厂商实测接受。
+  - lowering-pi：pi-ai 0.85.1 在 openai-completions 里自己跳过既无内容又无工具调用的 assistant，不受影响。
+- **复现与验证**：真 runLoop + DeepSeek `deepseek-flash`，思考流出 40 字时 `abort(new RunStop())`，再在同一会话发"继续"。修前 400（与测试服同一条错误），修后 3/3 正常收尾。
+- **存量会话**：不需要修数据，升级后下一次请求就能续上。`692e7ebe` 应能直接恢复，请升级后照原步骤核实。
