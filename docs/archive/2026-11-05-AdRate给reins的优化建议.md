@@ -980,4 +980,49 @@ AdRate 的一个用户可能管着多个 TikTok 身份，每个身份是一份�
   - 目录身份被撤销时没有单独淘汰的办法，`close()` 后重建 Socket。
   - 每个键握手后会挂一条常驻 SSE；池不设上限，键的数量由你们控制，凭据撤销或到期时调 `evict`。
 - **替换 `tiktok-mcp-socket.ts`**：Socket 改按团队缓存（目录身份取团队任一可用身份）。原来按凭据 id 淘汰的逻辑改成调 `evict(凭据键)`。
-- **请核实**：reins 用真 Streamable HTTP + 内存服务器测过按键令牌、401 按键刷新、evict 与在途调用，真 TikTok 多身份没有跑过（`docs/待处理任务.md` OPT-261119-1）。A4 接测试服后请核对：`tools/call` 带的令牌与账户归属一致；某个身份没有授权时服务器返回什么；evict 之后能正常重建。
+- **请核实**：reins 用真 Streamable HTTP + 内存服务器测过按键令牌、401 按键刷新、evict 与在途调用，真 TikTok 多身份没有跑过（reins 仓库 OPT-261119-1）。A4 接测试服后请核对：`tools/call` 带的令牌与账户归属一致；某个身份没有授权时服务器返回什么；evict 之后能正常重建。
+
+### AdRate 核实（2026-11-19，未升级）
+
+对照 npm 官方源 `@reinsjs/tools-mcp` 0.4.0 的 `dist` 与 README「Several credentials on one server」，与回复一致：依赖仍是 core 0.14.0，AdRate 只需要升这一个包；`keyOf` 在工具 `execute` 内、真正发出之前调用，返回值不合规或抛错就不发出，也不会回退到目录连接。升级随 A4 一起做，不单独升。
+
+- **草案第二条（宿主追加的路由入参）不用另外请 reins 改**：`keyOf` 拿到的 `args` / `ctx` 就是传给内层 `execute` 的那两个对象。Boss 11-19 定「多身份确定不了时由 Agent 指定身份」，宿主在 `override` 的包装层从入参里取出身份字段并删掉，用删掉字段后的新入参对象作键，记进进程内 `WeakMap`（入参对象 → 身份），`keyOf` 用同一个对象查到身份。发给 TikTok 的入参里没有这个字段。
+- **账户字段要补全**：除了 `advertiser_id` / `bc_id`，快照里还有 `advertiser_ids`（数组）、`tto_tcm_account_id`、`tcm_account_id`、`payment_portfolio_id` 等。能对应到身份的就自动处理，对应不到的交给 Agent 指定的身份字段；两者都没有就拒绝，不走目录身份。
+- **测试服待核对**（reins 的请求，reins 仓库 OPT-261119-1；A4 接测试服时做）：`tools/call` 带的令牌与账户归属一致；某个身份对账户没有授权时 TikTok 返回什么；`evict` 之后能正常重建。
+
+### AdRate 测试服核对结果（2026-11-20，tools-mcp 0.4.0 + core 0.14）
+
+reins 仓库 OPT-261119-1 请求的三项，测试服团队 1（两个开通 Agent 授权的身份，同一账户被两者覆盖）实测：
+
+- **令牌与账户归属一致**：两个身份分别经 MCP 调 `bc_get` / `auth_advertiser_get`，返回的 BC（23 / 25）与账户（173 / 346）逐个 ID 与各自 App 授权的本地记录一致；写操作（`adgroup_status_update` / `adgroup_update`）按 `keyOf` 路由到所选身份并成功。
+- **身份对账户没有授权**：显式指定看不到该账户的身份调 `advertiser_info_get`，TikTok 返回 `code 40001`「No permission to operate advertiser: <id>」，请求未生效，无副作用。
+- **evict 后重建**：把两条凭据临时置为过期（身份池清空、Socket 退役），再恢复原值，同一会话下一轮工具表恢复、调用成功。
+
+### reins 确认（2026-11-20）
+
+三项核对收到，与 reins 侧用例一致，reins 仓库 OPT-261119-1 关闭。建议 14 关闭。
+
+## AdRate 建议 15：工具增删提示在大量增删时汇总
+
+### 现状与问题
+
+core 0.14 的工具表变化提示（`announce`）逐个列出增删的工具名。挂 TikTok MCP 时，凭据过期 / 恢复会一次增删约 378 个工具，这条 `system_note` 把几百个工具名全列出来，只在变化那一轮出现一次，但单条就是几千 token，且对模型没有额外信息量（它只需要知道「TikTok 工具整体没了 / 回来了」）。
+
+### 建议形态（供参考）
+
+增删数超过阈值时按来源汇总，例如「Removed all 378 tools from MCP server `tiktok`」；或给宿主一个钩子自定义提示文本。优先级低，不阻塞 AdRate。
+
+### reins 回复（2026-11-20）
+
+采纳，但不按来源汇总，也不加钩子：只改 core 里拼这句说明的函数（`renderToolChangeNote`），随 core 下一个 patch 发布，AdRate 只需要升 core。
+
+- **为什么不按来源汇总**：core 不知道工具来自哪台 MCP 服务器（`tools_bound` 只存名字，`Tool` 上也没有来源字段）。为一句说明改公开形状不值得。
+- **为什么不加钩子**：挂大 MCP 的宿主都会遇到这个问题，缺省就该合理。等真有宿主要自定义措辞再加。
+- **改法**：增删任一侧不超过 20 件时，文案与现在逐字一致。超过 20 件时只列 20 个名字并报总数，例如：
+  `Removed 378 tools (no longer callable, even if earlier turns used them), including adgroup_status_update, campaign_get, ad_audit, …, and 358 more.`
+  本会话时间线里出现过的名字排在前面：先列调用过的（含经 `tool_find` 原生路径取回的），再列在对话文本里提到过的。其余按字母序补足，让模型看得出是哪一类工具变了。以前的变化说明里为凑数列出的名字不算出现过，凭据来回过期多少次，真用过的都排在最前。
+- **为什么只点名出现过的**：以前各轮发过的工具表不进历史，模型往回翻只能看到自己用过、提过的工具名，也只会凭记忆去调这些。万一调了已经不在表里的工具，循环回 `Unknown tool`，不会发出。
+- **影响面比报告的大**：说明写进日志后每次请求都会回放，不只出现在变化那一轮；凭据每过期 / 恢复一次就多两条。压缩后每条封顶约 150 token。
+- **不变**：`meta.toolsChanged` 与 `tools_bound` 仍记完整增删，回放与排查照旧可用；`announceToolChanges: false` 照旧可关。
+- **验证**（reins 仓库 `spikes/tool-change-summary/`）：第一段挂 378 件 TikTok 风格工具、用过两件，第二段工具全没，用户接着提要求。两题：要用的工具用过（说明里点名），要用的工具没用过（不在 20 个之内）。压缩说明与全列说明两臂对照。DeepSeek `deepseek-flash` 12/12、`claude-sonnet-5-5` 8/8，两臂都没有一次去调已移除的工具，都向用户说明能力不可用。
+- **请核实**：升级后在测试服让凭据过期、恢复各一次，看两条说明的文本，以及之后的请求里上下文是否不再带几百个名字。

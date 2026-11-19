@@ -70,7 +70,7 @@ transport.create() → MCP SDK Transport → Client.connect
 
 ### 三、工具表变化怎么被看见（core 侧，本包不做事）
 
-服务器 `listChanged` 只影响下一次 run。下一次起步 list 到新表 → `resolveSocketContributions` 结果不同 → runLoop 的 `toolsBoundDrafts` 比对上一条 `core.tools_bound` 有增删 → 追加 `system_note(kind=host)` "Your available tools changed…"。暂停中的 run 续跑会因 configHash 变化被 `validateResume` 拒绝（`config_mismatch`），`allowConfigDrift` 放行后同样出说明。
+服务器 `listChanged` 只影响下一次 run。下一次起步 list 到新表 → `resolveSocketContributions` 结果不同 → runLoop 的 `toolsBoundDrafts` 比对上一条 `core.tools_bound` 有增删 → 追加 `system_note(kind=host)` "Your available tools changed…"（凭据过期 / 恢复一次增删几百件时只列 20 个名字 + 总数，本会话出现过的排前，2026-11-20）。暂停中的 run 续跑会因 configHash 变化被 `validateResume` 拒绝（`config_mismatch`），`allowConfigDrift` 放行后同样出说明。
 
 ## 核心设计决策
 
