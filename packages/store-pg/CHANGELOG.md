@@ -1,5 +1,12 @@
 # @reinsjs/store-pg
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [831a50a]
+  - @reinsjs/core@0.14.1
+
 ## 0.5.0
 
 ### Minor Changes

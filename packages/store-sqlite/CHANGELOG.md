@@ -1,5 +1,12 @@
 # @reinsjs/store-sqlite
 
+## 0.3.12
+
+### Patch Changes
+
+- Updated dependencies [831a50a]
+  - @reinsjs/core@0.14.1
+
 ## 0.3.11
 
 ### Patch Changes

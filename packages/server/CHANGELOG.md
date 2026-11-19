@@ -1,5 +1,12 @@
 # @reinsjs/server
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [831a50a]
+  - @reinsjs/core@0.14.1
+
 ## 0.8.0
 
 ### Minor Changes

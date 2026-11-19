@@ -1014,7 +1014,7 @@ core 0.14 的工具表变化提示（`announce`）逐个列出增删的工具名
 
 ### reins 回复（2026-11-20）
 
-采纳，但不按来源汇总，也不加钩子：只改 core 里拼这句说明的函数（`renderToolChangeNote`），随 core 下一个 patch 发布，AdRate 只需要升 core。
+采纳，但不按来源汇总，也不加钩子：只改 core 里拼这句说明的函数（`renderToolChangeNote`），随 core 0.14.1 发布。依赖 core 的包同时各出一个 patch（只改了依赖版本），它们对 core 是精确版本依赖，AdRate 用到的 `@reinsjs/*` 要一起升，只升 core 会装出两份 core。
 
 - **为什么不按来源汇总**：core 不知道工具来自哪台 MCP 服务器（`tools_bound` 只存名字，`Tool` 上也没有来源字段）。为一句说明改公开形状不值得。
 - **为什么不加钩子**：挂大 MCP 的宿主都会遇到这个问题，缺省就该合理。等真有宿主要自定义措辞再加。

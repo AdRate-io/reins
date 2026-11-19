@@ -1,5 +1,12 @@
 # @reinsjs/lowering-pi
 
+## 0.4.10
+
+### Patch Changes
+
+- Updated dependencies [831a50a]
+  - @reinsjs/core@0.14.1
+
 ## 0.4.9
 
 ### Patch Changes
