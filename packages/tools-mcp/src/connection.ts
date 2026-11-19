@@ -57,6 +57,14 @@ export class McpConnection {
     }
   }
 
+  /**
+   * 确保连接已建好（握手完成）。`route` 把握手放进"发出前"那一段：握手期间 run 被中止时请求根本没发出，
+   * 调用方据此如实告诉模型"没发出"，而不是让 SDK 在发请求处抛错、被循环写成"结果未知"
+   */
+  async ready(): Promise<void> {
+    await this.ensure()
+  }
+
   /** `tools/list`（SDK 会自动翻完全部分页）。绕过 SDK 的列表缓存：每次 run 起步要的就是服务器此刻的表 */
   async listTools(signal?: AbortSignal): Promise<McpToolInfo[]> {
     const client = await this.ensure()

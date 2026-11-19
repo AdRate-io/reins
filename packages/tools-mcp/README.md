@@ -86,7 +86,8 @@ no retry policy inside a call: a failed call is reported to the model as an erro
 run start throws before anything is written to the log (fail-closed). Pass `optional: true` to instead start the
 run without that server's tools and warn once; the model then sees them listed as removed.
 
-Call `close()` when you are done with a socket (process shutdown, or the host replaced the configuration).
+Call `close()` when you are done with a socket (process shutdown, or the host replaced the configuration). With
+`route`, `evict(key)` retires one credential's connection; see [Several credentials on one server](#several-credentials-on-one-server).
 
 Hosts that build the agent per request should **cache sockets by configuration**, not rebuild them every time:
 rebuilding forces a fresh MCP handshake per request. `examples/mcp/agent.ts` shows a small cache keyed by the
@@ -130,6 +131,101 @@ the SDK's `OAuthClientProvider`: the valuable part of that interface is driving 
 which a server-side agent cannot do. Obtain and store the tokens in your web application; the loop only reads and
 refreshes them. Full OAuth flows are still not wrapped — call the SDK's `refreshAuthorization` (or your own code)
 from inside `token` / `onUnauthorized`.
+
+One user with several credentials on the same server (several identities, same catalog) is a different shape:
+see the next section.
+
+## Several credentials on one server
+
+One user may hold several identities on the same server: several TikTok for Business authorizations, each a
+separate OAuth token, each seeing the same tool catalog but a different set of ad accounts. The model should only
+decide *what to do to which account*; which identity carries the call is an authorization rule, and it belongs to
+the host. Pass `route`:
+
+```ts
+import { httpTransport, type McpRoute, type McpTransport, mcpTools } from "@reinsjs/tools-mcp"
+
+/** Calls that touch no account. Only these run on the catalog identity. */
+const NO_ACCOUNT = new Set(["tool_list", "tool_get"])
+
+/** Every argument that names an account. TikTok's gateway tool nests them under `params`. */
+const accountsOf = (name: string, args: unknown): string[] => {
+  const top = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>
+  const inner = name === "tool_execute" ? top.params : top
+  const fields = (typeof inner === "object" && inner !== null ? inner : {}) as Record<string, unknown>
+  return ["advertiser_id", "bc_id"]
+    .map((field) => fields[field])
+    .filter((id) => typeof id === "string" || typeof id === "number")
+    .map(String)
+}
+
+interface Identities {
+  /** The identity used for tools/list and for calls that touch no account */
+  catalog: string
+  /** Which identity may act on this account for this person; undefined when none may */
+  forAccount(account: string, principalId: string | undefined): Promise<string | undefined>
+  transport(identity: string): McpTransport
+}
+
+const routeByAccount = (ids: Identities): McpRoute => ({
+  async keyOf({ name, args }, ctx) {
+    if (NO_ACCOUNT.has(name)) return ids.catalog
+    const accounts = accountsOf(name, args)
+    if (accounts.length === 0) throw new Error(`Cannot tell which account ${name} acts on`)
+    const chosen = new Set<string>()
+    for (const account of accounts) {
+      const identity = await ids.forAccount(account, ctx.principal?.id)
+      if (identity === undefined)
+        throw new Error(`No connected TikTok identity can access account ${account}`)
+      chosen.add(identity)
+    }
+    if (chosen.size > 1)
+      throw new Error(`Accounts ${accounts.join(", ")} need different identities; use one per call`)
+    return [...chosen][0] as string
+  },
+  transportFor: (identity) => ids.transport(identity),
+})
+
+// ids.transport(identity) = httpTransport({ url, auth: { token: () => db.accessToken(identity), onUnauthorized: … } })
+const tiktok = mcpTools({ transport: ids.transport(ids.catalog), route: routeByAccount(ids) })
+```
+
+What happens:
+
+- `transport` is still the **catalog connection**: `tools/list` runs on it once at run start, and `optional`
+  applies to it alone. The tool table, and therefore the config hash, does not depend on `route`, so changing the
+  routing rules never counts as configuration drift. The identities are assumed to see the same catalog; when one
+  lacks a tool, the server's error reaches the model as an error result.
+- Every `tools/call` first asks `keyOf`. The returned key picks a connection from a pool owned by the socket;
+  a new key calls `transportFor(key)` once and the connection then follows the usual lifecycle (lazy, reused
+  across runs, rebuilt once after a drop). Each key's recipe carries its own `auth`, so a 401 refreshes that
+  identity alone.
+- `keyOf` returning anything but a non-empty string, or throwing, means the call is **not sent** — never sent on
+  the catalog connection instead. A thrown message reaches the model verbatim, so write it for the model.
+- If the run is stopped while the call is still being routed (inside `keyOf`, `transportFor` or a new key's
+  handshake), the model is told the call was not executed (`ROUTE_NOT_SENT_TEXT`), not that its outcome is unknown.
+- Call `evict(key)` when a credential is revoked, expires or gets a new recipe. The key leaves the pool at once;
+  its connection closes after the calls in flight on it finish, so a write that already reached the server is not
+  cut off and reported as a failure. `close()` does not wait: it closes everything, evicted connections included.
+
+Things you are responsible for:
+
+- **`keyOf` is the only authorization point.** The pool is keyed by credential only, and a cached socket is shared
+  by every session and user that reaches it. Check in `keyOf` that `ctx.principal` may use that identity. Fail
+  closed the way the recipe does: only an explicit list of account-free tools may use the catalog identity, a call
+  whose account you cannot find is refused rather than sent on some default identity, and every argument that
+  names an account must resolve to the same identity. Extend `accountsOf` with every account-naming argument your
+  server has.
+- **`transportFor` must depend on the key alone.** It runs once per key, not once per call, so anything
+  request-specific it captured would leak to later callers.
+- **Approval happens before routing.** The approver does not see which identity will carry the call unless you
+  compute it in the approval rule's `summary` with the same function.
+- **The catalog credential cannot be evicted on its own.** If it is revoked, `close()` the socket and build a new
+  one (the pool goes with it and is rebuilt on demand).
+- Each pooled connection keeps a standing SSE stream open once initialized (MCP SDK behaviour). The pool has no
+  size limit; it holds as many connections as there are keys you route to until you evict them.
+
+`packages/tools-mcp/src/multi-credential.recipe.test.ts` is the executable version of this recipe.
 
 ## Gateway-style servers
 
@@ -264,6 +360,7 @@ rejection. Script: `spikes/mcp-removed-tool-history`.
 | `callTimeoutMs` | 60 000 | Per `tools/call` timeout; expiry becomes an error result |
 | `optional` | `false` | On `tools/list` failure at run start: throw (default) or contribute no tools and warn once |
 | `override(tool, info)` | — | Per-tool rewrite; return `false` to drop the tool |
+| `route` | — | `{ keyOf(call, ctx), transportFor(key) }`: pick a credential per `tools/call`; `transport` then serves `tools/list` only |
 | `clientInfo` | `{ name: "reins", version }` | Sent in the MCP handshake |
 | `warn` | `console.warn` | Where degradations are reported |
 

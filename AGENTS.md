@@ -132,7 +132,7 @@
                           └── @reinsjs/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。当前版本：core 0.14.0、brain 0.8.7、lowering-fetch 0.6.5、eval / lowering-pi 0.4.9、agent 0.7.0、server 0.8.0、ui-agui 0.6.0、store-pg 0.5.0、adapter-tanstack-ai 0.4.0、其余 0.3.11。
+脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。当前版本：core 0.14.0、brain 0.8.7、lowering-fetch 0.6.5、eval / lowering-pi 0.4.9、agent 0.7.0、server 0.8.0、ui-agui 0.6.0、store-pg 0.5.0、adapter-tanstack-ai 0.4.0、tools-mcp 0.4.0、其余 0.3.11。
 
 ## 技术栈
 
@@ -252,6 +252,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 输入校验不合规：起步 `input` vs 中途 `pullInput` | 起步抛 RangeError、一条不写；中途已有半个 run 的日志，走 `fail()` 落 `core.error(input)` 收口。同一回调里抛错却是 fail-open（多半是宿主瞬时故障） |
 | 会话运行状态：runLoop vs TanStack 适配器 | runLoop 的 `tools_bound` 带 `marksEnd`、`run_paused` 带 `awaiting` / `stopped`；TanStack 都不带（InterruptReplaySignal 等出口不调终结钩子，承诺不了收尾），只剩 tools_bound 时判 unknown 而不是 interrupted |
 | "在跑"：经 handler + 租约的 run vs `agent.run()` / asTool 子 run / TanStack | 只有前者占租约、`pgRunStates` 判得出 running；后者只有结局，在跑时显示为 interrupted 或 unknown |
+| 配了 `route` 的 MCP：`tools/list` vs `tools/call` | `tools/list` 与 `optional` 只看目录凭据（`transport`）；`tools/call` 走 `keyOf` 选的凭据，选不出即不发出、不回退目录连接 |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表
@@ -339,6 +340,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`listTools` 必须 `cacheMode: "bypass"`** — client 2.0 缓存列表结果，不绕过拿不到服务器此刻的表。
 - **一个 `WebStandardStreamableHTTPServerTransport` 只服务一个会话** — 自己搭的服务器用 `createMcpHandler(factory)`，业务状态放工厂外（踩坑 19）。
 - **模型侧工具名改写为 `^[A-Za-z0-9_-]{1,64}$`** — MCP 名字可带点号，不改写请求 400；调用按原名。
+- **`route` 连接池跨会话共享、只按键区分，`keyOf` 是唯一授权点；`route` 不进 configHash** — `keyOf` 要在调用前判 principal 能否用该身份；`transportFor` 每键只调一次，不能捕获请求级上下文。`RoutePool.acquire` 必须同步（取项到在途 +1 之间加 await 会让被 evict 的连接在池外被用上）；发出前中止要返回"没发出"结果而不是抛（抛了循环写"结果未知"）。
 
 ### 服务端与总包
 

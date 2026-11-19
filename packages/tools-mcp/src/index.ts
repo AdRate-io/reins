@@ -9,9 +9,10 @@
  * - 工具表按 run 绑定：起步 tools/list 一次，run 内不变；服务器的 listChanged 只影响下一次 run，
  *   循环会把增删写成 tools_bound 快照 + 给模型的说明。不做 MCP 动态注册（PRD）。
  * - 连接由 Socket 持有、跨 run 复用；宿主按请求重建 `mcpTools()` 也没有代价（懒连接）。用完 `close()`。
+ * - 一台服务器多份凭据：`route` 按调用选凭据，工具表仍由 `transport` 取（route-pool.ts，2026-11-19）。
  * - 0.1 不做：sampling、elicitation、resources、prompts、MCP Apps。
  */
 export * from "./http.js"
-export { DEFAULT_CALL_TIMEOUT_MS, mcpTools, REINS_MCP_CLIENT_INFO } from "./mcp-tools.js"
+export { DEFAULT_CALL_TIMEOUT_MS, mcpTools, REINS_MCP_CLIENT_INFO, ROUTE_NOT_SENT_TEXT } from "./mcp-tools.js"
 export { MODEL_TOOL_NAME_RE, modelToolName, riskOf, toContentParts, toToolInfo } from "./translate.js"
 export * from "./types.js"

@@ -8,15 +8,27 @@
  *   `tool_result(isError)`，循环不崩。
  * - annotations → `risk` 与 `needsApproval` 缺省（readOnly → low；destructive → high + 要审批；其余 medium）。
  * spill / approval / budget 在 afterTool / beforeTool 上自动生效，MCP 服务器不需要知道 reins（P3）。
+ * - 配了 `route` 时：`tools/list` 仍走 `transport`（目录连接），每次 `tools/call` 先问宿主要凭据键、按键从连接池取连接
+ *   （route-pool.ts）。路由不进工具表、不进 configHash。
  */
 import { defineTool, REINS_VERSION, type Tool } from "@reinsjs/core"
 import { McpConnection } from "./connection.js"
+import { kindOf, type PoolEntry, RoutePool } from "./route-pool.js"
 import { modelToolName, riskOf, toContentParts } from "./translate.js"
 import type { McpToolInfo, McpToolsOptions, McpToolsSocket } from "./types.js"
 
 export const DEFAULT_CALL_TIMEOUT_MS = 60_000
 /** MCP initialize 握手里报给服务器的客户端身份；版本跟随 core，不另维护一份 */
 export const REINS_MCP_CLIENT_INFO = { name: "reins", version: REINS_VERSION }
+
+/**
+ * 路由阶段（选凭据、建连握手，还没发出 `tools/call`）run 被中止时给模型的结果。不能让 execute 抛：MCP 工具缺省不可重放，
+ * 循环已先写 `tool_started`，中止状态下抛错会被写成"结果未知"，而调用实际没发出——告诉模型的要与事实一致。
+ * 前缀与 core 的"没执行"文案同为 `Not executed:`，宿主按前缀判断时口径一致；不复用 `stopTextsOf`：它对非 RunStop 的中止
+ * （丢租约等）也说"被用户停止"
+ */
+export const ROUTE_NOT_SENT_TEXT =
+  "Not executed: the run was interrupted before this call was sent to the MCP server."
 
 export function mcpTools(options: McpToolsOptions): McpToolsSocket {
   const { transport } = options
@@ -25,7 +37,16 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
   const timeoutMs = options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
     throw new RangeError("callTimeoutMs must be a positive number")
-  const conn = new McpConnection(transport, { clientInfo: options.clientInfo ?? REINS_MCP_CLIENT_INFO })
+  const route = options.route
+  if (route) {
+    if (typeof route.keyOf !== "function")
+      throw new TypeError(`route.keyOf must be a function, got ${kindOf(route.keyOf)}`)
+    if (typeof route.transportFor !== "function")
+      throw new TypeError(`route.transportFor must be a function, got ${kindOf(route.transportFor)}`)
+  }
+  const connectionOptions = { clientInfo: options.clientInfo ?? REINS_MCP_CLIENT_INFO }
+  const conn = new McpConnection(transport, connectionOptions)
+  const pool = route ? new RoutePool(route, connectionOptions) : undefined
   const warned = new Set<string>()
   const warnOnce = (key: string, message: string) => {
     if (warned.has(key)) return
@@ -50,11 +71,36 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
       // 明说破坏性的工具缺省要人点头；循环内置兜底会在没有 Socket 做主时直接转审批
       ...(risk === "high" ? { needsApproval: true } : {}),
       async execute(args, ctx) {
-        const result = await conn.callTool(info.name, args, {
-          timeoutMs,
-          ...(ctx.signal ? { signal: ctx.signal } : {}),
-        })
-        return { content: toContentParts(result), isError: result.isError === true }
+        const callOptions = { timeoutMs, ...(ctx.signal ? { signal: ctx.signal } : {}) }
+        if (!route || !pool) {
+          const result = await conn.callTool(info.name, args, callOptions)
+          return { content: toContentParts(result), isError: result.isError === true }
+        }
+        // 占了池项就必须 release：在途计数挡住 evict 关连接，直到这次调用结束
+        let entry: PoolEntry | undefined
+        try {
+          // 发出前：问宿主要键、取池项、握手。这一段出任何错都意味着调用没发出
+          try {
+            const key: unknown = await route.keyOf({ name: info.name, args }, ctx)
+            if (typeof key !== "string" || key === "")
+              throw new Error(
+                `MCP route must return a non-empty credential key for tool ${info.name}, got ${kindOf(key)}; the call was not sent`,
+              )
+            if (ctx.signal?.aborted) return notSent()
+            entry = pool.acquire(key)
+            // 新键与 evict 后的第一次调用都要握手：握手期间被中止时请求没发出，SDK 却会在发请求处抛错、被循环写成"结果未知"
+            await entry.conn.ready()
+            if (ctx.signal?.aborted) return notSent()
+          } catch (err) {
+            if (ctx.signal?.aborted) return notSent()
+            throw err
+          }
+          // 发出
+          const result = await entry.conn.callTool(info.name, args, callOptions)
+          return { content: toContentParts(result), isError: result.isError === true }
+        } finally {
+          if (entry) pool.release(entry)
+        }
       },
     })
   }
@@ -83,8 +129,19 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
       }
       return tools
     },
-    close: () => conn.close(),
+    close: async () => {
+      const results = await Promise.allSettled([conn.close(), pool?.closeAll()])
+      const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected")
+      if (failed) throw failed.reason
+    },
+    evict: async (key: string) => {
+      await pool?.evict(key)
+    },
   }
+}
+
+function notSent() {
+  return { content: [{ type: "text" as const, text: ROUTE_NOT_SENT_TEXT }], isError: true }
 }
 
 function messageOf(err: unknown): string {

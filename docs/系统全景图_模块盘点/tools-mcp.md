@@ -1,6 +1,6 @@
 # @reinsjs/tools-mcp 模块盘点
 
-> 依据 2026-09-10 的 `packages/tools-mcp/src/` 源码写成（任务 P1）。规格在 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §10，决策在 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 2026-09-10 的 MCP 三行。
+> 依据 2026-09-10 的 `packages/tools-mcp/src/` 源码写成（任务 P1）。规格在 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` §10，决策在 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 2026-09-10 的 MCP 三行。2026-11-19 补按调用选凭据（`route`，AdRate 建议 14，方案 `implementation-plans/2026-11-19-MCP按调用选凭据.md`）。
 
 ## 架构概览
 
@@ -13,13 +13,16 @@
 - `@reinsjs/tools-mcp/node`：`stdioTransport()`，起子进程。只有这里牵进 `node:process` / `node:stream` / `cross-spawn`。
 
 ```
-mcpTools({ transport })                    ── Socket { name: "mcp:<label>", tools: async () => Tool[], close() }
+mcpTools({ transport, route? })           ── Socket { name: "mcp:<label>", tools: async () => Tool[], close(), evict(key) }
    │ tools()（每次 run 起步）                      │
    ▼                                              ▼ Tool.execute(args, ctx)
 McpConnection.listTools() ──▶ toToolInfo ──▶ toTool（modelToolName / riskOf）      McpConnection.callTool() ──▶ toContentParts
    │ ensure()：懒连、复用、断了下次需要时按配方重建一次
    ▼
 transport.create() → MCP SDK Transport → Client.connect
+
+配了 route：execute ──▶ route.keyOf(call, ctx) ──▶ RoutePool.acquire(key)（没有就 transportFor(key) → 新 McpConnection）──▶ callTool ──▶ release
+          tools/list 仍只走 transport（目录连接）
 ```
 
 ## 文件清单
@@ -28,11 +31,12 @@ transport.create() → MCP SDK Transport → Client.connect
 | --- | --- |
 | `packages/tools-mcp/package.json` | `@reinsjs/tools-mcp`，exports `.` 与 `./node`；依赖 `@reinsjs/core` + `@modelcontextprotocol/client` 2.0.0（精确）；devDeps 官方 server、zod、brain（测试用） |
 | `packages/tools-mcp/tsup.config.ts` | 两个入口，`removeNodeProtocol: false`，dts 清 paths |
-| `packages/tools-mcp/README.md` | 对外说明（英文）：用法、按 run 绑定、注解映射、连接生命周期、免重启原理与漂移三选一、网关型服务器审批配方、大而平工具表配方（只读 → `lazy` 进 lazy-tools 菜单、业务错误信封转 isError，2026-09-22）、上游实测 |
-| `packages/tools-mcp/src/index.ts` | 主入口门面：`mcpTools`、`httpTransport`、翻译纯函数、公开类型 |
-| `packages/tools-mcp/src/types.ts` | `McpToolInfo` / `McpToolAnnotations`（纯数据）、`McpTransport`（配方：`kind` / `label` / `create(): unknown`）、`McpAuth`（`token()` / `onUnauthorized?()`，结构兼容 SDK 的 `AuthProvider` 但不引用其类型）、`McpToolsOptions`、`McpToolsSocket`（Socket + `close()`）、`McpToolsError` |
-| `packages/tools-mcp/src/mcp-tools.ts` | `mcpTools(options): McpToolsSocket`：`tools` 异步贡献（list → 翻译 → `override` → 去掉 `false`）；`optional` 决定 list 失败是抛还是空表 + 告警一次；`execute` = `callTool` + `toContentParts`，`isError` 直通 |
-| `packages/tools-mcp/src/connection.ts` | `McpConnection`：`ensure()` 懒建 / 并发合流 / `onclose` 清引用 / 下次需要时重建；`listTools`（`cacheMode: "bypass"`，绕过 SDK 列表缓存）；`callTool`（timeout + signal）；`close`（建连进行中调用会等建连有结果再关，不然连接会被挂回来漏掉——2026-09-10 审查修） |
+| `packages/tools-mcp/README.md` | 对外说明（英文）：用法、按 run 绑定、注解映射、连接生命周期、免重启原理与漂移三选一、网关型服务器审批配方、大而平工具表配方（只读 → `lazy` 进 lazy-tools 菜单、业务错误信封转 isError，2026-09-22）、一台服务器多份凭据（`route`，2026-11-19）、上游实测 |
+| `packages/tools-mcp/src/index.ts` | 主入口门面：`mcpTools`、`ROUTE_NOT_SENT_TEXT`、`httpTransport`、翻译纯函数、公开类型 |
+| `packages/tools-mcp/src/types.ts` | `McpToolInfo` / `McpToolAnnotations`（纯数据）、`McpTransport`（配方：`kind` / `label` / `create(): unknown`）、`McpAuth`（`token()` / `onUnauthorized?()`，结构兼容 SDK 的 `AuthProvider` 但不引用其类型）、`McpToolsOptions`（含 `route?`）、`McpRoute`（`keyOf(call, ctx)` / `transportFor(key)`）、`McpRoutedCall`、`McpToolsSocket`（Socket + `close()` + `evict(key)`）、`McpToolsError` |
+| `packages/tools-mcp/src/mcp-tools.ts` | `mcpTools(options): McpToolsSocket`：`tools` 异步贡献（list → 翻译 → `override` → 去掉 `false`）；`optional` 决定 list 失败是抛还是空表 + 告警一次；`execute` = `callTool` + `toContentParts`，`isError` 直通；配了 `route` 时 execute 分"发出前"（keyOf 校验非空字符串、中止则返回 `ROUTE_NOT_SENT_TEXT` 而不抛、`RoutePool.acquire`）与"发出"（在途计数包住 callTool）两段；`close` 连池一起关 |
+| `packages/tools-mcp/src/route-pool.ts` | `RoutePool`：键 → `McpConnection`。`acquire` 同步（取项与在途 +1 之间无 await）、`transportFor` 返回值校验后才入池；`evict` 先移出、记进 draining、等在途归零再关（SDK `close()` 会掐断在途 fetch）；`closeAll` 收摊不等在途，连 draining 一起关；`kindOf` 给报错文案的 got |
+| `packages/tools-mcp/src/connection.ts` | `McpConnection`：`ensure()` 懒建 / 并发合流 / `onclose` 清引用 / 下次需要时重建；`listTools`（`cacheMode: "bypass"`，绕过 SDK 列表缓存）；`callTool`（timeout + signal）；`close`（建连进行中调用会等建连有结果再关，不然连接会被挂回来漏掉——2026-09-10 审查修）；`ready()`（只握手，route 把握手放进发出前一段，2026-11-19） |
 | `packages/tools-mcp/src/translate.ts` | 纯函数：`modelToolName`（前缀 + 非法字符改写 + 截 64）、`riskOf`（readOnly → low，destructive → high，其余 medium）、`toToolInfo`（声明 → 纯数据，形状不对抛错）、`toContentParts`（text / image / audio 原样（audio 须 `audio/*` mime）；二进制 resource 按 mime 前缀成 image / video / audio 片段（MCP 没有 video 块、也没有时长），其余二进制与 resource_link → 说明文字；文本 resource 带 uri 头；空 content 用 structuredContent） |
 | `packages/tools-mcp/src/http.ts` | `httpTransport({ url, headers?, auth?, fetch?, requestInit? })`：标签只留 origin + pathname（查询串常带 token）；`auth` 包一层交给 SDK 的 `authProvider`（我们的签名收 `MaybePromise`），与 `headers.Authorization` 互斥、构造期即拒 |
 | `packages/tools-mcp/src/node.ts` | `stdioTransport({ command, args?, env?, cwd?, stderr? })`，`/node` 子路径 |
@@ -41,6 +45,8 @@ transport.create() → MCP SDK Transport → Client.connect
 | `packages/tools-mcp/src/translate.test.ts` | 纯函数用例：名字改写、风险档、声明解析、七种内容块翻译 |
 | `packages/tools-mcp/src/mcp-tools.test.ts` | 端到端（内存传输 × runLoop）：list 翻译与懒连复用、prefix / override / 改名告警、isError 直通、服务器删工具后调用 → isError、服务器死掉 → isError 且回来后重建、连接断而服务器在 → 同 run 内重建、run 中 listChanged 不改本 run 表且下次 run 出说明、暂停中换表 → `config_mismatch` / `allowConfigDrift` 放行且出说明、× spill × approval 同装、起步连不上 fail-closed / optional |
 | `packages/tools-mcp/src/readonly-lazy.recipe.test.ts` | 大而平工具表配方的可执行版本（与 README 逐字一致）：`override` 只留 `readOnlyHint` 工具并标 `lazy: true`、`withBusinessErrors` 把 `{code≠0}` 成功结果翻成 isError；用例 ① mcpTools 在前 + lazyTools 在后（菜单只列只读、首轮只有 tool_find、取回后可调、写工具是未知工具、trust=system）② 反面：顺序反了退化为全表下发 + 两处告警 ③ 纯函数边界 |
+| `packages/tools-mcp/src/route.test.ts` | `route` 机制（真 Streamable HTTP + 记录令牌的 fetch 垫片）：按入参路由与目录连接只做 list、keyOf 抛错 / 不合规不发出不回退、发出前四个阶段中止都落"没发出"、transportFor 坏不入池、并发首调用一条连接、按键 401、evict 与在途（含漏关检测）、evict 等待中 close、close、审批续跑才路由、两个 principal 并发、override 组合、构造期校验 |
+| `packages/tools-mcp/src/multi-credential.recipe.test.ts` | 多凭据配方的可执行版本（与 README 逐字一致）：按 `advertiser_id` / `bc_id` 路由、网关 `tool_execute` 取 `params` 里的账户、只有白名单工具走目录身份、认不出账户 / 无身份可用 / 多账户跨身份都拒绝、授权点拿 principal |
 | `packages/tools-mcp/src/http.test.ts` | Streamable HTTP 走 `createMcpHandler().fetch`：list + call、鉴权头、标签、第二个客户端先后初始化 |
 | `packages/tools-mcp/src/node.test.ts` | stdio：起 `test-fixtures/stdio-server.mjs` 子进程 list + call |
 | `packages/tools-mcp/test-fixtures/stdio-server.mjs` | 测试用 stdio MCP 服务器（一个 echo 工具） |
@@ -60,6 +66,7 @@ transport.create() → MCP SDK Transport → Client.connect
 1. `callTool(原名, args, { timeoutMs, signal: ctx.signal })`；连接断了 `ensure()` 会重建一次（服务器还在就成功，模型无感；服务器死了抛错）。
 2. 结果 `toContentParts` + `isError === true` → `{ content, isError }`，循环按 `normalizeToolOutput` 原样入 `tool_result`。
 3. 抛错（服务器已删该工具 `ProtocolError -32602`、`Not connected`、超时）由循环记成 `tool_result(isError, "工具执行失败：…")`，run 不崩。
+4. 配了 `route`：先 `keyOf({ name: 原名, args }, ctx)` 要凭据键（不是非空字符串就抛，绝不回退目录连接），再按键从 `RoutePool` 取连接调用。发出前（keyOf、取池项、`McpConnection.ready()` 握手）任何一步出错或之后 run 已中止，返回 `ROUTE_NOT_SENT_TEXT`（前缀 `Not executed:`，与 core 没执行文案同口径；不复用 `stopTextsOf`，它对丢租约等非 RunStop 中止也说被用户停止）而不抛——MCP 工具缺省不可重放、已写 `tool_started`，抛错会被循环写成"结果未知"，而调用其实没发出。
 
 ### 三、工具表变化怎么被看见（core 侧，本包不做事）
 
@@ -73,4 +80,5 @@ transport.create() → MCP SDK Transport → Client.connect
 - **注解只定缺省** — spec 说注解是提示、不可信服务器的注解不能当权限依据。readOnly → low、destructive → high + 要审批、其余 medium 交给 approval 的策略；刻意不把"没写 destructiveHint"当破坏性（spec 缺省为 true），否则每个 MCP 工具都要审批，要严的宿主用 `override` 或 `approval({ unmatched: "ask" })`。
 - **run 起步 list 失败缺省抛** — fail-closed，宿主一定知道；`optional: true` 才降级成空表，且模型会从工具变化说明看到工具没了，不是静默少一批。
 - **模型侧工具名改写** — Anthropic / OpenAI 要求 `^[A-Za-z0-9_-]{1,64}$`，MCP 没这限制；不改写请求会 400。改写只在模型侧，调用按原名。
+- **按调用选凭据，路由归宿主**（2026-11-19，AdRate 建议 14）— 同一台服务器多份凭据（一个用户多个 TikTok 身份）：工具表仍由 `transport` 在 run 起步取一次，`route.keyOf` 每次调用定凭据键、`RoutePool` 按键懒建连接。不进 configHash（换路由规则不算漂移）。否决"一条连接按调用换令牌"：取决于服务器是否把 MCP 会话绑到初始化令牌，客户端保证不了。否决"每身份一个 Socket"：用哪个身份是宿主的权限边界，不该交给模型选。池跨会话共享，`keyOf` 是唯一授权点。
 - **0.1 不做** sampling / elicitation / resources / prompts / MCP Apps / OAuth 流程（`headers` 或自带 `fetch` 即可接简单鉴权）。

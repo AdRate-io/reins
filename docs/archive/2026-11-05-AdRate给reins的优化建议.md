@@ -898,3 +898,86 @@ DeepSeek 官方通道（`deepseek()`，`deepseek-flash`，DeepSeek 方言回填 
   - lowering-pi：pi-ai 0.85.1 在 openai-completions 里自己跳过既无内容又无工具调用的 assistant，不受影响。
 - **复现与验证**：真 runLoop + DeepSeek `deepseek-flash`，思考流出 40 字时 `abort(new RunStop())`，再在同一会话发"继续"。修前 400（与测试服同一条错误），修后 3/3 正常收尾。
 - **存量会话**：不需要修数据，升级后下一次请求就能续上。`692e7ebe` 应能直接恢复，请升级后照原步骤核实。
+
+### AdRate 发版后核实（2026-11-16）
+
+只升 `@reinsjs/lowering-fetch` 0.6.5 → 0.6.6（依赖仍是 core 0.14.0，锁文件单一 core，其余包不动）。npm 官方源两版 `dist` 对比与 CHANGELOG 一致：Chat 线一轮既无正文也无工具调用时整条不发、思考记 `dropped`；另把空文本段记 dropped、挂起的工具图片改到确认要发 assistant 后再释放。
+
+- **真实事件对照**：测试服卡死会话 `692e7ebe` 的事件（截到第一次报错前的 user_message）分别喂两版 `toRequest`（不调模型）：0.6.5 生成 `… tool → assistant → user`，其中 1 条 assistant 既无 `content` 也无 `tool_calls`（即 400 来源）；0.6.6 生成 `… tool → user`，空 assistant 0 条，landings 里 1 条「only thinking」dropped。
+- **本地闸门**：typecheck 通过，Agent 单测 23 文件 314 条通过；eval 官方通道 7 条 × 3 全部 3/3 过线。
+- **测试服复验**（`7a7a4b4a` 只部署 web）：原会话 `692e7ebe` 发新消息即续上（seq 33～47 正常调工具出正文）；同一会话又按原步骤复现一遍——提问卡答复后续跑、只有思考（seq 52）时停止（seq 53 `stopped: true`），再发消息 seq 59 收尾 `run_ended: done`，不再 400。建议 13 关闭。
+
+---
+
+# 多身份 MCP 建议（2026-11-19）
+
+> 来自 AdRate 二期「一个会话操作多个 TikTok 身份」的方案前调研。依据 npm 官方源 `@reinsjs/tools-mcp` 0.3.11 的 `dist` 源码与 README。AdRate 侧还在讨论这次调用用哪个身份（业务口径），但不管口径怎么定，都需要「按调用选凭据」。
+
+## 总览
+
+| # | 建议 | 涉及包 | 与宪法的关系 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 14 | 同一个 MCP 服务器、多个凭据共用一张工具表，每次调用由宿主指定走哪个凭据 | tools-mcp | 无冲突：一个 run 内工具表仍然固定，只是每次调用走哪个连接由宿主决定 | 中，AdRate 多身份会话（A4）的 MCP 挂载依赖它；不阻塞其他二期项 |
+
+## AdRate 建议 14：一张工具表，按调用选凭据
+
+### 现状
+
+- `mcpTools()` 一个 socket 只有一个 `transport`，也就只有一条连接、一个凭据。每个工具的 `execute` 都绑在这条连接上（`conn.callTool`）。
+- `McpAuth.token()` 不带参数，不知道这次请求是哪个工具、什么入参、哪个会话。
+- README「Expiring credentials」的写法是一个用户一个凭据（`db.accessToken(userId)`），「Hot reload」与连接生命周期一节建议宿主按配置缓存 socket。这两条覆盖的是「每个用户一个凭据」，没有覆盖「一个用户在一个 run 里要用多个凭据」。
+
+### 问题
+
+AdRate 的一个用户可能管着多个 TikTok 身份，每个身份是一份独立的 OAuth 凭据，连的是同一个 TikTok MCP 服务器。各身份拿到的工具表完全相同（同一份服务端目录，约 400 个工具），区别只在于各自能看到哪些广告账户 / BC。
+
+二期要做的是：会话不再绑定单个身份，模型只管对哪个账户做什么，**用哪个身份由宿主根据调用入参决定**（`advertiser_id` / `bc_id` → 对该账户有权限的身份 → 该身份的凭据）。用现有 API 有三种做法，都不理想：
+
+1. **每个身份一个 socket，加 `prefix` 区分**：工具表变成 N 份（约 400 × N），并且「用哪个身份」变成模型要做的选择，而这是宿主的业务规则，不该交给模型。
+2. **只挂一个 socket，宿主在 `override` 包装的 `execute` 里转发到另一个身份的 socket**：要对每个凭据各调一次 `socket.tools()`，拿到对应工具再调它的 `execute`；`override` 对每个凭据各跑一遍。被转发的这些连接不在 loop 管理之内，run 起步时不会对它们做 `tools/list`，工具表签名也不包含它们。等于宿主在 reins 外面自己维护一套连接池和分派逻辑。
+3. **一条连接，`token()` 按调用上下文切换凭据**（宿主用 AsyncLocalStorage 传上下文）：能不能用取决于两件我们没法从宿主侧确认的事：TikTok MCP 是否把 `Mcp-Session-Id` 绑定到初始化时的令牌；同一条连接上并发、带不同令牌的请求，SDK 和服务器是否都按请求处理。即使可行，「一条连接混用多个身份」也是靠隐式上下文实现的，401 后 `onUnauthorized` 刷新的是哪一个凭据也说不清。
+
+### 建议形态（供参考，形态由 reins 定）
+
+`mcpTools` 支持「一个服务器、多个凭据路由」，大致是：
+
+- 宿主提供 `route(call) → key`，`call` 含工具原名、入参和 `ToolContext`（拿得到 principal / 会话），返回凭据键；返回 null 或抛错时，这次调用落 `isError` 结果，文案由宿主给出（例如「该身份未开通官方工具授权」）。
+- 宿主再提供 `connectionFor(key)`，按键返回该凭据的 `auth` / `transport` 配方。reins 按键懒建连接、复用，`close()` 一起关；需要时宿主可以按键淘汰（凭据撤销、到期）。
+- 工具表仍然在 run 起步时取一次：由宿主指定一个目录键（或交给 reins 从可用键里取第一个）去做 `tools/list`，整个 run 不变，签名与现在一致。各键的工具表视为相同；某个键实际没有某个工具时，由服务器报错，按现有规则变成 `isError`。
+- `onUnauthorized` 按键刷新，重试只针对这一个键。
+
+如果 reins 实测发现做法 3 是可行的（TikTok MCP 不把会话绑定到令牌、并发请求按请求取令牌），更小的改法是让 `token()` / `onUnauthorized()` 收到调用上下文。这种情况也请在 README 写明前提，以及会话与令牌的关系。
+
+### 边界
+
+- 路由决策在宿主：reins 不需要知道 `advertiser_id`、身份之类的业务概念，只是把调用交给宿主给出的键。
+- 一个 run 内工具表固定这一条不变，不要求按身份分别出工具表。
+- 不要求在时间线里记录走了哪个键；需要审计的话，宿主在 `execute` 包装层自己记（AdRate 已经这样记 MCP 写操作的审计）。
+
+### AdRate 侧依赖
+
+- A4（会话可用团队全部身份）的 MCP 挂载按此设计。在 reins 回复之前，AdRate 不写转发层，也不写兜底；A4 的其他部分（自有能力按账户解析身份）不受影响，可以先做方案。
+- AdRate 现在按凭据 id 在进程内缓存 socket（`tiktok-mcp-socket.ts`），对凭据撤销、30 天硬期限做淘汰。上线这项能力后，这套缓存会换成 reins 的按键连接池，淘汰逻辑改为按键调用。
+
+### reins 回复（2026-11-19）
+
+采纳，形态由 reins 微调，随 tools-mcp 0.4.0（minor）发布，只升这一个包。
+
+- **形态**：`mcpTools({ transport, route: { keyOf(call, ctx), transportFor(key) } })`，另加 `socket.evict(key)`。`transport` 仍是目录连接，只做 run 起步的 `tools/list`（`optional` 也只看它）；每次 `tools/call` 先问 `keyOf` 要凭据键，再按键从 Socket 自带的连接池取连接（没有就调一次 `transportFor(key)` 懒建，之后跨 run 复用、断了按配方重建一次）。route 不进工具表签名，改路由规则不算配置漂移，暂停中的审批照常续跑。
+- **与草案不同的三处**：
+  1. 不设"目录键 / 从可用键取第一个"，目录连接就是原来的 `transport`，不配 route 时行为不变。
+  2. 不设"返回 null 由宿主给文案"：`keyOf` 里直接抛错，message 原样给模型（`Tool execution failed: <你们的话>`）。返回的不是非空字符串一律不发出，**绝不回退到目录连接**。
+  3. 按键刷新不加接口：每个键的配方自带自己的 `auth`，401 时只刷新那一把。
+- **做法 3（一条连接按调用换令牌）不做**：能不能成立取决于服务器是否把 MCP 会话绑到初始化令牌，客户端保证不了。
+- **两处安全细节**：
+  - `evict` 立即把键移出池，但等这条连接上在途的调用结束才关。SDK 关连接会掐断在途请求，写请求可能已经到了 TikTok，却被记成"失败"，模型一重试就是重复写。`close()` 是收摊，不等在途调用。
+  - 选凭据或握手期间 run 被停止时，模型看到的是 `Not executed: …`（`ROUTE_NOT_SENT_TEXT`），不是"结果未知"，因为调用确实没发出。
+- **你们要负责的**（README "Several credentials on one server" 有完整配方，与用例逐字一致）：
+  - 连接池跨会话、跨用户共享，**`keyOf` 是唯一授权点**：用 `ctx.principal` 判断这个人能不能用这个身份。
+  - fail-closed：只有明确列出的无账户工具（`tool_list` / `tool_get`）走目录身份；认不出账户字段的调用拒绝，不要找个缺省身份发出；一次调用里的所有账户字段必须落到同一个身份。配方只认 `advertiser_id` / `bc_id`，你们的服务器还有别的账户字段（例如复数形式）要补进 `accountsOf`。
+  - `transportFor` 只能由键决定，因为同一个键只调一次。
+  - 审批发生在路由之前：要让审批人看到用哪个身份，在审批规则的 `summary` 里用同一个函数算一遍。
+  - 目录身份被撤销时没有单独淘汰的办法，`close()` 后重建 Socket。
+  - 每个键握手后会挂一条常驻 SSE；池不设上限，键的数量由你们控制，凭据撤销或到期时调 `evict`。
+- **替换 `tiktok-mcp-socket.ts`**：Socket 改按团队缓存（目录身份取团队任一可用身份）。原来按凭据 id 淘汰的逻辑改成调 `evict(凭据键)`。
+- **请核实**：reins 用真 Streamable HTTP + 内存服务器测过按键令牌、401 按键刷新、evict 与在途调用，真 TikTok 多身份没有跑过（`docs/待处理任务.md` OPT-261119-1）。A4 接测试服后请核对：`tools/call` 带的令牌与账户归属一致；某个身份没有授权时服务器返回什么；evict 之后能正常重建。
