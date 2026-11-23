@@ -1,5 +1,13 @@
 # @reinsjs/lowering-fetch
 
+## 0.6.8
+
+### Patch Changes
+
+- 6a03481: Loss matrix: the note for `core.run_paused` / `core.run_resumed` no longer claims the perception module relays them to the model (it only reads `core.budget_usage`). Wording only; landings are unchanged.
+- Updated dependencies [f8a3550]
+  - @reinsjs/core@0.15.0
+
 ## 0.6.7
 
 ### Patch Changes

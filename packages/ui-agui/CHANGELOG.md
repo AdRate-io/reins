@@ -1,5 +1,17 @@
 # @reinsjs/ui-agui
 
+## 0.7.0
+
+### Minor Changes
+
+- f8a3550: A `budget` / `host` interrupt now carries the socket’s pause code in `metadata.code` when there is one. Interrupts without a code are unchanged.
+
+### Patch Changes
+
+- Updated dependencies [f8a3550]
+  - @reinsjs/core@0.15.0
+  - @reinsjs/server@0.8.2
+
 ## 0.6.1
 
 ### Patch Changes

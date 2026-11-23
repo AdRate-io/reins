@@ -1,5 +1,11 @@
 # @reinsjs/core
 
+## 0.15.0
+
+### Minor Changes
+
+- f8a3550: Pause codes: a socket’s `onTurnEnd` may now return `{ pause: { reason, code, note } }`. The `code` (your own identifier such as `acme.credits_exhausted`, format `PAUSE_CODE_RE`) and the note are written into `core.run_paused`, the code is on the live `Interruption` and on `RunStatus.paused.code`, so a later request or another process can tell why a run paused. reins never branches on it and it is not part of the resume state. The loop’s own `maxTurns` pause carries `reins.max_turns`. A code that does not match the format is dropped: the run still pauses, and a model-invisible `core.error` (category `input`, `detail.phase: "onTurnEnd"`) is logged before the `core.run_paused`. A `reason` other than `"budget"` / `"host"` is handled the same way and pauses with `host`. New exports: `PAUSE_CODE_RE`, `isPauseCode`, `MAX_TURNS_PAUSE_CODE`, `resolveSocketPause`, `pauseDetailOf`. Note: `core.run_paused` now also records the `note` of loop-originated pauses (aborts, user stop, `maxTurns`), so code that compares that payload for exact equality sees a new optional field.
+
 ## 0.14.1
 
 ### Patch Changes
