@@ -1072,7 +1072,7 @@ Socket 的 `onTurnEnd` 只能返回 `pause: { reason: "budget" | "host"; note?: 
 
 ### reins 回复（2026-11-23）
 
-采纳，形态基本照建议，调整三处。代码已完成、待发布：core 0.15.0，brain / ui-agui / adapter-tanstack-ai 各出 minor，其余依赖 core 的包出 patch。它们对 core 是精确版本依赖，AdRate 用到的 `@reinsjs/*` 要一起升。
+采纳，形态基本照建议，调整三处。已于 2026-11-23 发布：core 0.15.0、brain 0.9.0、ui-agui 0.7.0、adapter-tanstack-ai 0.5.0，其余依赖 core 的包各出 patch（lowering-fetch 0.6.8、lowering-pi / eval 0.4.11、agent 0.7.2、server 0.8.2、store-pg 0.5.2、store-sqlite 0.3.13、tools-mcp 0.4.2）。它们对 core 是精确版本依赖，AdRate 用到的 `@reinsjs/*` 要一起升。
 
 - **用法**：积分 Socket 的 `onTurnEnd` 返回 `{ pause: { reason: "budget", code: "adrate.credits_exhausted", note } }`。
 - **读出的三个位置**：
@@ -1087,5 +1087,5 @@ Socket 的 `onTurnEnd` 只能返回 `pause: { reason: "budget" | "host"; note?: 
 - **不带码的暂停**：宿主中止、丢租约、用户停止（已有 `stopped`），以及等审批 / 客户端工具 / 子代理的暂停。用户恰好在 Socket 要求暂停的同时点了停止，按停止记，不带码。子代理会话因带码的原因暂停时，码在子会话里，按 `awaiting[].childSessionId` 查。
 - **场景 3（续跑时让模型知道上次为什么停）**：reins 不自动告诉模型，这属于行为改动，目前没有模型因此做错的样本。宿主可以在自己的 Socket `beforeModel` 里读时间线上最近一条 `run_paused` 的 `code`，`emit` 一条说明，自己保证只写一次（这个写法用假模型核实过：续跑的第一次请求里带着这条说明）。
 - **顺带修了 TanStack 适配器的一处既有缺口**（AdRate 不走这条路径，不受影响）：已因审批 / 客户端工具暂停的轮次不再问 Socket，此前会多写一条终结事件。
-- **验证**：全部假模型（模型看不见这个字段），`pnpm check` 与构建产物自检全绿。store-pg 一列本地只跑了 PGlite 直连，真库 PG 16.13 那一列在 CI 跑，本地未测。独立审查对初版做了 19 处变异、拦住 18 处，漏的那处（一条空断言）已补；按审查意见改动后的逻辑另做 5 处变异，全部拦住。
+- **验证**：全部假模型（模型看不见这个字段），`pnpm check` 与构建产物自检全绿。发版前另起 PG 16.13 真库跑了一遍（store-pg 的 pg / postgres.js / Drizzle 列在内，2103 条全过）；发后在空目录从 npm 官方源安装，冒烟 6/6。独立审查对初版做了 19 处变异、拦住 18 处，漏的那处（一条空断言）已补；按审查意见改动后的逻辑另做 5 处变异，全部拦住。
 - **请核实**：升级后在测试服让积分用完暂停一次，看 `pgRunStates` 的 `code` 与前端收到的 `metadata.code`；充值后不续跑再查一次，`code` 应不变；再把积分 Socket 的暂停路径完整跑一遍，确认时间线里 `run_paused` 前没有 `core.error`（有就是码的格式不对）。
