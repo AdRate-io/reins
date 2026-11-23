@@ -373,11 +373,11 @@ for (const backend of backends) {
       })
 
       it.skipIf(backend.kind !== "real")(
-        "并发 append 同一 seq：两个写入者都过了 WHERE 守卫时撞主键，23505 翻成 seq_conflict，日志只留一份",
+        "并发 append 同一 seq：不论后到者败在 WHERE 守卫还是主键上，都恰好一个成功、另一个 seq_conflict，日志只留一份",
         async () => {
-          // 串行的 PGlite 永远走不到这条路径（后到者在 WHERE 守卫处就插 0 行），只有真库并发才撞得出；多跑几轮保证至少撞到一次
+          // 这里只断言与路径无关的不变式。后到者走哪条路径取决于调度：机器空闲时多半撞主键，CI 负载高时可以 20 轮全败在守卫上
+          // （2026-11-23 连红两次，各在不同的列）。"撞主键这条路径确实走得到"由下一条确定性用例负责
           await fresh()
-          let viaUniqueViolation = 0
           for (let round = 0; round < 20; round++) {
             const sessionId = `race-${round}`
             const [a, b] = [new PgEventLog(backend.client), new PgEventLog(backend.client)]
@@ -388,10 +388,63 @@ for (const backend of backends) {
             expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1)
             const failure = results.find((r) => r.status === "rejected") as PromiseRejectedResult
             expect(failure.reason).toMatchObject({ code: "seq_conflict" })
-            if (String(failure.reason.message).includes("another writer")) viaUniqueViolation++
             expect((await collect(a.read(sessionId))).map((e) => e.seq)).toEqual([1])
           }
-          expect(viaUniqueViolation).toBeGreaterThan(0)
+        },
+      )
+
+      it.skipIf(backend.kind !== "real")(
+        "撞主键的路径（确定性）：对手的同 seq 行还没提交时 append 过得了 WHERE 守卫、卡在主键上；对手一提交就拿到 23505，翻成 seq_conflict",
+        async () => {
+          // 不靠"多跑几轮总能撞上"：用一条单独的连接开事务插入 seq 1 但不提交。READ COMMITTED 下被测的 append 看不见这一行，
+          // 过了 WHERE 守卫去插同一个主键，卡在等对手事务结束；确认它真的在等锁之后再提交，它必然拿到唯一冲突。
+          // 串行的 PGlite 做不出两个会话，只在真库列跑
+          await fresh()
+          const sessionId = "race-held"
+          const [winner] = makeEvents(sessionId, 1)
+          if (!winner) throw new Error("unreachable")
+          const rival = new pg.Client({ connectionString: realUrl })
+          await rival.connect()
+          try {
+            await rival.query("BEGIN")
+            await rival.query(
+              "INSERT INTO reins_events (session_id, seq, id, type, at, data) VALUES ($1, $2, $3, $4, $5, $6::json)",
+              [sessionId, winner.seq, winner.id, winner.type, winner.at, JSON.stringify(winner)],
+            )
+            let settled = false
+            const loser = new PgEventLog(backend.client).append(makeEvents(sessionId, 1)).then(
+              () => {
+                settled = true
+                return null
+              },
+              (e: unknown) => {
+                settled = true
+                return e
+              },
+            )
+            // 等到 append 的那条 INSERT 真的在等锁（等对手的事务号），最多 10 秒；提前有了结局说明它没走到这条路径
+            const deadline = Date.now() + 10_000
+            while (true) {
+              const waiting = await rival.query(
+                "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE '%INSERT INTO reins_events%'",
+              )
+              if (Number(waiting.rows[0]?.n) >= 1) break
+              if (settled) throw new Error("append settled before blocking on the primary key")
+              if (Date.now() > deadline) throw new Error("append never blocked on the primary key")
+              await new Promise((r) => setTimeout(r, 10))
+            }
+            await rival.query("COMMIT")
+            const err = await loser
+            expect(isUniqueViolation(err)).toBe(false) // 已翻译，不把驱动的原始错误漏给调用方
+            expect(err).toMatchObject({ code: "seq_conflict" })
+            expect(String((err as Error).message)).toContain("another writer")
+            expect((await collect(new PgEventLog(backend.client).read(sessionId))).map((e) => e.id)).toEqual([
+              winner.id,
+            ])
+          } finally {
+            await rival.query("ROLLBACK").catch(() => {})
+            await rival.end()
+          }
         },
       )
 
