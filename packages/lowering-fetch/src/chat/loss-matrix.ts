@@ -23,9 +23,11 @@ export const NOT_SENT: Readonly<Record<string, readonly LandingSpec[]>> = {
     dropped("none", "the approval outcome reaches the model through tool_result(isError)"),
   ],
   "core.approval_decision": [dropped("none", "same as above")],
-  "core.run_paused": [dropped("none", "a run record; the perception module distills it into a system_note")],
+  "core.run_paused": [dropped("none", "a run record for the host; nothing relays it to the model")],
   "core.run_resumed": [dropped("none", "same as above")],
-  "core.budget_usage": [dropped("none", "same as above")],
+  "core.budget_usage": [
+    dropped("none", "a run record; the perception module distills it into a system_note"),
+  ],
   "core.memory_op": [
     dropped(
       "none",

@@ -10,7 +10,10 @@ import type { ProjectionStrategy } from "./types.js"
 /**
  * 默认对模型不可见的运维事件。它们服务于宿主与审计，对模型没有信息量或已由别的事件承载：
  * - approval_*：审批结果由 B7 以 tool_result(isError) 告知模型
- * - run_paused / run_resumed / budget_usage / memory_op：运行记录，感知模块会把要点提炼进 system_note
+ * - run_paused / run_resumed：run 的起止记录，只给宿主判状态与续跑用；没有模块把它转述给模型
+ *   （宿主想让模型知道上次为什么停，自己按 run_paused 的原因码写一条 system_note）
+ * - budget_usage：用量记录，感知模块把要点提炼进 system_note
+ * - memory_op：记忆读写的审计记录，模型已从工具结果得知
  * - handoff：交接后当前会话结束，新会话首条 user 消息承载 triggerMessage
  * - error：provider 级错误由循环层处理；工具错误已在 tool_result.isError
  * - tools_bound：每次 run 起步的工具表快照（P1）；工具表本身在请求里，增删由循环以 system_note(kind=host) 告知模型
