@@ -398,18 +398,52 @@ for (const backend of backends) {
         async () => {
           // 不靠"多跑几轮总能撞上"：用一条单独的连接开事务插入 seq 1 但不提交。READ COMMITTED 下被测的 append 看不见这一行，
           // 过了 WHERE 守卫去插同一个主键，卡在等对手事务结束；确认它真的在等锁之后再提交，它必然拿到唯一冲突。
-          // 串行的 PGlite 做不出两个会话，只在真库列跑
-          await fresh()
+          // 串行的 PGlite 做不出两个会话，只在真库列跑。
+          // 每一步都限时，卡住就把库里各会话的现场带进报错（2026-11-23 CI 上这条用例超时过，本地复现不出，靠现场定位）
+          const sessions = async (): Promise<string> => {
+            const probe = new pg.Client({ connectionString: realUrl, connectionTimeoutMillis: 3000 })
+            try {
+              await probe.connect()
+              const res = await probe.query(
+                "SELECT pid, state, wait_event_type, wait_event, (now() - state_change)::text AS since, left(query, 70) AS query FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()",
+              )
+              return JSON.stringify(res.rows)
+            } catch (e) {
+              return `snapshot failed: ${String(e)}`
+            } finally {
+              await probe.end().catch(() => {})
+            }
+          }
+          const step = async <T>(name: string, work: Promise<T>): Promise<T> => {
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const stalled = new Promise<never>((_, reject) => {
+              timer = setTimeout(() => {
+                void sessions().then((snapshot) =>
+                  reject(new Error(`stalled at "${name}"; sessions: ${snapshot}`)),
+                )
+              }, 12_000)
+            })
+            try {
+              return await Promise.race([work, stalled])
+            } finally {
+              clearTimeout(timer)
+            }
+          }
+
+          await step("fresh", fresh())
           const sessionId = "race-held"
           const [winner] = makeEvents(sessionId, 1)
           if (!winner) throw new Error("unreachable")
           const rival = new pg.Client({ connectionString: realUrl })
-          await rival.connect()
+          await step("rival connect", rival.connect())
           try {
-            await rival.query("BEGIN")
-            await rival.query(
-              "INSERT INTO reins_events (session_id, seq, id, type, at, data) VALUES ($1, $2, $3, $4, $5, $6::json)",
-              [sessionId, winner.seq, winner.id, winner.type, winner.at, JSON.stringify(winner)],
+            await step("rival begin", rival.query("BEGIN"))
+            await step(
+              "rival insert",
+              rival.query(
+                "INSERT INTO reins_events (session_id, seq, id, type, at, data) VALUES ($1, $2, $3, $4, $5, $6::json)",
+                [sessionId, winner.seq, winner.id, winner.type, winner.at, JSON.stringify(winner)],
+              ),
             )
             let settled = false
             const loser = new PgEventLog(backend.client).append(makeEvents(sessionId, 1)).then(
@@ -422,30 +456,32 @@ for (const backend of backends) {
                 return e
               },
             )
-            // 等到 append 的那条 INSERT 真的在等锁（等对手的事务号），最多 10 秒；提前有了结局说明它没走到这条路径
-            const deadline = Date.now() + 10_000
+            // 等到 append 的那条 INSERT 真的在等锁（等对手的事务号）；提前有了结局说明它没走到这条路径
+            const deadline = Date.now() + 12_000
             while (true) {
               const waiting = await rival.query(
                 "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE '%INSERT INTO reins_events%'",
               )
               if (Number(waiting.rows[0]?.n) >= 1) break
-              if (settled) throw new Error("append settled before blocking on the primary key")
-              if (Date.now() > deadline) throw new Error("append never blocked on the primary key")
+              if (settled) throw new Error(`append settled before blocking: ${String(await loser)}`)
+              if (Date.now() > deadline) {
+                throw new Error(`append never blocked on the primary key; sessions: ${await sessions()}`)
+              }
               await new Promise((r) => setTimeout(r, 10))
             }
-            await rival.query("COMMIT")
-            const err = await loser
+            await step("rival commit", rival.query("COMMIT"))
+            const err = await step("loser settles", loser)
             expect(isUniqueViolation(err)).toBe(false) // 已翻译，不把驱动的原始错误漏给调用方
             expect(err).toMatchObject({ code: "seq_conflict" })
             expect(String((err as Error).message)).toContain("another writer")
-            expect((await collect(new PgEventLog(backend.client).read(sessionId))).map((e) => e.id)).toEqual([
-              winner.id,
-            ])
+            const logged = await step("read back", collect(new PgEventLog(backend.client).read(sessionId)))
+            expect(logged.map((e) => e.id)).toEqual([winner.id])
           } finally {
             await rival.query("ROLLBACK").catch(() => {})
             await rival.end()
           }
         },
+        60_000,
       )
 
       it("与内存实现读出来 deepEqual（json 列往返不改内容，本包刻意不用 jsonb）；fork 后 sessionId 换掉、其余原样", async () => {
