@@ -52,10 +52,12 @@ import {
   outcomeUnknownText,
   type Principal,
   type ProjectionStrategy,
+  pauseDetailOf,
   pendingToolCalls,
   project,
   readTimeline,
   resolveSocketContributions,
+  resolveSocketPause,
   type Socket,
   type TokenEstimator,
   type TokenUsage,
@@ -979,19 +981,33 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       const tctx = s.turn.ctx
       tctx.budget.wallMs = now() - s.startedAt
       let decision: TurnDecision = state.lastTurnToolCallCount > 0 ? "continue" : "stop"
-      for (const sock of sockets) {
-        const d = await sock.onTurnEnd?.(tctx)
-        if (d !== undefined) {
-          decision = d
-          break
+      // 本 run 已写过终结事件（工具阶段因审批 / 客户端工具暂停）时这一轮是被挂起的，不问 Socket——与 runLoop
+      // "有中断不进 onTurnEnd"同口径。否则 Socket 的暂停 / 交接会在那条 run_paused 后面再落一条终结事件，盖掉"在等谁"
+      if (!s.ended) {
+        for (const sock of sockets) {
+          const d = await sock.onTurnEnd?.(tctx)
+          if (d !== undefined) {
+            decision = d
+            break
+          }
         }
       }
       await flush(ctx, s)
       if (decision === "continue") return true
       if (decision === "stop") return false
       if ("pause" in decision) {
+        // 原因码与说明随暂停落库（AdRate 建议 16）：与 runLoop 调同一对函数，同一个 Socket 在两条路径上留下同样的记录。
+        // 意见里不合规的地方已被改正，改正处先记一条非终结 core.error，照常暂停
+        const { interruption, error } = resolveSocketPause(decision.pause)
         await append(ctx, s, [
-          { type: "core.run_paused", actor: "system", payload: { reason: decision.pause.reason } },
+          ...(error !== undefined
+            ? [{ type: "core.error" as const, actor: "system" as const, payload: error }]
+            : []),
+          {
+            type: "core.run_paused",
+            actor: "system",
+            payload: { reason: interruption.kind, ...pauseDetailOf([interruption]) },
+          },
         ])
         return false
       }

@@ -21,6 +21,7 @@
 import type { Event } from "../events/base.js"
 import type { AwaitingCall, CoreEvent } from "../events/core.js"
 import { createCoreRegistry, type EventSchemaRegistry } from "../events/registry.js"
+import { isPauseCode } from "./pause-code.js"
 import { isClientTool } from "./tools.js"
 import type { Interruption, PauseReason, Tool, ToolCallEvent } from "./types.js"
 
@@ -114,6 +115,11 @@ export type RunStatus =
       stopped: boolean
       /** 老版本写的 run_paused 不带，为 undefined */
       awaiting: AwaitingCall[] | undefined
+      /**
+       * 暂停原因码（AdRate 建议 16）：Socket 暂停时给的，或内置来源的 `reins.*`。没给码的暂停（宿主中止、用户停止、
+       * 审批 / 客户端工具 / 子代理）与老版本写的事件没有这个字段。给人看的 `note` 只在事件里，不进这里
+       */
+      code?: string
     }
 
 const PAUSE_REASONS: ReadonlySet<string> = new Set<PauseReason>(["approval", "budget", "host"])
@@ -163,6 +169,8 @@ export function runStatusOf(input: {
       if (p.stopped !== undefined && p.stopped !== true) return { state: "unknown" }
       if (p.awaiting !== undefined && !(Array.isArray(p.awaiting) && p.awaiting.every(isAwaitingCall)))
         return { state: "unknown" }
+      // 原因码在场就必须合规（与写入同一个 isPauseCode）：绕过循环写进来的怪值不往下游传
+      if (p.code !== undefined && !isPauseCode(p.code)) return { state: "unknown" }
       return {
         state: "paused",
         seq,
@@ -170,6 +178,7 @@ export function runStatusOf(input: {
         reason: p.reason as PauseReason,
         stopped: p.stopped === true,
         awaiting: p.awaiting as AwaitingCall[] | undefined,
+        ...(p.code !== undefined ? { code: p.code } : {}),
       }
     }
     case "core.run_ended": {

@@ -16,7 +16,7 @@ import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@rein
 import { describe, expect, it } from "vitest"
 import { perception } from "../perception/index.js"
 import { pins } from "../pins/index.js"
-import { compact, isModelCompaction } from "./compact.js"
+import { COMPACT_STALLED_PAUSE_CODE, compact, isModelCompaction } from "./compact.js"
 import {
   MANIFEST_HEADING,
   parseCompactArgs,
@@ -464,12 +464,23 @@ describe("compact：阈值兜底与连续上限", () => {
     expect(result.status).toBe("paused")
     if (result.status !== "paused") return
     expect(result.reason).toBe("budget")
+    // 原因码（AdRate 建议 16）：reason 仍是 budget，靠 code 与预算触顶分开；随暂停落库
+    expect(COMPACT_STALLED_PAUSE_CODE).toBe("reins.compact_stalled")
     expect(result.interruptions).toEqual([
-      { kind: "budget", note: expect.stringContaining("compacted 2 times in a row") },
+      {
+        kind: "budget",
+        note: expect.stringContaining("compacted 2 times in a row"),
+        code: COMPACT_STALLED_PAUSE_CODE,
+      },
     ])
     const logged = await all(log)
     expect(compactionsOf(logged)).toHaveLength(2)
     expect(types(logged).at(-1)).toBe("run_paused")
+    expect(logged.at(-1)?.payload).toMatchObject({
+      reason: "budget",
+      code: COMPACT_STALLED_PAUSE_CODE,
+      note: expect.stringContaining("compacted 2 times in a row"),
+    })
     // 恢复（同一 sessionId 再跑）仍受同一规则约束：宿主没改配置就会再次撞上限
   })
 
@@ -492,6 +503,7 @@ describe("compact：阈值兜底与连续上限", () => {
       expect(result.interruptions[0]).toMatchObject({
         kind: "budget",
         note: expect.stringContaining("3 times in a row"),
+        code: COMPACT_STALLED_PAUSE_CODE,
       })
       expect(compactionsOf(await all(log))).toHaveLength(3)
       expect(lowering.requests).toHaveLength(3)

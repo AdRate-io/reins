@@ -37,6 +37,7 @@ import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
+import { MAX_TURNS_PAUSE_CODE, pauseDetailOf, resolveSocketPause } from "./pause-code.js"
 import { type ModelCallFailure, resolveRetry } from "./retry.js"
 import { awaitingOf } from "./run-status.js"
 import {
@@ -352,7 +353,15 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         {
           type: "core.run_paused",
           actor: "system",
-          payload: { reason, state, awaiting, ...(texts ? { stopped: true as const } : {}) },
+          // 原因码与说明随暂停落库（AdRate 建议 16）：取本次中断里 budget / host 那条，口径只走 pauseDetailOf。
+          // 用户停止时 interruptions 已换成停止那条，Socket 给的码随之不写
+          payload: {
+            reason,
+            state,
+            awaiting,
+            ...(texts ? { stopped: true as const } : {}),
+            ...pauseDetailOf(interruptions),
+          },
         },
       ])),
     ]
@@ -617,7 +626,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     }
     if (turns >= maxTurns) {
       const note = `reached the per-run turn limit of ${maxTurns}`
-      const { events, result } = await pause("budget", [{ kind: "budget", note }])
+      const { events, result } = await pause("budget", [{ kind: "budget", note, code: MAX_TURNS_PAUSE_CODE }])
       yield* events
       return result
     }
@@ -844,9 +853,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       return { status: "done", sessionId, lastSeq }
     }
     if ("pause" in decision) {
-      const note = decision.pause.note ?? `a socket requested a pause (${decision.pause.reason})`
-      const kind = decision.pause.reason
-      const { events, result } = await pause(kind, [{ kind, note }])
+      // Socket 要求暂停就一定暂停：意见里不合规的地方（原因码格式、reason 不在闭集）由 resolveSocketPause 改正，
+      // 改正处记一条模型不可见的非终结 core.error——标注写错不能把受控暂停变成 error、丢掉续跑凭据，也不静默
+      const { interruption, error } = resolveSocketPause(decision.pause)
+      if (error !== undefined) {
+        yield* await append([{ type: "core.error", actor: "system", payload: error }])
+      }
+      const { events, result } = await pause(interruption.kind, [interruption])
       yield* events
       return result
     }

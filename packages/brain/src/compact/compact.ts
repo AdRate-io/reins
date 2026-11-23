@@ -89,6 +89,9 @@ export interface CompactOptions {
 export const COMPACT_SOCKET_NAME = "compact"
 export const DEFAULT_MAX_CONSECUTIVE_COMPACTIONS = 3
 
+/** 连续整理达到上限而暂停时的原因码（AdRate 建议 16）：reason 仍是 budget，靠它与预算触顶分开 */
+export const COMPACT_STALLED_PAUSE_CODE = "reins.compact_stalled"
+
 export const COMPACT_INPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -266,6 +269,7 @@ export function compact(opts: CompactOptions = {}): Socket {
       return {
         pause: {
           reason: "budget",
+          code: COMPACT_STALLED_PAUSE_CODE,
           note:
             `Context was compacted ${total} times in a row without a turn of progress in between (limit ${maxConsecutive}). ` +
             "Either the window is still too small after folding, or the model is looping on compact. Paused for the host to inspect.",

@@ -254,6 +254,42 @@ for (const backend of backends) {
         })
       })
 
+      it("Socket 暂停带原因码：过库后 pgRunStates 读出同一个码，note 留在事件里（AdRate 建议 16）", async () => {
+        const stores = await fresh()
+        const model = { provider: "scripted", id: "scripted" }
+        for await (const _ of runLoop({
+          sessionId: "coded",
+          log: stores.log,
+          lowering: new ScriptedLowering([{ drafts: [say("x")] }]),
+          model,
+          input: "hi",
+          sockets: [
+            {
+              onTurnEnd: () => ({
+                pause: { reason: "budget", code: "acme.credits_exhausted", note: "credits ran out" },
+              }),
+            },
+          ],
+        })) {
+          // 跑到暂停
+        }
+        const status = (await pgRunStates(backend.client, ["coded"])).get("coded")
+        expect(status).toMatchObject({
+          state: "paused",
+          reason: "budget",
+          stopped: false,
+          awaiting: [],
+          code: "acme.credits_exhausted",
+        })
+        expect(status).not.toHaveProperty("note")
+        // 说明只在事件里：直接查库内的值
+        const row = await backend.client.query(
+          "SELECT data::json->'payload'->>'note' AS note, data::json->'payload'->>'code' AS code FROM reins_events WHERE session_id = $1 AND type = $2",
+          ["coded", "core.run_paused"],
+        )
+        expect(row.rows[0]).toMatchObject({ note: "credits ran out", code: "acme.credits_exhausted" })
+      })
+
       it("旧行二次编码（库里存成 JSON 字符串标量）照样读得出", async () => {
         await fresh()
         const ended = mkEvent("old", 1, "core.run_ended", { status: "error", category: "provider" })

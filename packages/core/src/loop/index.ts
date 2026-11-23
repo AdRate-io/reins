@@ -1,5 +1,6 @@
 export * from "./batch.js"
 export * from "./fork.js"
+export * from "./pause-code.js"
 export * from "./retry.js"
 export * from "./run-loop.js"
 export * from "./run-status.js"

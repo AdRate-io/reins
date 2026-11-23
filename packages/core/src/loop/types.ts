@@ -171,7 +171,12 @@ export type TurnDecision =
   | "continue"
   | "stop"
   | { handoff: HandoffIntent }
-  | { pause: { reason: "budget" | "host"; note?: string } }
+  /**
+   * 暂停。`code` 是可选的原因码（2026-11-23，AdRate 建议 16）：随 `note` 写进 `core.run_paused`，`runStatusOf` 带出，
+   * 事后分得清是谁、为什么停的。只是标注，库不按它做分支；格式见 `PAUSE_CODE_RE`，不合规的码被丢掉并记一条非终结 `core.error`，照常暂停。
+   * `reins.` 前缀留给内置来源，宿主用自己的前缀
+   */
+  | { pause: { reason: "budget" | "host"; code?: string; note?: string } }
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -315,8 +320,9 @@ export type PauseReason = "approval" | "budget" | "host"
 export type Interruption =
   | { kind: "approval"; toolCallId: string; request: ApprovalRequestPayload; call: ToolCallPayload }
   | { kind: "client_tool"; toolCallId: string; call: ToolCallPayload }
-  | { kind: "budget"; note: string }
-  | { kind: "host"; note: string }
+  /** `code`：Socket 给的原因码，或内置来源的 `reins.*`（见 pause-code.ts）；宿主中止、用户停止不带 */
+  | { kind: "budget"; note: string; code?: string }
+  | { kind: "host"; note: string; code?: string }
   | SubagentInterruption
 
 /**

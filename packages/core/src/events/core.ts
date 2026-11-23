@@ -203,6 +203,16 @@ export interface BudgetUsagePayload {
 
 export interface RunPausedPayload {
   reason: "approval" | "budget" | "host"
+  /**
+   * 这次暂停的原因码（2026-11-23，AdRate 建议 16）：Socket 暂停时给的，或内置来源的 `reins.*`（轮数兜底、budget、compact）。
+   * 只是标注，库不按它做任何分支；格式见 `PAUSE_CODE_RE`。宿主中止、用户停止、审批 / 客户端工具 / 子代理的暂停不带。
+   * 可选字段，不升版本
+   */
+  code?: string
+  /**
+   * 给人看的说明，与本次 `Interruption.note` 是同一句（budget / host 那条）。排查用，不进 `RunStatus`。可选字段，不升版本
+   */
+  note?: string
   /** 序列化 run 状态的外部引用（宿主 KV 键、URL 参数等），可选 */
   stateRef?: string
   /**

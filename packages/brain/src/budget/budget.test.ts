@@ -12,7 +12,15 @@ import {
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { handoff } from "../handoff/index.js"
-import { assertLimits, budget, budgetUsedOf, checkBudget, defaultBudgetNote } from "./budget.js"
+import {
+  assertLimits,
+  BUDGET_PAUSE_CODE,
+  type BudgetHit,
+  budget,
+  budgetUsedOf,
+  checkBudget,
+  defaultBudgetNote,
+} from "./budget.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
 const SESSION = "s1"
@@ -224,6 +232,56 @@ describe("budget × runLoop", () => {
       ),
     )
     expect(pausedBudget(result)).toBe("超了：totalTokens+turns")
+  })
+
+  it("原因码：缺省 reins.budget，随暂停落库；code 选项拿到 hits 自己算", async () => {
+    const run = async (code?: (hits: readonly BudgetHit[]) => string) => {
+      const log = new InMemoryEventLog()
+      const { result } = await drain(
+        runLoop(
+          config(new ScriptedLowering(THREE_TURNS), log, {
+            sockets: [budget({ limits: { totalTokens: 15, turns: 1 }, ...(code ? { code } : {}) })],
+          }),
+        ),
+      )
+      return { result, tail: (await all(log)).at(-1) }
+    }
+
+    // 缺省：不编维度（这里两维同时触顶），维度在 note 里
+    const byDefault = await run()
+    expect(BUDGET_PAUSE_CODE).toBe("reins.budget")
+    expect(byDefault.result).toMatchObject({
+      status: "paused",
+      interruptions: [{ kind: "budget", code: BUDGET_PAUSE_CODE }],
+    })
+    expect(byDefault.tail).toMatchObject({
+      type: "core.run_paused",
+      payload: {
+        reason: "budget",
+        code: BUDGET_PAUSE_CODE,
+        note: expect.stringContaining("totalTokens 15/15, turns 1/1"),
+      },
+    })
+
+    // 宿主按维度自己算
+    const seen: BudgetHit[][] = []
+    const custom = await run((hits) => {
+      seen.push([...hits])
+      return `acme.budget.${hits.map((h) => h.dimension.toLowerCase()).join("-")}`
+    })
+    expect(seen).toEqual([
+      [
+        { dimension: "totalTokens", used: 15, limit: 15 },
+        { dimension: "turns", used: 1, limit: 1 },
+      ],
+    ])
+    expect(custom.tail?.payload).toMatchObject({ code: "acme.budget.totaltokens-turns" })
+
+    // 算出来的码不合规：照常暂停（预算边界守住），码丢掉，改正处记一条非终结 core.error
+    const invalid = await run(() => "acme.budget.totalTokens")
+    expect(invalid.result).toMatchObject({ status: "paused", reason: "budget" })
+    expect(invalid.tail?.type).toBe("core.run_paused")
+    expect(invalid.tail?.payload).not.toHaveProperty("code")
   })
 
   it("续跑即再批一份预算：同一会话再起 runLoop，从零计，跑到 done", async () => {

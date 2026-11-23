@@ -476,6 +476,12 @@ describe("run 结束的三种翻译", () => {
     }
     const frames = feed([start, { kind: "result", result: paused }])
     const fin = data(frames)[1]
+    // 没带原因码的 budget 中断不出 metadata 字段（与加原因码之前逐字相同）
+    expect((fin as { outcome: { interrupts: unknown[] } }).outcome.interrupts[2]).toEqual({
+      id: "budget:5:2",
+      reason: "budget",
+      message: "轮数到顶",
+    })
     expect(fin).toMatchObject({
       type: "RUN_FINISHED",
       result: paused,
@@ -506,6 +512,44 @@ describe("run 结束的三种翻译", () => {
       },
     })
     assertValidAgui(frames)
+  })
+
+  it("budget / host 中断带原因码：进 metadata.code，前端暂停当场就能分清原因（AdRate 建议 16）", () => {
+    const pausedWith = (kind: "budget" | "host", code: string): RunResult => ({
+      status: "paused",
+      sessionId: "s1",
+      lastSeq: 7,
+      reason: kind,
+      interruptions: [{ kind, note: "credits ran out", code }],
+      state: {
+        v: 1,
+        sessionId: "s1",
+        lastSeq: 7,
+        pendingToolCallIds: [],
+        configHash: "h",
+        pendingDigest: "d",
+      },
+    })
+    for (const kind of ["budget", "host"] as const) {
+      const paused = pausedWith(kind, "acme.credits_exhausted")
+      const frames = feed([start, { kind: "result", result: paused }])
+      expect(data(frames)[1]).toMatchObject({
+        type: "RUN_FINISHED",
+        result: paused,
+        outcome: {
+          type: "interrupt",
+          interrupts: [
+            {
+              id: `${kind}:7:0`,
+              reason: kind,
+              message: "credits ran out",
+              metadata: { code: "acme.credits_exhausted" },
+            },
+          ],
+        },
+      })
+      assertValidAgui(frames)
+    }
   })
 
   it("error 态与 error 项 → RUN_ERROR", () => {

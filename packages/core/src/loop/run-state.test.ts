@@ -7,7 +7,7 @@ import { InMemoryEventLog } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, say } from "../testing/scripted-lowering.js"
 import { runLoop } from "./run-loop.js"
 import { pausedStateOf, type RunStateError, signRunState, verifyRunState } from "./state.js"
-import { RunStop } from "./stop.js"
+import { RunStop, STOPPED_NOTE } from "./stop.js"
 import type { LoopConfig, RunResult, SerializedRunState, Tool } from "./types.js"
 
 const registry = createCoreRegistry()
@@ -399,7 +399,14 @@ describe("RunState 随 run_paused 进时间线（AdRate 建议 8）", () => {
     expect(result).toMatchObject({ status: "paused", reason: "host" })
     if (result.status !== "paused") return
     const tail = (await all(log)).at(-1) as CoreEventOf<"core.run_paused">
-    expect(tail.payload).toEqual({ reason: "host", state: result.state, awaiting: [], stopped: true })
+    // note 是停止那一句（AdRate 建议 16：budget / host 中断的说明随暂停落库），停止不带原因码
+    expect(tail.payload).toEqual({
+      reason: "host",
+      state: result.state,
+      awaiting: [],
+      stopped: true,
+      note: STOPPED_NOTE,
+    })
     expect(result.state.pendingToolCallIds).toEqual([])
   })
 

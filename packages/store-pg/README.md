@@ -64,7 +64,7 @@ async function canDelete(client: PgClient, sessionId: string): Promise<boolean> 
 }
 ```
 
-`paused.awaiting` lists the calls waiting on an answer from outside: an approval (with `requestedAt`, the time the request was written), a client tool (pending — not a promise the client has already received it), or a sub-agent (with its `childSessionId` — query that session for its own status). A user stop sets `stopped: true` and leaves `awaiting` empty. Use `seq` to tell one run's outcome from the next.
+`paused.awaiting` lists the calls waiting on an answer from outside: an approval (with `requestedAt`, the time the request was written), a client tool (pending — not a promise the client has already received it), or a sub-agent (with its `childSessionId` — query that session for its own status). A user stop sets `stopped: true` and leaves `awaiting` empty. `paused.code` is the pause code, when the pause has one (`reins.budget`, `reins.compact_stalled`, `reins.max_turns`, or your own socket's, such as `acme.credits_exhausted`) — it is what was recorded at the moment of the pause, so a top-up afterwards does not change it. Use `seq` to tell one run's outcome from the next.
 
 "Running" is only known for runs started through `@reinsjs/server`'s handler with a lease registry — `createAgent` with `pgStores` sets that up. `agent.run()`, sub-agent runs and the TanStack adapter take no lease: their outcomes show up, but while they run the session reads as `interrupted` or `unknown`. Other windows where the answer is briefly wrong:
 

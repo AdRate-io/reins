@@ -250,7 +250,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从该 run 的信箱拉（共用 `runs` 的 handler 都能往里投），asTool 子 run 与停止收尾 run 仍不拉 |
 | run 结束时未拉走的中途消息：进程内宿主 vs HTTP handler（`midRunInput`） | 进程内宿主须再查一次自己的队列（消息在它手里）；handler 随 run 直接丢弃信箱，靠客户端按时间线判未送达后重发——不在 result 帧带未投递列表，送达判据只有时间线一条 |
 | 输入校验不合规：起步 `input` vs 中途 `pullInput` | 起步抛 RangeError、一条不写；中途已有半个 run 的日志，走 `fail()` 落 `core.error(input)` 收口。同一回调里抛错却是 fail-open（多半是宿主瞬时故障） |
-| 会话运行状态：runLoop vs TanStack 适配器 | runLoop 的 `tools_bound` 带 `marksEnd`、`run_paused` 带 `awaiting` / `stopped`；TanStack 都不带（InterruptReplaySignal 等出口不调终结钩子，承诺不了收尾），只剩 tools_bound 时判 unknown 而不是 interrupted |
+| 会话运行状态：runLoop vs TanStack 适配器 | runLoop 的 `tools_bound` 带 `marksEnd`、`run_paused` 带 `awaiting` / `stopped`；TanStack 都不带（InterruptReplaySignal 等出口不调终结钩子，承诺不了收尾），只剩 tools_bound 时判 unknown 而不是 interrupted；`note` 也只有 Socket 暂停那条带，TanStack 自己写的审批 / 客户端工具 / 中止暂停不带 |
 | "在跑"：经 handler + 租约的 run vs `agent.run()` / asTool 子 run / TanStack | 只有前者占租约、`pgRunStates` 判得出 running；后者只有结局，在跑时显示为 interrupted 或 unknown |
 | 配了 `route` 的 MCP：`tools/list` vs `tools/call` | `tools/list` 与 `optional` 只看目录凭据（`transport`）；`tools/call` 走 `keyOf` 选的凭据，选不出即不发出、不回退目录连接 |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
@@ -267,6 +267,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | `trustMarkers: false` | 不给 untrusted 内容包标记 | 宿主自担风险（例如已在别处处理注入） |
 | handler `onEvent` 钩子抛错 | 只经 `warn` 报一次，不进日志、不影响 run | 旁路观测不能拖垮主路径（但挂住不返回会让 run 永不结束，见服务端节） |
 | 流开后的 SSE `error` 帧原样带出厂商响应体 | 不截断、不脱敏 | `HttpError` 文案与 SDK 同款是刻意的（瞬断判据靠其中状态码）；面向公网时由宿主 `encode` 或网关截断 |
+| Socket 暂停意见里的 `code` / `reason` 不合规 | 改正（丢码、按 host）后照常暂停，记一条模型不可见的 `core.error(input)` | 标注写错不能把受控暂停变成 error、丢掉续跑凭据；记在时间线上，不是静默 |
 | `pullInput` 回调抛错 | 记一条模型不可见的 `core.error(host)`，当这次没有、run 照跑 | 后果只是晚一个空档送达，消息仍在宿主队列；返回值不合规不在此列（fail-closed） |
 | lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限） | 价目只用于报告，不影响请求正确性 |
 
@@ -282,6 +283,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试；判定先看状态码（408/409/429/5xx），有状态码就只按它定，文案关键词只在没有状态码时兜底且不匹配裸数字——SDK 文案固定 "<status> <body>"，正文里的 "timeout" / "429" 不是信号。
 - **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建。例外：补跑或工具批中途被用户停止时不调（否则 Socket 判出 handoff / done 会把 pending 带进非 paused 结局）。
 - **用户停止的收尾挂在 `pause()` 里，判据是 `signal.reason` 的 `name === "RunStop"`** — 新增任何暂停出口都必须走 `pause()`，否则停止留下 pending、下一个 run 照样补跑；停止原因只认第一个 abort，已因丢租约中止的 run 再 `abort(new RunStop())` 无效。`RunStop("host")` 是宿主收尾遗留调用（asTool 开新一轮前），文案换"之前的 run 中断了"、不说用户；文案按原因取只走 `stopTextsOf`。连接阶段被掐时 fetch 抛的是 `signal.reason` 本身（踩坑 46），宿主已中止的失败一律暂停不记 error。
+- **Socket 暂停的 `code` 只是标注：库不按它分支、不进续跑状态，写错也不改变结局** — 意见里不合规的地方由 `resolveSocketPause` 改正（码丢掉、`reason` 不在闭集按 host），改正处记一条非终结 `core.error(input)` 再照常暂停，别改成 `fail()`（非停止中止时 pending 会被带进 error 结局）；`note` 随 budget / host 中断一并落进 `run_paused`（含宿主中止、用户停止那几句），断言该载荷全等的用例要算进去；`PAUSE_CODE_RE` 只许收紧不许放宽（读侧不合规判 unknown）。口径只走 `loop/pause-code.ts`，TanStack 适配器调同一对函数。
 - **没声明 `risk` 的工具缺省不可重放：execute 前多落一条 `core.tool_started`** — 断言日志长度 / seq 的用例要算进去（纯计算的测试工具标 `risk: "low"`）；TanStack 宿主工具视图不带 risk，每次执行都会写。续跑见到"有 started 无结果"落"结果未知"不执行；任何工具返回 `subagentPause` 后补写 started，asTool 靠它判"父在补跑同一个调用"。
 - **`validateResume` 只有在状态带 `modelDigest` / `pendingToolsDigest` 且调用方传了 `model` 与基础工具表时才走收窄比对** — 漏传就退回 configHash 整体比对（更严，不会放过）；两个摘要在场即进签名材料，旧状态材料不变。工具摘要取基础工具表，别传 beforeModel 补丁改过的本轮工具表。
 - **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠父日志里本调用是否已有 `core.tool_started` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。

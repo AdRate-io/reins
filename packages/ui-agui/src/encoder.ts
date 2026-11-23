@@ -80,7 +80,14 @@ function interruptsOf(result: Extract<RunResult, { status: "paused" }>): AguiInt
           },
         }
       default:
-        return { id: `${i.kind}:${result.lastSeq}:${n}`, reason: i.kind, message: i.note }
+        // budget / host：带原因码时放进 metadata（AdRate 建议 16），前端暂停当场就能按码出对应的行动卡；
+        // 没码时不出 metadata 字段，与此前逐字相同
+        return {
+          id: `${i.kind}:${result.lastSeq}:${n}`,
+          reason: i.kind,
+          message: i.note,
+          ...(i.code !== undefined ? { metadata: { code: i.code } } : {}),
+        }
     }
   })
 }

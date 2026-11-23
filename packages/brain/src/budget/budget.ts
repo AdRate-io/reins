@@ -5,8 +5,8 @@
  * contextTokens（单次请求送进模型的上下文大小）、totalTokens（本次 run 累计输入 + 输出）、turns、toolCalls、wallMs。
  *
  * 做法：`onTurnEnd` 里对照 `ctx.budget`（循环在模型调用后已更新 tokensSpent / wallMs / lastUsage），任一维 **用量 ≥ 上限**
- * 即返回 `{ pause: { reason: "budget", note } }`，循环 append `run_paused(reason=budget)` 并以 paused 返回，note 进
- * `Interruption` 给宿主看。只在模型本轮还要继续（有工具调用）时拦：模型已经收尾作答的轮，循环本来就要停，
+ * 即返回 `{ pause: { reason: "budget", code, note } }`，循环 append `run_paused(reason=budget)` 并以 paused 返回，note 进
+ * `Interruption` 给宿主看；原因码 `code`（缺省 `BUDGET_PAUSE_CODE`）随暂停落库，事后与"连续整理失败""宿主自己的配额"分得开。只在模型本轮还要继续（有工具调用）时拦：模型已经收尾作答的轮，循环本来就要停，
  * 把一个自然结束的 run 改成"暂停"只会让宿主续跑一个没事可做的会话。
  *
  * 上限是**每次 run** 的：宿主续跑（同一 sessionId 再起 runLoop）即视为再批一份预算，`ctx.budget` 从零计。
@@ -44,9 +44,18 @@ export interface BudgetOptions {
   limits: BudgetLimits
   /** 暂停说明（给宿主看，进 Interruption.note）；缺省英文一句话列出触顶的维度 */
   note?: (hits: readonly BudgetHit[]) => string
+  /**
+   * 暂停原因码（AdRate 建议 16），缺省恒为 `BUDGET_PAUSE_CODE`。缺省不把维度编进码里：可能多维同时触顶，一个码装不下；
+   * 要按维度区分的宿主在这里自己算（如 `(hits) => \`acme.budget.${hits[0].dimension.toLowerCase()}\``——维度名带大写，要先转小写）。
+   * 返回值须满足 core 的 `PAUSE_CODE_RE`（只收小写），否则码被丢掉、记一条非终结 `core.error`，暂停照常
+   */
+  code?: (hits: readonly BudgetHit[]) => string
 }
 
 export const BUDGET_SOCKET_NAME = "budget"
+
+/** 本模块暂停时的缺省原因码（`reins.` 前缀留给内置来源） */
+export const BUDGET_PAUSE_CODE = "reins.budget"
 
 /** 上限必须是正的有限数；构造期就拒绝，免得跑起来才发现"0 上限"把一切都拦了 */
 export function assertLimits(limits: BudgetLimits): void {
@@ -110,7 +119,9 @@ export function budget(opts: BudgetOptions): Socket {
       if (!continuing.get(ctx)) return undefined
       const hits = checkBudget(ctx.budget, opts.limits)
       if (hits.length === 0) return undefined
-      return { pause: { reason: "budget", note: note(hits) } }
+      return {
+        pause: { reason: "budget", code: opts.code ? opts.code(hits) : BUDGET_PAUSE_CODE, note: note(hits) },
+      }
     },
   }
 }

@@ -91,7 +91,7 @@
 | `packages/brain/src/approval/rules.ts` | 规则提示 `APPROVAL_RULES`：要等人批不是出错、被拒别换写法再试；`APPROVAL_EXPIRY_RULE`：设了 ttl 时追加，过期可再调一次 |
 | `packages/brain/src/approval/approval.test.ts` | approval 的全部用例（简写与摘要、管线、与 runLoop 集成、R1 的 validate 前移、D3 有效期：期内执行 / 过期拒绝留痕 / 纯函数边界 / 文案与构造校验） |
 | `packages/brain/src/budget/index.ts` | budget 子模块聚合导出 |
-| `packages/brain/src/budget/budget.ts` | `budget({ limits, note? }): Socket`：五维上限定义、`checkBudget` 纯函数、onTurnEnd 触顶即 `pause(budget)` |
+| `packages/brain/src/budget/budget.ts` | `budget({ limits, note?, code? }): Socket`：五维上限定义、`checkBudget` 纯函数、onTurnEnd 触顶即 `pause(budget)` |
 | `packages/brain/src/budget/budget.test.ts` | budget 的全部用例（纯函数、五维各自触顶、收尾轮不拦、续跑再批一份） |
 | `packages/brain/src/halt-on-failure/index.ts` | halt-on-failure 子模块聚合导出 |
 | `packages/brain/src/halt-on-failure/halt-on-failure.ts` | `haltOnFailure({ counts?, applies?, warn? }): Socket`：beforeTool 按 toolCallId 在 `ctx.batch.calls` 定位，前面有算数的失败结果或挂起的调用即 block；`haltedText` 文案点名最初那个；无状态 |
@@ -128,7 +128,7 @@
 3. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 4. `afterTool` 见到 `compact` 调用：`parseCompactArgs` 拿规范入参 → `planCompaction(ctx.events, args, { protectCallId, timeline, manifest })` 算切点与幸存者 → `ctx.emit` 一条 `core.compaction(decidedBy=forced 或 model, actor=model, parentId=tool_call)`（本段请过即 forced） → 把占位结果换成 `receipt()` 回执。日志顺序是 tool_call → compaction → tool_result。
 5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result`，原样返回内容并加说明头；原件已外溢则指向 blob 让模型用 `fetch_blob`。
-6. `onTurnEnd`：本轮模型还要继续时，把本轮模型自决的整理数 + 本轮开始时投影新造的阈值兜底整理数 + `trailingCompactionRun(ctx.timeline)` 相加，达到 `maxConsecutive`（缺省 3）即返回 `{ pause: { reason: "budget", note } }`。
+6. `onTurnEnd`：本轮模型还要继续时，把本轮模型自决的整理数 + 本轮开始时投影新造的阈值兜底整理数 + `trailingCompactionRun(ctx.timeline)` 相加，达到 `maxConsecutive`（缺省 3）即返回 `{ pause: { reason: "budget", code: COMPACT_STALLED_PAUSE_CODE, note } }`（原因码 `reins.compact_stalled`，事后与预算触顶分得开）。
 
 ### pins
 
@@ -190,7 +190,7 @@
 1. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 2. `onTurnEnd`：本轮模型已收尾作答就不拦（循环本来就要停）。
 3. 还要继续时跑 `checkBudget(ctx.budget, limits)`：`contextTokens` 取 `contextTokensOf(lastUsage)`（input + cacheRead + cacheWrite），其余四维直接读 `tokensSpent` / `turns` / `toolCalls` / `wallMs`；**用量 ≥ 上限**即触顶。
-4. 有触顶维度就返回 `{ pause: { reason: "budget", note } }`，note（缺省 `defaultBudgetNote`）列出全部触顶维度与用量/上限，进 `Interruption` 给宿主看。上限按每次 run 计，宿主续跑即再批一份。
+4. 有触顶维度就返回 `{ pause: { reason: "budget", code, note } }`，code 缺省 `BUDGET_PAUSE_CODE`（`reins.budget`，不编维度——可能多维同时触顶；`code` 选项拿 hits 自己算），note（缺省 `defaultBudgetNote`）列出全部触顶维度与用量/上限，进 `Interruption` 给宿主看。上限按每次 run 计，宿主续跑即再批一份。
 
 ### halt-on-failure
 

@@ -1194,5 +1194,83 @@ describe("reinsMiddleware：终结记号（会话运行状态）", () => {
     const events = await all(f.log)
     expect(terminals(events)).toHaveLength(1)
     expect(events.at(-1)?.type).toBe("core.run_paused")
+    // 没给码：只有缺省说明（与 runLoop 同一句）
+    expect(events.at(-1)?.payload).toEqual({ reason: "budget", note: "a socket requested a pause (budget)" })
+  })
+
+  it("Socket 暂停带原因码：code 与 note 随 run_paused 落库，runStatusOf 读得出（AdRate 建议 16）", async () => {
+    const f = fixture(
+      [{ blocks: [say("x")] }],
+      [
+        {
+          onTurnEnd: () => ({
+            pause: { reason: "budget", code: "acme.credits_exhausted", note: "credits ran out" },
+          }),
+        },
+      ],
+    )
+    await f.run({ messages: [user("hi")] })
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ type: "core.run_paused" })
+    expect(events.at(-1)?.payload).toEqual({
+      reason: "budget",
+      code: "acme.credits_exhausted",
+      note: "credits ran out",
+    })
+    expect(runStatusOf({ held: false, lastMarker: lastRunMarker(events) })).toMatchObject({
+      state: "paused",
+      reason: "budget",
+      code: "acme.credits_exhausted",
+    })
+  })
+
+  it("原因码不合规：与 runLoop 同一处置——照常暂停、码丢掉、改正处记一条非终结 core.error", async () => {
+    // 首轮带工具调用：引擎本来要继续问模型，暂停必须真的拦住它（首轮是纯文本的话这条断言是空的）
+    const f = fixture(
+      [{ blocks: [callTool("c1", "add", { a: 1, b: 2 })] }, { blocks: [say("never")] }],
+      [{ onTurnEnd: () => ({ pause: { reason: "budget", code: "Not A Code", note: "credits ran out" } }) }],
+    )
+    await f.run({ messages: [user("hi")] })
+    const events = await all(f.log)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-2)).toMatchObject({
+      type: "core.error",
+      payload: {
+        category: "input",
+        message: expect.stringContaining("pause.code must match"),
+        retryable: false,
+        detail: { phase: "onTurnEnd" },
+      },
+    })
+    expect(events.at(-1)).toMatchObject({ type: "core.run_paused" })
+    expect(events.at(-1)?.payload).toEqual({ reason: "budget", note: "credits ran out" })
+    expect(f.adapter.calls).toHaveLength(1)
+  })
+
+  it("本轮已因客户端工具暂停：不再问 Socket，日志里只有那一条 run_paused(host)，不被 Socket 的暂停盖掉", async () => {
+    const pickTool = toolDefinition({
+      name: "pick",
+      description: "让用户选",
+      inputSchema: { type: "object", properties: {} },
+    })
+    let asked = 0
+    const f = fixture(
+      [{ blocks: [callTool("c1", "pick", {})] }, { blocks: [say("never")] }],
+      [
+        {
+          onTurnEnd: () => {
+            asked++
+            return { pause: { reason: "budget", code: "acme.credits_exhausted" } }
+          },
+        },
+      ],
+    )
+    await f.run({ messages: [user("选一个")], tools: [pickTool] })
+    const events = await all(f.log)
+    expect(asked).toBe(0)
+    expect(terminals(events)).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ type: "core.run_paused", payload: { reason: "host" } })
+    expect(events.at(-1)?.payload).not.toHaveProperty("code")
   })
 })

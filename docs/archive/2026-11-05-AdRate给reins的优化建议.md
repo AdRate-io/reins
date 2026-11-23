@@ -1026,3 +1026,66 @@ core 0.14 的工具表变化提示（`announce`）逐个列出增删的工具名
 - **不变**：`meta.toolsChanged` 与 `tools_bound` 仍记完整增删，回放与排查照旧可用；`announceToolChanges: false` 照旧可关。
 - **验证**（reins 仓库 `spikes/tool-change-summary/`）：第一段挂 378 件 TikTok 风格工具、用过两件，第二段工具全没，用户接着提要求。两题：要用的工具用过（说明里点名），要用的工具没用过（不在 20 个之内）。压缩说明与全列说明两臂对照。DeepSeek `deepseek-flash` 12/12、`claude-sonnet-5-5` 8/8，两臂都没有一次去调已移除的工具，都向用户说明能力不可用。
 - **请核实**：升级后在测试服让凭据过期、恢复各一次，看两条说明的文本，以及之后的请求里上下文是否不再带几百个名字。
+
+### AdRate 升级记录（2026-11-20）
+
+- 一组一起升：core 0.14.1、agent 0.7.1、brain 0.8.8、lowering-fetch 0.6.7、store-pg 0.5.1、tools-mcp 0.4.1、eval 0.4.10（server / ui-agui 随 agent 到 0.8.1 / 0.6.1），锁文件里只有一份 core。
+- store-pg 0.5.0 → 0.5.1 只改依赖版本，DDL 无变化，不补迁移；core 只改 `renderToolChangeNote` 并新增 `toolMentionTiers`，公开接口不变。
+- 运行时只影响 web（Worker 只引用记忆命名空间纯函数，Admin / 营销站不依赖 reins）。
+- typecheck 通过；Agent 单测 30 文件 408 条、db 测试 10 文件 77 条全过；eval（中转站）7 条夹具各 3 次 21/21 全过（`logs/agent-eval/2026-11-20T02-39-39-799Z.md`，最终回答平均字数 195 / 236 / 382 / 75 / 314 / 211 / 437）。
+- 说明文本写进事件日志：升级前已写入的长说明留在原会话里不变（`data` 是 `json`，不改写历史），只有升级后新产生的说明变短。测试服核实看新会话里新产生的两条。
+
+### AdRate 测试服核实（2026-11-20，core 0.14.1，`d0d57a7f`）
+
+测试服团队 1 新建会话：第 1 轮经 MCP 调 `bc_get` / `bc_asset_get` / `bc_member_get` / `bc_balance_get`（含 `tool_find` 取回）；把两条 MCP 凭据 `refresh_expires_at` 临时改到过去，第 2 轮；恢复原值，第 3 轮。
+
+- **移除说明**（557 字符，旧格式全列约 8.9K 字符）：`Removed 358 tools (no longer callable, even if earlier turns used them), including bc_asset_get, bc_balance_get, bc_get, bc_member_get, tool_find, advertiser_balance_get, advertiser_info_get, bc_transfer, payment_portfolio_…, ad_audience_size_estimate, …, and 338 more.` 前 5 个正是第 1 轮调用过的，其后是对话里提到过的，其余按字母序补足。总数 358 而非 378：AdRate 的 MCP 放行策略先过滤了一部分。
+- **恢复说明**（501 字符）：`Added 358 tools, including …, and 338 more.`，排序同上。
+- **模型行为**：第 2 轮没有调任何已移除工具，向用户说明 TikTok 直连工具这一轮不可用，改用 AdRate 自有能力回答；第 3 轮恢复调 MCP 工具（`bc_balance_get` 被 TikTok 拒绝是该身份在 BC 内无财务角色，业务权限问题）。
+- **上下文**：两条说明合计约 1K 字符（旧格式约 17.7K 字符）随后续每次请求回放；`meta.toolsChanged` 仍是完整 358 项。
+- 结论：符合 reins 描述，建议 15 可关闭。A4 上正式服时随同一批发布。
+
+---
+
+## AdRate 建议 16：Socket 暂停时可带宿主自定义原因，并随暂停事件落库
+
+### 现状与问题
+
+Socket 的 `onTurnEnd` 只能返回 `pause: { reason: "budget" | "host"; note?: string }`（core 0.14.1 `TurnDecision`）。落库的 `core.run_paused` payload 只有 `{ reason, state, awaiting, stopped? }`，`note` 只进本次返回的 `Interruption`，不落库；`pgRunStates` / `RunStatus` 也只带 `reason`。
+
+结果是：事后（另一个请求、另一个进程、列表轮询）只能看到「budget」或「host」，分不清是哪个 Socket、为什么停的。AdRate 的实际场景：
+
+1. **积分用完暂停**（AdRate 新增的积分 Socket，替代固定预算）与 **`compact()` 连续整理 3 次失败**都只能报 `budget`。后台定时任务的结算在 Worker 进程里读 `RunStatus`，为了区分只能在结算时再查一次积分余额猜原因；暂停后用户已充值的话就会猜错，飞书通知写错原因。
+2. **前端**看到 `paused(budget)` 只能统一显示「继续」。积分不足的情况要等用户点了继续、入场检查回 403，才出「去充值」的行动卡，多绕一步。
+3. **续跑后的模型**也不知道上一段为什么停（例如「积分用完，用户充值后继续」），宿主想补一句说明只能自己猜原因。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- `pause` 增加可选宿主原因码，例如 `pause: { reason: "budget", code?: string, note?: string }`。`code` 是宿主自定义的短标识（如 `adrate.credits_exhausted`），reins 只校验格式（如 `^[a-z0-9_.:-]{1,64}$`）、不解释含义。
+- `code`（以及可选的 `note`）写进 `core.run_paused` payload，`runStatusOf` / `pgRunStates` 的 `paused` 状态带出 `code`。
+- reins 自带模块也可以顺手用上：`budget()` 标出触顶维度，`compact()` 标 `compact_exhausted`。宿主和前端就能直接区分「轮数 / token 触顶」与「整理失败」。
+- 不改 `reason` 的闭集：续跑语义、`continueRun` 等按 `reason` 判断的逻辑不受影响，`code` 只是附加信息。
+
+### 对 AdRate 的影响
+
+不阻塞。A1 先用「结算时查积分」的办法区分，reins 支持后改为读 `code`：结算与通知不再猜原因，前端暂停时直接出对应的行动卡，续跑时按 `code` 给模型补一句说明。
+
+### reins 回复（2026-11-23）
+
+采纳，形态基本照建议，调整三处。代码已完成、待发布：core 0.15.0，brain / ui-agui / adapter-tanstack-ai 各出 minor，其余依赖 core 的包出 patch。它们对 core 是精确版本依赖，AdRate 用到的 `@reinsjs/*` 要一起升。
+
+- **用法**：积分 Socket 的 `onTurnEnd` 返回 `{ pause: { reason: "budget", code: "adrate.credits_exhausted", note } }`。
+- **读出的三个位置**：
+  - 时间线：`core.run_paused` 载荷多了可选的 `code` 与 `note`。
+  - 事后查询：`runStatusOf` / `pgRunStates` 的 `paused` 带 `code`。它记的是暂停那一刻的原因，之后用户充值不会改变它，结算与通知直接读即可。
+  - 暂停当场：实时返回的 `Interruption` 带 `code`，AG-UI 在该中断的 `metadata.code`，前端不用等用户点"继续"就能出"去充值"卡。
+- **内置来源的码**：`reins.max_turns`（循环自带的轮数兜底）、`reins.budget`（`budget()`）、`reins.compact_stalled`（`compact()` 连续整理达到上限）。`reins.` 前缀留给内置来源，宿主用自己的前缀。
+- **调整一：`budget()` 的码不编维度**。可能多维同时触顶，一个字符串装不下；维度在 `note` 里。要机器可读就传 `budget({ code: (hits) => … })` 自己算，注意维度名带大写、要先转小写。
+- **调整二：`note` 落进事件，但不进 `RunStatus`**。事件是记录，留着排查；状态查询是给机器分类的，不带英文说明。
+- **调整三：格式比建议多一条**，`^[a-z0-9][a-z0-9_.:-]{0,63}$`（首字符须是字母或数字）。不合规的码会被丢掉，run **照常暂停**，同时在 `run_paused` 前记一条模型不可见的 `core.error`（category `input`、`detail.phase: "onTurnEnd"`，后面没有 `run_ended`）。如果 AdRate 把所有 `core.error` 都当终结处理，这里要留意。`reason` 写成 budget / host 以外的值同样处理，按 host 暂停。
+- **不变**：`reason` 仍是闭集，reins 不按 `code` 做任何分支；`code` 不进续跑状态与签名；只加可选字段，不升事件版本，新旧版本混跑安全，老事件读出来没有 `code`。
+- **不带码的暂停**：宿主中止、丢租约、用户停止（已有 `stopped`），以及等审批 / 客户端工具 / 子代理的暂停。用户恰好在 Socket 要求暂停的同时点了停止，按停止记，不带码。子代理会话因带码的原因暂停时，码在子会话里，按 `awaiting[].childSessionId` 查。
+- **场景 3（续跑时让模型知道上次为什么停）**：reins 不自动告诉模型，这属于行为改动，目前没有模型因此做错的样本。宿主可以在自己的 Socket `beforeModel` 里读时间线上最近一条 `run_paused` 的 `code`，`emit` 一条说明，自己保证只写一次（这个写法用假模型核实过：续跑的第一次请求里带着这条说明）。
+- **顺带修了 TanStack 适配器的一处既有缺口**（AdRate 不走这条路径，不受影响）：已因审批 / 客户端工具暂停的轮次不再问 Socket，此前会多写一条终结事件。
+- **验证**：全部假模型（模型看不见这个字段），`pnpm check` 与构建产物自检全绿。store-pg 一列本地只跑了 PGlite 直连，真库 PG 16.13 那一列在 CI 跑，本地未测。独立审查对初版做了 19 处变异、拦住 18 处，漏的那处（一条空断言）已补；按审查意见改动后的逻辑另做 5 处变异，全部拦住。
+- **请核实**：升级后在测试服让积分用完暂停一次，看 `pgRunStates` 的 `code` 与前端收到的 `metadata.code`；充值后不续跑再查一次，`code` 应不变；再把积分 Socket 的暂停路径完整跑一遍，确认时间线里 `run_paused` 前没有 `core.error`（有就是码的格式不对）。
