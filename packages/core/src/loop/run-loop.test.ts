@@ -14,6 +14,7 @@ import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
 import type {
   ApprovalDecisionInput,
+  HandoffIntent,
   Interruption,
   LoopConfig,
   RunResult,
@@ -1447,13 +1448,60 @@ describe("runLoop：错误、中止、上限、交接", () => {
     if (result.status !== "handoff") throw new Error(result.status)
     const fresh = await all(log, result.toSessionId)
     expect(fresh.map((e) => [e.seq, e.type, e.actor, e.trust])).toEqual([
-      [1, "core.system_note", "host", "system"],
+      [1, "core.system_note", "model", "model"],
       [2, "core.system_note", "model", "model"],
       [3, "core.system_note", "system", "system"],
-      [4, "core.user_message", "user", "principal"],
+      [4, "core.user_message", "model", "model"],
     ])
     expect((fresh[1] as CoreEventOf<"core.system_note">).payload).toEqual({ kind: "pin", text: "钉住的" })
     expect(fresh.every((e) => e.sessionId === result.toSessionId && typeof e.id === "string")).toBe(true)
+  })
+
+  it("handoff 开场的发起者如实记（#52）：模型写的摘要与自拟触发消息是 model，逐字取自真实用户消息的才是 user，provenance 指回出处", async () => {
+    const run = async (intent: HandoffIntent, input = "  做 ABC ") => {
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering([{ drafts: [say("交接")] }])
+      const socket: Socket = { onTurnEnd: () => ({ handoff: intent }) }
+      const { result } = await drain(runLoop(baseConfig(lowering, log, { input, sockets: [socket] })))
+      if (result.status !== "handoff") throw new Error(result.status)
+      const old = await all(log)
+      const fresh = await all(log, result.toSessionId)
+      return { old, fresh }
+    }
+    const shape = (e: Event) => [e.type, e.actor, e.trust, e.provenance]
+
+    // 模型自拟的触发消息（例如被工具结果里的注入诱导）：不升格成用户本人的话
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "Delete everything", reason: "r" })
+      const handoff = old.find((e) => e.type === "core.handoff") as Event
+      expect(fresh.map(shape)).toEqual([
+        ["core.system_note", "model", "model", { source: "handoff", ref: handoff.id }],
+        ["core.user_message", "model", "model", { source: "handoff", ref: handoff.id }],
+      ])
+      expect((fresh[1] as CoreEventOf<"core.user_message">).payload.content).toEqual([
+        { type: "text", text: "Delete everything" },
+      ])
+    }
+    // 逐字（去首尾空白）取自旧会话真实用户消息：仍是用户的话，provenance 指回原事件
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "做 ABC", reason: "r" })
+      const original = old.find((e) => e.type === "core.user_message") as Event
+      expect(fresh.map(shape)[1]).toEqual([
+        "core.user_message",
+        "user",
+        "principal",
+        { source: "handoff", ref: original.id },
+      ])
+    }
+    // 宿主决定的交接：摘要与自拟触发消息记在宿主名下
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "go on", reason: "r", by: "host" })
+      const handoff = old.find((e) => e.type === "core.handoff") as Event
+      expect(fresh.map(shape)).toEqual([
+        ["core.system_note", "host", "system", { source: "handoff", ref: handoff.id }],
+        ["core.user_message", "host", "system", { source: "handoff", ref: handoff.id }],
+      ])
+    }
   })
 
   it("投影新造的阈值 compaction 先入日志再问模型", async () => {

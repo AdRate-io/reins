@@ -37,6 +37,7 @@ import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
+import { handoffOpeningDrafts } from "./handoff.js"
 import {
   type CheckImageRefsContext,
   checkImageRefs,
@@ -990,7 +991,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // ---- 交接：旧会话记 handoff，新会话开头 = 摘要说明 + 脑子带来的开场事件（如 pin）+ 触发消息 ----
     const intent = decision.handoff
     const toSessionId = intent.toSessionId ?? newId(now())
-    yield* await append([
+    const handoffEvents = await append([
       {
         type: "core.handoff",
         actor: intent.by ?? "model",
@@ -1002,18 +1003,14 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         },
       },
     ])
+    yield* handoffEvents
     const at = now()
-    const opening: EventDraft[] = [
-      { type: "core.system_note", actor: "host", payload: { kind: "host", text: intent.summary } },
-      ...(intent.opening ?? []),
-    ]
-    if (intent.triggerMessage !== undefined) {
-      opening.push({
-        type: "core.user_message",
-        actor: "user",
-        payload: { content: [{ type: "text", text: intent.triggerMessage }] },
-      })
-    }
+    // 发起者如实记（#52）：触发消息要对照旧会话完整时间线判是不是用户的原话
+    const opening = handoffOpeningDrafts(
+      intent,
+      handoffEvents[0] as Event,
+      await readTimeline(log, sessionId, { registry }),
+    )
     const openingEvents = opening.map((d, i) =>
       createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
     )

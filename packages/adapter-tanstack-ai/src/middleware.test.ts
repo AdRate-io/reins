@@ -591,6 +591,12 @@ describe("reinsMiddleware：脑子模块", () => {
     expect(events.at(-1)?.payload).toEqual({ status: "handoff", toSessionId: to })
     const opened = await all(f.log, to)
     expect(types(opened)).toEqual(["system_note", "user_message"])
+    // 与 runLoop 同一开场（core handoffOpeningDrafts）：模型写的摘要与自拟触发消息记在模型名下（#52）
+    const ho = events.at(-2)
+    expect(opened.map((e) => [e.actor, e.trust, e.provenance])).toEqual([
+      ["model", "model", { source: "handoff", ref: ho?.id }],
+      ["model", "model", { source: "handoff", ref: ho?.id }],
+    ])
     expect(f.adapter.calls).toHaveLength(1)
   })
 })
