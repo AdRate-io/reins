@@ -19,6 +19,7 @@ import { pins } from "../pins/index.js"
 import { COMPACT_STALLED_PAUSE_CODE, compact, isModelCompaction } from "./compact.js"
 import {
   MANIFEST_HEADING,
+  MEDIA_MANIFEST_HEADING,
   parseCompactArgs,
   planCompaction,
   renderCompactionSummary,
@@ -701,6 +702,84 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
     expect(second.payload.summary).toBe(
       `Second.\n\n${MANIFEST_HEADING}\n- seq 5 add({"a":1,"b":1}) — 1 chars`,
     )
+  })
+})
+
+describe("compact × recall：被折叠用户消息里的媒体有路可回（2026-11-24，AdRate 建议 17 第一步）", () => {
+  it("贴过图的旧用户消息被折叠后列进摘要第二节、回执点名；recall 逐字取回含图片，下一轮视图里看得到", async () => {
+    const log = new InMemoryEventLog()
+    const image = { type: "image" as const, mime: "image/png", data: "iVBORw0KGgo=" }
+    // 两个 run 共用一个 id 生成器：各自重来会撞 id，第一条消息会被误认成"最近一条用户消息"而幸存
+    const clock = deterministic()
+    // 第一个 run：用户贴图
+    await drain(
+      runLoop(
+        config(new ScriptedLowering([{ drafts: [say("I see the error.")] }]), log, {
+          input: [{ type: "text", text: "Here is the screenshot" }, image],
+          ...clock,
+        }),
+      ),
+    )
+    const imageSeq = (await all(log)).find((e) => e.type === "core.user_message")?.seq as number
+    // 第二个 run：新的用户消息（最近一条，幸存），模型整理后按清单取回旧图
+    const lowering = new ScriptedLowering([
+      { drafts: [doCompact("c1", { summary: "User shared a screenshot of an error.", keep: [] })] },
+      { drafts: [callTool("r1", "recall", { seq: imageSeq })] },
+      { drafts: [say("Same error as before.")] },
+    ])
+    await drain(runLoop(config(lowering, log, { input: "Look at it again", ...clock })))
+    const logged = await all(log)
+    const [summary] = compactionsOf(logged) as [Compaction]
+    expect(summary.payload.summary).toBe(
+      `User shared a screenshot of an error.\n\n${MEDIA_MANIFEST_HEADING}\n- seq ${imageSeq} user message — 1 image (image/png)`,
+    )
+    expect(resultOf(logged, "c1").payload.content[0]).toMatchObject({
+      text: expect.stringContaining(
+        "1 folded user message(s) with images, video or audio are listed under the summary and can be brought back verbatim with recall({ seq }).",
+      ),
+    })
+    const r1 = resultOf(logged, "r1")
+    expect(r1.payload.isError).toBe(false)
+    expect(r1.payload.content).toEqual([
+      { type: "text", text: `[Recalled user message seq ${imageSeq}. Original content follows verbatim.]` },
+      { type: "text", text: "Here is the screenshot" },
+      image,
+    ])
+    // 取回后那一轮：原消息已被折叠出视图，图片经 recall 结果回到视图
+    const view = lowering.requests[2]?.events ?? []
+    expect(view.some((e) => e.seq === imageSeq)).toBe(false)
+    expect(
+      view.some(
+        (e) =>
+          e.type === "core.tool_result" &&
+          (e as ToolResult).payload.toolCallId === "r1" &&
+          (e as ToolResult).payload.content.some((p) => p.type === "image"),
+      ),
+    ).toBe(true)
+  })
+
+  it("没有媒体的折叠摘要逐字不变；纯文本用户消息也能按 seq 取回", async () => {
+    const log = new InMemoryEventLog()
+    const clock = deterministic()
+    await drain(
+      runLoop(config(new ScriptedLowering([{ drafts: [say("ok")] }]), log, { input: "first ask", ...clock })),
+    )
+    const firstSeq = (await all(log)).find((e) => e.type === "core.user_message")?.seq as number
+    const lowering = new ScriptedLowering([
+      { drafts: [doCompact("c1", { summary: "Plain.", keep: [] })] },
+      { drafts: [callTool("r1", "recall", { seq: firstSeq })] },
+      { drafts: [say("done")] },
+    ])
+    await drain(runLoop(config(lowering, log, { input: "second ask", ...clock })))
+    const logged = await all(log)
+    expect((compactionsOf(logged)[0] as Compaction).payload.summary).toBe("Plain.")
+    expect(resultOf(logged, "c1").payload.content[0]).toMatchObject({
+      text: expect.not.stringContaining("user message(s) with images"),
+    })
+    expect(resultOf(logged, "r1").payload.content).toEqual([
+      { type: "text", text: `[Recalled user message seq ${firstSeq}. Original content follows verbatim.]` },
+      { type: "text", text: "first ask" },
+    ])
   })
 })
 

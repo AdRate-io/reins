@@ -1089,3 +1089,55 @@ Socket 的 `onTurnEnd` 只能返回 `pause: { reason: "budget" | "host"; note?: 
 - **顺带修了 TanStack 适配器的一处既有缺口**（AdRate 不走这条路径，不受影响）：已因审批 / 客户端工具暂停的轮次不再问 Socket，此前会多写一条终结事件。
 - **验证**：全部假模型（模型看不见这个字段），`pnpm check` 与构建产物自检全绿。发版前另起 PG 16.13 真库跑了一遍（store-pg 的 pg / postgres.js / Drizzle 列在内，2103 条全过）；发后在空目录从 npm 官方源安装，冒烟 6/6。独立审查对初版做了 19 处变异、拦住 18 处，漏的那处（一条空断言）已补；按审查意见改动后的逻辑另做 5 处变异，全部拦住。
 - **请核实**：升级后在测试服让积分用完暂停一次，看 `pgRunStates` 的 `code` 与前端收到的 `metadata.code`；充值后不续跑再查一次，`code` 应不变；再把积分 Socket 的暂停路径完整跑一遍，确认时间线里 `run_paused` 前没有 `core.error`（有就是码的格式不对）。
+
+### AdRate 测试服核实（2026-11-23，core 0.15.0，`2805ade9`）
+
+测试服团队 1 的定时任务后台 run：提示词要求逐个账户调工具，run 起跑后把团队 AI 积分包的已用量临时改满（余额归零），之后按真实消耗恢复。
+
+- **`pgRunStates`**：`{"state":"paused","reason":"budget","stopped":false,"awaiting":[],"code":"adrate.credits_exhausted"}`；定时任务结算据此记为 `failed / credits_exhausted` 并发了通知。
+- **充值后不续跑再查**：积分恢复后再调一次，`code` 仍是 `adrate.credits_exhausted`，未变。
+- **时间线**：`core.run_paused` 载荷带 `code` 与 `note`，整条会话没有任何 `core.error`。
+- 前端没有直接读 AG-UI 的 `metadata.code`：暂停条从时间线 `run_paused` 事件取码，实时与补发同一路径（单测锁定），页面效果由 Boss 在该会话核对。
+- 结论：符合 reins 描述，建议 16 可关闭。随 A1 上正式服发布。
+
+---
+
+# 图片输入建议（2026-11-24）
+
+## AdRate 建议 17：图片以引用形式进入事件日志（字节放 BlobStore），被折叠后可取回
+
+### 现状（core 0.15.0 / brain 0.9.0）
+
+- `ImagePart` 只有一种形态 `{ type: "image", mime, data }`，`data` 是内联 base64。README「Media」一节写明：媒体字节随事件存进日志，只追加、不外溢，在视野内时每轮重发。
+- `compact()` 折叠后附的清单（`MANIFEST_HEADING`：「Folded tool results …」）只列被折叠的**工具结果**，`recall({ seq })` 按此取回。用户消息里的图片被折叠后，清单里没有它。README 说媒体内容「can fold … with `compact` and get it back with `recall`」，是否也覆盖用户消息，请 reins 确认。
+- reins 已有 `BlobStore` 合同（`put` / `get` / `slice`，`put` 带 `sessionId`），`spill()` 与 `fetch_blob` 用的就是它；store-pg 有 `reins_blobs` 表。
+
+### 问题（AdRate 场景）
+
+AdRate 要支持用户在对话里粘贴截图：TikTok 后台的报错、数据面板，或者一张素材图。按现状：
+
+1. **字节永久留在事件表里。** 一张压缩后的截图，base64 后约 0.3～0.5MB；一个排查会话发十来张就是几 MB。事件表的 `data` 是 `json`（续跑要按原文校验，不能用 `jsonb`），只追加，会话不删就一直在。
+2. **读会话的成本随图片数量线性增长，和图片在不在视野内无关。** 凡是读整条时间线的路径都会把这些字节一起读出来、一起解析：run 起跑构建投影、宿主回放历史给前端、宿主在事件上做的查询（AdRate 的会话搜索只从 `json` 里抽文本片段做匹配，但 `json` 类型每次访问都要解析整行）。
+3. **前端展示要再取一遍。** 宿主想在用户消息气泡里显示这张图，只能从事件里取 base64 下发，或者另存一份。另存就有两份存储、两处清理。
+4. **折叠后取不回。** 图片被 `compact` 折叠后，模型不知道它还在，也没有办法再看。
+
+### 建议形态（供参考，形态由 reins 定）
+
+- **增加图片的引用形态**，例如 `{ type: "image", mime, blobId }`，与 `data` 二选一。字节放在 `BlobStore` 里：宿主先 `blobs.put(bytes, { mime, sessionId })`，再追加带引用的用户消息。降级层组装请求时按 `blobId` 取字节，是否发送仍由 capabilities 决定，不支持时落占位并记 `lossy`，与现在一致。
+- **追加前校验引用（fail-closed）**：`blobId` 不存在、或不属于本会话时，追加前就拒绝，不写入任何事件。
+- **工具结果里的图片也能用引用**：AdRate 打算给模型一个「重新查看某张图」的工具，它返回引用，不再重复存一份字节；`liftToolImages` 照常生效。
+- **折叠后能找回**：被折叠的图片（用户消息里的和工具结果里的）进入清单，`recall` 能取回；或者另给一个按引用取回图片的入口。形态由 reins 定。
+- **token 估算**：引用形态下 reins 看不到字节，估算可能需要宽高。可以由 `put` 的 meta 或 part 自带 `width` / `height`，具体由 reins 定；也请顺带说明现在图片是怎么估算的。
+
+### 边界
+
+- 只加可选形态，内联 `data` 照旧可用，老事件不受影响。
+- 确定性：事件里存的是引用，blob 写入后不可改，续跑的原文校验依然成立。如果「媒体不外溢」原本就是为续跑校验或别的原因刻意设计的，请说明。
+- 会话分叉（fork）后，引用的 blob 归属哪个会话、校验时怎么判，由 reins 定。
+- 视频 / 音频要不要一起做，由 reins 定。AdRate 目前只需要图片。
+
+### 对 AdRate 的影响
+
+- 不阻塞其他二期工作。A12 等这一条发版后再实施，发版前 AdRate 先做前端上传交互、暂存区，以及单张大小和张数上限的实测。
+- 生命周期 AdRate 这边已经覆盖：会话的物理清理按 `session_id` 在同一个事务里删除 `reins_events` / `reins_blobs` / `reins_runs`。
+- 预上传在 AdRate 侧处理：用户粘贴时先传到 AdRate 自己的暂存区，发送时再 `put` 进 `BlobStore`。所以不需要 reins 支持「会话还没有事件时先 `put`」。如果 reins 本来就允许，请告知，AdRate 可以省掉一次搬运。

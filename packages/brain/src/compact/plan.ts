@@ -15,15 +15,19 @@
  * 5. （E3c）被折叠的工具结果列成清单附在摘要之后（`seq N tool(arguments) — 大小`），模型之后可用 recall 按 seq 取回。
  *    摘要是模型的取舍，清单是"事实上还在的东西"；两个模型族的实测都把复核过的字段值整理成了一句结论，
  *    清单让它至少知道去哪拿。脑子自己的工具（compact / pin / recall / fetch_blob 的回执）不列，只是噪音。
+ *    （2026-11-24）被折叠用户消息里的图片 / 视频 / 音频另列一节，同样按 seq 用 recall 取回——否则贴过的截图一折就再也看不到。
  */
 import {
   type CompactionPayload,
   type Event,
   type FoldedToolResult,
+  type FoldedUserMedia,
   foldedToolResults,
+  foldedUserMedia,
   isCompaction,
   isPinNote,
   renderFoldedToolResults,
+  renderFoldedUserMedia,
   splitTurns,
   supersededIds,
 } from "@reinsjs/core"
@@ -65,6 +69,9 @@ export const MANIFEST_DEFAULT_EXCLUDE: ReadonlySet<string> = new Set([
 
 export const MANIFEST_HEADING = `Folded tool results (bring one back verbatim with ${RECALL_TOOL_NAME}({ seq })):`
 
+/** 被折叠用户消息里媒体的清单标题；与工具结果清单分开，没有媒体时摘要逐字不变 */
+export const MEDIA_MANIFEST_HEADING = `Images, video or audio in folded user messages (bring the message back verbatim with ${RECALL_TOOL_NAME}({ seq })):`
+
 export interface ManifestOptions {
   /** 最多列几条，其余折成一行。缺省 80 */
   maxItems?: number
@@ -80,12 +87,18 @@ export function renderCompactionSummary(
   args: Pick<CompactArgs, "summary" | "keep">,
   folded: readonly FoldedToolResult[] = [],
   manifest: ManifestOptions = {},
+  media: readonly FoldedUserMedia[] = [],
 ): string {
   const parts = [args.summary]
   if (args.keep.length > 0)
     parts.push(`Key facts carried forward:\n${args.keep.map((k) => `- ${k}`).join("\n")}`)
   const list = renderFoldedToolResults(folded, { heading: MANIFEST_HEADING, ...manifest })
   if (list) parts.push(list)
+  const mediaList = renderFoldedUserMedia(media, {
+    heading: MEDIA_MANIFEST_HEADING,
+    ...(manifest.maxItems !== undefined ? { maxItems: manifest.maxItems } : {}),
+  })
+  if (mediaList) parts.push(mediaList)
   return parts.join("\n\n")
 }
 
@@ -101,6 +114,8 @@ export type CompactPlan =
       keptTurns: number
       /** 列进摘要的被折叠工具结果（E3c） */
       manifest: FoldedToolResult[]
+      /** 列进摘要的被折叠用户消息媒体（2026-11-24） */
+      media: FoldedUserMedia[]
     }
   | { ok: false; reason: string }
 
@@ -195,6 +210,7 @@ export function planCompaction(
   const manifestOpts =
     opts.manifest === false ? undefined : { exclude: MANIFEST_DEFAULT_EXCLUDE, ...opts.manifest }
   let manifest: FoldedToolResult[] = []
+  let media: FoldedUserMedia[] = []
   if (manifestOpts) {
     const listed = new Set(folded.map((e) => e.id))
     const scope = folded.filter((e) => !survivorIds.has(e.id))
@@ -214,6 +230,7 @@ export function planCompaction(
       lookup: opts.timeline ?? visible,
       exclude: manifestOpts.exclude ?? MANIFEST_DEFAULT_EXCLUDE,
     })
+    media = foldedUserMedia(scope)
   }
   const from = Math.min(
     minSeq(folded),
@@ -225,7 +242,7 @@ export function planCompaction(
     ok: true,
     payload: {
       coversSeq: [from, to],
-      summary: renderCompactionSummary(args, manifest, manifestOpts ?? {}),
+      summary: renderCompactionSummary(args, manifest, manifestOpts ?? {}, media),
       decidedBy: "model",
       pinsKept: survivors.map((e) => e.id),
     },
@@ -233,6 +250,7 @@ export function planCompaction(
     absorbed,
     keptTurns: args.keepRecentTurns,
     manifest,
+    media,
   }
 }
 

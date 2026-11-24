@@ -124,7 +124,7 @@ Content parts are `text`, `image`, `video`, `audio` and `tool_reference`. A `vid
 
 - **Capabilities decide, not mime types.** `LoweringCapabilities.video` / `audio` are optional and mean "no" when absent: a lowering that does not take them replaces the part with a placeholder and records the event `lossy`, so the run goes on instead of the provider answering 400.
 - **Estimates follow duration.** Video is estimated at 100 tokens per second and audio at 32 (measured: about 91 and 25 on a relay Gemini). Without `durationSec` the estimate falls back to the byte size at a deliberately low bitrate (1 Mbps / 64 kbps) with a 30-second floor — erring high, because bitrates differ by about 60× and underestimating leads to overflow. Give `durationSec` whenever you know it, and never `0` — a part with `durationSec: 0` (or a mime type outside `video/` / `audio/`) is malformed, and a tool result containing one is turned into JSON text as a whole, base64 included. For other rates, wrap `roughTokenEstimate` in your own `TokenEstimator`.
-- **They stay in the log.** Media `data` is stored in the event like an image (append-only, never spilled) and is re-sent on every turn while it is in view. Cap the size and length of clips on your side; the model can fold what it has watched with `compact` and get it back with `recall`.
+- **They stay in the log.** Media `data` is stored in the event like an image (append-only, never spilled) and is re-sent on every turn while it is in view. Cap the size and length of clips on your side. With `@reinsjs/brain`'s `compact`, the model can fold what it has seen and bring it back with `recall({ seq })`: from a tool result, or from a user message (a summary lists folded user messages that carried media by `seq`).
 
 ## Sockets
 

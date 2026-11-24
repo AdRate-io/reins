@@ -139,6 +139,11 @@ function receipt(plan: Extract<CompactPlan, { ok: true }>, withRecall: boolean):
       `${plan.manifest.length} folded tool result(s) are listed under the summary${withRecall ? ` and can be brought back verbatim with ${RECALL_TOOL_NAME}({ seq })` : ""}.`,
     )
   }
+  if (plan.media.length > 0) {
+    parts.push(
+      `${plan.media.length} folded user message(s) with images, video or audio are listed under the summary${withRecall ? ` and can be brought back verbatim with ${RECALL_TOOL_NAME}({ seq })` : ""}.`,
+    )
+  }
   if (plan.payload.pinsKept.length > 0)
     parts.push(
       `${plan.payload.pinsKept.length} item(s) carried over verbatim (pinned notes and the latest user message).`,

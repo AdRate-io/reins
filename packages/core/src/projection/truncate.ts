@@ -21,7 +21,12 @@ import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { estimateBudgetOf, estimateTotal } from "./estimate.js"
 import { isCompaction, isPinNote, supersededIds } from "./fold.js"
-import { foldedToolResults, renderFoldedToolResults } from "./manifest.js"
+import {
+  foldedToolResults,
+  foldedUserMedia,
+  renderFoldedToolResults,
+  renderFoldedUserMedia,
+} from "./manifest.js"
 import type { ProjectionContext, ProjectionStrategy } from "./types.js"
 
 const ASSISTANT_TYPES: ReadonlySet<string> = new Set([
@@ -126,6 +131,11 @@ export const defaultThresholdSummary: ThresholdSummarizer = (removed, ctx) => {
     heading: "Tool results that were removed (still in the session log, by seq):",
   })
   if (manifest) lines.push(manifest)
+  // 用户消息里的媒体同理：摘录只写得出 "[image]"，模型要知道它按哪个 seq 还能拿回来
+  const media = renderFoldedUserMedia(foldedUserMedia(fresh), {
+    heading: "Images, video or audio in removed user messages (still in the session log, by seq):",
+  })
+  if (media) lines.push(media)
   return lines.join("\n")
 }
 

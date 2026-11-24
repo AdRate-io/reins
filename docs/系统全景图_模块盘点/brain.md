@@ -64,7 +64,7 @@
 | `packages/brain/src/compact/compact.ts` | `compact(opts): Socket`：注册 `compact` / `recall` 工具与规则提示，afterTool 落 compaction 并换回执，onTurnEnd 查连续整理上限 |
 | `packages/brain/src/compact/plan.ts` | 纯函数 `planCompaction`：算切点、幸存者、被吸收的旧摘要、被折叠工具结果清单；另有按轮分段与连续整理计数 |
 | `packages/brain/src/compact/request.ts` | 到线请模型整理：`DEFAULT_FORCE_AT`（两级）、`renderCompactRequest`（按 attempt 换措辞）、`isCompactRequest`、`compactRequestedSinceLastCompaction` / `compactRequestsSinceLastCompaction`、`contextUsageRatio`（全从时间线读，无跨轮状态）；`modelActedSinceLastCompaction` / `timelineSoFar` 从 shared/segment.ts 再导出 |
-| `packages/brain/src/compact/recall.ts` | `recall({ seq })` 工具：从本会话日志按 seq 逐字取回一条被折叠的工具结果 |
+| `packages/brain/src/compact/recall.ts` | `recall({ seq })` 工具：从本会话日志按 seq 逐字取回一条被折叠的工具结果或用户消息（含媒体） |
 | `packages/brain/src/compact/rules.ts` | compact / recall 的工具名、工具说明与规则提示 `COMPACT_RULES`（英文常量） |
 | `packages/brain/src/compact/compact.test.ts` | compact 的全部用例（自决整理、阈值兜底与连续上限、recall、纯函数层） |
 | `packages/brain/src/pins/index.ts` | pins 子模块聚合导出 |
@@ -127,7 +127,7 @@
 2. `beforeModel`（`force` 缺省开）：`timelineSoFar(ctx)` 里最后一次 compaction 之后已有 n 条请求 → 看第 n+1 级软线（缺省 `[0.75, 0.8]`）；`contextUsageRatio(ctx)`（估算 + `contextOverheadOf`，与感知、阈值兜底同一把尺）过线、且整理后模型动过（`modelActedSinceLastCompaction`），就 emit 一条 `system_note(kind=budget, directive, meta.compactRequest={usage, autoFoldAt, attempt, at})` 请模型先整理。两级都不理就留给阈值兜底。
 3. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 4. `afterTool` 见到 `compact` 调用：`parseCompactArgs` 拿规范入参 → `planCompaction(ctx.events, args, { protectCallId, timeline, manifest })` 算切点与幸存者 → `ctx.emit` 一条 `core.compaction(decidedBy=forced 或 model, actor=model, parentId=tool_call)`（本段请过即 forced） → 把占位结果换成 `receipt()` 回执。日志顺序是 tool_call → compaction → tool_result。
-5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result`，原样返回内容并加说明头；原件已外溢则指向 blob 让模型用 `fetch_blob`。
+5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result` 或 `user_message`，原样返回内容并加说明头；工具结果原件已外溢则指向 blob 让模型用 `fetch_blob`。
 6. `onTurnEnd`：本轮模型还要继续时，把本轮模型自决的整理数 + 本轮开始时投影新造的阈值兜底整理数 + `trailingCompactionRun(ctx.timeline)` 相加，达到 `maxConsecutive`（缺省 3）即返回 `{ pause: { reason: "budget", code: COMPACT_STALLED_PAUSE_CODE, note } }`（原因码 `reins.compact_stalled`，事后与预算触顶分得开）。
 
 ### pins
@@ -222,7 +222,7 @@
 
 **被折叠范围内最近的一条用户消息由库保住**（B2）— 真模型实测：用户说"先整理，然后做 X"，模型整理时把这条也折了进去，摘要只写"接着做第二部分"，整理完反问第二部分是什么。模型没法复述它还没开始处理的指令。边界：`keepLatestUserMessage: false` 可关。
 
-**摘要之后自动附被折叠工具结果清单，并给 `recall({ seq })` 取回**（E3c）— 整理丢细节是机制本身的代价（两个模型族都把"复核过的字段值"整理成"状态正常"一句结论），与其教模型该留什么，不如让它知道什么还能拿回来；原件本来就在日志里，缺的只是一条读回去的路。清单范围含被吸收旧摘要盖住的原件（从完整时间线补回），脑子自己的回执（compact / pin / recall / fetch_blob）不列。边界：`manifest: false` 关清单时应一并换 `rules`，缺省文案里关于清单的说法就不成立了。
+**摘要之后自动附被折叠工具结果清单，并给 `recall({ seq })` 取回**（E3c）— 整理丢细节是机制本身的代价（两个模型族都把"复核过的字段值"整理成"状态正常"一句结论），与其教模型该留什么，不如让它知道什么还能拿回来；原件本来就在日志里，缺的只是一条读回去的路。清单范围含被吸收旧摘要盖住的原件（从完整时间线补回），脑子自己的回执（compact / pin / recall / fetch_blob）不列。带图片 / 视频 / 音频的被折叠用户消息另列一节（`MEDIA_MANIFEST_HEADING`，2026-11-24），纯文本用户消息不列（要点由摘要承载），但 `recall` 接受任何 user_message 的 seq。边界：`manifest: false` 关清单时应一并换 `rules`，缺省文案里关于清单的说法就不成立了。
 
 **清单与取回用 tool_result 的 seq，不用 toolCallId 或事件 id**（E3c 附）— seq 短、模型能抄；fork 出的会话（eval 探针、宿主分叉）三种存储实现都保留 seq，子会话里照样有效；toolCallId 是厂商格式且长，事件 id 36 位。
 

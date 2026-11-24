@@ -23,13 +23,13 @@ export const COMPACT_TOOL_DESCRIPTION = [
   "the originals stay in the session log but you will no longer see them.",
   "Earlier summaries inside the folded range are replaced too — carry forward whatever still matters.",
   "The most recent user message and pinned notes survive verbatim, so you need not repeat them.",
-  `Under your summary the harness lists every folded tool result (seq, tool, arguments); any of them can be brought back verbatim later with \`${RECALL_TOOL_NAME}\`.`,
+  `Under your summary the harness lists every folded tool result (seq, tool, arguments) and every folded user message that carried images, video or audio; any of them can be brought back verbatim later with \`${RECALL_TOOL_NAME}\`.`,
 ].join(" ")
 
 export const RECALL_TOOL_DESCRIPTION = [
-  "Bring back, verbatim, a tool result that was folded away by a compaction.",
-  "Each summary lists its folded tool results as `seq N tool(arguments)`; pass that `seq`.",
-  "The original output is returned exactly as the tool produced it (large outputs are stored as blobs and read with fetch_blob instead).",
+  "Bring back, verbatim, a tool result or user message that was folded away by a compaction.",
+  "Each summary lists its folded tool results as `seq N tool(arguments)`, and folded user messages that carried images, video or audio as `seq N user message`; pass that `seq`.",
+  "The original is returned exactly as it was logged, media included (large tool outputs are stored as blobs and read with fetch_blob instead).",
   "Use it when you need a value that the summary only mentioned or left out; each recall costs a turn and stays in context afterwards.",
 ].join(" ")
 
@@ -46,6 +46,6 @@ You have a \`${COMPACT_TOOL_NAME}\` tool that folds earlier conversation into a 
 - Do not compact in the middle of a derivation, while a problem is still unresolved, or when you feel stuck: you would lose exactly the details you still need.
 - The summary replaces everything it folds, including earlier summaries. Carry forward the user's goals and constraints, decisions made and why, the current state, and what comes next. List each fact that must survive in \`keep\`. The most recent user message and pinned notes survive verbatim on their own; check the pins still say what you need.
 - Keep exact values, not just conclusions: identifiers, status and enum fields you verified, numbers, dates, error codes. "Checked, all ENABLE" loses the field values themselves.
-- Nothing folded is lost for good: under each summary the harness lists the folded tool results as \`seq N tool(arguments)\`, and \`${RECALL_TOOL_NAME}({ seq })\` brings one back verbatim. When asked about a detail your summary did not keep, recall the result that contained it instead of guessing or saying it is gone.
+- Nothing folded is lost for good: under each summary the harness lists the folded tool results as \`seq N tool(arguments)\` and folded user messages with images, video or audio as \`seq N user message\`, and \`${RECALL_TOOL_NAME}({ seq })\` brings one back verbatim. When asked about a detail your summary did not keep, recall the result that contained it instead of guessing or saying it is gone.
 ${COMPACT_REQUEST_RULE}
 - If you never compact, the harness folds the oldest turns mechanically once the window nears its limit. Its summary is worse than yours, but it lists the folded tool results the same way.`

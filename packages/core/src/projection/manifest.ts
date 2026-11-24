@@ -121,3 +121,68 @@ export function renderFoldedToolResults(
   }
   return lines.join("\n")
 }
+
+/**
+ * 被折叠用户消息里的媒体（2026-11-24，AdRate 建议 17 第一步）。
+ *
+ * 工具结果清单只覆盖 tool_result；用户贴的截图、视频、音频一旦随旧轮被折叠，模型既看不到、也不知道它还在——
+ * 违反"会消失就要拿得回"。这里把带媒体片段的被折叠 user_message 按 seq 列出，取回仍由脑子的 recall 做。
+ * 只列带媒体的：纯文本用户消息的要点由摘要承载（兜底摘要另有原话开头），全列只会让清单变长。
+ */
+export interface FoldedUserMedia {
+  /** user_message 事件的 seq —— 模型取回时报这个号 */
+  seq: number
+  /** 消息里的媒体片段，按出现顺序 */
+  media: { type: "image" | "video" | "audio"; mime: string }[]
+}
+
+/** 从一段被折叠（或被裁掉）的事件里挑出带媒体的用户消息，按 seq 升序 */
+export function foldedUserMedia(removed: readonly Event[]): FoldedUserMedia[] {
+  const out: FoldedUserMedia[] = []
+  for (const e of removed) {
+    if (e.type !== "core.user_message") continue
+    const media: FoldedUserMedia["media"] = []
+    for (const p of (e as CoreEventOf<"core.user_message">).payload.content) {
+      switch (p.type) {
+        case "image":
+        case "video":
+        case "audio":
+          media.push({ type: p.type, mime: p.mime })
+          break
+        case "text":
+        case "tool_reference":
+          break
+        default: {
+          const _exhaustive: never = p
+          return _exhaustive
+        }
+      }
+    }
+    if (media.length > 0) out.push({ seq: e.seq, media })
+  }
+  return out.sort((a, b) => a.seq - b.seq)
+}
+
+/** 渲染成给模型看的清单行，例：`- seq 12 user message — 2 images (image/png, image/jpeg)`；没有条目返回空字符串 */
+export function renderFoldedUserMedia(
+  items: readonly FoldedUserMedia[],
+  opts: { heading: string; maxItems?: number },
+): string {
+  if (items.length === 0) return ""
+  const maxItems = opts.maxItems ?? 80
+  const lines = [opts.heading]
+  const shown = items.slice(0, maxItems)
+  for (const it of shown) {
+    const byType = new Map<string, string[]>()
+    for (const m of it.media) byType.set(m.type, [...(byType.get(m.type) ?? []), m.mime])
+    const desc = [...byType.entries()]
+      .map(([type, mimes]) => `${mimes.length} ${type}${mimes.length > 1 ? "s" : ""} (${mimes.join(", ")})`)
+      .join(", ")
+    lines.push(`- seq ${it.seq} user message — ${desc}`)
+  }
+  if (items.length > shown.length) {
+    const rest = items.slice(shown.length)
+    lines.push(`- …and ${rest.length} more (seq ${rest[0]?.seq}–${rest[rest.length - 1]?.seq})`)
+  }
+  return lines.join("\n")
+}

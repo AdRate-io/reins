@@ -11,7 +11,13 @@ import { createCoreRegistry } from "../events/registry.js"
 import { estimateTextTokens, roughTokenEstimate } from "./estimate.js"
 import { DEFAULT_MODEL_INVISIBLE_TYPES, visibilityFilter } from "./filter.js"
 import { foldCompactions } from "./fold.js"
-import { digestArgs, foldedToolResults, renderFoldedToolResults } from "./manifest.js"
+import {
+  digestArgs,
+  foldedToolResults,
+  foldedUserMedia,
+  renderFoldedToolResults,
+  renderFoldedUserMedia,
+} from "./manifest.js"
 import { reinjectPins } from "./pins.js"
 import { defaultProjectionChain, project } from "./project.js"
 import { budgetTruncate, defaultThresholdSummary, splitTurns } from "./truncate.js"
@@ -160,6 +166,18 @@ describe("defaultThresholdSummary：非文本片段按类型摘录", () => {
     })
     const text = defaultThresholdSummary([u], ctxOf([u]))
     expect(text).toContain("- look [image] [video] [audio] [tool g]")
+    // 2026-11-24：带媒体的被裁用户消息按 seq 列出，模型知道还能拿回来
+    expect(text).toContain(
+      [
+        "Images, video or audio in removed user messages (still in the session log, by seq):",
+        "- seq 1 user message — 1 image (image/png), 1 video (video/mp4), 1 audio (audio/mpeg)",
+      ].join("\n"),
+    )
+  })
+
+  it("没有媒体的被裁用户消息不出媒体清单，兜底摘要与改动前逐字一致", () => {
+    const events = [user(1, "hi"), call(2, "c1"), result(3, "c1")]
+    expect(defaultThresholdSummary(events, ctxOf(events))).not.toContain("Images, video or audio")
   })
 })
 
@@ -398,6 +416,69 @@ describe("被折叠工具结果清单（manifest）", () => {
     expect(digestArgs({ z: [3, { y: 1, x: 2 }], a: null })).toBe('{"a":null,"z":[3,{"x":2,"y":1}]}')
     expect(digestArgs("x".repeat(200), 10)).toBe(`"${"x".repeat(8)}…`)
     expect(digestArgs(undefined)).toBe("")
+  })
+})
+
+describe("被折叠用户消息的媒体清单（2026-11-24）", () => {
+  it("foldedUserMedia：只挑带媒体的 user_message，按 seq 升序、按出现顺序记 mime；工具结果里的图不算", () => {
+    const events = [
+      ev(7, "core.user_message", {
+        content: [
+          { type: "image", mime: "image/jpeg", data: "AA" },
+          { type: "text", text: "and" },
+          { type: "image", mime: "image/png", data: "BB" },
+        ],
+      }),
+      user(2, "plain"),
+      ev(4, "core.user_message", { content: [{ type: "audio", mime: "audio/wav", data: "CC" }] }),
+      ev(5, "core.tool_result", {
+        toolCallId: "c1",
+        name: "shot",
+        content: [{ type: "image", mime: "image/png", data: "DD" }],
+        isError: false,
+      }),
+    ]
+    expect(foldedUserMedia(events)).toEqual([
+      { seq: 4, media: [{ type: "audio", mime: "audio/wav" }] },
+      {
+        seq: 7,
+        media: [
+          { type: "image", mime: "image/jpeg" },
+          { type: "image", mime: "image/png" },
+        ],
+      },
+    ])
+  })
+
+  it("renderFoldedUserMedia：空清单为空串；同类合并计数；超过 maxItems 折成一行", () => {
+    expect(renderFoldedUserMedia([], { heading: "H" })).toBe("")
+    const items = [
+      {
+        seq: 3,
+        media: [
+          { type: "image" as const, mime: "image/png" },
+          { type: "video" as const, mime: "video/mp4" },
+          { type: "image" as const, mime: "image/jpeg" },
+        ],
+      },
+      { seq: 8, media: [{ type: "audio" as const, mime: "audio/mpeg" }] },
+      { seq: 9, media: [{ type: "image" as const, mime: "image/webp" }] },
+    ]
+    expect(renderFoldedUserMedia(items, { heading: "H" })).toBe(
+      [
+        "H",
+        "- seq 3 user message — 2 images (image/png, image/jpeg), 1 video (video/mp4)",
+        "- seq 8 user message — 1 audio (audio/mpeg)",
+        "- seq 9 user message — 1 image (image/webp)",
+      ].join("\n"),
+    )
+    expect(renderFoldedUserMedia(items, { heading: "H", maxItems: 1 })).toBe(
+      [
+        "H",
+        "- seq 3 user message — 2 images (image/png, image/jpeg), 1 video (video/mp4)",
+        "- …and 2 more (seq 8–9)",
+      ].join("\n"),
+    )
   })
 })
 
