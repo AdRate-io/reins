@@ -48,10 +48,27 @@ function isDuration(x: unknown): boolean {
 }
 
 /**
+ * 图片片段可写进日志的 mime 白名单（真源索引）：Anthropic / OpenAI / Gemini 都收的四种，逐字比对、不做大小写或别名归一。
+ * 不在表里的（svg、heic、`image/jpg` 写法、非图片类型）一旦以图片片段进日志，之后每次请求都整段回放、厂商回非瞬断 400，
+ * 会话卡死（全库审查 2026-11-25 #9）。片段形状（`isContentPart`）与各入口、降级层的图片白名单都调这一份
+ */
+export const SUPPORTED_IMAGE_MIMES: ReadonlySet<string> = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+])
+
+/** mime 是否在图片白名单里（`SUPPORTED_IMAGE_MIMES`）；非字符串一律 false */
+export function isSupportedImageMime(mime: unknown): boolean {
+  return typeof mime === "string" && SUPPORTED_IMAGE_MIMES.has(mime)
+}
+
+/**
  * 内容片段的形状校验，全包唯一一份（真源索引）：工具返回值归一（本文件）与 runLoop 输入草稿 / 片段数组（run-loop.ts）都调它。
  * 坏片段一旦进日志，之后每次读到它都会崩（会话报废），所以在写之前拦。
- * 规则：text 有 `text`；image 是内联（`mime` 与 `data`，mime 不校验，历史行为）或引用（`isImageRef`：mime 以 "image/" 开头、
- * blobId 非空且 ≤ 128 字符），`data` 与 `blobId` 恰好一个；video / audio 的 mime 以 "video/" / "audio/" 开头、
+ * 规则：text 有 `text`；image 是内联（`mime` 与 `data`）或引用（`isImageRef`：blobId 非空且 ≤ 128 字符），`data` 与 `blobId`
+ * 恰好一个，两种形态的 mime 都必须在白名单里（`isSupportedImageMime`）；video / audio 的 mime 以 "video/" / "audio/" 开头、
  * `durationSec` 缺省或为有限正数；tool_reference 有名字、描述与对象形 inputSchema。
  * 宿主经 HTTP 送来的用户消息另有白名单（server `rebuildContentParts`，两份实现靠跨包用例锁同口径），不含引用段
  */
@@ -62,9 +79,11 @@ export function isContentPart(x: unknown): x is ContentPart {
     case "text":
       return typeof p.text === "string"
     case "image":
-      // 引用形态 fail-closed：mime 不要求 image/ 的话，同会话的外溢文本 blob 能被当图片引用，每轮发给厂商 400、会话卡死
+      // mime 白名单 fail-closed：厂商不收的类型进了日志，之后每轮整段回放都 400、会话卡死。引用形态另要 isImageRef 的形状——
+      // 它只查 image/ 前缀（降级层靠它认出日志里已有的旧引用，不能跟着收紧），白名单在这里叠加
+      if (!isSupportedImageMime(p.mime)) return false
       if (p.blobId !== undefined) return isImageRef(p)
-      return typeof p.mime === "string" && typeof p.data === "string"
+      return typeof p.data === "string"
     case "video":
     case "audio":
       return (

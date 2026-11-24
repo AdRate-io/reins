@@ -118,7 +118,7 @@ describe("形状（isImageRef / isContentPart）", () => {
   it("合规的引用通过；内联照旧", () => {
     expect(isContentPart(ref("b1"))).toBe(true)
     expect(isImageRef(ref("b1"))).toBe(true)
-    expect(isContentPart({ type: "image", mime: "whatever", data: "AA" })).toBe(true)
+    expect(isContentPart({ type: "image", mime: "whatever", data: "AA" })).toBe(false)
     expect(isImageRef({ type: "image", mime: "image/png", data: "AA" })).toBe(false)
   })
 
@@ -530,7 +530,7 @@ describe("工具结果里的图片引用", () => {
     await expect(
       drain(
         runLoop(
-          base(log, new ScriptedLowering([]), { blobs, input: [ref(own.id), ref(own.id, "image/x-bogus")] }),
+          base(log, new ScriptedLowering([]), { blobs, input: [ref(own.id), ref(own.id, "image/webp")] }),
         ),
       ),
     ).rejects.toThrow(imageRefNotFound(own.id))
