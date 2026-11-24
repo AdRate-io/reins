@@ -74,7 +74,10 @@ export interface EvalFixture {
    * 这是确定性评分器；要 LLM judge 判完成度就自己在这里调 judge。
    */
   completion(outcome: EvalOutcomeDraft): boolean | number | Promise<boolean | number>
-  /** 审批由 runner 代人回答；缺省全批。返回 false 即拒绝（模型会看到被拒的 tool_result） */
+  /**
+   * 审批由 runner 代人回答；缺省全批。返回 false 即拒绝（模型会看到被拒的 tool_result）。
+   * outcome 是暂停那一刻的中间态：时间线读到这次暂停为止，`result` 是这次暂停，`finalText` 是此前最后一段正文
+   */
   approve?(interruption: ApprovalInterruption, outcome: EvalOutcomeDraft): boolean
   /**
    * 覆盖模型的上下文窗口（token）。把窗口缩小，中等长度的任务也会触发整理 ——
@@ -180,7 +183,7 @@ export interface FactResult {
   gradedBy: "expect" | "judge"
 }
 
-/** completion / approve 回调看到的中间态：跑完了但还没算指标 */
+/** completion / approve 回调看到的中间态：completion 时是跑完、还没算指标；approve 时是暂停的那一刻 */
 export interface EvalOutcomeDraft {
   fixtureId: string
   arm: string
@@ -214,7 +217,18 @@ export interface ArmSummary {
   tokens: TokenTotals
   cacheHitRate?: number
   recall?: number
-  violations: { before: number; after: number }
+  /**
+   * 治理衰减：只取"第一次整理之后还有模型动作"（`after.actions > 0`）的格，两窗都在这同一批格上算。
+   * `before` / `after` 是各格违规率的均值（每格一票），`pooledBefore` / `pooledAfter` 是按动作加权（Σ违规 / Σ动作）；门禁要求两种都不上升。
+   * 没整理过的格 after 窗恒空，掺进来会把整理后违规率稀释向 0、把治理衰减盖住；compactedRuns 为 0 时各率都记 0，门禁据此带 note。
+   */
+  violations: {
+    before: number
+    after: number
+    pooledBefore: number
+    pooledAfter: number
+    compactedRuns: number
+  }
   compactions: CompactionCounts
   turns: number
   toolCalls: number

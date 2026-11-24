@@ -36,7 +36,7 @@ The reference CLI is `examples/eval/run.ts` in the repository; copy from it rath
 | `metrics` | pure functions over a timeline: tokens and cache hits, turns / tool calls / duplicate calls, compaction count and streaks, governance decay windows |
 | `arms` | `noneArm`, `thresholdArm`, `withCapabilities` / `withContextWindow` lowering wrappers; brain-driven arms are assembled by the caller from `@reinsjs/brain` |
 | `runner` | fixture × arm × repeat runner with approval auto-answering, budget resumes, handoff following and a forked probe question at the end |
-| `gate` | the four hard rules from the PRD (§7 threshold 2 / P8): recall, token cost, governance, no regressions |
+| `gate` | the four hard rules from the PRD (§7 threshold 2 / P8), candidate against reference: total tokens (≤ reference × ratio), completion (≥), recall (≥), governance (the candidate's own violation rate does not rise after compaction) |
 | `report` | Markdown tables |
 
 Zero `node:*`: file I/O and the CLI live in the caller (`examples/eval` in the repository is the reference CLI and holds the fixtures reins itself is measured on).
@@ -45,7 +45,8 @@ Zero `node:*`: file I/O and the CLI live in the caller (`examples/eval` in the r
 
 - `withContextWindow` changes only what the mechanisms are told; the real window is untouched. It measures *how the mechanism behaves in a narrow window*, not *what overflow does*.
 - The probe question keeps brain tools (an arm with `compact` can `recall`, one with `spill` can `fetch_blob`) and drops host tools — so the recall cell is intentionally not the same exam for a baseline arm.
-- The governance rule compares the candidate against itself before and after its first compaction; two of the four gate rules can pass on "no information".
+- The governance rule compares the candidate against itself before and after its first compaction, and only over the runs that still had model actions after it (`ArmSummary.violations.compactedRuns`); runs that never compacted would otherwise dilute the after-rate towards zero. Both the per-run mean and the rate pooled over actions (`pooledBefore` / `pooledAfter`) must not rise, since either alone can be skewed by how actions are spread over runs. Two of the four gate rules can pass on "no information" — recall without planted facts, governance without such runs — and both say so in a `note`.
+- `checkGate` throws unless the reference and candidate arms cover exactly the same fixture × repeat cells, each once, and each arm's `summary.runs` matches its cells in `outcomes` (keep `outcomes` when you build a report by hand; strip timelines, not cells). Every rule compares per-run means, so a cell missing from one arm (a crashed process when arms run separately) would compare the arms on different exams.
 - Behavioural defects only show on real models. Scripted lowerings prove mechanics, not that a model will use them.
 
 ## Documentation

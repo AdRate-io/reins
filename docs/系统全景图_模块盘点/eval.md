@@ -46,20 +46,20 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 | `packages/eval/src/types.ts` | 全部数据形状：`EvalTask` / `PlantedFact` / `PlantedConstraint` / `EvalFixture` / `EvalArm` / `Judge` / `TokenTotals` / `EvalMetrics` / `FactResult` / `EvalOutcome(Draft)` / `ArmSummary` / `EvalReport` |
 | `packages/eval/src/jsonl.ts` | 事件 ↔ JSONL 文本；读走注册表 `read` 升级，fail-closed，错误带行号（`JsonlParseError`） |
 | `packages/eval/src/recorded-tools.ts` | `recordedTools(recording, opts)`：把录像里配对的 tool_call → tool_result 变成确定性回放工具；`canonicalArgs` 是键排序稳定 JSON |
-| `packages/eval/src/recording.ts` | 录像 → fixture 素材的纯函数：`unspillRecording`（拼回外溢全文）、`scrubEvents`（JSON 文本层逐字脱敏）、`aliasTable` / `matchStrings` / `jsonValuesAt` / `parseFetchChunk` / `assembleChunks` |
+| `packages/eval/src/recording.ts` | 录像 → fixture 素材的纯函数：`unspillRecording`（拼回外溢全文）、`scrubEvents`（JSON 文本层逐字脱敏，一层与两层转义都换）、`scrubForms`（一个值在事件 JSON 里的全部写法，给自查用）、`aliasTable` / `matchStrings` / `jsonValuesAt` / `parseFetchChunk` / `assembleChunks` |
 | `packages/eval/src/metrics.ts` | 时间线纯函数指标：`sumTokens` / `billableTokens` / `cacheHitRateOf` / `splitModelTurns` / `countCompactions` / `countRepeatedToolCalls` / `measureViolations` / `measureTimeline` / `finalTextOf` / `mean` |
 | `packages/eval/src/arms.ts` | 内置 `noneArm()` / `thresholdArm()`，以及 `withCapabilities` / `withContextWindow` 这层只改能力声明的 Lowering 包装 |
 | `packages/eval/src/runner.ts` | `runEval` 对照运行器与 `summarize`；含审批代答、预算续跑、handoff 跟随、fork 探针、`probeAnswerOf` / `gradeExpect` |
 | `packages/eval/src/gate.ts` | `checkGate`：PRD §7 门槛 2 / P8 的四条硬规则，只给结论与数字 |
 | `packages/eval/src/report.ts` | `renderReport`：臂均值表 + 可选门禁表 + 可选每格明细，输出 Markdown |
-| `packages/eval/src/*.test.ts` | 五个测试文件（jsonl / metrics / recorded-tools / recording / runner），describe 覆盖：JSONL 读写、指标纯函数、录像回放、外溢拼回、脱敏与待脱敏值收集、`runEval` 对照运行器 |
+| `packages/eval/src/*.test.ts` | 六个测试文件（gate / jsonl / metrics / recorded-tools / recording / runner），describe 覆盖：门禁四条规则的通过与失败路径、JSONL 读写、指标纯函数、录像回放、外溢拼回、脱敏与待脱敏值收集、`runEval` 对照运行器 |
 
 ## 3 核心流程
 
 ### 3.1 素材：从真实录像做出一个"世界"
 
 1. `unspillRecording(recording)` 先把 spill 外溢过的 tool_result 补全：扫出全部 `fetch_blob` 结果，用 `parseFetchChunk` 从 `[blob "id": characters a–b of N …]` 头解析分片，`assembleChunks` 按字符偏移拼接——重叠取先到者，声明区间与正文长度不符、有缺口、没拼到 `total` 一律返回 `undefined`，该 blob 进 `incomplete` 且原结果原样保留。拼齐的把 `spilled` 字段删掉、内容换成全文；`fetch_blob` 的调用/结果对缺省整对删掉（`dropFetchBlob`）。
-2. `scrubEvents(events, replacements)` 脱敏：对每条事件 `JSON.stringify` 后做字符串替换，**长的 `from` 先换**，替换双方都按 `jsonForm`（`JSON.stringify(s).slice(1,-1)`）转成 JSON 字面量里的写法，再 `JSON.parse` 回事件。返回每条规则的命中数 `hits`（不含原文，可进报告）。待换的值由 `matchStrings`（正则找）与 `jsonValuesAt`（按键名找，遇到 `text` 字段是 JSON 就解析后继续遍历）收集，`aliasTable` 去重保序编号。
+2. `scrubEvents(events, replacements)` 脱敏：对每条事件 `JSON.stringify` 后做字符串替换，**长的 `from` 先换**，替换双方都按 `jsonForm`（`JSON.stringify(s).slice(1,-1)`）转成 JSON 字面量里的写法，**一层与两层转义各换一遍**（值可能在 tool_result 文本里的 JSON 字符串中，`jsonValuesAt` 正是从那一层取值的；两层写法更长、先换），再 `JSON.parse` 回事件。自查残留用 `scrubForms(value)` 给的全部写法查——带引号 / 反斜杠的原值不会原样出现在 JSON 文本里，只查原值永远查不出。返回每条规则的命中数 `hits`（不含原文，可进报告）。待换的值由 `matchStrings`（正则找）与 `jsonValuesAt`（按键名找，遇到 `text` 字段是 JSON 就解析后继续遍历）收集，`aliasTable` 去重保序编号。
 3. `recordedTools(recording, opts)` 建回放工具：先按 `toolCallId` 建 tool_result 索引，再顺序扫 tool_call 配对，按工具名分组存 `{ key: canonicalArgs(args), result }`。统计四项：`pairs`（配对成功数）、`byName`、`spilled`（配对上的结果里 `payload.spilled` 非空的条数——回放时只有预览，全文不在，fixture 作者要么录制时关外溢要么用 `fallback` 补）、`unanswered`（有 call 无 result，录制时被拒或暂停未续，不进回放）。
 
 `recordedTools` 的 `execute` 匹配顺序（严格在前，宽松要显式开）：
@@ -69,6 +69,8 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 3. 没匹配上 → `opts.fallback(name, args, ctx)`，返回非 undefined 就用（fixture 作者补的合成答案）；
 4. 还没有 → `opts.sequence === true` 时给该工具**下一条没被 `used` 标记过的**录像结果（模型换写法但意图相近）；缺省关闭；
 5. 都没有 → `noRecording()` 返回 `isError: true` 的英文说明（"这是回放环境，只有之前观察过的调用有数据"），而不是随便给一条。
+
+`cursor` 与 `used` **按 `ctx.sessionId` 分桶**：fixture 的工具对象只建一次、`runEval` 跨臂跨重复复用同一批，进度挂在工具对象上会让先跑的格推进后跑的格的世界（同参录过多次拿到下一份、sequence 直接回 noRecording）。边界：handoff 接到的新会话也从头回放。
 
 工具声明来自 `opts.specs[name]`（description / inputSchema / risk / needsApproval / resultPolicy），缺省是一句通用说明 + `{ type: "object", additionalProperties: true }`；`opts.only` 可限定只为哪些工具建回放。
 
@@ -81,7 +83,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 3. **会话与种子**：`newId()` 生成 sessionId；有 `task.seed` 就 `map(e => ({ ...e, sessionId }))` 后 append——**只换 sessionId，事件 id 保留**，`parentId` / `pinsKept` 这些会话内引用才不断。
 4. **跑任务**：`drain(runLoop(loopConfig(...{ input })))` 第一次跑，之后进 `while (steps++ < maxSteps)`（缺省 200）：
    - `status === "handoff"` → sessionId 换成 `result.toSessionId`、推进 `sessionIds`，用空 extra 再 `runLoop`；
-   - `paused` + `reason === "approval"` → 逐条 interruption，`kind === "approval"` 的交 `fixture.approve(i, draft())`（缺省全批），装成 `ApprovalDecisionInput{ by: "eval" }`；出现非 approval 的中断（客户端工具等）就 `blocked = true` 并**跳出**——eval 里没人能回填；
+   - `paused` + `reason === "approval"` → 逐条 interruption，`kind === "approval"` 的交 `fixture.approve(i, draft)`（缺省全批；`draft` 是暂停那一刻从日志读出的中间态，与第 5 步收尾同一个函数组出，`timeline` / `fresh` / `finalText` 都是真的），装成 `ApprovalDecisionInput{ by: "eval" }`；出现非 approval 的中断（客户端工具等）就 `blocked = true` 并**跳出**——eval 里没人能回填；
    - `paused` + `reason === "budget"` 且 `resumes < (fixture.maxResumes ?? 0)` → `resumes++` 后带 `resume: result.state` 续跑；**缺省 `maxResumes` 是 0，即暂停就算没跑完**；
    - 其余（error、host、budget 且续跑用尽）→ break，`status` 如实进指标。
    墙钟 `wallMs` 从这一段开始前量到结束，含续跑之间的开销，不含探针。
@@ -96,21 +98,21 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 - **tokens**：把时间线里全部 `core.budget_usage` 的 `input / output / cacheRead / cacheWrite` 相加，`total = 四者之和`（缓存读按 1× 计，反映"模型每轮读了多少"）。另有 `billableTokens(t) = input + output + 0.1 × cacheRead + cacheWrite`，只进报告不进门禁。
 - **cacheHitRate** = `cacheRead / (input + cacheRead + cacheWrite)`；分母为 0（一次请求都没记用量）时返回 `undefined`，字段整个不出现。
 - **turns**：`splitModelTurns` 的长度。**一轮 = 一段连续的模型输出（core `isModelOutput`：thinking / text / tool_call）+ 到下一段模型输出之前的一切**（工具结果、用量、整理、暂停）。开头在第一段模型输出之前的 preamble 事件归入第一轮的 `aftermath`；没有任何模型输出就是 0 轮。
-- **compactions**：按 `payload.decidedBy` 分 `model` 与 `threshold`（非 model 一律记 threshold）。`maxConsecutive` 是**最长一串"连续含整理的模型轮"里 compaction 的总数**——逐轮数 `aftermath` 里的 compaction 条数，非零就累加、为零就清零，取过程最大值。
+- **compactions**：按 `payload.decidedBy` 分三类——`model`（模型自己挑的时机）、`forced`（框架请它整理后照做，时机框架定、摘要模型写）、`threshold`（其余一律记这里，即投影链机械裁剪）。`maxConsecutive` 是**最长一串"连续含整理的模型轮"里 compaction 的总数**——逐轮数 `aftermath` 里的 compaction 条数，非零就累加、为零就清零，取过程最大值。
 - **violations**：`measureViolations` 用 `timeline.findIndex(type === "core.compaction")` 定第一次整理的**数组下标**（不是 `seq`，跨会话拼接后 seq 会重新从 1 起），下标严格大于它的模型动作进 `after` 窗，其余进 `before` 窗。模型动作 = `core.tool_call` 或 `core.model_text`（`isModelAction`）。每窗记 `actions / violations / rate`，`rate = violations / actions`，无动作记 0。没整理过则全部落 `before`、`after` 全零。
 - **repeatedToolCalls**：键为 `` `${name} ${canonicalArgs(args)}` ``，**第二次起每次记 1**（死循环计数），与回放工具用的是同一个 `canonicalArgs`。
 - **toolErrors**：`isError` 的 tool_result 条数。
 
-`summarize(outcomes)` 按臂分组取均值：`finishedRate` 是 `status === "done"` 的比例，`tokens` 四项各取均值后 `cacheHitRate` 用**均值后的 token** 重算，`recall` 只对有值的格取均值，`violations` 取两窗 `rate` 的均值，其余直接均值。
+`summarize(outcomes)` 按臂分组取均值：`finishedRate` 是 `status === "done"` 的比例，`tokens` 四项各取均值后 `cacheHitRate` 用**均值后的 token** 重算，`recall` 只对有值的格取均值，`violations` **只取 `after.actions > 0` 的格**（第一次整理之后还有模型动作），两窗在这同一批格上给两种口径：`before` / `after` 是各格 `rate` 的均值（每格一票），`pooledBefore` / `pooledAfter` 是按动作加权（Σviolations / Σactions），`compactedRuns` 记这批格数（没整理过的格 after 窗恒空，掺进来会把整理后违规率稀释向 0、盖住治理衰减），其余直接均值。
 
-`checkGate(report, { reference, candidate, tokenRatioMax = 1 })` 四条（缺任一臂直接抛）：
+`checkGate(report, { reference, candidate, tokenRatioMax = 1 })` 四条。前提校验不过直接抛：缺任一臂；某臂 `summary.runs` 与 `outcomes` 里该臂的格数不等（四条读 summary、格集合核对读 outcomes，outcomes 被裁空时后者会两边皆空而放行）；两臂覆盖的 `fixtureId#repeat` 集合不完全相同或同一臂同一格出现两次（四条都按格均值比，缺格时两臂不在同一组题上算——拆进程跑某个进程崩了就会这样；`examples/eval/report.ts` 接住这个错，报告照出、门禁不判并写明原因）：
 
 1. `tokens`：候选 `tokens.total ≤ 基线 × ratio`；
 2. `completion`：候选完成度 ≥ 基线；
 3. `recall`：候选召回 ≥ 基线；**双方都没有 recall（没预埋事实）时视为通过并带 `note`**，只有一方有则缺的一方按 0 参与比较；
-4. `governance`：**候选自己**整理后违规率 ≤ 整理前（这一条不跟基线比，`reference` 字段填的是候选的 before）。
+4. `governance`：**候选自己**整理后违规率 ≤ 整理前（这一条不跟基线比，`reference` 字段填的是候选的 before），只在 `compactedRuns > 0` 的那批格上比，**按格均值与按动作加权都不上升才算过**（单用一种都能被分布掩盖），报出的数字取没过的那个口径、另一口径写进 `note`；`compactedRuns === 0` 时视为通过并带 `note`。
 
-`renderReport(report, { gate?, detail? })` 输出 Markdown：抬头一行（模型、fixture 数 × 臂数、总格数、耗时）；臂均值表 13 列（跑完/完成度/总 token/计费等价/缓存命中/召回/违规前→后/整理 模型·阈值·连续/轮/工具/重复调用/墙钟），`undefined` 一律显示 `—`；`gate` 存在时附门禁表（token 列按整数显示、其余按百分比）；`detail` 存在时每格一行明细。
+`renderReport(report, { gate?, detail? })` 输出 Markdown：抬头一行（模型、fixture 数 × 臂数、总格数、耗时）；臂均值表 13 列（跑完/完成度/总 token/计费等价/缓存命中/召回/违规前→后（附参与的格数，无格显示 `—`）/整理 模型·请求·阈值·连续/轮/工具/重复调用/墙钟），`undefined` 一律显示 `—`；`gate` 存在时附门禁表（token 列按整数显示、其余按百分比）；`detail` 存在时每格一行明细。
 
 ## 4 核心设计决策
 
