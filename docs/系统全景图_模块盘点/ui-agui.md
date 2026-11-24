@@ -22,7 +22,7 @@
         ├─ delta   ─► onDelta ─► 按 kind:index 开/续块（换块不收尾）──► TEXT_* / REASONING_*（tool_args 丢弃）
         ├─ event   ─► onEvent ─┬─ model_text / model_thinking 且 open 有内容对得上的同 kind 块 → 认领最早那块，只补带 metadata 的 END
         │                      ├─ 其余模型输出（对不上的块、tool_call）→ mapEvent，不动 open
-        │                      └─ 非模型输出 → closeOpen() + mapEvent(event, { parentMessageId })
+        │                      └─ 非模型输出 → closeOpen() + 重置 parentMessageId + mapEvent(event)
         ├─ result  ─► closeOpen() + RUN_FINISHED(success|interrupt) / RUN_ERROR
         ├─ end     ─► closeOpen() + RUN_FINISHED(success, result=replayed[+state])
         └─ error   ─► closeOpen() + RUN_ERROR
@@ -52,7 +52,7 @@
 | `core.user_message` | `TEXT_MESSAGE_START`(role=user) → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END` |
 | `core.model_text` | `TEXT_MESSAGE_START`(role=assistant) → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END` |
 | `core.model_thinking` | `REASONING_START` → `REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END` → `REASONING_END` |
-| `core.tool_call` | `TOOL_CALL_START` → `TOOL_CALL_ARGS`（整段 JSON，不分片）→ `TOOL_CALL_END` |
+| `core.tool_call` | `TOOL_CALL_START` → `TOOL_CALL_ARGS`（整段一次给出、不分片：入参是对象时 `JSON.stringify`；是字符串时原样给原文——core 不变式下字符串入参就是模型写的线上原文，再 stringify 一层前端只看到带引号的字符串字面量，与 lowering-fetch 写侧 `argumentsOf` 同口径，2026-11-25）→ `TOOL_CALL_END` |
 | `core.tool_result` | `TOOL_CALL_RESULT`（role=tool） |
 | `core.system_note` / `approval_request` / `approval_decision` / `compaction` / `handoff` / `memory_op` / `budget_usage` / `run_paused` / `run_resumed` / `core.error` / `ext.*` | `CUSTOM`（`name` = 事件 type，`value` = 事件本身） |
 
@@ -68,7 +68,7 @@
 1. `onDelta` 只处理 `text` / `thinking`，**`tool_args` 增量直接丢弃**（返回空数组）—— 增量里没有 toolCallId 与工具名，凑不出 `TOOL_CALL_START`；参数等完整 `tool_call` 事件到达时一次给出。空 delta 也丢弃。
 2. 第一片增量：`newMessageId()`（缺省 `uuidv7`）开一个**临时 id**，发 `TEXT_MESSAGE_START` + `CONTENT`（或 `REASONING_START` + `MESSAGE_START` + `CONTENT`），把 `{ kind, index, messageId }` 以键 `kind:index` 记进 `open`（Map，插入顺序即认领顺序）。后续同键的片只发 `CONTENT`。**换块不收尾前一块**：四条降级层（fetch 三线与 pi 版）都在整次响应流完后才按块序交出草稿，思考块的完整事件要等正文也流完才到，所以同一轮的思考块与正文块会同时打开。AG-UI 按 id 分别跟踪进行中的消息，允许并存，只要求 `RUN_FINISHED` 前全部收尾（@ag-ui/client 1.0.3 `verifyEvents`）。
 3. `onEvent` 收到 `core.model_text` / `core.model_thinking` 时，在 `open` 里找**内容对得上**（`sameText`：增量拼出的正文与完整正文 trim 后相等，trim 是为 pi-ai Responses 线摘要段尾多发的 `\n\n`）的最早同 kind 块，**认领它、只补 END**，`messageId` 沿用增量开出的那个（此时 `metadata.reins` 才带上真实 seq 与事件 id）。对不上就走 `mapEvent` 整段照发、不动 `open`：redacted 思考（正文是占位串 `[Reasoning redacted]`）、加密思考（正文空）、只流到后半截的块、上游没给草稿的块都是这种——宁可重复，不丢内容、不错挂元数据。`tool_call` 也不动 `open`；非模型输出的事件先 `closeOpen()` 把剩下的块无主收尾（不带 metadata）再翻译，不留半截消息。2026-11-06 之前只有一个 `open` 槽，换块即无主收尾、提交时整段重发，带思考的轮次 live 流每段各出两遍（AdRate 建议 9，踩坑 49）。中途挂上的流由 server 挡掉半截块的增量（见 server 盘点）。
-4. `parentMessageId`：`core.user_message` 到达即重置为 undefined；完整 `core.model_text` 设为事件 id，增量开出的文本块设为那个临时 id；随后的 `tool_call` 用它做 `parentMessageId`。
+4. `parentMessageId`：任何非模型输出的事件（工具结果、用户说话、暂停 / 续跑标记、`CUSTOM` 类）到达即重置为 undefined——它们都标志本次模型响应已结束，否则下一轮只出思考 + 工具调用时，调用会挂到上一轮正文上、被前端并进上一轮气泡（2026-11-25，此前只有 `core.user_message` 重置）；完整 `core.model_text` 设为事件 id，增量开出的文本块设为那个临时 id；随后的 `tool_call` 用它做 `parentMessageId`。
 
 ### 3.3 run 收尾与 SSE 帧
 

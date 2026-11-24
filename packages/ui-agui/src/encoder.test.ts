@@ -380,6 +380,61 @@ describe("流式增量与完整事件接成同一条消息", () => {
     assertValidAgui(frames)
   })
 
+  it("同一 run 多轮：下一轮只发 tool_call（没有正文）时不挂上一轮的正文；同一响应里正文之后的多个 tool_call 仍挂它", () => {
+    const callStart = (frames: readonly SseFrame[], id: string) =>
+      data(frames).find((e) => e.type === "TOOL_CALL_START" && e.toolCallId === id)
+    // live：第 1 轮正文流过增量 + 两个调用；第 2 轮只思考（增量）后调用 c3
+    const live = feed([
+      start,
+      delta("text", 0, "I will"),
+      item(ev("core.model_text", { text: "I will" }, 1)),
+      item(ev("core.tool_call", { toolCallId: "c1", name: "add", args: {} }, 2)),
+      item(ev("core.tool_call", { toolCallId: "c2", name: "add", args: {} }, 3)),
+      item(
+        ev(
+          "core.tool_result",
+          { toolCallId: "c1", name: "add", content: [{ type: "text", text: "ok" }], isError: false },
+          4,
+        ),
+      ),
+      item(
+        ev(
+          "core.tool_result",
+          { toolCallId: "c2", name: "add", content: [{ type: "text", text: "ok" }], isError: false },
+          5,
+        ),
+      ),
+      delta("thinking", 0, "hmm"),
+      item(ev("core.model_thinking", { text: "hmm" }, 6)),
+      item(ev("core.tool_call", { toolCallId: "c3", name: "add", args: {} }, 7)),
+      done,
+    ])
+    expect(callStart(live, "c1")).toMatchObject({ parentMessageId: "m1" })
+    expect(callStart(live, "c2")).toMatchObject({ parentMessageId: "m1" })
+    expect(callStart(live, "c3") && "parentMessageId" in (callStart(live, "c3") as object)).toBe(false)
+    assertValidAgui(live)
+
+    // 补发：审批后续跑的 run 不带用户消息，暂停 / 续跑标记之后的调用也不挂暂停前那一轮的正文
+    const replay = feed([
+      { kind: "start", sessionId: "s1", fromSeq: 1, live: false },
+      item(ev("core.model_text", { text: "先查" }, 1)),
+      item(ev("core.tool_call", { toolCallId: "c1", name: "deploy", args: {} }, 2)),
+      item(ev("core.run_paused", { reason: "approval" }, 3)),
+      item(
+        ev(
+          "core.tool_result",
+          { toolCallId: "c1", name: "deploy", content: [{ type: "text", text: "ok" }], isError: false },
+          4,
+        ),
+      ),
+      item(ev("core.tool_call", { toolCallId: "c2", name: "deploy", args: {} }, 5)),
+      { kind: "end", sessionId: "s1", lastSeq: 5 },
+    ])
+    expect(callStart(replay, "c1")).toMatchObject({ parentMessageId: "e1" })
+    expect(callStart(replay, "c2") && "parentMessageId" in (callStart(replay, "c2") as object)).toBe(false)
+    assertValidAgui(replay)
+  })
+
   it("补发结束带续跑状态：原样进 RUN_FINISHED(replayed).result.state，outcome 仍是 success（AdRate 建议 8）", () => {
     const state = {
       v: 1 as const,

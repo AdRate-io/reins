@@ -53,7 +53,7 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
     (!decisions.some((d) => d.approved) || isApprover(principal)),
   ```
 
-  `decisions` includes entries addressed to sub-agent sessions (with `sessionId`), so a check over the whole array covers them too. It is a frozen copy: changing it does not change the run. A request may carry only one decision per call (`400` otherwise). A client-side tool that also needs approval cannot have its result filled in while it waits for approval (`409 approval_pending`): the decision has to come through `decisions` first.
+  `decisions` includes entries addressed to sub-agent sessions (with `sessionId`), so a check over the whole array covers them too. It is a frozen copy: changing it does not change the run. A request may carry only one decision per call (`400` otherwise). A client-side tool that also needs approval cannot have its result filled in while it waits for approval (`409 approval_pending`): the decision has to come through `decisions` first. Likewise, a client-side tool result is accepted only after a run has evaluated that call and paused for it: when the last run was aborted by the host (a dropped connection with `onDisconnect: "abort"`, a lost lease) or paused for budget or by a Socket, calls later in the batch may never have been checked, so filling one in answers `409 call_not_evaluated`. `POST { sessionId }` without `input` first; the run evaluates the pending calls again (asking for approval where needed) without calling the model, and the result can be filled in after that pause.
 
 - **Resume is validated before anything is written.** Signature (when `secret` is set) and the digest of pending tool calls must match the log, and the model and the definitions of the tools behind the pending calls must be unchanged (states from before 0.10 still compare the whole configuration hash); drift answers `409 config_mismatch` unless the host passes `allowConfigDrift`. A request carrying `decisions` must carry `resume` as well (`400` otherwise); the state is in the `result` frame of the paused run and in the `end` frame of a replay.
 - **Session ids** must be non-empty printable ASCII without spaces (`400` otherwise).
@@ -137,6 +137,9 @@ This pre-check only needs ownership and `mime`, so it calls `BlobStore.stat(id)`
 The handler does not serve blob bytes. To show the pictures in your UI, add your own route, run your session check first (the same one as `authorizeSession`), and decide with `blobUsableBy` — comparing `meta.sessionId` alone would hide a parent's pictures in a forked session. `registry` is your event registry (`createCoreRegistry()`):
 
 ```ts
+/** Raster formats only: an SVG opened from your origin runs its scripts there, with the viewer's credentials. */
+const SERVABLE_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
+
 /** GET /images?sessionId=…&id=… — call it only after your own session check (the same one as `authorizeSession`). */
 async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id: string): Promise<Response> {
   const notFound = () => new Response("not found", { status: 404 })
@@ -149,16 +152,21 @@ async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id
   }
   const timeline = await readTimeline(log, sessionId, { registry })
   if (!blobUsableBy(sessionId, blob.meta, id, timeline)) return notFound()
-  if (!blob.meta.mime.startsWith("image/")) return notFound()
+  if (!SERVABLE_IMAGES.has(blob.meta.mime)) return notFound()
   return new Response(blob.bytes.slice(), {
-    headers: { "content-type": blob.meta.mime, "cache-control": "private, max-age=31536000, immutable" },
+    headers: {
+      "content-type": blob.meta.mime,
+      "cache-control": "private, max-age=31536000, immutable",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+    },
   })
 }
 ```
 
 Blob ids are never reused and bytes never change after `put`, so the response can be cached for good.
 
-Keep the `image/` check: `blobUsableBy` also accepts the session's own non-image blobs, such as spilled tool results. With the default AG-UI encoding a client finds the ids in `metadata.reins.parts` of a user message or tool result (`@reinsjs/ui-agui`, "Images and other media").
+Keep the format check: `blobUsableBy` also accepts the session's own non-image blobs, such as spilled tool results, and an image reference only has to start with `image/`, so a session's owner can reference an `image/svg+xml` blob. An SVG served from your origin and opened directly (a link, a new tab) runs its scripts with the viewer's credentials — for example an approver's, who could then be made to approve a pending call. Serve only raster formats from your origin, keep `nosniff` and the sandboxing `content-security-policy`, and if you must show SVGs, serve them from a separate domain that carries no credentials. With the default AG-UI encoding a client finds the ids in `metadata.reins.parts` of a user message or tool result (`@reinsjs/ui-agui`, "Images and other media").
 
 ## Multiple instances
 

@@ -21,6 +21,9 @@ const registry = createCoreRegistry()
 
 // ---- 配方本体（与 README 逐字一致，改一处要同步另一处）----
 
+/** Raster formats only: an SVG opened from your origin runs its scripts there, with the viewer's credentials. */
+const SERVABLE_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
+
 /** GET /images?sessionId=…&id=… — call it only after your own session check (the same one as `authorizeSession`). */
 async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id: string): Promise<Response> {
   const notFound = () => new Response("not found", { status: 404 })
@@ -33,9 +36,14 @@ async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id
   }
   const timeline = await readTimeline(log, sessionId, { registry })
   if (!blobUsableBy(sessionId, blob.meta, id, timeline)) return notFound()
-  if (!blob.meta.mime.startsWith("image/")) return notFound()
+  if (!SERVABLE_IMAGES.has(blob.meta.mime)) return notFound()
   return new Response(blob.bytes.slice(), {
-    headers: { "content-type": blob.meta.mime, "cache-control": "private, max-age=31536000, immutable" },
+    headers: {
+      "content-type": blob.meta.mime,
+      "cache-control": "private, max-age=31536000, immutable",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+    },
   })
 }
 
@@ -43,14 +51,20 @@ async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
 
-async function chat(log: InMemoryEventLog, blobs: InMemoryBlobStore, sessionId: string, blobId: string) {
+async function chat(
+  log: InMemoryEventLog,
+  blobs: InMemoryBlobStore,
+  sessionId: string,
+  blobId: string,
+  mime = "image/png",
+) {
   const gen = runLoop({
     sessionId,
     log,
     blobs,
     lowering: new ScriptedLowering([{ drafts: [say("ok")] }]),
     model: { provider: "scripted", id: "scripted" },
-    input: [{ type: "image", mime: "image/png", blobId }],
+    input: [{ type: "image", mime, blobId }],
   })
   for await (const _ of gen) {
     // 跑完即可
@@ -70,6 +84,9 @@ describe("配方：图片下发路由", () => {
     expect(ok.status).toBe(200)
     expect(ok.headers.get("content-type")).toBe("image/png")
     expect(new Uint8Array(await ok.arrayBuffer())).toEqual(PNG)
+    // 浏览器不按内容嗅探、直接打开也不执行任何东西
+    expect(ok.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(ok.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox")
     for (const id of [foreign.id, "nope", text.id])
       expect((await serveImage(log, blobs, "s1", id)).status).toBe(404)
 
@@ -77,5 +94,17 @@ describe("配方：图片下发路由", () => {
     await log.fork("s1", atSeq, "child")
     expect((await serveImage(log, blobs, "child", own.id)).status).toBe(200)
     expect((await serveImage(log, blobs, "child", foreign.id)).status).toBe(404)
+  })
+
+  it("SVG 即使是本会话引用过的图也不下发：同源直接打开会执行其中的脚本（存储型 XSS）", async () => {
+    const log = new InMemoryEventLog()
+    const blobs = new InMemoryBlobStore()
+    const svg = await blobs.put('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', {
+      mime: "image/svg+xml",
+      sessionId: "s1",
+    })
+    // 引用本身能通过 core 的图片引用校验（只要求 image/ 前缀）
+    await chat(log, blobs, "s1", svg.id, "image/svg+xml")
+    expect((await serveImage(log, blobs, "s1", svg.id)).status).toBe(404)
   })
 })

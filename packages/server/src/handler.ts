@@ -25,6 +25,7 @@ import {
   type EventLog,
   isImageRef,
   type LoopConfig,
+  lastRunMarker,
   type Principal,
   pausedStateOf,
   pendingToolCalls,
@@ -348,6 +349,15 @@ function checkInput(
         message: `the call ${call.payload.toolCallId} is waiting for approval; send a decision before filling in its result`,
       }
     }
+    // 宿主中止后没走过判定的调用不收回填（全库审查 #38），判据见 clientCallsJudged
+    if (!clientCallsJudged(timeline)) {
+      return {
+        ok: false,
+        status: 409,
+        error: "call_not_evaluated",
+        message: `the call ${call.payload.toolCallId} has not been evaluated since the last run was interrupted; resume the session without input first, then fill in its result`,
+      }
+    }
     const content = rebuildContentParts(payload.content)
     if (!content)
       return {
@@ -378,6 +388,24 @@ function checkInput(
     error: "bad_request",
     message: `input drafts accept only core.user_message or a core.tool_result for a client-side tool, got ${String(draft.type)}`,
   }
+}
+
+/**
+ * pending 的客户端工具调用是否都已过判定（beforeTool、校验、审批都走过、被循环挂起等宿主），即客户端此刻可以回填。
+ *
+ * 时间线不记"挂起"这一步，所以从暂停的形状反推：会话最后一条 run 标记是一条**非停止、不带 note** 的 run_paused。
+ * core `pauseDetailOf` 的契约是 note 在且仅在本次中断里有 budget / host 那条时写；宿主中止（断线 `onDisconnect: "abort"`、
+ * 丢租约）一律带 host 那条——而中止后批里排在后面的调用、模型回复被掐断时的整批调用都没走判定，留作 pending 也没有
+ * approval_request，awaitingOf 照样判 client_tool。此时放行回填就绕过了审批与审批人那道 authorizeSession（全库审查 #38）。
+ * 没有这样的暂停（中止、预算 / Socket 暂停、error、起步没收尾）一律当没判定过（fail-closed）：客户端先不带 input 续跑一次，
+ * 循环补跑 pending 时重新判定（需审批的落 approval_request，其余挂起成不带 note 的暂停，不调模型），再回填。
+ * 代价只是预算 / Socket 暂停时同批挂起的客户端工具多这一趟。已知缺口：写 note 之前的老版本中止暂停不带 note，照旧放行
+ */
+function clientCallsJudged(timeline: readonly Event[]): boolean {
+  const marker = lastRunMarker(timeline)
+  if (marker?.type !== "core.run_paused") return false
+  const payload = marker.payload as { note?: unknown; stopped?: unknown } | null | undefined
+  return payload?.note === undefined && payload?.stopped === undefined
 }
 
 /** 从 Last-Event-ID 头或 query 取 lastSeq；头是重连时浏览器自动带的、更新，优先 */
@@ -804,7 +832,12 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     ) {
       try {
         const timeline = await readTimeline(log, sessionId, { registry })
-        const contributions = await resolveSocketContributions(agent)
+        // 与下面 begin() 交给 runLoop 的配置同一组输入：Socket 可按 setup.principal 决定带哪些工具，
+        // 漏传 principal 会算出另一张工具表，合法续跑被判配置漂移（409）、客户端工具回填被当成服务端工具拒掉
+        const contributions = await resolveSocketContributions({
+          ...agent,
+          ...(principal !== undefined ? { principal } : {}),
+        })
         if (body.resume !== undefined) {
           await validateResume({
             state: body.resume,

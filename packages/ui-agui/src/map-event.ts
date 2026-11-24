@@ -176,7 +176,7 @@ export function mapEvent(event: Event, ctx: MapContext = {}): AguiEvent[] {
           ...(ctx.parentMessageId !== undefined ? { parentMessageId: ctx.parentMessageId } : {}),
           ...meta(),
         },
-        { type: "TOOL_CALL_ARGS", toolCallId, delta: JSON.stringify(args ?? {}), ...meta() },
+        { type: "TOOL_CALL_ARGS", toolCallId, delta: argumentsTextOf(args), ...meta() },
         { type: "TOOL_CALL_END", toolCallId, ...meta() },
       ]
     }
@@ -208,4 +208,13 @@ export function mapEvent(event: Event, ctx: MapContext = {}): AguiEvent[] {
       // 运维与脑子事件：原样交给前端，name 就是事件 type（core.approval_request 等），前端按需弹窗或忽略
       return [{ type: "CUSTOM", name: event.type, value: event, ...meta() }]
   }
+}
+
+/**
+ * 工具入参 → AG-UI 的 ARGS 文本。core 不变式：时间线里 `tool_call.args` 是字符串 ⟺ 它就是模型写的线上原文
+ * （解析失败或二次编码解不成对象时存原文，见 core `decodeToolArgumentsText`），原样给出；再 stringify 一层，
+ * 前端拼出的 arguments 就成了带引号的 JSON 字符串字面量，看不到模型真正写了什么。与 lowering-fetch 写侧的 argumentsOf 同一口径
+ */
+function argumentsTextOf(args: unknown): string {
+  return typeof args === "string" ? args : JSON.stringify(args ?? {})
 }

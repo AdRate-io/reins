@@ -7,6 +7,7 @@ import {
   InMemoryEventLog,
   isContentPart,
   type RunResult,
+  runLoop,
   type SerializedRunState,
   type Tool,
 } from "@reinsjs/core"
@@ -427,6 +428,70 @@ describe("审批暂停与跨请求恢复", () => {
     const frames = parseFrames(await res.text())
     expect(resultOf(frames)?.status).toBe("done")
     expect(typesOf(frames)).toContain("model_text")
+  })
+
+  it("Socket 按 principal 贡献工具：恢复预校验与 run 起步用同一组输入（带 principal），同一用户批准后续跑到 done 而不是 409", async () => {
+    const sockets = [
+      {
+        name: "p",
+        tools: (s: { principal?: { id: string } }) => (s.principal?.id === "boss" ? [deployTool] : []),
+      },
+    ]
+    const { handler } = setup(
+      SCRIPT,
+      [],
+      { secret: "k", sockets },
+      { principal: async () => ({ id: "boss" }) },
+    )
+    const { result } = await pauseFirst(handler)
+    const res = await handler(
+      postRequest({
+        sessionId: "s1",
+        lastSeq: result.lastSeq,
+        resume: result.state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(res.status).toBe(200)
+    const frames = parseFrames(await res.text())
+    expect(resultOf(frames)?.status).toBe("done")
+    expect(typesOf(frames)).toContain("model_text")
+  })
+
+  it("Socket 按 principal 贡献客户端工具：同一用户回填 tool_result → 200 续跑到 done，不被当成服务端工具 400", async () => {
+    const pick = defineTool<Record<string, never>>({
+      name: "pick_file",
+      description: "让用户选文件",
+      inputSchema: { type: "object" },
+      side: "client",
+    })
+    const sockets = [
+      {
+        name: "p",
+        tools: (s: { principal?: { id: string } }) => (s.principal?.id === "boss" ? [pick] : []),
+      },
+    ]
+    const { handler, log } = setup(
+      [{ drafts: [callTool("c1", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [],
+      { secret: "k", sockets },
+      { principal: async () => ({ id: "boss" }) },
+    )
+    const { result } = await pauseFirst(handler)
+    expect(result.status).toBe("paused")
+    const res = await handler(
+      postRequest({
+        sessionId: "s1",
+        input: {
+          type: "core.tool_result",
+          payload: { toolCallId: "c1", content: [{ type: "text", text: "a.txt" }] },
+        },
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(resultOf(parseFrames(await res.text()))?.status).toBe("done")
+    const filled = (await logged(log, "s1")).find((e) => e.type === "core.tool_result")
+    expect(filled?.payload).toMatchObject({ toolCallId: "c1", name: "pick_file", isError: false })
   })
 
   it("D4 续跑校验收窄（与 runLoop 同一个 validateResume）：加了别的工具 → 200 续跑；pending 工具 schema 变了 → 409 config_mismatch 且日志不写", async () => {
@@ -1320,6 +1385,67 @@ describe("BUG-261105-2 第二步：authorizeSession 看得见这次带的审批�
     )
     expect(approved?.status).toBe("paused")
     expect(resultOf(parseFrames(await (await handler(fill("owner"))).text()))?.status).toBe("done")
+  })
+
+  it("宿主中止后没走过判定的客户端工具不收回填（409 call_not_evaluated）；续跑补判定后照常走审批（全库审查 #38）", async () => {
+    // 批 = [服务端工具执行时宿主中止, 要审批的客户端工具]：中止后 c2 没经过审批判定，留作 pending 且没有 approval_request
+    const ac = new AbortController()
+    const abortsHost = defineTool<Record<string, never>>({
+      name: "probe",
+      description: "执行时宿主中止",
+      inputSchema: { type: "object" },
+      risk: "low",
+      execute: () => {
+        ac.abort()
+        return "ok"
+      },
+    })
+    const pick = defineTool<Record<string, never>>({
+      name: "pick_file",
+      description: "让用户选文件（要审批）",
+      inputSchema: { type: "object" },
+      side: "client",
+      needsApproval: true,
+    })
+    const { handler, log, agent } = setup(
+      [{ drafts: [callTool("c1", "probe", {}), callTool("c2", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [abortsHost, pick],
+      { secret: "k" },
+      approverOnly,
+    )
+    // 第一次 run 直接跑循环带上宿主的 signal（等价于断线 onDisconnect: "abort" / 丢租约）
+    const gen = runLoop({ ...agent, sessionId: "s1", input: "上线", signal: ac.signal })
+    let step = await gen.next()
+    while (!step.done) step = await gen.next()
+    expect(step.value).toMatchObject({ status: "paused", reason: "host" })
+    expect((await logged(log, "s1")).some((e) => e.type === "core.approval_request")).toBe(false)
+    const fill = asUser("owner", {
+      sessionId: "s1",
+      input: {
+        type: "core.tool_result",
+        payload: { toolCallId: "c2", content: [{ type: "text", text: "secret.txt" }] },
+      },
+    })
+    const before = (await logged(log, "s1")).length
+    const res = await handler(fill)
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ error: "call_not_evaluated" })
+    expect(await logged(log, "s1")).toHaveLength(before)
+
+    // 不带 input 续跑一次：补跑判定 c2，落 approval_request、暂停等审批，之后回填照旧被 approval_pending 拦
+    const resumed = resultOf(parseFrames(await (await handler(asUser("owner", { sessionId: "s1" }))).text()))
+    expect(resumed).toMatchObject({ status: "paused", reason: "approval" })
+    const again = await handler(
+      asUser("owner", {
+        sessionId: "s1",
+        input: {
+          type: "core.tool_result",
+          payload: { toolCallId: "c2", content: [{ type: "text", text: "secret.txt" }] },
+        },
+      }),
+    )
+    expect(again.status).toBe(409)
+    expect(await again.json()).toMatchObject({ error: "approval_pending" })
   })
 })
 
