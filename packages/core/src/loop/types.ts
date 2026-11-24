@@ -205,7 +205,11 @@ export interface TurnContext {
      * 超过它库就按阈值自动折叠最旧的轮次（感知用同一函数校准、据此提醒模型）
      */
     targetTokens: number
-    /** 本轮投影的估算 token */
+    /**
+     * 本轮投影的估算 token（beforeModel 补丁之前）。注意与固定开销口径不同：开销按补丁与注入**之后**送出视图的估算校准
+     * （`budget_usage.contextEstimate`）。宿主 Socket 若每轮用 `patch.events` 剔掉同样的内容，
+     * "used + contextOverheadOf" 会稳定高估被剔掉的那一部分（感知读数、到线请求、阈值兜底同此）
+     */
     used: number
     /** 本次 run 累计消耗（输入 + 输出） */
     tokensSpent: number
