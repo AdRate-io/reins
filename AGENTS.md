@@ -271,7 +271,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | Socket 暂停意见里的 `code` / `reason` 不合规 | 改正（丢码、按 host）后照常暂停，记一条模型不可见的 `core.error(input)` | 标注写错不能把受控暂停变成 error、丢掉续跑凭据；记在时间线上，不是静默 |
 | `pullInput` 回调抛错 | 记一条模型不可见的 `core.error(host)`，当这次没有、run 照跑 | 后果只是晚一个空档送达，消息仍在宿主队列；返回值不合规不在此列（fail-closed） |
 | 图片引用的 blob 取不到（`not_found` / 没配 BlobStore） | 引用原样交给降级层，落 `[image unavailable]` 占位、记 lossy，run 照跑 | 被清理的一张旧图不该让整个会话卡死；其它存储错误不在此列（走模型调用失败与重试判定） |
-| lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限） | 价目只用于报告，不影响请求正确性 |
+| lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限；Haiku 5.5、gpt-5.4 / 5.5 存低档价，长提示是下限） | 价目只用于报告，不影响请求正确性 |
 
 ### 循环与时间线（core）
 
