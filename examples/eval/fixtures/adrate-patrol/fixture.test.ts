@@ -12,6 +12,7 @@ import {
   type ToRequestInput,
 } from "@reinsjs/core"
 import { callTool, type Script, ScriptedLowering, say } from "@reinsjs/core/testing"
+import { handoff } from "@reinsjs/brain"
 import { gradeExpect, noneArm, runEval, jsonValuesAt } from "@reinsjs/eval"
 import { describe, expect, it } from "vitest"
 import { adratePatrolFixtures, auditCompletion, disableCompletion, loadRecording, reportTextOf, seedOf, worldOf } from "./fixture.ts"
@@ -276,6 +277,39 @@ describe("adrate-patrol-disable：完整任务", () => {
     }
     await runEval({ fixtures: [{ ...fx("adrate-patrol-disable"), facts: [] }], arms: [noneArm()], lowering: new ScriptedLowering(reader), model: MODEL })
     expect(seen2.g2).toContain("ENABLE")
+  })
+
+  it("交接不换账本：一格里 handoff 到新会话后，停投过的计划仍是 DISABLE（同一格沿交接链共用一本账）", async () => {
+    const target = CANDIDATES[0] ?? ""
+    let phase: "write" | "handoff" | "read" | "done" = "write"
+    let after = ""
+    const script: Script = (input) => {
+      if (isProbe(input)) return { drafts: [say("x")] }
+      switch (phase) {
+        case "write":
+          phase = "handoff"
+          return { drafts: [callTool("w", "ads_campaigns_status", { advId: ADV, campaignId: target, desiredStatus: "DISABLE" })] }
+        case "handoff":
+          phase = "read"
+          return { drafts: [callTool("h", "handoff", { summary: "已停投一条", nextSteps: ["核对状态"] })] }
+        case "read":
+          phase = "done"
+          return { drafts: [callTool("g", "ads_campaigns_get", { advId: ADV, campaignId: target })] }
+        default:
+          for (const e of input.events)
+            if (e.type === "core.tool_result" && (e as CoreEventOf<"core.tool_result">).payload.toolCallId === "g")
+              after = JSON.stringify((e as CoreEventOf<"core.tool_result">).payload.content)
+          return { drafts: [say("done")] }
+      }
+    }
+    const report = await runEval({
+      fixtures: [{ ...fx("adrate-patrol-disable"), facts: [] }],
+      arms: [{ name: "handoff", sockets: [handoff()] }],
+      lowering: new ScriptedLowering(script),
+      model: MODEL,
+    })
+    expect(report.outcomes[0]?.sessionIds).toHaveLength(2)
+    expect(after).toContain("DISABLE")
   })
 })
 

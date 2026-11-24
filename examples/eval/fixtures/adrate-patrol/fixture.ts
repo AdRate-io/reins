@@ -212,15 +212,43 @@ function paginate<T>(items: readonly T[], args: Record<string, unknown>, default
 /**
  * 从录像数据里长出来的世界：列表 / 报表 / get / status / commands 全部由它供给（不逐字回放这几个工具的录像，
  * 因为录像是写操作之前的快照，模型停投之后再拉列表若仍显示 ENABLE，会被这个矛盾带偏 —— E3 第一轮实测发生过）。
- * 写操作按会话记账：同一会话里 status 成功之后，list / get 看到的就是新状态；不同会话（不同格）互不影响。
+ * 写操作按格记账：同一格里 status 成功之后，list / get 看到的就是新状态；不同格互不影响。
+ * 一格可能因 handoff 换到新会话（runner 沿 toSessionId 接着跑），新会话沿交接链认回起步会话的账本，
+ * 否则交接后又看到停投前的 ENABLE，正是上面那种矛盾。
  */
 export function worldFallback(world: PatrolWorld) {
   const byId = new Map(world.campaigns.map((c) => [c.campaignId, c]))
-  /** 每个会话自己的写账本：campaignId → 当前 operationStatus */
+  /** 每格一本写账本，键是该格起步会话：campaignId → 当前 operationStatus */
   const ledgers = new Map<string, Map<string, string>>()
-  const ledger = (ctx: ToolContext) => {
-    const l = ledgers.get(ctx.sessionId) ?? new Map<string, string>()
-    ledgers.set(ctx.sessionId, l)
+  /** 会话 → 所在格的起步会话；见过的会话都登记 */
+  const rootOf = new Map<string, string>()
+  /**
+   * 新会话第一次调工具时，从已知会话的日志里找 core.handoff 往前推：A→B 推出 B 的根是 A 的根，
+   * 推到本会话为止（B 一件工具没调就又交接到 C 也推得到）。找不到即是新的一格。
+   * 各格的存储各自一份（runner 每格调一次 stores 工厂），读别格的会话只会读到空。
+   */
+  const resolveRoot = async (ctx: ToolContext): Promise<string> => {
+    const known = rootOf.get(ctx.sessionId)
+    if (known) return known
+    const queue = [...rootOf.keys()]
+    for (let s = queue.shift(); s !== undefined; s = queue.shift()) {
+      const root = rootOf.get(s) ?? s
+      for await (const e of ctx.log.read(s)) {
+        if (e.type !== "core.handoff") continue
+        const to = (e.payload as { toSessionId?: unknown }).toSessionId
+        if (typeof to !== "string" || rootOf.has(to)) continue
+        rootOf.set(to, root)
+        if (to === ctx.sessionId) return root
+        queue.push(to)
+      }
+    }
+    rootOf.set(ctx.sessionId, ctx.sessionId)
+    return ctx.sessionId
+  }
+  const ledger = async (ctx: ToolContext) => {
+    const root = await resolveRoot(ctx)
+    const l = ledgers.get(root) ?? new Map<string, string>()
+    ledgers.set(root, l)
     return l
   }
   const withStatus = (c: Campaign, l: Map<string, string>): Campaign => {
@@ -235,10 +263,10 @@ export function worldFallback(world: PatrolWorld) {
       (c) => (key && c.idempotencyKey === key) || (id && c.commandId === id),
     )
 
-  return (name: string, rawArgs: unknown, ctx: ToolContext): ToolResult | undefined => {
+  return async (name: string, rawArgs: unknown, ctx: ToolContext): Promise<ToolResult | undefined> => {
     const args = (typeof rawArgs === "object" && rawArgs !== null ? rawArgs : {}) as Record<string, unknown>
     const adv = String(args.advId ?? "")
-    const l = ledger(ctx)
+    const l = await ledger(ctx)
     const wrongAdvertiser = (cmd: string) =>
       fail("RESOURCE_NOT_FOUND", `Advertiser ${adv} is not connected to this team.`, cmd)
     switch (name) {
@@ -354,8 +382,8 @@ export function patrolTools(world: PatrolWorld, specs: ToolSpecFile[] = loadTool
       description: spec.description,
       inputSchema: spec.inputSchema,
       ...(spec.risk ? { risk: spec.risk } : {}),
-      execute: (input: unknown, ctx: ToolContext) =>
-        fallback(spec.name, input, ctx) ?? { content: [{ type: "text" as const, text: `No data for ${spec.name} in this replayed environment.` }], isError: true },
+      execute: async (input: unknown, ctx: ToolContext) =>
+        (await fallback(spec.name, input, ctx)) ?? { content: [{ type: "text" as const, text: `No data for ${spec.name} in this replayed environment.` }], isError: true },
     }
   })
   const readOnly = all.filter((t) => t.risk !== "high")
