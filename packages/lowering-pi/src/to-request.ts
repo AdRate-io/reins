@@ -29,7 +29,7 @@ import {
   type ToolSpec,
   untrustedSourceOf,
 } from "@reinsjs/core"
-import { IMAGE_UNAVAILABLE_NOTE, MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
+import { IMAGE_OMITTED_NOTE, IMAGE_UNAVAILABLE_NOTE, MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
 import type { PiModel } from "./models.js"
 import { framedSystemNote, markSystemNote, midSystemSlotFollowsUser, midSystemSlotOf } from "./system-note.js"
 
@@ -78,13 +78,23 @@ function mediaPlaceholder(p: Extract<ContentPart, { type: "video" | "audio" }>):
  */
 const IMAGE_UNAVAILABLE = "[image unavailable]"
 
-function toPiContent(parts: readonly ContentPart[]): {
+/**
+ * 模型不收图时的占位（全库审查 2026-11-25 #34）。不交给 pi-ai：它的 downgradeUnsupportedImages 会静默换成
+ * 自己的一句、落点却还是 exact。文案与 lowering-fetch 逐字一致
+ */
+const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
+
+function toPiContent(
+  parts: readonly ContentPart[],
+  capabilities: LoweringCapabilities,
+): {
   content: (TextContent | { type: "image"; data: string; mimeType: string })[]
-  /** 有片段被换成占位时的落点说明（视频 / 音频、未换回的图片引用）；没有为 undefined */
+  /** 有片段被换成占位时的落点说明（模型不收的图片、视频 / 音频、未换回的图片引用）；没有为 undefined */
   mediaNote: string | undefined
 } {
   let mediaDropped = false
   let unavailable = false
+  let imageOmitted = false
   const content = parts.map((p): TextContent | { type: "image"; data: string; mimeType: string } => {
     switch (p.type) {
       case "text":
@@ -97,6 +107,10 @@ function toPiContent(parts: readonly ContentPart[]): {
           unavailable = true
           return { type: "text", text: IMAGE_UNAVAILABLE }
         }
+        if (!capabilities.images) {
+          imageOmitted = true
+          return { type: "text", text: IMAGE_OMITTED }
+        }
         return { type: "image", data: p.data, mimeType: p.mime }
       case "video":
       case "audio":
@@ -108,7 +122,11 @@ function toPiContent(parts: readonly ContentPart[]): {
       }
     }
   })
-  const notes = [mediaDropped ? MEDIA_NOTE : undefined, unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined]
+  const notes = [
+    imageOmitted ? IMAGE_OMITTED_NOTE : undefined,
+    mediaDropped ? MEDIA_NOTE : undefined,
+    unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+  ]
   const mediaNote = notes.filter(Boolean).join("; ")
   return { content, mediaNote: mediaNote.length > 0 ? mediaNote : undefined }
 }
@@ -291,7 +309,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.user_message": {
         flush()
         const c = content(e, e.payload.content)
-        const pc = toPiContent(c.parts)
+        const pc = toPiContent(c.parts, capabilities)
         const msg: Message = { role: "user", content: pc.content, timestamp: e.at }
         const mediaNote = pc.mediaNote
         // 工具结果还没到齐就来了用户消息：后移到同批结果之后，否则 tool_use 后面紧跟的不是 tool_result，厂商 400。
@@ -399,7 +417,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.tool_result": {
         flush()
         const c = content(e, e.payload.content)
-        const pc = toPiContent(c.parts)
+        const pc = toPiContent(c.parts, capabilities)
         messages.push({
           role: "toolResult",
           toolCallId: e.payload.toolCallId,

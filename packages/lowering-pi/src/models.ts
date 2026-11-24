@@ -33,6 +33,7 @@ export interface ModelDefinition {
   reasoning: boolean
   contextWindow: number
   maxOutputTokens: number
+  /** 收不收图片；缺省 false（fail-closed）：图片落 `[image omitted: …]` 占位、落点记 lossy */
   images?: boolean
   name?: string
   /** 每百万 token 美元价；缺省全 0（成本算不出但能跑） */

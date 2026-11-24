@@ -959,3 +959,65 @@ describe("PiAiLowering — Anthropic 中途 system 落不到 user 之后时退�
     expect(req.landings[1]).toMatchObject({ kind: "exact", landing: "system" })
   })
 })
+
+// ---------------- 模型不收图（全库审查 2026-11-25 #34） ----------------
+
+describe("PiAiLowering — 模型不收图时图片落占位并声明 lossy", () => {
+  const PNG = { type: "image" as const, mime: "image/png", data: "iVBORw0KGgo=" }
+  const custom = (images?: boolean) => {
+    const { fetch, captured } = fakeFetch(anthropicSse)
+    const lo = new PiAiLowering({
+      apiKey: () => "k",
+      fetch,
+      models: [
+        {
+          provider: "gw",
+          id: "m",
+          api: "anthropic-messages",
+          baseUrl: "https://gw.example",
+          reasoning: false,
+          contextWindow: 100_000,
+          maxOutputTokens: 1000,
+          ...(images !== undefined ? { images } : {}),
+        },
+      ],
+    })
+    return { lo, captured }
+  }
+
+  it("没写 images 的自定义模型：用户与工具结果里的图换成占位，落点 lossy 且在矩阵声明内", async () => {
+    const { lo, captured } = custom()
+    expect(lo.capabilities({ provider: "gw", id: "m" }).images).toBe(false)
+    seq = 0
+    const events: Event[] = [
+      ev("core.user_message", { content: [{ type: "text", text: "look" }, PNG] }),
+      ev("core.tool_call", { toolCallId: "toolu_1", name: "shot", args: {} }, { replay: {} }),
+      ev("core.tool_result", { toolCallId: "toolu_1", name: "shot", content: [PNG], isError: false }),
+    ]
+    const req = lo.toRequest({ events, model: { provider: "gw", id: "m" } })
+    const user = req.landings[0]
+    const result = req.landings[2]
+    expect(user).toMatchObject({ kind: "lossy", landing: "user" })
+    expect(result).toMatchObject({ kind: "lossy", landing: "tool_result" })
+    expect(user?.note).toContain("does not accept images")
+    for (const l of req.landings) {
+      const declared = declaredLandings("anthropic-messages", l.type)
+      expect(declared.some((d) => d.kind === l.kind && d.landing === l.landing)).toBe(true)
+    }
+    await collect(lo.stream(req))
+    const wire = JSON.stringify(captured[0]?.body)
+    expect(wire).not.toContain('"type":"image"')
+    expect(wire).toContain("[image omitted: this model does not accept images]")
+    expect(wire).not.toContain("model does not support images")
+  })
+
+  it("声明了 images: true 的模型图片照常内联、exact", () => {
+    const { lo } = custom(true)
+    seq = 0
+    const req = lo.toRequest({
+      events: [ev("core.user_message", { content: [{ type: "text", text: "look" }, PNG] })],
+      model: { provider: "gw", id: "m" },
+    })
+    expect(req.landings[0]).toMatchObject({ kind: "exact", landing: "user" })
+  })
+})
