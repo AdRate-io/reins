@@ -84,12 +84,12 @@ If the transport closes (server restarted, network dropped), or a stateful Strea
 the session it issued is gone (restart, session expiry), the next call that needs it — a `tools/call` in the
 same run or `tools/list` at the next run start — rebuilds the connection from the transport recipe once. A `tools/list`
 that hits the 404 re-initializes and lists again within the same call (it is read-only); a `tools/call` that hits it is
-reported as an error and is not resent. If the run is stopped while a `tools/call` is still waiting for that rebuild,
-the call is never sent and the model is told so (`ROUTE_NOT_SENT_TEXT`, the same text routed calls use), not that its
-outcome is unknown. There is
-no retry policy inside a call: a failed call is reported to the model as an error result, and a failed reconnect at
-run start throws before anything is written to the log (fail-closed). Pass `optional: true` to instead start the
-run without that server's tools and warn once; the model then sees them listed as removed.
+reported as an error and is not resent. Other calls already in flight on the expired connection are left to finish
+before it is closed. If the run is stopped while a `tools/call` is still waiting for that rebuild, the call is never
+sent and the model is told so (`ROUTE_NOT_SENT_TEXT`, the same text routed calls use), not that its outcome is
+unknown. There is no retry policy inside a call: a failed call is reported to the model as an error result, and a
+failed reconnect at run start throws before anything is written to the log (fail-closed). Pass `optional: true` to
+instead start the run without that server's tools and warn once; the model then sees them listed as removed.
 
 Call `close()` when you are done with a socket (process shutdown, or the host replaced the configuration). With
 `route`, `evict(key)` retires one credential's connection; see [Several credentials on one server](#several-credentials-on-one-server).
@@ -372,7 +372,8 @@ rejection. Script: `spikes/mcp-removed-tool-history`.
 A transport's `label` names the socket (`mcp:<label>`) and appears in warnings and in connection errors — which can
 reach the model as an error result and stay in the log. It therefore defaults to the parts that never carry a
 secret: the URL's origin for HTTP (no path, no query) and the bare `command` for stdio (no arguments). Pass `label`
-for a friendlier name, and keep secrets out of it.
+for a friendlier name, and keep secrets out of it. Several servers on one origin (`https://host/github` and
+`https://host/slack`) would otherwise share a label, so give each its own `label` to tell their sockets and warnings apart.
 
 Tool names that the model APIs reject (`^[A-Za-z0-9_-]{1,64}$`) are rewritten (`files.read` → `files_read`) with a
 one-time warning; the original name is used on the wire. If a rewrite lands on a name another tool of the same
