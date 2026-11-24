@@ -18,7 +18,7 @@ import {
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
-import { approval } from "./approval/index.js"
+import { approval, type PolicyCall } from "./approval/index.js"
 import { budget } from "./budget/index.js"
 import { compact } from "./compact/index.js"
 import { haltOnFailure } from "./halt-on-failure/index.js"
@@ -79,8 +79,8 @@ const stack = () => [
     ask: [
       {
         id: "deploy-gate",
-        match: (c) => c.name === "deploy",
-        summary: (c) => `deploy to ${(c.args as { env: { name: string } }).env.name}`,
+        match: (c: PolicyCall) => c.name === "deploy",
+        summary: (c: PolicyCall) => `deploy to ${(c.args as { env: { name: string } }).env.name}`,
       },
     ],
   }),
