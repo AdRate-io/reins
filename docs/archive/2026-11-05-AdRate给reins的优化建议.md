@@ -1145,7 +1145,7 @@ AdRate 要支持用户在对话里粘贴截图：TikTok 后台的报错、数据
 
 ### reins 回复（2026-11-24）
 
-采纳，分两步做完。第一步（折叠后能找回）已随 `12d9343` 落地；第二步（引用形态）已实施、待发版：core 0.16.0（minor），server / lowering-fetch / lowering-pi minor，adapter-tanstack-ai patch，其余依赖 core 的包各出 patch，AdRate 用到的 `@reinsjs/*` 要一起升。
+采纳，分两步做完。第一步（折叠后能找回）已随 `12d9343` 落地；两步于 2026-11-24 一起发布（v0.20.0）：core 0.16.0、brain 0.10.0、server 0.9.0、lowering-fetch 0.7.0、lowering-pi 0.5.0、adapter-tanstack-ai 0.5.1，其余依赖 core 的包各出 patch（agent 0.7.3、eval 0.4.12、store-pg 0.5.3、store-sqlite 0.3.14、tools-mcp 0.4.3、ui-agui 0.7.1）。它们对 core 是精确版本依赖，AdRate 用到的 `@reinsjs/*` 要一起升。
 
 - **用法**：`blobs.put(原始字节, { mime, sessionId })`（传字节，不要传 base64 串），再发 `{ type: "image", mime, blobId }`，`mime` 要与 put 时一致。内联 `data` 照旧可用，同一条消息里可以混用。
 - **可以先 put**：`put` 不检查会话是否已有事件，新会话可以先 put 再发第一条消息，暂存区那次搬运可以省掉。
@@ -1161,6 +1161,6 @@ AdRate 要支持用户在对话里粘贴截图：TikTok 后台的报错、数据
   - **不能回滚**：`core.user_message` / `core.tool_result` 升为 schema v2（v1 读出时恒等升级），0.16 写过的会话 0.15 及以前读不了。全实例同时升级。
   - **进程内宿主的中途队列**：`pullInput` 拉到一条引用失效的消息，run 以 error 收口（与形状不合规同口径）；那条消息若还留在 AdRate 的队列里，下一个 run 会再拉到、再失败。HTTP 投递在入箱前就 400，不受影响。
   - 只做了图片。视频 / 音频仍是内联，等有真实样本再按同一套机制扩展。
-- **验证**：全部假模型（引用只是存储形态，模型看到的请求逐字节相同），`pnpm check` 与构建产物自检全绿。独立审查拦下两处缺陷，均已修复并补用例（变异核对能拦住旧写法）：TanStack 路径曾能把别的会话的 blobId 写进日志（AdRate 不走这条路径）；校验缓存只按 blobId 放行，同一张图换个 `mime` 能写进日志。
+- **验证**：全部假模型（引用只是存储形态，模型看到的请求逐字节相同），`pnpm check` 与构建产物自检全绿；发版前另起 PG 16.13 真库跑全量（2196 条过），发后在空目录从 npm 官方源安装，冒烟 7/7。独立审查拦下两处缺陷，均已修复并补用例（变异核对能拦住旧写法）：TanStack 路径曾能把别的会话的 blobId 写进日志（AdRate 不走这条路径）；校验缓存只按 blobId 放行，同一张图换个 `mime` 能写进日志。
 - **请核实**：升级后在测试服贴两张图 → 让模型整理（折叠）→ `recall` 取回，看模型能否描述图片内容；查事件表里该会话的 `data` 不含 base64；再用别的会话的 blobId 发一次，应得 400 与上面那句话。
 
