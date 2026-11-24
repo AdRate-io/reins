@@ -358,7 +358,7 @@ rejection. Script: `spikes/mcp-removed-tool-history`.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `transport` | — | `httpTransport({ url, headers?, auth?, fetch?, requestInit? })` or `stdioTransport({ command, args?, env?, cwd?, stderr? })` |
+| `transport` | — | `httpTransport({ url, headers?, auth?, fetch?, requestInit?, label? })` or `stdioTransport({ command, args?, env?, cwd?, stderr?, label? })` |
 | `prefix` | none | Prepended to tool names shown to the model; the server still sees the original name |
 | `callTimeoutMs` | 60 000 | Per `tools/call` timeout; expiry becomes an error result |
 | `optional` | `false` | On `tools/list` failure at run start: throw (default) or contribute no tools and warn once |
@@ -366,6 +366,11 @@ rejection. Script: `spikes/mcp-removed-tool-history`.
 | `route` | — | `{ keyOf(call, ctx), transportFor(key) }`: pick a credential per `tools/call`; `transport` then serves `tools/list` only |
 | `clientInfo` | `{ name: "reins", version }` | Sent in the MCP handshake |
 | `warn` | `console.warn` | Where degradations are reported |
+
+A transport's `label` names the socket (`mcp:<label>`) and appears in warnings and in connection errors — which can
+reach the model as an error result and stay in the log. It therefore defaults to the parts that never carry a
+secret: the URL's origin for HTTP (no path, no query) and the bare `command` for stdio (no arguments). Pass `label`
+for a friendlier name, and keep secrets out of it.
 
 Tool names that the model APIs reject (`^[A-Za-z0-9_-]{1,64}$`) are rewritten (`files.read` → `files_read`) with a
 one-time warning; the original name is used on the wire. If a rewrite lands on a name another tool of the same

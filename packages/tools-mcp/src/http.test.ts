@@ -27,7 +27,7 @@ async function drain(gen: AsyncGenerator<Event, RunResult>): Promise<Event[]> {
 }
 
 describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
-  it("list + call 成功；鉴权头随每个请求发出；标签不含查询串；第二个客户端先后初始化也行", async () => {
+  it("list + call 成功；鉴权头随每个请求发出；标签只留 origin；第二个客户端先后初始化也行", async () => {
     let instances = 0
     const handler = createMcpHandler(() => {
       instances++
@@ -55,7 +55,7 @@ describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
       headers: { Authorization: "Bearer t0k" },
       fetch: shim,
     })
-    expect(transport.label).toBe("http://mcp.local/mcp")
+    expect(transport.label).toBe("http://mcp.local")
 
     const socket = mcpTools({ transport })
     const log = new InMemoryEventLog()
@@ -176,6 +176,19 @@ describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
 
     await socket.close()
     await handler.close()
+  })
+
+  it("标签缺省只留 origin（不少托管服务把密钥放在路径里）；宿主可显式给 label；空 label 构造期拒绝", () => {
+    // 修复前：label 是 origin + pathname，路径里的密钥进 Socket.name、告警与报错，最终进 tool_result 与日志
+    const secret = httpTransport({ url: "https://mcp.example.com/mcp/SECRETPATH/sse?k=q" })
+    expect(secret.label).toBe("https://mcp.example.com")
+    expect(mcpTools({ transport: secret }).name).toBe("mcp:https://mcp.example.com")
+    expect(httpTransport({ url: "https://mcp.example.com/mcp/SECRETPATH", label: "github" }).label).toBe(
+      "github",
+    )
+    expect(() => httpTransport({ url: "https://mcp.example.com/mcp", label: "" })).toThrow(
+      /label must be a non-empty string, got an empty string/,
+    )
   })
 
   it("auth 与 headers.Authorization 同时给：构造期就拒绝（不静默让一个盖掉另一个）", () => {
