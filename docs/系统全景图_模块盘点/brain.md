@@ -15,7 +15,7 @@
 | perception | beforeModel | 无 | 推荐默认 | 不依赖存储 |
 | compact | beforeModel、afterModel、afterTool、onTurnEnd | 工具 `compact`、`recall`（`recall: false` 可关）；规则提示 `COMPACT_RULES` | 推荐默认（E3c 改判，取代 E3 / E3b 的"不默认"） | 不依赖存储（recall 读 EventLog） |
 | pins | beforeModel、afterTool | 工具 `pin`（`tool: false` 可关）；规则提示 `PIN_RULES`（仅带工具时贡献） | 推荐默认 | 不依赖存储 |
-| spill | afterTool | 工具 `fetch_blob`（`tool: false` 可关）；规则提示 `SPILL_RULES` | 推荐默认（阈值 16k） | 无 `BlobStore` → **外溢自动关闭**并告警一次，大结果原样通过；声明 `overflow: "truncate"` 的工具照常截断。注意工具与规则仍注册（常量形态），调用时返回 isError |
+| spill | afterTool | 工具 `fetch_blob`（`tool: false` 可关）；规则提示 `SPILL_RULES` | 推荐默认（阈值 16k） | 无 `BlobStore` → **外溢自动关闭**并告警一次，大结果原样通过；声明 `overflow: "truncate"` 的工具照常截断。注意工具与规则仍注册（缺 BlobStore 不影响注册；静态贡献是经 `ownToolsGuard` 按 setup 解析的函数，只有撞名时不注册），调用时返回 isError |
 | handoff | afterTool、onTurnEnd | 工具 `handoff`；规则提示 `HANDOFF_RULES` | 不默认 | 不依赖存储 |
 | memory | 无钩子 | 工具 `memory` 与规则提示 `MEMORY_RULES`，均为按 `SocketSetup` 算一次的**函数形态** | 不默认 | 无 `MemoryStore` → **工具与规则都不注册**（§5"缺则不注册"）并告警一次 |
 | approval | beforeTool | 规则提示 `APPROVAL_RULES`（无工具） | 推荐默认 | 不依赖存储 |
@@ -50,6 +50,7 @@
 | `packages/brain/src/resident-context.recipe.test.ts` | 常驻上下文配方（与 brain README "Resident context that survives compaction" 逐字一致）：记忆索引作快照 pin，锁住"开场一份、段内写记忆不刷新、整理后刷新且视图只有一份" |
 | `packages/brain/src/gateway-tool.recipe.test.ts` | 网关型工具（一件工具转发数百操作，如 TikTok `tool_execute`）的审批配方，与 tools-mcp README "Gateway-style servers" 逐字一致：锁住"按工具名写的 deny 放跑了删除"（反面）、"按入参里的操作名判就拦得住"、"ask 段的审批摘要带真实操作名"、"不配规则时缺省 byRisk 连只读也问人（fail-closed）" |
 | `packages/brain/src/shadowed-tools.test.ts` | 自带工具撞名：排在前面的 Socket 声明全部八个脑子工具名时七个模块都不注册、规则不进提示、各告警一次且解析两遍不重复；只撞 recall 也整个不注册；同一对象不算撞名；没撞名照常；runLoop 下别人的 handoff / compact / pin 调用不交接、不整理、不落 pin（宿主 pin 照常），别人的 fetch_blob 在时 spill 不外溢 |
+| `packages/brain/src/composition.test.ts` | 按 README 推荐顺序整套同装的集成用例（全库审查 2026-11-25 #70）：haltOnFailure → handoff → stopAfter → compact → budget → pins → lazyTools → approval 装在一起时的顺序约定与跨 run 的停止 / 续跑场景 |
 | `packages/brain/src/act-then-announce.recipe.test.ts` | "先做再通知"配方（与 brain README "Act, then announce" 逐字一致）：锁住"同批前一个失败则通知与收尾都被拦、run 不停"与"全部成功则本轮即 done" |
 | `packages/brain/src/shared/batch.ts` | `batchOf(ctx, module)`：取 `ctx.batch`，缺失（宿主装出两份 core、旧循环不填）时抛可读错误；halt-on-failure 与 stop-after 共用 |
 | `packages/brain/src/shared/own-tools.ts` | 自带工具撞名的统一处置（全库审查 #51）：`shadowingToolName(bound, own)`（同名且不是同一对象；给名字时同名即撞）、`shadowedToolWarning`、`ownToolsGuard`（按名字只告警一次）、`ownsTool(ctx, tool)`（钩子确认本 run 绑定的是自家那件）；compact / spill / pins / handoff / memory / skills / lazy-tools 共用 |

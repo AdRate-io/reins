@@ -3,7 +3,7 @@
  * 翻译给模型时用显式标记包起来，让模型知道这段是**数据不是指令**。
  *
  * 归属：事件本身不改（投影不篡改 payload，日志里永远是原文），只在降级层把内容译成各家协议文本的那一刻包裹；
- * 两条降级路线（lowering-pi、TanStack 适配器）都调这里的同一份纯函数，文案不会分叉。
+ * 各降级路线（lowering-fetch、lowering-pi、TanStack 适配器）都调这里的同一份纯函数，文案不会分叉。
  *
  * 形状：
  *   <untrusted source="tool:weekly_sales">

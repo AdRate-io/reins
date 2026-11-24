@@ -1,6 +1,6 @@
 # 模块盘点：`@reinsjs/adapter-tanstack-ai`
 
-> 对应任务 B10。包版本 `0.1.0`，依赖 `@reinsjs/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` 是 peerDependency，pin 精确版本 `0.53.0`**（2026-09-10 审查改：宿主自装、与库共用同一份实例——R7 的登记检查与引擎的中间件判断都靠引用同一性，装两份会把审批全判成没登记；非 `^`，不随小版本漂移；除主入口外还用了 `@tanstack/ai/adapter-internals` 的中断登记表 Capability，R7）；`@reinsjs/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
+> 对应任务 B10。包版本以 `package.json` / `CHANGELOG.md` 为准，依赖 `@reinsjs/core`（workspace）、`@standard-schema/spec ^1.1.0`、**`@tanstack/ai` 是 peerDependency，pin 精确版本 `0.53.0`**（2026-09-10 审查改：宿主自装、与库共用同一份实例——R7 的登记检查与引擎的中间件判断都靠引用同一性，装两份会把审批全判成没登记；非 `^`，不随小版本漂移；除主入口外还用了 `@tanstack/ai/adapter-internals` 的中断登记表 Capability，R7）；`@reinsjs/brain` 只在 devDependencies（测试用脑子模块，运行时不依赖）。本文以代码为准。
 
 ## 1 架构概览
 
@@ -56,7 +56,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 | 路径 | 职责 |
 | --- | --- |
 | `src/index.ts` | 唯一导出口；把 middleware / messages / assembler / tools / interrupt / schema / loss-matrix 的公开面拢在一处，并声明"`@tanstack/ai` 的类型只在本包出现"。 |
-| `src/middleware.ts` | 主体（约 1030 行）：`reinsMiddleware()`，十二个 TanStack 钩子 → 五个 Socket 方法的翻译，run 状态、事件 append、审批中断、交接、用量记账都在这里。终结记号（2026-11-15）：`onFinish` 写 `run_ended(done)`（日志里还有没执行的调用时不写——引擎可能按 stop 策略提前结束）、交接在新会话开场后立即落 `run_ended(handoff)`（留给 onFinish 的话，交接后被取消会被 onAbort 记成暂停）、`onError` 把 `core.error` 与 `run_ended(error)` 同批写、`onAbort` 写 `run_paused(host)`，三者共用 `RunState.ended` 守卫（append 见到 run_paused / run_ended 即置位）——wait 路径返回后连接被取消时引擎 finally 会再调 onAbort，没守卫就会盖掉审批暂停；`tools_bound` 不带 `marksEnd`（InterruptReplaySignal 等出口不调终结钩子），`run_paused` 不带 `awaiting` / `stopped`。 |
+| `src/middleware.ts` | 主体（2026-11-25 实测约 1.5k 行）：`reinsMiddleware()`，十二个 TanStack 钩子 → 五个 Socket 方法的翻译，run 状态、事件 append、审批中断、交接、用量记账都在这里。终结记号（2026-11-15）：`onFinish` 写 `run_ended(done)`（日志里还有没执行的调用时不写——引擎可能按 stop 策略提前结束）、交接在新会话开场后立即落 `run_ended(handoff)`（留给 onFinish 的话，交接后被取消会被 onAbort 记成暂停）、`onError` 把 `core.error` 与 `run_ended(error)` 同批写、`onAbort` 写 `run_paused(host)`，三者共用 `RunState.ended` 守卫（append 见到 run_paused / run_ended 即置位）——wait 路径返回后连接被取消时引擎 finally 会再调 onAbort，没守卫就会盖掉审批暂停；`tools_bound` 不带 `marksEnd`（InterruptReplaySignal 等出口不调终结钩子），`run_paused` 不带 `awaiting` / `stopped`。 |
 | `src/messages.ts` | 事件 ⇄ TanStack `ModelMessage` 的纯函数翻译：出口 `toModelMessages`（含 trust 标注：untrusted 内容调 core `markUntrusted` 包 `<untrusted>`，`trustMarkers` 可关）、入口 `importModelMessages`（每条草稿的 `provenance.ref` 是幂等键 `importRef`：消息 id 或客户端数组位置）与 `dedupeImportedUserMessages`（R5 去重），外加 `trailingUserMessages`、`framedSystemNote`、`parseArgs`。 |
 | `src/assembler.ts` | `BlockAssembler`：把流式 AG-UI chunk（TEXT_* / REASONING_* / TOOL_CALL_*）拼成完整内容块的 `EventDraft`，`finish()` 收尾未闭合的块。 |
 | `src/content.ts` | 内容片段互译：`toTanstackParts` / `toTanstackContent` / `fromTanstackContent` / `fromTanstackToolResult`，data 源的图片 / 视频 / 音频双向逐字翻译（TanStack 没有时长字段：导出丢 `durationSec`、导入没有时长），URL 源、文档、mime 前缀不符以及形状不合规的（缺 mimeType、value 不是字符串——导入草稿直接 append、不经 runLoop 白名单，所以造出的片段一律过 core `isContentPart`）留占位文本并报 `dropped`（如 `video(url)`）；`partAsText` 是纯文本语境的唯一写法（`[<类型> <mime>]`）。；图片引用不换回，落 `IMAGE_REF_PLACEHOLDER`（`[image unavailable]`），`messages.ts` 记 lossy（2026-11-24，刻意不对称）；白名单外的旧图片（core `isSupportedImageMime` 判否）落 core `unsupportedImageText`、记 lossy（`IMAGE_UNSUPPORTED_NOTE`，与两个降级层同口径，2026-11-25）；落点 note 统一经 `placeholderNoteOf` |
