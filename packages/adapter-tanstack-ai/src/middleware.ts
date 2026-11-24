@@ -28,6 +28,8 @@
  *   写的 run_paused 不带 awaiting / stopped（与 state 同）
  */
 import {
+  type ApprovalDecisionInput,
+  assertDecisionsAwaitApproval,
   awaitingOf,
   type BeforeToolDecision,
   type BlobStore,
@@ -58,6 +60,7 @@ import {
   pauseDetailOf,
   pendingToolCalls,
   project,
+  RunStateError,
   readTimeline,
   resolveReserveTokens,
   resolveSocketContributions,
@@ -1075,15 +1078,31 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     async onInterruptResolution(ctx, resolutions) {
       const s = states.get(ctx)
       if (!s) return undefined
+      // 通用中断的续跑不签名：key 与答复全由客户端的 resume 带来，照抄合法项改个 key 引擎就接受（全库审查 2026-11-25 #35）。
+      // 只收指向本会话**正在等审批**的调用的答复（有 approval_request、还没有结论、同一调用只收一条），与 runLoop / server
+      // 同一个 assertDecisionsAwaitApproval；其余不入日志、告警。否则不对应任何请求的结论会进日志，还能替模型将来才发出的
+      // 调用预先批准、绕过审批
+      const timeline = await timelineOf()
+      const accepted: ApprovalDecisionInput[] = []
       for (const r of resolutions.for(reinsApprovalInterrupt)) {
         const approved = r.status === "resolved" && r.response.approved === true
         const by = r.status === "resolved" && r.response.by ? r.response.by : TANSTACK_DECIDER
         const reason = r.status === "resolved" ? r.response.reason : "Approval was cancelled"
-        s.emitted.push({
-          type: "core.approval_decision",
-          actor: "host",
-          payload: { toolCallId: r.request.key, approved, by, ...(reason !== undefined ? { reason } : {}) },
-        })
+        const decision: ApprovalDecisionInput = {
+          toolCallId: r.request.key,
+          approved,
+          by,
+          ...(reason !== undefined ? { reason } : {}),
+        }
+        try {
+          assertDecisionsAwaitApproval({ sessionId, timeline, decisions: [...accepted, decision] })
+        } catch (err) {
+          if (!(err instanceof RunStateError)) throw err
+          warn(`ignored an approval answer from the client: ${err.message}`)
+          continue
+        }
+        accepted.push(decision)
+        s.emitted.push({ type: "core.approval_decision", actor: "host", payload: decision })
       }
       const events = await flush(ctx, s)
       if (events.length > 0) await markResumed(ctx, s)
