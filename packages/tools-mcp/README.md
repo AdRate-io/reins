@@ -368,7 +368,9 @@ rejection. Script: `spikes/mcp-removed-tool-history`.
 | `warn` | `console.warn` | Where degradations are reported |
 
 Tool names that the model APIs reject (`^[A-Za-z0-9_-]{1,64}$`) are rewritten (`files.read` → `files_read`) with a
-one-time warning; the original name is used on the wire.
+one-time warning; the original name is used on the wire. If a rewrite lands on a name another tool of the same
+server already uses (`files.delete` next to `files_delete`, or two long names sharing their first 64 characters), the
+rewritten one gets a `_2`, `_3`… suffix and the warning names the clash — names that need no rewrite keep theirs.
 
 Not supported: sampling, elicitation, resources, prompts, MCP Apps, and driving an OAuth authorization
 prompt (obtain tokens in your application and hand them over through `auth`).

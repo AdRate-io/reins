@@ -20,6 +20,35 @@ export function modelToolName(mcpName: string, prefix = ""): string {
 }
 
 /**
+ * 一台服务器全部工具的模型侧名字，保证互不相同。改写（换字符、截断）会让不同原名落到同一个名字上（`a.b` 与 `a_b`、
+ * 前 64 位相同的两个长名）；core 对同名工具先到者赢、后到者静默丢掉，模型永远看不到它——所以撞名必须在这里消掉。
+ * 规则：合规原名（不需改写的）先占名，与服务器列出的顺序无关，这样加了一件改写工具不会挤走已有工具的名字；
+ * 改写过的按列出顺序取 `modelToolName`，被占就在末尾追加 `_2`、`_3`…（必要时截掉尾部给后缀让位，仍不超 64）。
+ * 返回值与入参一一对应；与 `modelToolName` 的结果不同即是撞名改的，调用方应在告警里说明
+ */
+export function modelToolNames(mcpNames: readonly string[], prefix = ""): string[] {
+  const taken = new Set<string>()
+  const out: (string | undefined)[] = mcpNames.map((n) => {
+    const raw = `${prefix}${n}`
+    if (!MODEL_TOOL_NAME_RE.test(raw) || taken.has(raw)) return undefined
+    taken.add(raw)
+    return raw
+  })
+  return mcpNames.map((n, i) => {
+    const done = out[i]
+    if (done !== undefined) return done
+    const base = modelToolName(n, prefix)
+    let name = base
+    for (let k = 2; taken.has(name); k++) {
+      const suffix = `_${k}`
+      name = `${base.slice(0, 64 - suffix.length)}${suffix}`
+    }
+    taken.add(name)
+    return name
+  })
+}
+
+/**
  * 注解 → 风险档。spec 说注解只是提示、不可信服务器的注解不能当权限依据，所以这里只定**缺省值**：
  * 明说只读 → low；明说破坏性 → high（并缺省要审批）；其余（含完全没注解）→ medium，交给 approval 模块的策略。
  * 注意 spec 里 destructiveHint 缺省为 true，我们刻意不把"没写"当"破坏性"——否则每个 MCP 工具都要审批，

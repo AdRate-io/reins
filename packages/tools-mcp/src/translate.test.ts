@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { modelToolName, riskOf, toContentParts, toToolInfo } from "./translate.js"
+import { modelToolName, modelToolNames, riskOf, toContentParts, toToolInfo } from "./translate.js"
 
 describe("modelToolName：模型侧工具名", () => {
   it("合规名字原样；加前缀；非法字符换 _；截到 64", () => {
@@ -9,6 +9,19 @@ describe("modelToolName：模型侧工具名", () => {
     expect(modelToolName("a".repeat(80))).toHaveLength(64)
     expect(modelToolName("中文")).toBe("__")
     expect(modelToolName("")).toBe("_")
+  })
+})
+
+describe("modelToolNames：一台服务器的模型侧名字互不相同", () => {
+  it("合规原名先占名（与列出顺序无关）；改写后撞名追加 _2、_3；后缀让位截断仍 ≤ 64", () => {
+    expect(modelToolNames(["a.b", "a_b"])).toEqual(["a_b_2", "a_b"])
+    expect(modelToolNames(["a.b", "a-b", "a b", "a_b"])).toEqual(["a_b_2", "a-b", "a_b_3", "a_b"])
+    expect(modelToolNames(["a.b", "a_b_2", "a_b"])).toEqual(["a_b_3", "a_b_2", "a_b"])
+    const long = "y".repeat(70)
+    const names = modelToolNames([`${long}1`, `${long}2`], "p_")
+    expect(names).toEqual([`p_${"y".repeat(62)}`, `p_${"y".repeat(60)}_2`])
+    expect(names.every((n) => n.length <= 64)).toBe(true)
+    expect(modelToolNames(["ok", "files.read"])).toEqual(["ok", "files_read"])
   })
 })
 

@@ -14,7 +14,7 @@
 import { defineTool, REINS_VERSION, type Tool } from "@reinsjs/core"
 import { McpConnection } from "./connection.js"
 import { kindOf, type PoolEntry, RoutePool } from "./route-pool.js"
-import { modelToolName, riskOf, toContentParts } from "./translate.js"
+import { modelToolName, modelToolNames, riskOf, toContentParts } from "./translate.js"
 import type { McpToolInfo, McpToolsOptions, McpToolsSocket } from "./types.js"
 
 export const DEFAULT_CALL_TIMEOUT_MS = 60_000
@@ -54,14 +54,20 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
     warn(message)
   }
 
-  /** 一个 MCP 工具 → reins Tool。名字给模型看的可能被改写，调用时用原名 */
-  const toTool = (info: McpToolInfo): Tool => {
-    const name = modelToolName(info.name, prefix)
-    if (name !== `${prefix}${info.name}`)
+  /**
+   * 一个 MCP 工具 → reins Tool。`name` 是 `modelToolNames` 排过撞名的模型侧名字（可能被改写），调用时用原名。
+   * 告警按"原名 → 改写名"去重：撞名对象随服务器工具表变化时改写名会变，变了要再说一次
+   */
+  const toTool = (info: McpToolInfo, name: string): Tool => {
+    if (name !== `${prefix}${info.name}`) {
+      const plain = modelToolName(info.name, prefix)
       warnOnce(
-        `name:${info.name}`,
-        `MCP tool name ${info.name} does not meet the model-facing requirements; the name shown to the model is rewritten to ${name}`,
+        `name:${info.name}->${name}`,
+        plain === name
+          ? `MCP tool name ${info.name} does not meet the model-facing requirements; the name shown to the model is rewritten to ${name}`
+          : `MCP tool name ${info.name} is shown to the model as ${name}: ${plain} is already used by another tool on this server`,
       )
+    }
     const risk = riskOf(info.annotations)
     return defineTool<unknown>({
       name,
@@ -121,8 +127,12 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
         return []
       }
       const tools: Tool[] = []
-      for (const info of infos) {
-        const tool = toTool(info)
+      const names = modelToolNames(
+        infos.map((i) => i.name),
+        prefix,
+      )
+      for (const [i, info] of infos.entries()) {
+        const tool = toTool(info, names[i] as string)
         const overridden = options.override?.(tool, info)
         if (overridden === false) continue
         tools.push(overridden ?? tool)
