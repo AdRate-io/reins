@@ -1,5 +1,17 @@
 # @reinsjs/lowering-pi
 
+## 0.5.0
+
+### Minor Changes
+
+- c47e62b: An image reference that reaches the lowering unhydrated (its blob was deleted, or no `BlobStore` is configured) is replaced with `[image unavailable]` and the event is recorded `lossy`, instead of sending a broken image. When the model takes no images the usual "this model does not accept images" placeholder is used, as for inline images. Loss matrices mention the new case.
+
+### Patch Changes
+
+- Updated dependencies [c47e62b]
+- Updated dependencies [12d9343]
+  - @reinsjs/core@0.16.0
+
 ## 0.4.11
 
 ### Patch Changes

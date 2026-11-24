@@ -1,5 +1,13 @@
 # @reinsjs/tools-mcp
 
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies [c47e62b]
+- Updated dependencies [12d9343]
+  - @reinsjs/core@0.16.0
+
 ## 0.4.2
 
 ### Patch Changes
