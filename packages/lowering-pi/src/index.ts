@@ -18,6 +18,9 @@ export {
 export {
   framedSystemNote,
   markSystemNote,
+  newSystemNoteMark,
+  type RewriteAnthropicOptions,
+  type RewriteOptions,
   rewriteAnthropicPayload,
   rewriteOpenAIResponsesPayload,
   SYSTEM_NOTE_MARK,

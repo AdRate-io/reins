@@ -3,7 +3,11 @@
  *
  * pi-ai 的 Message 没有 system 角色，所以：
  * - 模型支持中途 system 时：先当 user 消息放进 Context，文本前加内部标记；在 pi-ai 的 onPayload 钩子里
- *   把带标记的消息改写成线协议的 system 消息并归位。标记只在本文件生产与消费，不会送到线上。
+ *   把带标记的消息改写成线协议的 system 消息并归位，标记随之剥掉。
+ *   ⚠️ 标记必须是调用方伪造不了的：onPayload 只看得到请求体，分不出一条 user 消息是我们生成的说明还是用户原话，
+ *   而用户文本经 HTTP 原样进日志。所以 PiAiLowering 每个请求用 `newSystemNoteMark()` 取一枚带随机数的标记、
+ *   随 payload 带到 stream（全库审查 2026-11-25 #3：固定标记曾让以它开头的用户话被抬成 system / developer）。
+ *   静态的 `SYSTEM_NOTE_MARK` 只是独立调用这些函数时的缺省值，此时由调用方保证用户文本不以它开头。
  * - 不支持时：以 <system_note> 标签包住、仍走 user 角色，有损矩阵记为 lossy(user-role)。
  *
  * Anthropic 摆放规则（官方，违反即 400）：不能是首条；必须紧跟 user 轮（含 tool_result 的 user）；
@@ -14,8 +18,16 @@ import type { SystemNotePayload } from "@reinsjs/core"
 
 export const SYSTEM_NOTE_MARK = "[[reins:system_note]]"
 
-export function markSystemNote(text: string): string {
-  return `${SYSTEM_NOTE_MARK}${text}`
+/** 一枚一次性标记：静态前缀 + 128 位随机数（Web 标准 crypto，核心零 Node）。每个请求取一枚，用户无从预知 */
+export function newSystemNoteMark(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+  return `${SYSTEM_NOTE_MARK.slice(0, -2)}:${hex}]]`
+}
+
+export function markSystemNote(text: string, mark: string = SYSTEM_NOTE_MARK): string {
+  return `${mark}${text}`
 }
 
 /** 不支持中途 system 的模型：用标签框住，让模型知道这不是用户说的 */
@@ -36,7 +48,7 @@ interface MarkedNote {
 }
 
 /** 取出带标记的正文；不是标记消息返回 null */
-function markedNote(m: WireMessage, textType: string): MarkedNote | null {
+function markedNote(m: WireMessage, textType: string, mark: string): MarkedNote | null {
   if (m.role !== "user") return null
   let text: string | null = null
   let cacheControl: unknown
@@ -48,9 +60,9 @@ function markedNote(m: WireMessage, textType: string): MarkedNote | null {
       cacheControl = only.cache_control
     }
   }
-  if (text === null || !text.startsWith(SYSTEM_NOTE_MARK)) return null
+  if (text === null || !text.startsWith(mark)) return null
   return {
-    text: text.slice(SYSTEM_NOTE_MARK.length),
+    text: text.slice(mark.length),
     ...(cacheControl !== undefined ? { cacheControl } : {}),
   }
 }
@@ -72,7 +84,12 @@ function markedNote(m: WireMessage, textType: string): MarkedNote | null {
  */
 export type MidSystemCacheBreakpoint = "automatic" | "previous-user" | "drop"
 
-export interface RewriteAnthropicOptions {
+export interface RewriteOptions {
+  /** 本请求生成说明时用的标记（`markSystemNote` 的第二参）；缺省静态 `SYSTEM_NOTE_MARK` */
+  mark?: string
+}
+
+export interface RewriteAnthropicOptions extends RewriteOptions {
   cacheBreakpoint?: MidSystemCacheBreakpoint
 }
 
@@ -81,6 +98,7 @@ const MAX_ANTHROPIC_BREAKPOINTS = 4
 
 export function rewriteAnthropicPayload(payload: unknown, opts: RewriteAnthropicOptions = {}): unknown {
   const breakpoint = opts.cacheBreakpoint ?? "automatic"
+  const mark = opts.mark ?? SYSTEM_NOTE_MARK
   const p = payload as {
     messages?: WireMessage[]
     system?: unknown
@@ -91,7 +109,7 @@ export function rewriteAnthropicPayload(payload: unknown, opts: RewriteAnthropic
   const body: WireMessage[] = []
   const pending: (MarkedNote & { afterIndex: number })[] = []
   for (const m of p.messages) {
-    const note = markedNote(m, "text")
+    const note = markedNote(m, "text", mark)
     if (note !== null) pending.push({ ...note, afterIndex: body.length })
     else body.push(m)
   }
@@ -184,13 +202,18 @@ function isEmptyContent(content: unknown): boolean {
  * OpenAI Responses 请求体改写：标记消息 → {role: developer|system, content:[input_text]}。
  * reasoning 模型用 developer（与 pi-ai 放 systemPrompt 的选择一致），其余用 system。
  */
-export function rewriteOpenAIResponsesPayload(payload: unknown, model: { reasoning: boolean }): unknown {
+export function rewriteOpenAIResponsesPayload(
+  payload: unknown,
+  model: { reasoning: boolean },
+  opts: RewriteOptions = {},
+): unknown {
+  const mark = opts.mark ?? SYSTEM_NOTE_MARK
   const p = payload as { input?: unknown }
   if (!Array.isArray(p.input)) return undefined
   let changed = false
   const role = model.reasoning ? "developer" : "system"
   const input = (p.input as WireMessage[]).map((m) => {
-    const note = markedNote(m, "input_text")
+    const note = markedNote(m, "input_text", mark)
     if (note === null) return m
     changed = true
     return { role, content: [{ type: "input_text", text: note.text }] }

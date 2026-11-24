@@ -145,6 +145,11 @@ export interface ToContextInput {
   systemPrompt?: string
   /** trust=untrusted 的内容（工具输出、外部内容）以 <untrusted source=…> 包裹（§14）。缺省 true；关掉是宿主自担风险 */
   trustMarkers?: boolean
+  /**
+   * 中途 system 说明的内部标记（发出前由 onPayload 改写时按它认）。PiAiLowering 每个请求传一枚 `newSystemNoteMark()`；
+   * 缺省静态 `SYSTEM_NOTE_MARK`，只供独立调用——此时用户文本以它开头会被当成说明（全库审查 2026-11-25 #3）
+   */
+  systemNoteMark?: string
 }
 
 export function eventsToContext(input: ToContextInput): { context: Context; landings: LandingRecord[] } {
@@ -380,7 +385,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         if (capabilities.midConversationSystem && e.payload.directive !== true) {
           note(
             e,
-            { role: "user", content: markSystemNote(t.text), timestamp: e.at },
+            { role: "user", content: markSystemNote(t.text, input.systemNoteMark), timestamp: e.at },
             t.escaped ? "lossy" : "exact",
             isAnthropic ? "system" : model.reasoning ? "developer" : "system",
             t.escaped ? ESCAPED_NOTE : undefined,

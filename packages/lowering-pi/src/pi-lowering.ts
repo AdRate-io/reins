@@ -23,6 +23,7 @@ import { consumeStream } from "./from-stream.js"
 import { definitionToModel, type ModelDefinition, type PiModel, resolveModel } from "./models.js"
 import {
   type MidSystemCacheBreakpoint,
+  newSystemNoteMark,
   type RewriteAnthropicOptions,
   rewriteAnthropicPayload,
   rewriteOpenAIResponsesPayload,
@@ -59,6 +60,11 @@ export interface PiAiLoweringOptions {
 /** 对外暴露的请求体：pi-ai Context 的结构描述，不引用 pi-ai 类型 */
 export interface PiLoweredPayload {
   api: string
+  /**
+   * 本请求的中途 system 标记（`newSystemNoteMark()`，每个请求一枚随机值）：context 里带它开头的 user 消息
+   * 在发出前改写成 system / developer。缺省视为静态 `SYSTEM_NOTE_MARK`（手拼的 payload）
+   */
+  systemNoteMark?: string
   context: {
     systemPrompt?: string
     messages: readonly unknown[]
@@ -95,15 +101,23 @@ export class PiAiLowering implements Lowering<PiLoweredPayload> {
   toRequest(input: ToRequestInput): LoweredRequest<PiLoweredPayload> {
     const model = resolveModel(input.model, this.extraModels)
     const capabilities = this.capabilitiesFor(input.model, model)
+    // 每个请求一枚用户无从预知的标记：用户原话以静态前缀开头也不会被当成说明抬成 system（#3）
+    const systemNoteMark = newSystemNoteMark()
     const { context, landings } = eventsToContext({
       events: input.events,
       model,
       capabilities,
+      systemNoteMark,
       ...(input.tools ? { tools: input.tools } : {}),
       ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
       ...(this.opts.trustMarkers !== undefined ? { trustMarkers: this.opts.trustMarkers } : {}),
     })
-    return { model: input.model, capabilities, landings, payload: { api: model.api, context } }
+    return {
+      model: input.model,
+      capabilities,
+      landings,
+      payload: { api: model.api, systemNoteMark, context },
+    }
   }
 
   async *stream(
@@ -127,6 +141,7 @@ export class PiAiLowering implements Lowering<PiLoweredPayload> {
       ...(ctx.signal ? { signal: ctx.signal } : {}),
       onPayload: (payload: unknown, m: Model<Api>) =>
         rewritePayload(model.api, payload, m, {
+          ...(req.payload.systemNoteMark !== undefined ? { mark: req.payload.systemNoteMark } : {}),
           ...(this.opts.midSystemCacheBreakpoint
             ? { cacheBreakpoint: this.opts.midSystemCacheBreakpoint }
             : {}),
@@ -156,6 +171,6 @@ export function rewritePayload(
   opts: RewriteAnthropicOptions = {},
 ): unknown {
   if (api === "anthropic-messages") return rewriteAnthropicPayload(payload, opts)
-  if (api === "openai-responses") return rewriteOpenAIResponsesPayload(payload, model)
+  if (api === "openai-responses") return rewriteOpenAIResponsesPayload(payload, model, opts)
   return undefined
 }
