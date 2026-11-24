@@ -1543,7 +1543,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
   })
 
   it("handoff 开场的发起者如实记（#52）：模型写的摘要与自拟触发消息是 model，逐字取自真实用户消息的才是 user，provenance 指回出处", async () => {
-    const run = async (intent: HandoffIntent, input = "  做 ABC ") => {
+    const run = async (intent: HandoffIntent, input: LoopConfig["input"] = "  做 ABC ") => {
       const log = new InMemoryEventLog()
       const lowering = new ScriptedLowering([{ drafts: [say("交接")] }])
       const socket: Socket = { onTurnEnd: () => ({ handoff: intent }) }
@@ -1585,6 +1585,24 @@ describe("runLoop：错误、中止、上限、交接", () => {
       expect(fresh.map(shape)).toEqual([
         ["core.system_note", "host", "system", { source: "handoff", ref: handoff.id }],
         ["core.user_message", "host", "system", { source: "handoff", ref: handoff.id }],
+      ])
+    }
+    // 逐字取自宿主写的用户消息（actor host）：按原事件的发起者与 trust 记，不记成 model，provenance 指回原事件
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "背景任务", reason: "r" }, [
+        {
+          type: "core.user_message",
+          actor: "host",
+          payload: { content: [{ type: "text", text: "背景任务" }] },
+        },
+      ])
+      const original = old.find((e) => e.type === "core.user_message") as Event
+      expect(original.actor).toBe("host")
+      expect(fresh.map(shape)[1]).toEqual([
+        "core.user_message",
+        "host",
+        "system",
+        { source: "handoff", ref: original.id },
       ])
     }
   })
