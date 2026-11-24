@@ -69,6 +69,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 
 ## 3 核心流程
 
+0. **构造**：`reinsMiddleware()` 先调 core `resolveReserveTokens` 校验 `capabilities.contextWindow` 与 `projection.reserveTokens`，不合规抛 RangeError（与 runLoop 起步同口径，在任何 run 写日志之前）。
 1. **init**（`onConfig(ctx.phase === "init")` → `initRun`）：`readTimeline(log, sessionId, { registry })` 先把整条日志过一遍注册表——读不出来的事件在写任何东西之前就拒绝（fail-closed）。
 2. 宿主工具 `config.tools` 逐个 `viewOfTanstackTool` 成只读视图，连同 `sockets` 交给 `await resolveSocketContributions`（P1 起 async），拿回"视图 + 脑子工具"的 `baseTools` 与脑子的规则提示片段；`systemPrompts = [...config.systemPrompts, brainPrompt?]`——宿主原有条目（可能带 `cache_control`）一个字不动，脑子片段追加成最后一条，整个 run 逐字不变。 随后 append 一条 `core.tools_bound`（P1，与 runLoop 共用 `toolsBoundDrafts`；configHash 只按脑子片段算，与 runLoop 的不可比、只在本适配器内前后自比），工具表与上一条相比有增删且 `announceToolChanges !== false` 则再 append 模型可见说明。
 3. **导入客户端新输入**：日志为空则 `config.messages` 整段接管，否则只取 `trailingUserMessages(config.messages)`（末尾连续的 user），经 `importModelMessages`（传 `startIndex` = 这一截在客户端数组里的起始下标）变成草稿，再经 `dedupeImportedUserMessages` 对照日志去掉重发的用户消息（R5，跳过时 `warn` 一句）后 `append` 入日志；片段翻不动时 `warn`。init 返回 `{ tools: tanstackToolsOf(...), systemPrompts }`。

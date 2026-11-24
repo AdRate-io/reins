@@ -172,6 +172,23 @@ function fixture(
 const user = (text: string): ModelMessage => ({ role: "user", content: text })
 
 describe("reinsMiddleware：基本流程", () => {
+  it("窗口 / 预留不合规在构造时就抛 RangeError，不等到投影（此时 tools_bound 与用户消息已落日志）（全库审查 2026-11-25 第二波返修）", () => {
+    const base = { sessionId: SESSION, log: new InMemoryEventLog() }
+    for (const [contextWindow, reserveTokens] of [
+      [Number.NaN, undefined],
+      [0, undefined],
+      [1000, 2000],
+    ] as const) {
+      expect(() =>
+        reinsMiddleware({
+          ...base,
+          capabilities: { contextWindow },
+          ...(reserveTokens !== undefined ? { projection: { reserveTokens } } : {}),
+        }),
+      ).toThrow(RangeError)
+    }
+  })
+
   it("budget_usage.contextEstimate 含 beforeModel 期间注入的说明，与 runLoop 同口径（全库审查 2026-11-25 #20）", async () => {
     const big = "word ".repeat(4000)
     const injector: Socket = {

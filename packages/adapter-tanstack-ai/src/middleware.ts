@@ -58,6 +58,7 @@ import {
   pendingToolCalls,
   project,
   readTimeline,
+  resolveReserveTokens,
   resolveSocketContributions,
   resolveSocketPause,
   roughTokenEstimate,
@@ -273,6 +274,14 @@ export function toReinsUsage(u: TanstackUsage): TokenUsage {
  */
 export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddleware {
   const { sessionId, log, sockets = [] } = options
+  // 窗口与预留在构造时校验（与 runLoop 起步、project() 同一函数）：capabilities 是静态的，拖到 buildTurn 的投影才抛，
+  // tools_bound 与导入的用户消息已经落了日志，会话被判 interrupted（全库审查 2026-11-25 第二波返修）
+  resolveReserveTokens({
+    contextLimit: options.capabilities.contextWindow,
+    ...(options.projection?.reserveTokens !== undefined
+      ? { reserveTokens: options.projection.reserveTokens }
+      : {}),
+  })
   const registry = options.registry ?? createCoreRegistry()
   const now = options.now ?? (() => Date.now())
   const newId = options.newId ?? uuidv7
