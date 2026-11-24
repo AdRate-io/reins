@@ -728,4 +728,69 @@ describe("非停止中止落在工具批中途（全库审查 2026-11-25 #11）"
     expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c2"])
     expect(types(await all(log))).not.toContain("handoff")
   })
+
+  // 全库审查 2026-11-25 #58：onTurnEnd 的三种非 continue 决定 × 正常路径 / 补跑路径，结局都是 paused(host) 且 pending 保留
+  const decisions: [string, ReturnType<NonNullable<Socket["onTurnEnd"]>>][] = [
+    ["stop", "stop"],
+    ["handoff", { handoff: { summary: "交给下一位", reason: "context" } }],
+    ["pause", { pause: { reason: "budget", note: "over budget" } }],
+  ]
+
+  it.each(decisions)(
+    "正常路径：普通中止批中途 + onTurnEnd 判 %s → paused(host)，c2 仍 pending",
+    async (_n, d) => {
+      const log = new InMemoryEventLog()
+      const ac = new AbortController()
+      const executed: string[] = []
+      const decider: Socket = { onTurnEnd: () => d }
+      const tools = [writeTool("a", executed, () => ac.abort()), writeTool("b", executed)]
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("c1", "a", { x: 1 }), callTool("c2", "b", { x: 2 })] },
+      ])
+      const { result } = await drain(
+        runLoop(cfgOf(lowering, log, { tools, sockets: [decider], input: "go", signal: ac.signal })),
+      )
+      expect(result).toMatchObject({
+        status: "paused",
+        reason: "host",
+        interruptions: [{ kind: "host", note: "host aborted during the tool batch" }],
+      })
+      expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c2"])
+      expect(types(await all(log)).at(-1)).toBe("run_paused")
+    },
+  )
+
+  it.each(decisions)(
+    "补跑路径：补跑途中普通中止 + onTurnEnd 判 %s → paused(host)，余下仍 pending",
+    async (_n, d) => {
+      const log = new InMemoryEventLog()
+      const first = new AbortController()
+      const second = new AbortController()
+      const executed: string[] = []
+      const tools = [
+        writeTool("a", executed, () => first.abort()),
+        writeTool("b", executed, () => second.abort()),
+        writeTool("c", executed),
+      ]
+      const lowering = new ScriptedLowering([
+        {
+          drafts: [
+            callTool("c1", "a", { x: 1 }),
+            callTool("c2", "b", { x: 2 }),
+            callTool("c3", "c", { x: 3 }),
+          ],
+        },
+      ])
+      await drain(runLoop(cfgOf(lowering, log, { tools, input: "go", signal: first.signal })))
+      expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c2", "c3"])
+
+      const decider: Socket = { onTurnEnd: () => d }
+      const { result } = await drain(
+        runLoop(cfgOf(lowering, log, { tools, sockets: [decider], signal: second.signal })),
+      )
+      expect(result).toMatchObject({ status: "paused", reason: "host" })
+      expect(executed).toEqual(["a:1", "b:2"])
+      expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c3"])
+    },
+  )
 })
