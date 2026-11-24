@@ -516,6 +516,41 @@ describe("perception：用上一请求的真实用量校准上下文使用率（
     }
   })
 
+  it("阈值兜底折叠的那一轮，读数的整理次数已算上本轮投影新造的 compaction，不再说 nothing has been folded（全库审查 2026-11-25 #21）", async () => {
+    const log = new InMemoryEventLog()
+    const big = defineTool<Record<string, never>>({
+      name: "big",
+      description: "返回一大段",
+      risk: "low",
+      inputSchema: { type: "object" },
+      execute: () => "y ".repeat(2000),
+    })
+    // 窗口 6000：每轮一个约 1000 token 的结果，几轮后兜底开始机械折叠
+    const lowering = new ScriptedLowering(
+      (_input, turn) => ({ drafts: turn < 8 ? [callTool(`c${turn}`, "big", {})] : [say("好")] }),
+      { capabilities: { contextWindow: 6000 } },
+    )
+    await drain(
+      runLoop(
+        config(lowering, log, { tools: [big], sockets: [perception({ calibrate: false })], maxTurns: 20 }),
+      ),
+    )
+    const logged = await all(log)
+    const folds = logged.filter((e) => e.type === "core.compaction")
+    expect(folds.length).toBeGreaterThanOrEqual(2)
+    // 每条感知说明报的整理次数 = 它之前日志里的 compaction 数
+    for (const n of notesOf(logged)) {
+      const reading = (n.payload.meta as { reading: PerceptionReading }).reading
+      expect(reading.compactions).toBe(folds.filter((f) => f.seq < n.seq).length)
+    }
+    // 模型每次看到的最后一条感知说明，不会在视图里已有折叠摘要时说"什么都没折叠"
+    for (const req of lowering.requests) {
+      if (!req.events.some((e) => e.type === "core.compaction")) continue
+      const last = notesOf(req.events).at(-1)
+      expect(last?.payload.text).not.toContain("nothing has been folded")
+    }
+  })
+
   it("感知报 ≥85% 的那一轮，阈值兜底同轮就折（2026-10-30 onset-pause：此前兜底只比估算，报了不折）", async () => {
     const log = new InMemoryEventLog()
     // 窗口 4000、兜底线 3400。第一轮真实上下文 3450：估算只有几十，校准后第二轮读数 ≥85%

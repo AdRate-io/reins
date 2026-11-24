@@ -54,11 +54,11 @@
 | `packages/brain/src/shared/batch.ts` | `batchOf(ctx, module)`：取 `ctx.batch`，缺失（宿主装出两份 core、旧循环不填）时抛可读错误；halt-on-failure 与 stop-after 共用 |
 | `packages/brain/src/shared/own-tools.ts` | 自带工具撞名的统一处置（全库审查 #51）：`shadowingToolName(bound, own)`（同名且不是同一对象；给名字时同名即撞）、`shadowedToolWarning`、`ownToolsGuard`（按名字只告警一次）、`ownsTool(ctx, tool)`（钩子确认本 run 绑定的是自家那件）；compact / spill / pins / handoff / memory / skills / lazy-tools 共用 |
 | `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
-| `packages/brain/src/shared/segment.ts` | 段判据（compact 与 pins 共用）：`atSegmentStart`、`modelActedSinceLastCompaction`、`currentSegment`、`timelineSoFar`，全从时间线读 |
+| `packages/brain/src/shared/segment.ts` | 段判据（compact、pins、perception 共用）：`atSegmentStart`、`modelActedSinceLastCompaction`、`currentSegment`、`timelineSoFar`，全从时间线读 |
 | `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读；`enforceLimit` 硬上限模式给 skills：带范围也截、超长单行切开）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
 | `packages/brain/src/perception/index.ts` | perception 子模块聚合导出 |
 | `packages/brain/src/perception/perception.ts` | `perception(opts): Socket`：beforeModel 算读数、渲染、与可见的上一条说明按文字判重，不同才 emit `system_note(kind=perception)` |
-| `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数、外溢条数、预算最紧一维余量；上下文开销调 core `contextOverheadOf` 并原名转出 |
+| `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数（按 `timelineSoFar`，含本轮投影新造的阈值 compaction）、外溢条数、预算最紧一维余量；上下文开销调 core `contextOverheadOf` 并原名转出 |
 | `packages/brain/src/perception/render.ts` | 读数 → 给模型看的英文说明文字；含"折叠到底拿走了什么"那句（E3 实测补的） |
 | `packages/brain/src/perception/tiers.ts` | 档位离散化：`rangeTier` / `countTier` / `percent` / `compactNumber`，以及边界严格升序的构造期校验 |
 | `packages/brain/src/perception/perception.test.ts` | perception 的全部用例（档位、判重、校准、与 runLoop 集成） |

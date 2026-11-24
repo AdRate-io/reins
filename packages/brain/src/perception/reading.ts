@@ -7,6 +7,7 @@
  */
 import { type CoreEvent, contextOverheadOf, type Event, type TurnContext } from "@reinsjs/core"
 import type { BudgetDimension, BudgetLimits } from "../budget/budget.js"
+import { timelineSoFar } from "../shared/segment.js"
 import { compactNumber, countTier, percent, rangeTier, type Tier } from "./tiers.js"
 
 /** 预算上限：与 budget 模块（§9.8）同一个形状，宿主把同一份 limits 传给两个模块。给了哪几维就只按那几维算余量 */
@@ -128,6 +129,9 @@ export function readPerception(
   const { budget } = ctx
   const contextOverhead = opts.calibrate === false ? 0 : contextOverheadOf(ctx.timeline)
   const contextTokens = budget.used + contextOverhead
+  // 计数看截至此刻的时间线：本轮投影新造的阈值 compaction 只在 ctx.events 里、不在 ctx.timeline 快照里，
+  // 漏掉它，兜底折叠那一轮就会对着视图开头的折叠摘要说"什么都没折叠"（全库审查 2026-11-25 #21）
+  const soFar = timelineSoFar(ctx)
   const spilled = ctx.events.filter(
     (e) => e.type === "core.tool_result" && (e as CoreEvent & { type: "core.tool_result" }).payload.spilled,
   ).length
@@ -137,8 +141,8 @@ export function readPerception(
     contextOverhead,
     autoFoldAt: percent(budget.targetTokens / budget.contextLimit),
     unfoldedTurns: countTier(countModelTurns(ctx.events), thresholds.turns),
-    compactions: ctx.timeline.filter((e) => e.type === "core.compaction").length,
-    sessionTokens: rangeTier(sumSessionTokens(ctx.timeline), thresholds.tokens, compactNumber),
+    compactions: soFar.filter((e) => e.type === "core.compaction").length,
+    sessionTokens: rangeTier(sumSessionTokens(soFar), thresholds.tokens, compactNumber),
     spilledResults: spilledTier,
   }
   const remaining = limits ? remainingOf(budget, contextTokens, limits) : undefined
