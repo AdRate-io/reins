@@ -82,16 +82,17 @@ import {
   toolsBoundDrafts,
   uuidv7,
 } from "@reinsjs/core"
-import type {
-  AfterToolCallInfo,
-  AnyTool,
-  ChatMiddleware,
-  ChatMiddlewareConfig,
-  ChatMiddlewareContext,
-  StreamChunk,
-  SystemPrompt,
-  TokenUsage as TanstackUsage,
-  ToolPhaseCompleteInfo,
+import {
+  type AfterToolCallInfo,
+  type AnyTool,
+  type ChatMiddleware,
+  type ChatMiddlewareConfig,
+  type ChatMiddlewareContext,
+  DISCOVERY_TOOL_NAME,
+  type StreamChunk,
+  type SystemPrompt,
+  type TokenUsage as TanstackUsage,
+  type ToolPhaseCompleteInfo,
 } from "@tanstack/ai"
 import { GenericInterruptDefinitionRegistryCapability } from "@tanstack/ai/adapter-internals"
 import { BlockAssembler } from "./assembler.js"
@@ -221,6 +222,8 @@ interface RunState {
   turn?: TurnState
   /** 已包装成 TanStack 工具的 reins 工具（按名字缓存，保持引用稳定） */
   wrapped: Map<string, AnyTool>
+  /** 上一次交给引擎的工具表（onConfig 的返回）：下一次 beforeModel 见到的表与它不同，就是引擎自己换过（lazy 发现） */
+  lastTools: AnyTool[]
   /**
    * 宿主是否把 `reinsApprovalInterrupt` 登记到了 `chat({ interrupts })`（R7）。没登记时引擎会在边界抛
    * "not registered on this chat"，run 死在一条永远等不到答复的 run_paused 上；所以 init 就查，没登记则 defer 降级为拒绝
@@ -482,6 +485,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       callEventIds: new Map(),
       assembler: new BlockAssembler({ provider: model.provider, api: TANSTACK_API, model: model.id }),
       wrapped: new Map(),
+      lastTools: [],
       approvalInterruptRegistered: approvalInterruptRegistered(ctx),
       nativeResolutions: nativeResolutionsOf(config),
       resumed: false,
@@ -606,11 +610,54 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     }
   }
 
+  /**
+   * 跟上引擎自己换过的宿主工具表（全库审查 2026-11-25 #33）。TanStack 原生 lazy 工具在工具阶段被发现后，引擎把活动表
+   * 换成 `lazyToolManager.getActiveTools()`（新发现的工具进表、全部发现后撤下发现工具）；本中间件每轮又按起步快照
+   * 交回工具表，不跟上就会把刚发现的工具盖掉——模型看不见，照发现结果去调还撞 "Unknown tool"。
+   *
+   * 判据：这一轮引擎给的表与上一次交给它的不同（逐个同一性），才认为是引擎换过。只增不删：新出现的宿主工具（不是本
+   * 中间件包装的脑子工具）补进视图，排在宿主视图之后、脑子工具之前；删只认引擎撤下的发现工具——排在本中间件之后的宿主
+   * 中间件按轮过滤掉的工具也会表现为"不在表里"，照删就再也回不来。与已有工具同名的不收（先到者赢，与
+   * resolveSocketContributions 同口径），告警一次。工具表在 run 内变化不另记 tools_bound，下一个 run 起步照常比对
+   */
+  const syncHostTools = (s: RunState, engineTools: readonly AnyTool[]) => {
+    if (engineTools.length === s.lastTools.length && engineTools.every((t, i) => t === s.lastTools[i])) return
+    const wrapped = new Set(s.wrapped.values())
+    const taken = new Set(s.baseTools.map((t) => t.name))
+    const added: Tool[] = []
+    for (const t of engineTools) {
+      if (wrapped.has(t) || s.hostTools.get(t.name) === t) continue
+      if (taken.has(t.name)) {
+        warnOnce(
+          `host tool ${t.name} appeared during the run but a tool with that name is already bound; it was not added`,
+        )
+        continue
+      }
+      s.hostTools.set(t.name, t)
+      added.push(viewOfTanstackTool(t, warnOnce))
+      taken.add(t.name)
+    }
+    const dropDiscovery =
+      s.hostTools.has(DISCOVERY_TOOL_NAME) && !engineTools.some((t) => t.name === DISCOVERY_TOOL_NAME)
+    if (added.length === 0 && !dropDiscovery) return
+    if (dropDiscovery) s.hostTools.delete(DISCOVERY_TOOL_NAME)
+    const kept = dropDiscovery
+      ? s.baseTools.filter((t) => !(isNativeToolView(t) && t.name === DISCOVERY_TOOL_NAME))
+      : s.baseTools
+    let at = 0
+    kept.forEach((t, i) => {
+      if (isNativeToolView(t)) at = i + 1
+    })
+    s.baseTools = [...kept.slice(0, at), ...added, ...kept.slice(at)]
+  }
+
   // ---- beforeModel：投影 + Socket 补丁 → providerMessages / tools / systemPrompts ----
   const beforeModel = async (
     ctx: ChatMiddlewareContext,
     s: RunState,
+    config: ChatMiddlewareConfig,
   ): Promise<Partial<ChatMiddlewareConfig>> => {
+    syncHostTools(s, config.tools)
     const timeline = await timelineOf()
     s.turns++
     const turn = await buildTurn(ctx, s, timeline)
@@ -642,9 +689,10 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       ...(options.trustMarkers !== undefined ? { trustMarkers: options.trustMarkers } : {}),
     })
     options.onLandings?.(landings.filter((l) => l.kind !== "exact"))
+    s.lastTools = tanstackToolsOf(s, tools)
     return {
       providerMessages: messages,
-      tools: tanstackToolsOf(s, tools),
+      tools: s.lastTools,
       systemPrompts: systemPrompt !== undefined ? [systemPrompt] : s.systemPrompts,
     }
   }
@@ -1023,11 +1071,12 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     async onConfig(ctx, config) {
       if (ctx.phase === "init") {
         const s = await initRun(ctx, config)
-        return { tools: tanstackToolsOf(s, s.baseTools), systemPrompts: s.systemPrompts }
+        s.lastTools = tanstackToolsOf(s, s.baseTools)
+        return { tools: s.lastTools, systemPrompts: s.systemPrompts }
       }
       const s = states.get(ctx)
       if (!s) return undefined
-      if (ctx.phase === "beforeModel" || ctx.phase === "structuredOutput") return beforeModel(ctx, s)
+      if (ctx.phase === "beforeModel" || ctx.phase === "structuredOutput") return beforeModel(ctx, s, config)
       return undefined
     },
 

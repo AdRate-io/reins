@@ -247,6 +247,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 工具入参二次编码：fetch / pi 降级层 vs TanStack 适配器 | 前者读侧多解一层并标 `meta.argumentsUnwrapped`；后者不解——它的历史按 `JSON.stringify(args)` 送回，模型看到的就是自己写的二次编码，与执行一致，没有"说法不一"，代价只是多一轮往返（要补走 `transformArgs`，OPT-261102-2） |
 | 用户停止：runLoop vs TanStack 适配器 | runLoop 在所有暂停出口把 pending 收尾成"没执行"等结果；TanStack 引擎自己处理中止，适配器在它的边界上做不到对等，停止后 pending 照旧留着 |
 | 审批答复的可信度：server vs TanStack 适配器 | server 的 `decisions` 须连同验签的 `resume` 交、过 `authorizeSession`；TanStack 通用中断的续跑不签名、key 与 `by` 都是客户端自报，适配器只能按同一个 `assertDecisionsAwaitApproval` 收窄到正在等审批的调用（其余告警丢弃）——要审批人身份可信，宿主在调 `chat()` 前自己核 `resume` |
+| run 内工具表：runLoop vs TanStack 适配器 | runLoop 的工具表 run 内不变；TanStack 跟着引擎原生 lazy 工具的发现补进新工具、撤下发现工具（只增不删，其余删除可能是排在后面的宿主中间件按轮过滤），不另记 tools_bound——不跟就把刚发现的工具盖掉、调用撞 Unknown tool |
 | 续跑校验：runLoop / server vs TanStack 适配器 | 前两者调同一个 `validateResume`（D4 收窄）；TanStack 路径本来就不做续跑校验，只为 `tools_bound` 算 configHash，写的 `run_paused` 也不带 `state` |
 | `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从该 run 的信箱拉（共用 `runs` 的 handler 都能往里投），asTool 子 run 与停止收尾 run 仍不拉 |
 | run 结束时未拉走的中途消息：进程内宿主 vs HTTP handler（`midRunInput`） | 进程内宿主须再查一次自己的队列（消息在它手里）；handler 随 run 直接丢弃信箱，靠客户端按时间线判未送达后重发——不在 result 帧带未投递列表，送达判据只有时间线一条 |

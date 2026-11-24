@@ -674,6 +674,34 @@ describe("reinsMiddleware：能力位", () => {
     await f.run({ messages: [user("在吗")] })
     expect(seen).toBe(false)
   })
+
+  it("TanStack 原生 lazy 工具：同一 run 里发现之后，下一轮工具表跟着引擎的活动表走，调得到（全库审查 2026-11-25 #33）", async () => {
+    const secret = toolDefinition({
+      name: "secret",
+      description: "秘密",
+      inputSchema: { type: "object", properties: {} },
+      lazy: true,
+    }).server(async () => "S")
+    const f = fixture(
+      [
+        { blocks: [callTool("c1", "__lazy__tool__discovery__", { toolNames: ["secret"] })] },
+        { blocks: [callTool("c2", "secret", {})] },
+        { blocks: [say("done")] },
+      ],
+      [pins()],
+    )
+    await f.run({ messages: [user("go")], tools: [addTool, secret] })
+    const names = (call: number) => (f.adapter.calls[call]?.tools ?? []).map((t) => t.name).sort()
+    expect(names(0)).toEqual(["__lazy__tool__discovery__", "add", "pin"])
+    // 全部发现后引擎把发现工具撤下；脑子工具（pin）照旧在
+    expect(names(1)).toEqual(["add", "pin", "secret"])
+    expect(names(2)).toEqual(["add", "pin", "secret"])
+    const result = (await all(f.log)).find(
+      (e) =>
+        e.type === "core.tool_result" && (e as CoreEventOf<"core.tool_result">).payload.toolCallId === "c2",
+    ) as CoreEventOf<"core.tool_result">
+    expect(result.payload).toMatchObject({ isError: false, content: [{ type: "text", text: "S" }] })
+  })
 })
 
 describe("reinsMiddleware：审批", () => {
