@@ -313,6 +313,22 @@ describe("approval：evaluatePolicy 管线", () => {
     })
   })
 
+  it("fail-closed 同样管规则的 summary：入参来自模型，摘要函数抛错不能抛出管线", async () => {
+    const onError = vi.fn()
+    const rule = always("deploy-gate", {
+      summary: (c) => `deploy to ${(c.args as { env: { name: string } }).env.name}`,
+    })
+    const out = await run(call(deployTool, { env: null }), { ask: [rule] }, "byRisk", onError)
+    expect(out).toEqual({
+      verdict: "deny",
+      policyId: "deploy-gate",
+      reason: expect.stringMatching(
+        /^policy deploy-gate threw while being evaluated and is treated as a denial: /,
+      ),
+    })
+    expect(onError).toHaveBeenCalledWith("deploy-gate", expect.any(TypeError))
+  })
+
   it("fail-closed 同样管 needsApproval 函数", async () => {
     const t: Tool = {
       ...deployTool,

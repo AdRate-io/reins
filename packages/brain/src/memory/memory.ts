@@ -16,6 +16,7 @@
  * 工具与规则都不出现，并告警一次 —— 而不是注册一个一用就报错的工具，那会让模型每轮都撞墙。
  */
 import type { Socket, SocketSetup, Tool, ToolContext } from "@reinsjs/core"
+import { isCanonicalKeyPrefix } from "../shared/paths.js"
 import {
   bindMemoryFs,
   executeMemoryCommand,
@@ -25,13 +26,16 @@ import {
   type MemoryLimits,
   parseMemoryCommand,
 } from "./commands.js"
-import { MEMORY_ROOT, resolveMemoryPath } from "./paths.js"
+import { hasMemorySegment, MEMORY_ROOT, resolveMemoryPath } from "./paths.js"
 import { MEMORY_RULES, MEMORY_TOOL_DESCRIPTION, MEMORY_TOOL_NAME } from "./rules.js"
 
 export interface MemoryOptions {
   /**
-   * 命名空间：返回加在存储键前面的前缀，模型看到的路径不变。多用户宿主用它隔离：
-   * `namespace: (ctx) => \`/users/${ctx.principal?.id ?? "anonymous"}\``。缺省无前缀（全体共享一块 /memories）
+   * 命名空间：返回加在存储键前面的前缀，模型看到的路径不变，存储键是 `<namespace>/memories/…`。多用户宿主用它隔离：
+   * `namespace: (ctx) => \`/users/${ctx.principal?.id ?? "anonymous"}\``。缺省无前缀（全体共享一块 /memories）。
+   * 返回值每次调用前校验（fail-closed）：须是空串，或 `/` 起、不以 `/` 收、无空段与 `.` / `..` 段、不含 `memories` 段的路径——
+   * 否则两个前缀可能互相嵌套（`/a` 的 `/memories/x/memories/f` 就是 `/a/memories/x` 的 `/memories/f`）。
+   * 不合规时本次调用 isError、不碰存储，经 `warn` 告警（每个 memory() 实例只告一次，报第一个坏值）。principal id 里可能带 `/` 时宿主自己先编码
    */
   namespace?: (ctx: ToolContext) => string
   /** 单文件上限（UTF-8 字节）。缺省 64 KiB：记忆是给未来的自己看的摘记，不是数据仓库 */
@@ -47,7 +51,7 @@ export interface MemoryOptions {
   directories?: readonly string[]
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
-  /** 没有 MemoryStore 时的告警出口（每个 memory() 实例只告警一次）。缺省 console.warn */
+  /** 告警出口：没有 MemoryStore、namespace 返回值不合规（各自每个 memory() 实例只告警一次）。缺省 console.warn */
   warn?: (message: string) => void
 }
 
@@ -73,6 +77,11 @@ export function memory(opts: MemoryOptions = {}): Socket {
   const namespace = opts.namespace ?? (() => "")
   const warn = opts.warn ?? ((message: string) => console.warn(message))
   let warned = false
+  /**
+   * 不合规的 namespace 只告警一次（每个实例）：namespace 多由 principal id 拼成，按值去重的集合会随租户增多在长驻进程里一直涨；
+   * 返回坏值是宿主代码的 bug，报出第一个就够定位
+   */
+  let warnedNamespace = false
 
   const tool: Tool<MemoryCommand> = {
     name: MEMORY_TOOL_NAME,
@@ -80,6 +89,9 @@ export function memory(opts: MemoryOptions = {}): Socket {
     inputSchema: MEMORY_INPUT_SCHEMA as unknown as Record<string, unknown>,
     validate: parseMemoryCommand,
     risk: "low",
+    // low 只表示不用问人；insert / str_replace / delete / rename 不幂等（再跑一遍会插重复行、把成功的删除报成不存在），
+    // 开始动手后被中断的调用续跑时不能重放，落"结果未知"由模型 view 后自己判断
+    replayable: false,
     async execute(cmd, ctx) {
       if (!ctx.memory) {
         // 正常装法到不了这里（没有 MemoryStore 时工具不注册）；宿主自己把工具塞进 LoopConfig.tools 才会
@@ -90,7 +102,26 @@ export function memory(opts: MemoryOptions = {}): Socket {
           isError: true,
         }
       }
-      const fs = bindMemoryFs(ctx.memory, namespace(ctx), directories)
+      const prefix = namespace(ctx)
+      if (!isValidNamespace(prefix)) {
+        // fail-closed：不合规的前缀可能与别的 principal 的记忆互相嵌套，一个键都不碰。细节只给宿主（可能含 principal id）
+        if (!warnedNamespace) {
+          warnedNamespace = true
+          warn(
+            `[reins/memory] memory.namespace must return "" or a path starting with "/", not ending with "/", with no empty, . or .. segments and no "${MEMORY_ROOT.slice(1)}" segment, got ${JSON.stringify(prefix) ?? String(prefix)}. The memory tool refuses every call in sessions that get an invalid namespace; further invalid values are not reported.`,
+          )
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Memory is unavailable in this session: the host's memory namespace is invalid.",
+            },
+          ],
+          isError: true,
+        }
+      }
+      const fs = bindMemoryFs(ctx.memory, prefix, directories)
       const outcome = await executeMemoryCommand(fs, cmd, limits)
       if (outcome.op) {
         // 留痕排在 tool_result 之前（循环保证）；模型不可见，给配额 / 回放 / eval 看
@@ -125,6 +156,15 @@ export function memory(opts: MemoryOptions = {}): Socket {
     socket.systemPrompt = (setup) => (setup.memory ? rules : undefined)
   }
   return socket
+}
+
+/**
+ * namespace 返回值是否可用：空串（全体共享）或规范绝对路径，且不含 memories 段。
+ * 规范 + 无 memories 段保证不同前缀的记忆键空间互不嵌套：键的 memories 段恰好落在前缀之后那一段
+ */
+function isValidNamespace(ns: unknown): ns is string {
+  if (typeof ns !== "string") return false
+  return ns === "" || (isCanonicalKeyPrefix(ns) && !hasMemorySegment(ns))
 }
 
 /** 构造期校验常设目录：与模型给的路径走同一个规范化函数（同一个值两处比对调同一个纯函数），根本身不算 */

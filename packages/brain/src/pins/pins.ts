@@ -30,6 +30,7 @@ import {
   isCompaction,
   type MaybePromise,
   type Socket,
+  supersededIds,
   type Tool,
   type ToolCallEvent,
   type ToolResultDraft,
@@ -182,10 +183,19 @@ export function lastHostPin(events: readonly Event[], spec: string): PinNote | u
   return undefined
 }
 
-/** 模型钉的、文字完全相同的一条（从后往前找） */
-export function findModelPin(events: readonly Event[], text: string): PinNote | undefined {
+/**
+ * 模型钉的、文字完全相同的一条（从后往前找）。
+ * `superseded` 给出时跳过其中的 id：被取代的旧 pin 在下次整理前仍留在视图里，但不再幸存——
+ * 判重与 replaces 只该认现行的，否则回执说"已钉住"、整理时却丢了（幸存规则同样排除被取代的，core `keptBy`）
+ */
+export function findModelPin(
+  events: readonly Event[],
+  text: string,
+  superseded: ReadonlySet<string> = new Set(),
+): PinNote | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i] as Event
+    if (superseded.has(e.id)) continue
     if (isPinNoteEvent(e) && pinMetaOf(e)?.source === "model" && e.payload.text === text) return e
   }
   return undefined
@@ -351,10 +361,20 @@ export function pins(opts: PinsOptions = {}): Socket {
         return replaceResult(result, err instanceof Error ? err.message : String(err), true)
       }
 
+      // 取代关系按完整时间线算（含本轮投影新造的），与幸存规则同一个 core 函数
+      const superseded = supersededIds(timelineSoFar(ctx))
       let replaced: PinNote | undefined
       if (args.replaces !== undefined) {
-        replaced = findModelPin(ctx.events, args.replaces)
+        replaced = findModelPin(ctx.events, args.replaces, superseded)
         if (!replaced) {
+          if (findModelPin(ctx.events, args.replaces)) {
+            // 指向的是自己钉过、但已被后来的 pin 取代的那条：再取代它会让现行的那条与新的同时幸存
+            return replaceResult(
+              result,
+              "That note has already been replaced by a later one. Pass the text of the note currently in effect in `replaces`.",
+              true,
+            )
+          }
           const hostHit = ctx.events.find(
             (e) => isPinNoteEvent(e) && e.payload.text === args.replaces && pinMetaOf(e)?.source === "host",
           )
@@ -373,7 +393,7 @@ export function pins(opts: PinsOptions = {}): Socket {
             false,
           )
         }
-      } else if (findModelPin(ctx.events, args.text)) {
+      } else if (findModelPin(ctx.events, args.text, superseded)) {
         return replaceResult(result, "Already pinned; nothing changed.", false)
       }
 

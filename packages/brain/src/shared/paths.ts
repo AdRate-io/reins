@@ -49,3 +49,13 @@ export function resolveRootedPath(raw: unknown, root: string, field = "path"): s
 export function isUnder(dir: string, path: string): boolean {
   return path.startsWith(`${dir}/`)
 }
+
+/**
+ * 宿主给的存储键前缀（skills 的 root、memory 的 namespace）是否规范：`/` 起、不以 `/` 收、没有空段与 `.` / `..` 段。
+ * 规范形态保证"前缀 + 路径"按 `/` 切开的段与各自的段一一对应，按段判定（如 memories 段）才可靠
+ */
+export function isCanonicalKeyPrefix(p: string): boolean {
+  if (!p.startsWith("/")) return false
+  const segments = p.split("/").slice(1)
+  return segments.length > 0 && segments.every((s) => s.length > 0 && s !== "." && s !== "..")
+}

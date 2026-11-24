@@ -72,6 +72,11 @@ export const MANIFEST_HEADING = `Folded tool results (bring one back verbatim wi
 /** 被折叠用户消息里媒体的清单标题；与工具结果清单分开，没有媒体时摘要逐字不变 */
 export const MEDIA_MANIFEST_HEADING = `Images, video or audio in folded user messages (bring the message back verbatim with ${RECALL_TOOL_NAME}({ seq })):`
 
+/** compact({ recall: false }) 时的两个清单标题：模型没有取回工具，标题只说原件还在日志里 */
+export const MANIFEST_HEADING_NO_RECALL = "Folded tool results (still in the session log, by seq):"
+export const MEDIA_MANIFEST_HEADING_NO_RECALL =
+  "Images, video or audio in folded user messages (still in the session log, by seq):"
+
 export interface ManifestOptions {
   /** 最多列几条，其余折成一行。缺省 80 */
   maxItems?: number
@@ -88,14 +93,18 @@ export function renderCompactionSummary(
   folded: readonly FoldedToolResult[] = [],
   manifest: ManifestOptions = {},
   media: readonly FoldedUserMedia[] = [],
+  recall = true,
 ): string {
   const parts = [args.summary]
   if (args.keep.length > 0)
     parts.push(`Key facts carried forward:\n${args.keep.map((k) => `- ${k}`).join("\n")}`)
-  const list = renderFoldedToolResults(folded, { heading: MANIFEST_HEADING, ...manifest })
+  const list = renderFoldedToolResults(folded, {
+    heading: recall ? MANIFEST_HEADING : MANIFEST_HEADING_NO_RECALL,
+    ...manifest,
+  })
   if (list) parts.push(list)
   const mediaList = renderFoldedUserMedia(media, {
-    heading: MEDIA_MANIFEST_HEADING,
+    heading: recall ? MEDIA_MANIFEST_HEADING : MEDIA_MANIFEST_HEADING_NO_RECALL,
     ...(manifest.maxItems !== undefined ? { maxItems: manifest.maxItems } : {}),
   })
   if (mediaList) parts.push(mediaList)
@@ -149,6 +158,8 @@ export interface PlanOptions {
   timeline?: readonly Event[]
   /** 被折叠工具结果清单：false 不列；对象调条数与排除名单。缺省列、上限 80 条 */
   manifest?: false | ManifestOptions
+  /** 模型有没有 recall 取回工具：决定清单标题提不提 recall。缺省 true */
+  recall?: boolean
 }
 
 export function planCompaction(
@@ -242,7 +253,7 @@ export function planCompaction(
     ok: true,
     payload: {
       coversSeq: [from, to],
-      summary: renderCompactionSummary(args, manifest, manifestOpts ?? {}, media),
+      summary: renderCompactionSummary(args, manifest, manifestOpts ?? {}, media, opts.recall ?? true),
       decidedBy: "model",
       pinsKept: survivors.map((e) => e.id),
     },

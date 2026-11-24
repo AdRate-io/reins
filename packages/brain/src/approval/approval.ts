@@ -52,7 +52,10 @@ export interface PolicyRule {
   id: string
   /** 是否命中。抛错按 fail-closed 记 deny */
   match(call: PolicyCall, ctx: TurnContext): MaybePromise<boolean>
-  /** ask 时给审批人看的一句话摘要；缺省 `name(入参 JSON)`（按 maxSummaryChars 截断） */
+  /**
+   * ask 时给审批人看的一句话摘要；缺省 `name(入参 JSON)`（按 maxSummaryChars 截断）。
+   * 入参来自模型、形状不保证（工具没写 validate 时原样传入）；抛错与 match 同样按 fail-closed 记 deny
+   */
   summary?(call: PolicyCall): string
   /** deny 时给模型的说明；缺省 "策略 <id> 不允许调用 <name>" */
   reason?: string
@@ -254,7 +257,15 @@ export async function evaluatePolicy(
 
   const asked = await firstMatch(stages.ask)
   if (isOutcome(asked)) return asked
-  if (asked) return { verdict: "ask", policyId: asked.id, summary: summaryOf(asked) }
+  if (asked) {
+    // 宿主写的摘要函数读的是模型给的入参，抛错与 match 同一口径 fail-closed——
+    // 漏了这一道，异常会抛出 runLoop、不落终结事件，pending 每个 run 补跑都再抛一次
+    try {
+      return { verdict: "ask", policyId: asked.id, summary: summaryOf(asked) }
+    } catch (err) {
+      return failClosed(asked.id, err)
+    }
+  }
 
   // 工具自己声明的 needsApproval 视作 ask 段的最后一条规则；函数形态抛错同样 fail-closed
   if (tool.needsApproval !== undefined) {

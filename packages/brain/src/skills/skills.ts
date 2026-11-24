@@ -28,8 +28,8 @@
  * 不做：脚本执行（子进程越硬约束，技能要的动作宿主用普通 Tool 暴露）、热刷新、`allowed-tools` 等私有字段。
  */
 import type { SkillSource, Socket, SocketSetup, Tool } from "@reinsjs/core"
-import { MEMORY_ROOT } from "../memory/paths.js"
-import { resolveRootedPath } from "../shared/paths.js"
+import { hasMemorySegment, MEMORY_ROOT } from "../memory/paths.js"
+import { isCanonicalKeyPrefix, resolveRootedPath } from "../shared/paths.js"
 import { formatFileView } from "../shared/view.js"
 import { DEFAULT_SKILLS_ROOT, SKILL_FILE_NAME, SKILL_NAME_RE } from "./constants.js"
 import { parseSkillMarkdown } from "./frontmatter.js"
@@ -48,7 +48,10 @@ export interface SkillsOptions {
    * 宿主按"这个环境有没有技能库"条件装配时可以直接透传可能为 undefined 的值
    */
   source?: SkillSource | undefined
-  /** 载体里技能的键前缀，缺省 `/skills`；须是 `/` 起、不以 `/` 收、不含 `.` / `..` 段的规范路径，且不能与 `/memories` 重叠 */
+  /**
+   * 载体里技能的键前缀，缺省 `/skills`；须是 `/` 起、不以 `/` 收、不含 `.` / `..` 段的规范路径，且不能与 `/memories` 重叠、不能含 `memories` 段。
+   * 任何带 `memories` 段的键（技能名或附件路径）都当不存在：与 memory 共用载体时，那是模型可写的地方
+   */
   root?: string
   /**
    * `skill_read` 单次最多返回的字符数（正文部分，硬上限：带 range 也截、超长单行切开）。缺省 40000：
@@ -96,6 +99,14 @@ export async function loadSkillMenu(source: SkillSource, root = DEFAULT_SKILLS_R
     const m = skillFile.exec(key)
     if (!m) continue
     const dir = m[1] as string
+    if (hasMemorySegment(key)) {
+      // 与记忆共用载体时这里可能是模型经 memory 写的（namespace 恰好等于 root）：不读、不进菜单
+      menu.rejected.push({
+        path: key,
+        reason: `the path segment ${JSON.stringify(MEMORY_ROOT.slice(1))} is reserved for the memory tool; whatever the model can write must not become a skill`,
+      })
+      continue
+    }
     const content = await source.read(key)
     if (content === null) continue // list 与 read 之间被删了，当不存在
     const parsed = parseSkillMarkdown(content)
@@ -157,19 +168,16 @@ export function parseSkillReadInput(raw: unknown, root = DEFAULT_SKILLS_ROOT): S
   return out
 }
 
-/** root 必须是规范的绝对路径（`/a/b`，无空段、无 `.`/`..`），且不能与记忆根相同或互为前缀 */
+/** root 必须是规范的绝对路径（`/a/b`，无空段、无 `.`/`..`），且不能与记忆根相同或互为前缀、不能含 `memories` 段 */
 export function assertSkillsRoot(root: string): void {
-  const segments = root.split("/")
-  const bad =
-    !root.startsWith("/") ||
-    segments.length < 2 ||
-    segments.slice(1).some((s) => s.length === 0 || s === "." || s === ".." || /\s/.test(s))
+  const bad = !isCanonicalKeyPrefix(root) || /\s/.test(root)
   if (bad) {
     throw new RangeError(
       `skills.root must be a canonical path starting with "/", not ending with "/", with no empty, . or .. segments, got ${JSON.stringify(root)}`,
     )
   }
-  if (root === MEMORY_ROOT || root.startsWith(`${MEMORY_ROOT}/`) || MEMORY_ROOT.startsWith(`${root}/`)) {
+  // 带 memories 段的 root 可能正是某个 namespace 的记忆根（`/t/memories`），与 /memories 本身同样拒绝
+  if (hasMemorySegment(root) || MEMORY_ROOT.startsWith(`${root}/`)) {
     throw new RangeError(
       `skills.root ${JSON.stringify(root)} overlaps the memory root ${MEMORY_ROOT}: whatever the model can write through the memory tool must not become a skill (which is trusted as system)`,
     )
@@ -205,12 +213,13 @@ export function skills(opts: SkillsOptions = {}): Socket {
           )
           return undefined
         }
-        if (setup.hostTools.some((t) => t.name === SKILL_READ_TOOL_NAME)) {
-          // 同名以宿主为准（resolveSocketContributions 去重规则）：本模块的工具会被丢掉，菜单却仍会指向"skill_read"——
-          // 那是宿主的另一个工具、语义与 trust 都不同。宁可整个不注册
+        if (setup.tools.some((t) => t.name === SKILL_READ_TOOL_NAME)) {
+          // 同名以先到者为准（resolveSocketContributions 去重规则，与 lazy-tools 同一判据）：本模块的工具会被丢掉，
+          // 菜单却仍会指向"skill_read"——那是宿主或前面某个 Socket（如一台 MCP 服务器）的另一个工具、语义与 trust 都不同。
+          // 宁可整个不注册
           warnOnce(
             "host-tool",
-            `[reins/skills] The host tool table already has a tool named ${SKILL_READ_TOOL_NAME}, so this module's tool and menu are not registered. Rename the host tool to enable them.`,
+            `[reins/skills] The tool table already has a tool named ${SKILL_READ_TOOL_NAME} (from the host or a socket registered before skills()), so this module's tool and menu are not registered. Rename that tool to enable them.`,
           )
           return undefined
         }
@@ -258,6 +267,14 @@ export function skills(opts: SkillsOptions = {}): Socket {
         }
       }
       const key = `${root}/${input.name}/${input.path}`
+      // 带 memories 段的键可能是模型经 memory 写的（宿主的 namespace 落在技能根或技能目录里）：
+      // 绝不以 system 信任读出，与真不存在同一句话（越权当不存在）
+      if (hasMemorySegment(key)) {
+        return {
+          content: [{ type: "text", text: `Skill file ${input.name}/${input.path} does not exist.` }],
+          isError: true,
+        }
+      }
       let content: string | null
       try {
         content = await source.read(key)

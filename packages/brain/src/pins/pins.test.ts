@@ -11,6 +11,7 @@ import {
   type LoopConfig,
   type RunResult,
   runLoop,
+  supersededIds,
   type TurnContext,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
@@ -242,6 +243,39 @@ describe("pins × runLoop：模型的 pin 工具", () => {
     const r5 = resultOf(logged, "p5")
     expect(r5.payload.isError).toBe(true)
     expect(textOf(r5)).toMatch(/pinned by the host/)
+  })
+
+  it("判重与 replaces 只认现行的 pin：已被取代的旧 pin 虽仍在视图里，再钉回它要真的钉、replaces 它要报错", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [doPin("p1", { text: "X" })] },
+      { drafts: [doPin("p2", { text: "Y", replaces: "X" })] },
+      // 改回 X：X 已被 Y 取代、下次整理不会幸存，不能回"已钉住"
+      { drafts: [doPin("p3", { text: "X" })] },
+      { drafts: [say("好")] },
+    ])
+    await drain(runLoop(config(lowering, log)))
+    let logged = await all(log)
+    let notes = notesOf(logged).filter((n) => n.actor === "model")
+    expect(notes.map((n) => n.payload.text)).toEqual(["X", "Y", "X"])
+    expect(textOf(resultOf(logged, "p3"))).toMatch(/^Pinned\./)
+    expect([...supersededIds(logged)].sort()).toEqual([notes[0]?.id])
+
+    // 对已被取代的旧 pin 再 replaces：指错了对象，报错并指明它已被取代，而不是让 Y 与 Z 同时幸存
+    const log2 = new InMemoryEventLog()
+    const lowering2 = new ScriptedLowering([
+      { drafts: [doPin("p1", { text: "X" })] },
+      { drafts: [doPin("p2", { text: "Y", replaces: "X" })] },
+      { drafts: [doPin("p3", { text: "Z", replaces: "X" })] },
+      { drafts: [say("好")] },
+    ])
+    await drain(runLoop(config(lowering2, log2)))
+    logged = await all(log2)
+    notes = notesOf(logged).filter((n) => n.actor === "model")
+    expect(notes.map((n) => n.payload.text)).toEqual(["X", "Y"])
+    const r3 = resultOf(logged, "p3")
+    expect(r3.payload.isError).toBe(true)
+    expect(textOf(r3)).toMatch(/already been replaced/)
   })
 
   it("入参校验：空文字、超长文字以 isError 告知模型，不 emit 任何 pin", async () => {

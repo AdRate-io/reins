@@ -16,6 +16,7 @@ import {
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
+import { approval } from "../approval/index.js"
 import { spill } from "../spill/index.js"
 import {
   DEFAULT_LAZY_SUMMARY_CHARS,
@@ -691,4 +692,43 @@ describe("lazyTools() 原生路径（capabilities.deferredTools，L1）", () => 
     ])
     expect(resultOf(await all(log), "c2").payload.isError).toBe(false)
   })
+})
+
+describe("lazyTools() 与 approval() 同装：lazyTools 在前、approval 殿后", () => {
+  // 循环逐个问 beforeTool、第一个 block / defer 就停：approval 排在前面会先把未取回的调用转去问人（原生路径）
+  // 或判成未知工具（过滤路径），lazyTools 的"先 tool_find"拦截轮不到。README 的推荐顺序由这条用例锁住
+  for (const native of [false, true]) {
+    it(`未取回就直调一件要审批的菜单工具：被 lazyTools 拦下指向 tool_find，不问人、不判未知（${native ? "原生" : "过滤"}路径）`, async () => {
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering(
+        [
+          { drafts: [callTool("c0", "ads_disable", { x: "1" })] },
+          { drafts: [callTool("c1", TOOL_FIND_TOOL_NAME, { names: ["ads_disable"] })] },
+          { drafts: [callTool("c2", "ads_disable", { x: "1" })] },
+        ],
+        native ? { capabilities: { deferredTools: true } } : {},
+      )
+      const { result } = await drain(
+        runLoop({
+          sessionId: SESSION,
+          log,
+          lowering,
+          model: MODEL,
+          tools: [tool("greet", { risk: "low" }), tool("ads_disable", { lazy: true, risk: "high" })],
+          sockets: [lazyTools({ warn: () => {} }), approval()],
+          input: "开始",
+          ...deterministic(),
+        }),
+      )
+      const events = await all(log)
+      const blocked = resultOf(events, "c0")
+      expect(blocked.payload.isError).toBe(true)
+      expect(textOf(blocked)).toContain(TOOL_FIND_TOOL_NAME)
+      expect(events.some((e) => e.type === "core.approval_decision")).toBe(false)
+      // 取回之后再调：照常走审批（risk high → 问人）
+      expect(result.status).toBe("paused")
+      const requests = events.filter((e) => e.type === "core.approval_request")
+      expect(requests.map((e) => (e.payload as { toolCallId: string }).toolCallId)).toEqual(["c2"])
+    })
+  }
 })

@@ -238,7 +238,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 用户消息后移 vs 说明后移 | 用户消息后移记 `lossy(user)`（改变了对话顺序）；脑子说明后移仍算 `exact`（只换位置） |
 | runLoop vs TanStack 适配器遇 `defer` | runLoop 只挡需要审批的那个调用；TanStack 在 `beforeTools` 边界暂停，整轮工具全停（引擎形状决定，不绕） |
 | asTool 子代理暂停：默认循环 vs TanStack | 默认循环 `subagentPause` 冒泡成父 paused；TanStack 路径降级为 isError（子会话保留可续跑） |
-| `ctx.batch`：默认循环 vs TanStack | 默认循环逐个判、beforeTool 看得见同批前面的结果；TanStack 整批先判，同批结果不可见、`held` 恒空、补跑批没有 onTurnEnd——`haltOnFailure` 只拦得住补跑预置的失败，`stopAfter` 兑现不了"审批后收尾" |
+| `ctx.batch`：默认循环 vs TanStack | 默认循环逐个判、beforeTool 看得见同批前面的结果；TanStack 整批先判，同批结果不可见、`held` 恒空、补跑批没有 onTurnEnd——`haltOnFailure` 只拦得住补跑预置的失败，`stopAfter` 兑现不了"审批后收尾"；与审批同批的 handoff 照样兑现（下一轮从日志重建，用例锁住） |
 | Responses reasoning：pi 版 vs fetch 版 | pi 版只在请求 effort 时带 `include: ["reasoning.encrypted_content"]`；fetch 版推理模型永远带（gpt-5 缺省开推理，不带就产出无法回放的项） |
 | `deferredTools` 能力位：Anthropic 官方 vs DeepSeek 的 Anthropic 端口 | 只对 `provider: "anthropic"` 缺省开；DeepSeek 兼容端口实测忽略 `defer_loading`；Chat / Responses / pi 版把 `deferLoading` 的工具直接不发 |
 | DeepSeek `reasoning_content`：`deepseek()` vs `openaiChat()` | 前者缺省开方言、每条历史 assistant 字段必在；后者不带 |
@@ -285,7 +285,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
 - **阈值兜底按"估算 + 固定开销"比 `contextLimit − reserveTokens`，开销是 core `contextOverheadOf(timeline)`** — `reserveTokens` 实际只给输出留；告诉模型的阈值要有用例锁住"报过线 ⟺ 真的动作"（踩坑 40）。触发后裁到回落线 `cutToRatio`（缺省 0.6）而不是触发线下，测切点合法性的用例要显式 `cutToRatio: 1`。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试；判定先看状态码（408/409/429/5xx），有状态码就只按它定，文案关键词只在没有状态码时兜底且不匹配裸数字——SDK 文案固定 "<status> <body>"，正文里的 "timeout" / "429" 不是信号。
-- **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建。例外：补跑或工具批中途被**任何**中止（用户停止、断线、丢租约）打断、批里还有没落结果的调用时不调，直接暂停（否则 Socket 判出 handoff / done 会把 pending 带进非 paused 结局）。
+- **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建（回执之后出现 user_message 即作废；不按补跑轮收窄，TanStack 补跑批不调 onTurnEnd、靠下一轮重建）。例外：补跑或工具批中途被**任何**中止（用户停止、断线、丢租约）打断、批里还有没落结果的调用时不调，直接暂停（否则 Socket 判出 handoff / done 会把 pending 带进非 paused 结局）。
 - **用户停止的收尾挂在 `pause()` 里，判据是 `signal.reason` 的 `name === "RunStop"`** — 新增任何暂停出口都必须走 `pause()`，否则停止留下 pending、下一个 run 照样补跑；停止原因只认第一个 abort，已因丢租约中止的 run 再 `abort(new RunStop())` 无效。`RunStop("host")` 是宿主收尾遗留调用（asTool 开新一轮前），文案换"之前的 run 中断了"、不说用户；文案按原因取只走 `stopTextsOf`。连接阶段被掐时 fetch 抛的是 `signal.reason` 本身（踩坑 46），宿主已中止的失败一律暂停不记 error。
 - **Socket 暂停的 `code` 只是标注：库不按它分支、不进续跑状态，写错也不改变结局** — 意见里不合规的地方由 `resolveSocketPause` 改正（码丢掉、`reason` 不在闭集按 host），改正处记一条非终结 `core.error(input)` 再照常暂停，别改成 `fail()`（非停止中止时 pending 会被带进 error 结局）；`note` 随 budget / host 中断一并落进 `run_paused`（含宿主中止、用户停止那几句），断言该载荷全等的用例要算进去；`PAUSE_CODE_RE` 只许收紧不许放宽（读侧不合规判 unknown）。口径只走 `loop/pause-code.ts`，TanStack 适配器调同一对函数。
 - **一次没说完的模型响应里的 tool_call 一律不执行** — 响应以 error 收尾时随 `run_ended(error)` 落 `MODEL_FAILED_NOT_EXECUTED_TEXT`，被宿主中止（`stopReason: "aborted"` 或流抛错时已中止）时暂停前落 `MODEL_INTERRUPTED_NOT_EXECUTED_TEXT`，用户停止仍走停止文案。降级层被掐时会按半截入参吐出调用，不能当"完整的块"留给补跑；断言"中止后 pending"的用例要换成断言这条结果。
@@ -309,7 +309,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`approval({ ttlMs })` 比的是 `approval_request.at` 与宿主批准事件 `at` 之差（循环时钟），不读墙钟；判定挂在 ask 落点、以 deny + block 落地** — 管线判 allow 的调用不看 ttl；还没批的 pending 不会因为老而过期。
 - **skills 的载体是 `SkillSource = Pick<MemoryStore, "list" | "read">`，布局 `${root}/<name>/SKILL.md`** — `name` 须与目录名一致且匹配 `^[a-z0-9][a-z0-9-]{0,63}$`；缺 source 或无一份合规技能不注册；菜单进 configHash，技能表变了只影响下一 run。
 - **`skill_read` 缺省上限 40k 字符是硬上限（带 range 也截、超长单行切开），`resultPolicy.maxTokens = 2 × maxReadChars + 256`** — 上界不能按"token ≤ 字符"取，core 粗估非 ASCII 一字一 token（踩坑 22 / 23）。若将来允许模型写技能，模型写的必须回 untrusted。
-- **`skills({ root })` 拒绝与 `/memories` 相同或互为前缀；宿主工具表已有同名 `skill_read` 时整个不注册** — 否则模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能。
+- **`memories` 段归记忆工具独占：skills 的 root 带它或是 `/memories` 的祖先即构造期拒绝，菜单与 `skill_read` 把带它的键当不存在；memory 的 namespace 也不许带它** — 记忆键恒为 `<namespace>/memories/…`，namespace 撞技能根时模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能；判据只走 `hasMemorySegment`。工具表（宿主 + 排在前面的 Socket，如 MCP）已有同名 `skill_read` 时 skills 整个不注册（去重先到者为准）。
+- **memory 工具 `risk: "low"` 但 `replayable: false`，每次调用前多一条 `core.tool_started`** — 写命令不幂等，中断后续跑落"结果未知"不重放；断言日志形状的用例要算进去。namespace 返回值每次用前校验，不合规 fail-closed（isError、不碰存储、每实例告警一次）。
 - **AdRate `skills install` 落盘的 SKILL.md 是存根，正文只在 CLI 里** — 示例用 `inlineSkills` 从 CLI 的 `--json` 拼；接任何技能目录前先看一眼正文（踩坑 21）。
 - **lazy-tools 的"已取回"集合从时间线重建（`tool_find` 的 tool_call 与非 isError 的 tool_result 配对 ∩ 当前菜单），菜单按 Tool 对象同一性记** — 没取回就直接调菜单工具会被 `beforeTool` block 并指向 `tool_find`，不是"未知工具"；lazy 工具来自注册在它之后的 Socket 则不藏、告警指出顺序。
 - **`stopAfter` 排在 handoff 之后、compact / budget 之前；`haltOnFailure` 排最前** — onTurnEnd 第一个给意见的定，`[handoff, end_run]` 时排在 handoff 前会吞掉已回执的交接；`ctx.batch` 是随落随更的同一对象，别存引用当快照。

@@ -430,16 +430,17 @@ describe("reinsMiddleware：脑子模块", () => {
       "user_message",
       "tool_call",
       "budget_usage",
+      "tool_started", // memory 不可重放
       "memory_op",
       "tool_result",
       "model_text",
       "budget_usage",
       "run_ended",
     ])
-    const op = events[4] as CoreEventOf<"core.memory_op">
+    const op = events[5] as CoreEventOf<"core.memory_op">
     expect(op.payload).toMatchObject({ op: "create", path: "/memories/a.md" })
     expect(op.provenance?.ref).toBe("c1")
-    expect((events[5] as CoreEventOf<"core.tool_result">).payload.isError).toBe(false)
+    expect((events[6] as CoreEventOf<"core.tool_result">).payload.isError).toBe(false)
   })
 
   it("skills：菜单进系统提示，skill_read 的结果 trust=system、模型看到的不套 <untrusted>（与 runLoop 同一口径的 resultTrust）", async () => {
@@ -1080,6 +1081,55 @@ describe("reinsMiddleware：TurnContext.batch（2026-11-02）", () => {
     ])
     // 刻意不对称：TanStack 续跑补完遗留调用后直接问模型，中间没有 onShouldContinue，补跑批没有 onTurnEnd；
     // 所以"审批续跑后收尾"只在 runLoop 成立，这里模型会多被请求一轮（锁住现状，引擎形状决定）
+    expect(f2.adapter.calls).toHaveLength(1)
+  })
+
+  it("handoff × 审批同批（R2）：补跑批没有 onTurnEnd，交接在下一轮从日志重建兑现，不因模型多答一句而丢", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    const sockets = [handoff(), approval({ ask: ["deploy"], allow: ["*"] })]
+    const args = { summary: "聊到一半", nextSteps: ["继续"], triggerMessage: "接着" }
+    const f = fixture(
+      [{ blocks: [callTool("h1", "handoff", args), callTool("c1", "deploy", {})] }],
+      sockets,
+      {},
+      shared,
+    )
+    const chunks = await f.run({ messages: [user("上线并交接")], tools: [deployTool], runId: "run1" })
+    const finished = chunks.find(
+      (c) => c.type === "RUN_FINISHED" && (c as { outcome?: { type: string } }).outcome?.type === "interrupt",
+    ) as { runId: string; outcome: { interrupts: Interrupt[] } } | undefined
+    const interrupt = finished?.outcome.interrupts[0]
+    if (!finished || !interrupt) throw new Error("没有暂停")
+    const continuation = genericInterruptContinuationFromDescriptor(interrupt)
+    if (!continuation) throw new Error("不是通用中断")
+
+    const f2 = fixture([{ blocks: [say("已上线")] }, { blocks: [say("never")] }], sockets, {}, shared)
+    await f2.run({
+      messages: [
+        user("上线并交接"),
+        {
+          role: "assistant",
+          content: null,
+          toolCalls: [
+            { id: "h1", type: "function", function: { name: "handoff", arguments: JSON.stringify(args) } },
+            { id: "c1", type: "function", function: { name: "deploy", arguments: "{}" } },
+          ],
+        },
+      ],
+      tools: [deployTool],
+      parentRunId: finished.runId,
+      resume: [
+        {
+          interruptId: interrupt.id,
+          status: "resolved",
+          payload: { approved: true, by: "boss" },
+          metadata: wrapGenericInterruptContinuation(continuation),
+        },
+      ],
+    })
+    const events = await all(shared.log)
+    expect(types(events).slice(-2)).toEqual(["handoff", "run_ended"])
+    expect(events.at(-1)?.payload).toMatchObject({ status: "handoff" })
     expect(f2.adapter.calls).toHaveLength(1)
   })
 })
