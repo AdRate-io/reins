@@ -115,7 +115,7 @@ export const LOSS_MATRIX: LossMatrix = {
       lossy(
         "user-role",
         "wrapped in a <system_note> tag and sent with the user role",
-        "the model family does not support mid-conversation system, or the note is a directive the model must act on (SystemNotePayload.directive)",
+        "the model family does not support mid-conversation system, the note is a directive the model must act on (SystemNotePayload.directive), or no user turn precedes the note's place (e.g. a run starts with only a note after the model's last answer)",
       ),
     ],
     "core.compaction": [

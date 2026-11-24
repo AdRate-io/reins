@@ -889,3 +889,73 @@ describe("PiAiLowering — 用户文本伪造 system_note 标记", () => {
     expect(JSON.stringify(note?.content)).not.toContain("[[reins:")
   })
 })
+
+// ---------------- 中途 system 前一条不是 user（全库审查 2026-11-25 #32） ----------------
+
+describe("PiAiLowering — Anthropic 中途 system 落不到 user 之后时退回带标签的 user", () => {
+  /** 线上每条非空 system 的前一条角色（Anthropic：必须是 user） */
+  const predecessorsOfSystems = (messages: { role: string; content: unknown }[]) =>
+    messages.flatMap((m, i) =>
+      m.role === "system" && !(Array.isArray(m.content) && m.content.length === 0)
+        ? [messages[i - 1]?.role ?? "none"]
+        : [],
+    )
+
+  it("上个 run 以纯文本收尾、新 run 只带说明：说明不放在 assistant 后面，落点记 lossy(user-role)", async () => {
+    const { fetch, captured } = fakeFetch(anthropicSse)
+    const lo = new PiAiLowering({ apiKey: () => "sk-test", fetch })
+    seq = 0
+    const events: Event[] = [
+      ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
+      ev("core.model_text", { text: "hello" }, { replay: { ...ANTHROPIC } }),
+      ev("core.system_note", { kind: "host", text: "background job finished" }),
+      ev("core.system_note", { kind: "perception", text: "Context <50% used." }),
+    ]
+    const req = lo.toRequest({ events, model: { provider: "anthropic", id: "claude-opus-5" } })
+    expect(req.landings.map((l) => `${l.kind}:${l.landing}`)).toEqual([
+      "exact:user",
+      "exact:assistant-text",
+      "lossy:user-role",
+      // 前一条已是（带标签的）user，第二条可以照常走 system
+      "exact:system",
+    ])
+    for (const l of req.landings) {
+      const declared = declaredLandings("anthropic-messages", l.type)
+      expect(declared.some((d) => d.kind === l.kind && d.landing === l.landing)).toBe(true)
+    }
+    await collect(lo.stream(req))
+    const body = captured[0]?.body as { messages: { role: string; content: unknown }[] }
+    expect(predecessorsOfSystems(body.messages)).toEqual(["user"])
+    expect(JSON.stringify(body.messages)).toContain('<system_note kind=\\"host\\">')
+  })
+
+  it("夹在两段 assistant 之间的说明同样退回 user", async () => {
+    const { fetch, captured } = fakeFetch(anthropicSse)
+    const lo = new PiAiLowering({ apiKey: () => "sk-test", fetch })
+    seq = 0
+    const events: Event[] = [
+      ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
+      ev("core.model_text", { text: "part one" }, { replay: { ...ANTHROPIC } }),
+      ev("core.system_note", { kind: "perception", text: "between" }),
+      ev("core.model_text", { text: "part two" }, { replay: { ...ANTHROPIC } }),
+    ]
+    const req = lo.toRequest({ events, model: { provider: "anthropic", id: "claude-opus-5" } })
+    expect(req.landings[2]).toMatchObject({ kind: "lossy", landing: "user-role" })
+    await collect(lo.stream(req))
+    const body = captured[0]?.body as { messages: { role: string; content: unknown }[] }
+    expect(predecessorsOfSystems(body.messages)).toEqual([])
+  })
+
+  it("说明前面就是 user 时不受影响，仍是 exact(system)", () => {
+    seq = 0
+    const lo = new PiAiLowering({ apiKey: () => "sk-test" })
+    const req = lo.toRequest({
+      events: [
+        ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
+        ev("core.system_note", { kind: "perception", text: "s" }),
+      ],
+      model: { provider: "anthropic", id: "claude-opus-5" },
+    })
+    expect(req.landings[1]).toMatchObject({ kind: "exact", landing: "system" })
+  })
+})

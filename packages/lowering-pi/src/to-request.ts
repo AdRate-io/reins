@@ -25,12 +25,13 @@ import {
   markUntrustedText,
   needsUntrustedMark,
   renderToolReference,
+  type SystemNotePayload,
   type ToolSpec,
   untrustedSourceOf,
 } from "@reinsjs/core"
 import { IMAGE_UNAVAILABLE_NOTE, MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
 import type { PiModel } from "./models.js"
-import { framedSystemNote, markSystemNote } from "./system-note.js"
+import { framedSystemNote, markSystemNote, midSystemSlotFollowsUser, midSystemSlotOf } from "./system-note.js"
 
 /** 模型事件 replay 里记录的来源，产出与回放两头共用 */
 export interface ModelOrigin {
@@ -152,6 +153,48 @@ export interface ToContextInput {
   systemNoteMark?: string
 }
 
+interface MidSystemNote {
+  msg: Message
+  event: Event
+  kind: SystemNotePayload["kind"]
+  /** 已做过 trust 标注的正文（不含标记） */
+  text: string
+}
+
+const MISPLACED_NOTE =
+  "no user turn precedes the note's place (it would follow the model's answer), and Anthropic rejects a mid-conversation system message there, so it is wrapped in a <system_note> tag and sent with the user role"
+
+/**
+ * Anthropic 中途 system 的落点预判（全库审查 2026-11-25 #32）：发出前的改写只能把说明挪到下一条 assistant 之前或末尾，
+ * 落点前一条若是 assistant（上个 run 以纯文本收尾、新 run 只带说明；说明夹在两段 assistant 之间）厂商 400，
+ * 而日志只追加、每轮整段回放，会一直 400。这里用改写同一个归位函数预判，不合法的就地换成带标签的 user、落点改记
+ * lossy(user-role)——与 lowering-fetch 的 Anthropic 线同一取向。按时间线顺序逐条判：退回 user 的说明成为普通
+ * user 消息，后面同一落点的说明就紧跟它、可以照常走 system，与改写时看到的请求体一致。
+ * pi-ai 若在发出时额外丢掉某条 assistant，只会让前一条更可能是 user，预判偏保守，不会放过非法形状。
+ */
+function fallBackMisplacedNotes(
+  messages: Message[],
+  landings: LandingRecord[],
+  notes: readonly MidSystemNote[],
+): void {
+  const marked = new Set<Message>(notes.map((n) => n.msg))
+  for (const n of notes) {
+    const idx = messages.indexOf(n.msg)
+    if (idx === -1) continue
+    const body = messages.filter((m) => !marked.has(m))
+    const afterIndex = messages.slice(0, idx).filter((m) => !marked.has(m)).length
+    if (midSystemSlotFollowsUser(body, midSystemSlotOf(body, afterIndex))) continue
+    marked.delete(n.msg)
+    messages[idx] = { ...n.msg, content: framedSystemNote(n.kind, n.text) } as Message
+    const rec = landings.find((l) => l.eventId === n.event.id)
+    if (rec) {
+      rec.kind = "lossy"
+      rec.landing = "user-role"
+      rec.note = rec.note ? `${MISPLACED_NOTE}; ${rec.note}` : MISPLACED_NOTE
+    }
+  }
+}
+
 export function eventsToContext(input: ToContextInput): { context: Context; landings: LandingRecord[] } {
   const { model, capabilities } = input
   const target: ModelOrigin = { provider: model.provider, api: model.api, model: model.id }
@@ -168,6 +211,8 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
    * 所以结果没到齐时，说明、摘要与用户消息先攒着，到齐后再放出（落点备注说明后移）。时间线本身如实保留插话的位置。
    */
   const awaiting = new Set<string>()
+  /** Anthropic 线上要改写成中途 system 的说明（按时间线顺序），收尾时预判归位、落不到 user 之后的退回 user */
+  const midSystemNotes: MidSystemNote[] = []
   const deferred: {
     msg: Message
     event: Event
@@ -383,9 +428,15 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         const t = text(e, e.payload.text)
         // 指令类说明（directive）不走中途 system：有的上游收下却不执行其中的指令（踩坑 42），一律带标签走 user
         if (capabilities.midConversationSystem && e.payload.directive !== true) {
+          const msg: Message = {
+            role: "user",
+            content: markSystemNote(t.text, input.systemNoteMark),
+            timestamp: e.at,
+          }
+          if (isAnthropic) midSystemNotes.push({ msg, event: e, kind: e.payload.kind, text: t.text })
           note(
             e,
-            { role: "user", content: markSystemNote(t.text, input.systemNoteMark), timestamp: e.at },
+            msg,
             t.escaped ? "lossy" : "exact",
             isAnthropic ? "system" : model.reasoning ? "developer" : "system",
             t.escaped ? ESCAPED_NOTE : undefined,
@@ -440,6 +491,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
   }
   flush()
   settleAwaiting()
+  if (midSystemNotes.length > 0) fallBackMisplacedNotes(messages, landings, midSystemNotes)
 
   const context: Context = { messages }
   if (input.systemPrompt) context.systemPrompt = input.systemPrompt
