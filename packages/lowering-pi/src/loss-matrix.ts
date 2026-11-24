@@ -134,14 +134,34 @@ export const LOSS_MATRIX: LossMatrix = {
   },
   "openai-responses": {
     "core.user_message": [exact("user"), USER_DEFERRED, lossy("user", MEDIA_NOTE_ALL, MEDIA_WHEN)],
-    "core.model_text": [exact("assistant-message")],
+    "core.model_text": [
+      exact("assistant-message"),
+      lossy(
+        "assistant-message",
+        "the message id and phase recorded with this text are not replayed for another model",
+        "the replay's provider/api/model differs from the current one and carries a textSignature",
+      ),
+    ],
     "core.model_thinking": [
       exact("reasoning-item", "the encrypted_content is replayed verbatim"),
       THINKING_COMMON.noSignature,
       THINKING_COMMON.foreign,
       THINKING_COMMON.foreignDropped,
     ],
-    "core.tool_call": [exact("function_call"), TOOL_CALL_ARGS],
+    "core.tool_call": [
+      exact("function_call"),
+      exact(
+        "function_call",
+        "the fc_ item id is not replayed for another model",
+        "the replay comes from another model",
+      ),
+      lossy(
+        "function_call",
+        "the tool namespace is not replayed for another model",
+        "the replay comes from another model and carries a namespace",
+      ),
+      TOOL_CALL_ARGS,
+    ],
     "core.tool_result": [
       exact("function_call_output"),
       lossy("function_call_output", MEDIA_NOTE_ALL, MEDIA_WHEN),

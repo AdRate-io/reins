@@ -108,6 +108,35 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       ],
     },
     {
+      label: "model_text 换型号、带 textSignature",
+      events: [
+        user(),
+        mk("core.model_text", { text: "t" }, { ...origin, model: `${model.id}-older`, textSignature: "{}" }),
+      ],
+    },
+    {
+      label: "tool_call 换型号、带 namespace",
+      events: [
+        user(),
+        mk(
+          "core.tool_call",
+          { toolCallId: "c1", name: "f", args: { a: 1 } },
+          { ...origin, model: `${model.id}-older`, namespace: "ns" },
+        ),
+      ],
+    },
+    {
+      label: "tool_call 换型号、带 fc_ 项 id",
+      events: [
+        user(),
+        mk(
+          "core.tool_call",
+          { toolCallId: "c1|fc_1", name: "f", args: { a: 1 } },
+          { ...origin, model: `${model.id}-older` },
+        ),
+      ],
+    },
+    {
       label: "tool_call 对象入参",
       events: [user(), mk("core.tool_call", { toolCallId: "c1", name: "f", args: { a: 1 } }, origin)],
     },

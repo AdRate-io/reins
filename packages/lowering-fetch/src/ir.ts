@@ -96,8 +96,8 @@ export function sameOrigin(a: ModelOrigin, b: ModelOrigin): boolean {
 }
 
 /**
- * 是否来自别家：只比 provider 与 api。响应里报告的模型 id 常与请求的不同（日期后缀、别名、网关改名），
- * 同家同协议下回放数据仍可用，不算有损。
+ * 是否来自别家：只比 provider 与 api，用来分"别家"与"同家"两种有损说法。签名 / 加密推理 / 项 id 这类只对产出它的
+ * 型号有效的回放数据另按 `sameOrigin`（三者一致）判，同家换型号一样不回放（踩坑 37）。
  */
 export function foreignOrigin(a: ModelOrigin, target: ModelOrigin): boolean {
   return a.provider !== target.provider || a.api !== target.api

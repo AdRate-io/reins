@@ -129,6 +129,10 @@ function sameOrigin(a: ModelOrigin, b: ModelOrigin): boolean {
   return a.provider === b.provider && a.api === b.api && a.model === b.model
 }
 
+const TEXT_SIGNATURE_NOTE =
+  "the message id and phase recorded with this text are not replayed for another model"
+const NAMESPACE_NOTE = "the tool namespace is not replayed for another model"
+
 const DEFERRED_NOTE =
   "moved after that batch of tool results (tool results must immediately follow their call)"
 const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
@@ -281,8 +285,9 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
           land(e, "lossy", "text-or-drop", "pi-ai downgrades unsigned thinking to text or drops it")
         // 判据与 pi-ai 回放时的 isSameModel 逐字同口径（transform-messages：provider + api + model 三者相等）：
         // 不同就由 pi-ai 改写——带签名的思考降成纯文本，redacted 或正文为空的整块丢掉。
-        // 型号 id 取自厂商回报（anthropic-messages 线），2026-11-24 实测 DeepSeek Anthropic 端口与官方
-        // Haiku 5.5 都与请求逐字一致（spikes/pi-reported-model）；网关改名时这里如实记有损，不假装 exact。
+        // Anthropic 线的型号 id 取自厂商回报（Responses 线取请求的 id，不漂移）。2026-11-24 只实测了 DeepSeek
+        // Anthropic 端口与官方 Haiku 5.5 两处，回报与请求逐字一致（spikes/pi-reported-model）；请求别名而厂商回报
+        // 带日期的 id、或经改名的中转站时未测——那时每轮都会降级，这里如实记有损，不假装 exact。
         else if (!sameOrigin(origin, target)) {
           if (block.redacted === true || block.thinking.trim() === "")
             land(
@@ -308,7 +313,11 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         const block: TextContent = { type: "text", text: e.payload.text }
         if (typeof r.textSignature === "string") block.textSignature = r.textSignature
         assistant(e, origin).content.push(block)
-        land(e, "exact", isAnthropic ? "assistant-text" : "assistant-message")
+        // pi-ai 对非同源（三者任一不同）的正文只留文字、剥掉 textSignature；Responses 线靠它回放消息 id 与 phase
+        // （commentary / final_answer），没了就退成 msg_pi_N、phase 丢失。Anthropic 线不用它，照旧 exact
+        if (!isAnthropic && !sameOrigin(origin, target) && typeof r.textSignature === "string")
+          land(e, "lossy", "assistant-message", TEXT_SIGNATURE_NOTE)
+        else land(e, "exact", isAnthropic ? "assistant-text" : "assistant-message")
         break
       }
 
@@ -325,7 +334,14 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         if (typeof r.thoughtSignature === "string") block.thoughtSignature = r.thoughtSignature
         if (typeof r.namespace === "string") block.namespace = r.namespace
         assistant(e, origin).content.push(block)
+        // Responses 线换型号：pi-ai 只对同型号回放 namespace（lowering-pi 不开 deferredTools），fc_ 项 id 也不再回放；
+        // 前者改变工具归属记 lossy，后者只影响与推理项的配对校验、语义无损，exact 加备注
+        const otherModel = !isAnthropic && !sameOrigin(origin, target)
         if (wrapped) land(e, "lossy", "wrapped-args", "non-object arguments are wrapped as { value }")
+        else if (otherModel && typeof r.namespace === "string")
+          land(e, "lossy", "function_call", NAMESPACE_NOTE)
+        else if (otherModel && e.payload.toolCallId.includes("|fc_"))
+          land(e, "exact", "function_call", "the fc_ item id is not replayed for another model")
         else land(e, "exact", isAnthropic ? "tool_use" : "function_call")
         break
       }
