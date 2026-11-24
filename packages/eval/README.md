@@ -36,7 +36,7 @@ The reference CLI is `examples/eval/run.ts` in the repository; copy from it rath
 | `metrics` | pure functions over a timeline: tokens and cache hits, turns / tool calls / duplicate calls, compaction count and streaks, governance decay windows |
 | `arms` | `noneArm`, `thresholdArm`, `withCapabilities` / `withContextWindow` lowering wrappers; brain-driven arms are assembled by the caller from `@reinsjs/brain` |
 | `runner` | fixture × arm × repeat runner with approval auto-answering, budget resumes, handoff following and a forked probe question at the end |
-| `gate` | the four hard rules from the PRD (§7 threshold 2 / P8): recall, token cost, governance, no regressions |
+| `gate` | the four hard rules from the PRD (§7 threshold 2 / P8), candidate against reference: total tokens (≤ reference × ratio), completion (≥), recall (≥), governance (the candidate's own violation rate does not rise after compaction) |
 | `report` | Markdown tables |
 
 Zero `node:*`: file I/O and the CLI live in the caller (`examples/eval` in the repository is the reference CLI and holds the fixtures reins itself is measured on).

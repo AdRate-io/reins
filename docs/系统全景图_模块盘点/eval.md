@@ -98,7 +98,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 - **tokens**：把时间线里全部 `core.budget_usage` 的 `input / output / cacheRead / cacheWrite` 相加，`total = 四者之和`（缓存读按 1× 计，反映"模型每轮读了多少"）。另有 `billableTokens(t) = input + output + 0.1 × cacheRead + cacheWrite`，只进报告不进门禁。
 - **cacheHitRate** = `cacheRead / (input + cacheRead + cacheWrite)`；分母为 0（一次请求都没记用量）时返回 `undefined`，字段整个不出现。
 - **turns**：`splitModelTurns` 的长度。**一轮 = 一段连续的模型输出（core `isModelOutput`：thinking / text / tool_call）+ 到下一段模型输出之前的一切**（工具结果、用量、整理、暂停）。开头在第一段模型输出之前的 preamble 事件归入第一轮的 `aftermath`；没有任何模型输出就是 0 轮。
-- **compactions**：按 `payload.decidedBy` 分 `model` 与 `threshold`（非 model 一律记 threshold）。`maxConsecutive` 是**最长一串"连续含整理的模型轮"里 compaction 的总数**——逐轮数 `aftermath` 里的 compaction 条数，非零就累加、为零就清零，取过程最大值。
+- **compactions**：按 `payload.decidedBy` 分三类——`model`（模型自己挑的时机）、`forced`（框架请它整理后照做，时机框架定、摘要模型写）、`threshold`（其余一律记这里，即投影链机械裁剪）。`maxConsecutive` 是**最长一串"连续含整理的模型轮"里 compaction 的总数**——逐轮数 `aftermath` 里的 compaction 条数，非零就累加、为零就清零，取过程最大值。
 - **violations**：`measureViolations` 用 `timeline.findIndex(type === "core.compaction")` 定第一次整理的**数组下标**（不是 `seq`，跨会话拼接后 seq 会重新从 1 起），下标严格大于它的模型动作进 `after` 窗，其余进 `before` 窗。模型动作 = `core.tool_call` 或 `core.model_text`（`isModelAction`）。每窗记 `actions / violations / rate`，`rate = violations / actions`，无动作记 0。没整理过则全部落 `before`、`after` 全零。
 - **repeatedToolCalls**：键为 `` `${name} ${canonicalArgs(args)}` ``，**第二次起每次记 1**（死循环计数），与回放工具用的是同一个 `canonicalArgs`。
 - **toolErrors**：`isError` 的 tool_result 条数。
@@ -112,7 +112,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 3. `recall`：候选召回 ≥ 基线；**双方都没有 recall（没预埋事实）时视为通过并带 `note`**，只有一方有则缺的一方按 0 参与比较；
 4. `governance`：**候选自己**整理后违规率 ≤ 整理前（这一条不跟基线比，`reference` 字段填的是候选的 before），只在 `compactedRuns > 0` 的那批格上比；`compactedRuns === 0` 时视为通过并带 `note`。
 
-`renderReport(report, { gate?, detail? })` 输出 Markdown：抬头一行（模型、fixture 数 × 臂数、总格数、耗时）；臂均值表 13 列（跑完/完成度/总 token/计费等价/缓存命中/召回/违规前→后/整理 模型·阈值·连续/轮/工具/重复调用/墙钟），`undefined` 一律显示 `—`；`gate` 存在时附门禁表（token 列按整数显示、其余按百分比）；`detail` 存在时每格一行明细。
+`renderReport(report, { gate?, detail? })` 输出 Markdown：抬头一行（模型、fixture 数 × 臂数、总格数、耗时）；臂均值表 13 列（跑完/完成度/总 token/计费等价/缓存命中/召回/违规前→后（附参与的格数，无格显示 `—`）/整理 模型·请求·阈值·连续/轮/工具/重复调用/墙钟），`undefined` 一律显示 `—`；`gate` 存在时附门禁表（token 列按整数显示、其余按百分比）；`detail` 存在时每格一行明细。
 
 ## 4 核心设计决策
 
