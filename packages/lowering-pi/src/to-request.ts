@@ -29,7 +29,12 @@ import {
   type ToolSpec,
   untrustedSourceOf,
 } from "@reinsjs/core"
-import { IMAGE_OMITTED_NOTE, IMAGE_UNAVAILABLE_NOTE, MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
+import {
+  ESCAPED_NOTE,
+  IMAGE_OMITTED_NOTE,
+  IMAGE_UNAVAILABLE_NOTE,
+  MEDIA_PLACEHOLDER_NOTE,
+} from "./loss-matrix.js"
 import type { PiModel } from "./models.js"
 import { framedSystemNote, markSystemNote, midSystemSlotFollowsUser, midSystemSlotOf } from "./system-note.js"
 
@@ -154,7 +159,6 @@ const NAMESPACE_NOTE = "the tool namespace is not replayed for another model"
 
 const DEFERRED_NOTE =
   "moved after that batch of tool results (tool results must immediately follow their call)"
-const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
 
 export interface ToContextInput {
   events: readonly Event[]
