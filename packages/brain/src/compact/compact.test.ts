@@ -35,7 +35,7 @@ import {
   isCompactRequest,
   renderCompactRequest,
 } from "./request.js"
-import { COMPACT_REQUEST_RULE, COMPACT_RULES } from "./rules.js"
+import { COMPACT_REQUEST_RULE, COMPACT_RULES, RECALL_TOOL_DESCRIPTION } from "./rules.js"
 
 const registry = createCoreRegistry()
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -651,10 +651,17 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
     await log.append([spilledResult])
     const ctxOf = (sessionId: string) => ({ sessionId, toolCallId: "t", log, emit: () => {} })
     const spilled = await recallResult({ seq: 1 }, ctxOf(SESSION))
-    expect(spilled.isError).toBe(true)
-    expect(spilled.content[0]).toMatchObject({
-      text: expect.stringContaining('stored verbatim as blob "b-1". Read it with fetch_blob({ id: "b-1" })'),
-    })
+    // 全库审查 2026-11-25 #66：这是"换个工具取"的指路，不是失败（否则 haltOnFailure 会拦下同批后面的调用）；
+    // recall 看不到工具表，所以如实说"在表里时"用 fetch_blob
+    expect(spilled.isError).toBe(false)
+    expect(spilled.content).toEqual([
+      {
+        type: "text",
+        text: '[seq 1 list() was too large to keep inline; its full output is stored verbatim as blob "b-1". Read it with fetch_blob({ id: "b-1" }) if that tool is in your tool list; recall cannot return it.]',
+      },
+    ])
+    // 第二波返修：清单行、recall 结果、recall 工具说明三处对 fetch_blob 同一种说法（模型手里不一定有它）
+    expect(RECALL_TOOL_DESCRIPTION).toContain("read those with fetch_blob if that tool is in your tool list")
     // 别的会话看不到
     expect(await recallResult({ seq: 1 }, ctxOf("other"))).toMatchObject({
       isError: true,
@@ -988,7 +995,7 @@ describe("compact 纯函数层", () => {
       { manifest: { maxItems: 1 } },
     )
     expect(capped.ok && capped.payload.summary).toBe(
-      `S\n\n${MANIFEST_HEADING}\n- seq 4 get({"adv":1,"id":2}) — 1.5k chars\n- …and 1 more (seq 5–5)`,
+      `S\n\n${MANIFEST_HEADING}\n- …1 earlier (seq 4)\n- seq 5 get({"id":1}) — 5 chars`,
     )
     const off = planCompaction(events, { summary: "S", keep: ["k"], keepRecentTurns: 0 }, { manifest: false })
     expect(off.ok && off.payload.summary).toBe("S\n\nKey facts carried forward:\n- k")

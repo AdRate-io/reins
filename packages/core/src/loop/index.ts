@@ -1,5 +1,6 @@
 export * from "./batch.js"
 export * from "./fork.js"
+export * from "./handoff.js"
 // media-refs 列名导出：并发读取与两步校验（readBlobs、上限常量、prefetchImageRefs / judgeImageRef）只给 runLoop 用，不进公开形状。
 // media-refs 新增公开导出时记得在这里补上
 export {

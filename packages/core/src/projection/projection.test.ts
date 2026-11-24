@@ -179,6 +179,17 @@ describe("defaultThresholdSummary：非文本片段按类型摘录", () => {
     const events = [user(1, "hi"), call(2, "c1"), result(3, "c1")]
     expect(defaultThresholdSummary(events, ctxOf(events))).not.toContain("Images, video or audio")
   })
+
+  // 全库审查 2026-11-25 #66：core 不知道模型手里有没有取回工具，首句只陈述"还在日志里"，
+  // 不说"由宿主取回"——那会与 compact 规则里"recall 可取回"相左
+  it("首句只说还在会话日志里，不替模型断定谁能取回", () => {
+    const events = [user(1, "hi"), call(2, "c1"), result(3, "c1")]
+    const text = defaultThresholdSummary(events, ctxOf(events))
+    expect(text.split("\n")[0]).toBe(
+      "[Context truncated by budget] Events seq 1-3 were removed to fit the context window. They remain in the session log.",
+    )
+    expect(text).not.toContain("by the host")
+  })
 })
 
 describe("visibilityFilter", () => {
@@ -210,6 +221,41 @@ describe("visibilityFilter", () => {
       isVisible: (e) => e.seq !== 1,
     }).apply(timeline, ctxOf(timeline))
     expect(seqs(events)).toEqual([2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13])
+  })
+
+  // 全库审查 2026-11-25 #19：ext.* 三条降级线都 dropped 不下发，投影留着它就会把模型看不到的字节算进估算
+  const extRegistry = createCoreRegistry([{ type: "ext.audit", version: 1 }])
+  const extEvent = (seq: number, size: number): Event => ({
+    id: idOf(seq),
+    sessionId: SESSION,
+    seq,
+    at: NOW,
+    type: "ext.audit",
+    schemaVersion: 1,
+    actor: "host",
+    trust: "system",
+    payload: { blob: "x".repeat(size) },
+  })
+
+  it("ext.* 缺省不可见；keepExtEvents 留给宿主自己的策略翻译；覆盖 invisibleTypes 不改变 ext 口径", () => {
+    const tl = [user(1, "hi"), extEvent(2, 10), text(3, "ok")]
+    expect(seqs(visibilityFilter().apply(tl, ctxOf(tl)).events)).toEqual([1, 3])
+    expect(seqs(visibilityFilter({ invisibleTypes: [] }).apply(tl, ctxOf(tl)).events)).toEqual([1, 3])
+    expect(seqs(visibilityFilter({ keepExtEvents: true }).apply(tl, ctxOf(tl)).events)).toEqual([1, 2, 3])
+  })
+
+  it("缺省投影不把 ext.* 的字节算进估算，也不因它触发兜底裁剪", () => {
+    const tl = [user(1, "hi"), extEvent(2, 40_000), user(3, "next")]
+    const r = project({
+      timeline: tl,
+      budget: { contextLimit: 12_000 },
+      registry: extRegistry,
+      now: NOW,
+      newId: () => "n",
+    })
+    expect(r.events.map((e) => e.type)).toEqual(["core.user_message", "core.user_message"])
+    expect(r.stats.estimatedTokens).toBeLessThan(100)
+    expect(r.stats.overBudget).toBe(false)
   })
 })
 
@@ -407,11 +453,24 @@ describe("被折叠工具结果清单（manifest）", () => {
         "H",
         '- seq 4 read({"a":"x","b":1}) — 12k chars',
         "- seq 5 read() — 7 chars, error",
-        '- seq 6 big({}) — stored as blob "blob-9", read with fetch_blob',
+        '- seq 6 big({}) — stored as blob "blob-9"; read it with fetch_blob if that tool is in your tool list',
       ].join("\n"),
     )
     expect(renderFoldedToolResults(items, { heading: "H", maxItems: 1 })).toBe(
-      ["H", '- seq 4 read({"a":"x","b":1}) — 12k chars', "- …and 2 more (seq 5–6)"].join("\n"),
+      [
+        "H",
+        "- …2 earlier (seq 4–5)",
+        '- seq 6 big({}) — stored as blob "blob-9"; read it with fetch_blob if that tool is in your tool list',
+      ].join("\n"),
+    )
+    // 全库审查 2026-11-25 #63：超限时留最近的，较旧的折成一行；只省一条时不写成 "seq 4–4"
+    expect(renderFoldedToolResults(items, { heading: "H", maxItems: 2 })).toBe(
+      [
+        "H",
+        "- …1 earlier (seq 4)",
+        "- seq 5 read() — 7 chars, error",
+        '- seq 6 big({}) — stored as blob "blob-9"; read it with fetch_blob if that tool is in your tool list',
+      ].join("\n"),
     )
     expect(digestArgs({ z: [3, { y: 1, x: 2 }], a: null })).toBe('{"a":null,"z":[3,{"x":2,"y":1}]}')
     expect(digestArgs("x".repeat(200), 10)).toBe(`"${"x".repeat(8)}…`)
@@ -473,11 +532,7 @@ describe("被折叠用户消息的媒体清单（2026-11-24）", () => {
       ].join("\n"),
     )
     expect(renderFoldedUserMedia(items, { heading: "H", maxItems: 1 })).toBe(
-      [
-        "H",
-        "- seq 3 user message — 2 images (image/png, image/jpeg), 1 video (video/mp4)",
-        "- …and 2 more (seq 8–9)",
-      ].join("\n"),
+      ["H", "- …2 earlier (seq 3–8)", "- seq 9 user message — 1 image (image/webp)"].join("\n"),
     )
   })
 })
@@ -729,6 +784,30 @@ describe("project（默认链端到端）", () => {
     )
     expect(() => project({ timeline: [], budget: { contextLimit: 100 } })).toThrow(RangeError)
     expect(project({ timeline: [], budget: { contextLimit: 100 }, sessionId: SESSION }).events).toEqual([])
+  })
+
+  it("窗口 / 预留不合规（NaN、0、负数、预留不小于窗口）在入口拒绝，不产出一条把历史裁光的阈值 compaction（全库审查 2026-11-25 #17）", () => {
+    const bad: { contextLimit: number; reserveTokens?: number }[] = [
+      { contextLimit: Number.NaN },
+      { contextLimit: 0 },
+      { contextLimit: -100 },
+      { contextLimit: Number.POSITIVE_INFINITY },
+      { contextLimit: 1000, reserveTokens: 2000 },
+      { contextLimit: 1000, reserveTokens: 1000 },
+      { contextLimit: 1000, reserveTokens: -1 },
+      { contextLimit: 1000, reserveTokens: Number.NaN },
+    ]
+    for (const budget of bad) expect(() => project({ timeline, budget, now: NOW })).toThrow(RangeError)
+    expect(() => project({ timeline, budget: { contextLimit: Number.NaN }, now: NOW })).toThrow(
+      "budget.contextLimit must be a positive finite number, got NaN",
+    )
+    expect(() =>
+      project({ timeline, budget: { contextLimit: 1000, reserveTokens: 2000 }, now: NOW }),
+    ).toThrow("budget.reserveTokens must be a non-negative finite number below contextLimit (1000), got 2000")
+    // 预留 0 合法：整个窗口都给上下文
+    expect(
+      project({ timeline, budget: { contextLimit: 1_000_000, reserveTokens: 0 }, now: NOW }).emitted,
+    ).toEqual([])
   })
 
   it("使用自定义 ext 注册表时能新造事件（registry 参数生效）", () => {

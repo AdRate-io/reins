@@ -7,7 +7,14 @@
  * `durationSec`、导入没有时长，估算走字节折算）；对不上的（文档、URL 源、mime 前缀与类型不符）以占位文本代替并在返回值里
  * 声明丢了什么（P7：有损必声明）。
  */
-import { isContentPart, isImageRef, type ContentPart as ReinsPart, renderToolReference } from "@reinsjs/core"
+import {
+  isContentPart,
+  isImageRef,
+  isSupportedImageMime,
+  type ContentPart as ReinsPart,
+  renderToolReference,
+  unsupportedImageText,
+} from "@reinsjs/core"
 import type { ContentPart as TanstackPart } from "@tanstack/ai"
 
 export interface ImportedContent {
@@ -26,6 +33,28 @@ export const IMAGE_REF_PLACEHOLDER = "[image unavailable]"
 /** 有图片引用被换成占位时的落点说明 */
 export const IMAGE_REF_NOTE =
   "an image stored by reference is not loaded on the TanStack path, so it is replaced with placeholder text"
+
+/**
+ * 白名单外的图片（全库审查 2026-11-25 第二波返修）：core 拦住了新写入的，但白名单之前写进日志的每轮整段回放，
+ * 原样交给 TanStack 照样厂商 400、会话卡死。与 fetch / pi 两个降级层同口径：判定调 core `isSupportedImageMime`，
+ * 落 core `unsupportedImageText`、记 lossy
+ */
+function isUnsupportedImage(p: ReinsPart): boolean {
+  return p.type === "image" && !isImageRef(p) && !isSupportedImageMime(p.mime)
+}
+
+/** 有白名单外图片被换成占位时的落点说明（与 lowering-fetch / lowering-pi 同一句） */
+export const IMAGE_UNSUPPORTED_NOTE =
+  "an image of a type outside the supported set (image/jpeg, image/png, image/gif, image/webp; logged before that check existed) would be rejected by the provider, so it is replaced with placeholder text naming its type"
+
+/** 一组片段翻成 TanStack 时被换成占位的说明（图片引用、白名单外图片）；没有为 undefined。落点 note 用 */
+export function placeholderNoteOf(parts: readonly ReinsPart[]): string | undefined {
+  const notes = [
+    parts.some(isImageRef) ? IMAGE_REF_NOTE : undefined,
+    parts.some(isUnsupportedImage) ? IMAGE_UNSUPPORTED_NOTE : undefined,
+  ].filter(Boolean)
+  return notes.length > 0 ? notes.join("; ") : undefined
+}
 
 /**
  * 把片段里的图片引用换成占位文本（TanStack 路径落日志前用）：这条路径不校验引用归属，所以绝不把引用写进日志——
@@ -48,6 +77,8 @@ export function toTanstackParts(parts: readonly ReinsPart[]): TanstackPart[] {
       case "video":
       case "audio":
         if (isImageRef(p)) return { type: "text", content: IMAGE_REF_PLACEHOLDER }
+        if (p.type === "image" && !isSupportedImageMime(p.mime))
+          return { type: "text", content: unsupportedImageText(p.mime) }
         // durationSec 只用于 reins 的估算，模型看不到；TanStack 没有对应字段，不带
         return { type: p.type, source: { type: "data", value: p.data, mimeType: p.mime } }
       default: {

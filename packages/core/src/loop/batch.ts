@@ -1,19 +1,22 @@
 /**
  * 工具批的定位（2026-11-02，OnSet 建议 9 / 10）。
  *
- * "一批" = 一段连续模型输出里的 tool_call。与 replay 切轮（`isModelOutput`）同口径，另外跳过模型不可见的运维事件
- * （budget_usage、approval_request、run_paused…）——它们可能夹在同一次输出中间（TanStack 的 onUsage 早于输出收尾时），
+ * "一批" = 一段连续模型输出里的 tool_call。与 replay 切轮（`isModelOutput`）同口径，另外跳过缺省对模型不可见的事件
+ * （budget_usage、approval_request、run_paused…与宿主 ext.*）——它们可能夹在同一次输出中间（TanStack 的 onUsage 早于输出收尾时），
  * 与 lowering-fetch IR"运维事件不打断 assistant 分组"同一条规矩。runLoop 与 TanStack 适配器补跑时都调它（真源索引）。
  */
 import type { Event } from "../events/base.js"
 import type { CoreEvent } from "../events/core.js"
-import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
+import { isModelInvisibleByDefault } from "../projection/filter.js"
 import { isModelOutput } from "../replay/replay.js"
 import type { ToolCallEvent, ToolResultEvent } from "./types.js"
 
-/** 同一批里可以连续出现的事件：模型输出，或模型不可见的运维事件 */
+/**
+ * 同一批里可以连续出现的事件：模型输出，或缺省对模型不可见的事件（运维事件与 ext.*，`isModelInvisibleByDefault`）。
+ * ext.* 也算：降级层 IR 不让它打断 assistant 分组，这里切段就会与模型看到的"一次输出"对不上（第二波返修）
+ */
 function inBatchSpan(e: Event): boolean {
-  return isModelOutput(e) || DEFAULT_MODEL_INVISIBLE_TYPES.has(e.type)
+  return isModelOutput(e) || isModelInvisibleByDefault(e.type)
 }
 
 /**

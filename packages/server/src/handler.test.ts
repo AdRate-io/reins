@@ -10,6 +10,7 @@ import {
   RunStateError,
   runLoop,
   type SerializedRunState,
+  type Socket,
   type Tool,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
@@ -1637,6 +1638,39 @@ describe("流开了之后的失败：200 + error 帧，未开跑的名额归还"
     const again = await handler(postRequest({ sessionId: "s1", input: "再来" }))
     expect(again.status).toBe(200)
     expect(resultOf(parseFrames(await again.text()))?.status).toBe("done")
+  })
+})
+
+describe("handoff 经 handler（全库审查 #55）", () => {
+  it("旧会话的流与 onEvent 只有旧会话的事件：SSE id 单调、与 GET 补发一致，新会话开场只在新会话里", async () => {
+    const handoffSocket: Socket = {
+      name: "h",
+      onTurnEnd: () => ({
+        handoff: { summary: "SUM", reason: "r", toSessionId: "new", triggerMessage: "TRIG" },
+      }),
+    }
+    const observed: string[] = []
+    const { handler, log } = setup(
+      [{ drafts: [say("hi")] }],
+      [],
+      { sockets: [handoffSocket] },
+      { onEvent: (e, input) => void observed.push(`${input.sessionId}<-${e.sessionId}#${e.seq}`) },
+    )
+    const frames = parseFrames(
+      await (await handler(postRequest({ sessionId: "old", input: "hello" }))).text(),
+    )
+    expect(resultOf(frames)).toMatchObject({ status: "handoff", toSessionId: "new" })
+    const live = eventsOf(frames)
+    expect(live.every((e) => e.sessionId === "old")).toBe(true)
+    const seqs = ids(frames)
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b))
+    // 实时流与 GET 补发同一组事件
+    const replay = eventsOf(parseFrames(await (await handler(getRequest({ sessionId: "old" }))).text()))
+    expect(live.map((e) => e.seq)).toEqual(replay.map((e) => e.seq))
+    expect(observed.every((s) => s.startsWith("old<-old#"))).toBe(true)
+    expect(observed).toHaveLength(live.length)
+    // 新会话开场照常写进日志
+    expect((await logged(log, "new")).map((e) => e.type)).toEqual(["core.system_note", "core.user_message"])
   })
 })
 

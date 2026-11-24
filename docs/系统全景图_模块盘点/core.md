@@ -93,13 +93,13 @@
 | --- | --- |
 | `projection/index.ts` | 汇总导出全部策略与执行器 |
 | `projection/types.ts` | `ProjectionStrategy` / `ProjectionContext`（只读上下文 + `nextSeq()`）/ `ProjectionStep`（events + emitted）/ `ProjectionStats` / `ProjectionResult` |
-| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（9 种运维事件，含 P1 的 `tools_bound`）+ 宿主可覆盖的 `isVisible` |
+| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（11 种运维事件）+ `ext.*` 缺省剔除（`keepExtEvents` 放开）+ 宿主追加的 `isVisible`；`isModelInvisibleByDefault` 是"缺省不可见"的真源，runLoop / TanStack 的注入过滤也调它 |
 | `projection/fold.ts` | 策略 2 折叠：`covers` / `keptBy` / `isPinNote` / `supersededIds` 幸存判定，`foldCompactions` 把摘要插到**被覆盖区间的位置** |
 | `projection/pins.ts` | 策略 3 钉住重注入：把幸存的被覆盖事件挪到覆盖它的最新可见 compaction 之后（去掉本策略投影仍正确，只是顺序不好读） |
 | `projection/truncate.ts` | 策略 5 预算裁剪兜底：过触发线才裁、一裁到回落线（`cutToRatio` 缺省 `DEFAULT_CUT_TO_RATIO` 0.6）；`splitTurns` 切轮、三条切点硬规则、`defaultThresholdSummary` 机械摘要（并入旧摘要 + 用户原话 + 被裁工具结果清单），新造 `compaction(decidedBy=threshold)` 经 `emitted` 交出 |
 | `projection/estimate.ts` | 零依赖 token 粗估：ASCII 4 字一 token、非 ASCII 一字一 token、图片 1600、视频 100 / 秒与音频 32 / 秒（缺 `durationSec` 按 1 Mbps / 64 kbps 折算、30 秒下限）、每事件 +4 固定开销；`estimateTotal`；`estimateBudgetOf(budget)`（目标 − 开销，兜底判据唯一一份） |
 | `projection/manifest.ts` | E3c 被折叠工具结果清单：`foldedToolResults` 抽取（入参从 lookup 找、外溢记 blob id）、`digestArgs` 键排序截断、`renderFoldedToolResults` 渲染成 `seq N tool(args) — 大小`；`foldedUserMedia` / `renderFoldedUserMedia` 列带媒体的被折叠用户消息（`seq N user message — 2 images (…)`，2026-11-24） |
-| `projection/project.ts` | 策略链执行器 `project()` + `defaultProjectionChain()`（四步）+ `DEFAULT_RESERVE_RATIO = 0.15`；入参校验 seq 严格升序，逐策略累计 stats 与 emitted |
+| `projection/project.ts` | 策略链执行器 `project()` + `defaultProjectionChain()`（四步）+ `DEFAULT_RESERVE_RATIO = 0.15` + `resolveReserveTokens`（窗口有限正数、预留有限非负且小于窗口，不合规抛 RangeError；runLoop 起步写日志前也调）；入参校验 seq 严格升序，逐策略累计 stats 与 emitted |
 | 测试 | `projection.test.ts` 覆盖粗估、四个策略各自的规则、manifest 渲染、supersedes（B3）四种情形、默认链端到端与拒绝条件 |
 
 ### `lowering/` — 降级层接口（T7）与 trust 标注（R9）
@@ -109,7 +109,7 @@
 | `lowering/index.ts` | 汇总导出 errors / tool-arguments / trust / types |
 | `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`（含 `deferLoading?`：向厂商声明但不载入上下文，L1）、`LoweringCapabilities`（含 `deferredTools`：有无 `defer_loading` / `tool_reference` 的原生落点）、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
 | `lowering/errors.ts` | `LoweringError` 与 4 种 code（unsupported_model / unsupported_api / missing_api_key / invalid_request） |
-| `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
+| `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记；`tool_reference` 片段保持形状，但名字、描述与 schema 里每个字符串（含键）同样转义并计入 `escaped`——它在 untrusted 结果里一律展开成文本，2026-11-25）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
 | `lowering/tool-arguments.ts` | 工具入参二次编码解码（OnSet 建议 8）：`decodeToolArgumentsText(raw)` 收线上原文，空白 → `{}`、解成非字符串就用、解成字符串再交下一个函数、没解成对象一律存原文（不变式：`args` 是字符串 ⟺ 线上原文）；`unwrapToolArguments(parsed)` 收已解析值，字符串能再解成普通对象（容忍字面量里的裸控制字符）时换成对象、报 `unwrapped`，其余原样；`toolCallArgumentsMeta` 据此给 `tool_call.payload` 拼 `meta.argumentsUnwrapped: true`。fetch 三条线与 lowering-pi 读侧都调这里 |
 | 测试 | `tool-arguments.test.ts` 覆盖只多解一层、欠转义换行、没解成对象存原文与原样返回的各种值；`trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reinsjs/lowering-pi` 的 T8 矩阵测试覆盖 |
 
@@ -118,7 +118,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `loop/index.ts` | 汇总导出 batch / fork / pause-code / retry / run-loop / run-status / state / static / stop / tools / tools-bound / types |
-| `loop/batch.ts` | `toolBatchOf(timeline, pending)`（2026-11-02）：补跑时定位遗留调用所在那批（以第一条 pending 为锚、前后扩到非模型输出且模型可见的事件为止），并收这批已落的结果；pending 跨批只取第一批。runLoop 与 TanStack 适配器共用 |
+| `loop/batch.ts` | `toolBatchOf(timeline, pending)`（2026-11-02）：补跑时定位遗留调用所在那批（以第一条 pending 为锚、前后扩到非模型输出且非 `isModelInvisibleByDefault`（运维事件与 ext.*）的事件为止），并收这批已落的结果；pending 跨批只取第一批。runLoop 与 TanStack 适配器共用 |
 | `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`（含可选 `decisions` / `spend`，asTool 用）；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`（含 `batch: ToolBatch`，2026-11-02）；`ToolCallEvent` / `ToolResultEvent`；`RunResult` 四态、`SerializedRunState`、`Interruption`（五种，含 `SubagentInterruption`）、`ApprovalDecisionInput`（可选 `sessionId`）、`LoopConfig`（全部循环开关，P1 加 `announceToolChanges`）；`StaticContribution<T>` 的函数形态可返回 Promise（P1） |
 | `loop/run-loop.ts` | `runLoop` 主体（约 1260 行）：append/pause/fail/spendInto 四个基础动作（`pause` 先签状态再写 `run_paused { reason, state, awaiting, stopped?, code?, note? }`（后两个取本次中断里 budget / host 那条，`pauseDetailOf`）；`fail` 把 `core.error` 与 `run_ended(error)` 同批写；`lastSeq + 1` 即这条事件自己的 seq，`RunResult.state` 是同一对象）、恢复与审批校验（结论按 `sessionId` 分本会话 / 转发两路）、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`（含 `isSubagentPause` 冒泡分支；包一层 append 把落日志的 tool_result 登记进 `ctx.batch.results`，三处挂起登记 `held`）、`inputDrafts` 归一与白名单（草稿数组逐条查）、`checkPulledDrafts`（`pullInput` 返回值：收窄白名单 + 注册表）与每轮顶部的拉取点；图片引用（2026-11-24）：起步 input / `pullInput` / 工具结果（afterTool 之后、settle 之前）三处 `checkImageRefs`，`toRequest` 前 `hydrateImageRefs`（run 级 `imageCache`，瞬断重试复用同一份） |
 | `loop/pause-code.ts` | 暂停原因码（2026-11-23，AdRate 建议 16）：`PAUSE_CODE_RE` / `isPauseCode`（写入与 `runStatusOf` 读取共用的格式判定；只许收紧不许放宽）、`MAX_TURNS_PAUSE_CODE`（`reins.max_turns`）、`resolveSocketPause(pause)`（Socket 的暂停意见 → `{ interruption, error? }`：补缺省 note；码不合规丢掉、reason 不在闭集按 host，有改正时给出要记的 `core.error` 载荷；永不抛错）、`pauseDetailOf(interruptions)`（→ `run_paused` 的 `{ code?, note? }`）。runLoop 与 TanStack 适配器共用 |
@@ -132,6 +132,7 @@
 | `loop/content-part.test.ts` | `isContentPart` 视频 / 音频边界（mime 前缀、`durationSec` 为 0 / 负 / NaN / Infinity / null）、image mime 白名单（内联与引用）、`normalizeToolOutput` 对媒体片段的归一与白名单外图片的逐段替换；runLoop 输入侧的同组边界在 `run-loop.test.ts` |
 | `loop/deferred-tools.test.ts` | L1 在 core 的用例：`renderToolReference` 写法、`normalizeToolOutput` 认引用段、估算按展开文本算、`BeforeModelPatch.deferredTools` → `ToolSpec.deferLoading` 的接线（不在表的名字忽略、后一个 Socket 整体替换、没给就沿用） |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
+| `loop/handoff.ts` | `handoffOpeningDrafts(intent, handoffEvent, timeline)`：交接新会话的开场草稿（摘要说明 → `intent.opening` → 触发消息），发起者如实记——摘要记 `intent.by`（缺省 model），触发消息逐字取自旧会话某条用户消息时按原事件的 actor 与 trust 记（否则记 `intent.by`），provenance 指回出处；`HANDOFF_PROVENANCE_SOURCE`。runLoop 与 TanStack 适配器共用 |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |
 | `loop/media-refs.ts` | 图片引用形态（2026-11-24，AdRate 建议 17）：`isImageRef`（形状真源）、`mediaRefsOf`（本会话图片引用集合，与 fetch_blob 的外溢集合分开）、`blobUsableBy`（归属：本会话的 blob 或已图片引用过）、`checkImageRefs`（写入校验，统一 `imageRefNotFound` 一句、先归属后 mime、存储错误原样抛；`metaOnly` 给 server 预校验，有 `stat` 用 `stat`、不进缓存）、`hydrateImageRefs`（换回内联，只有 not_found 留引用）、`bytesToBase64`（分块 btoa）；内部（`loop/index.ts` 列名导出时不带）：`readBlobs` 并发池（上限 `BLOB_READ_CONCURRENCY` 16、去重、allSettled、返回非对象当 not_found、base64 在池内编）、`prefetchImageRefs` / `judgeImageRef`（校验两步，runLoop 工具结果逐段用） |
 | `loop/media-refs-concurrency.test.ts` | 并发读取（AdRate 建议 18）：带延迟的计数存储测在途峰值与耗时 < 2D、去重、按片段顺序报第一个问题、返回 null 当 not_found、同步抛错不冲出池子、metaOnly、换回错误按视野顺序、合批入口、工具结果预读与瞬断只读一次 |
@@ -169,7 +170,7 @@
 4. **每轮开头**：若 `signal.aborted` 立即 `pause("host")`（先于读时间线、投影与补齐 pending，不问模型的 run 不触发阈值整理；`pause` 内若中止原因是 `RunStop` 先把 pending 收尾成 isError 结果，所有暂停出口同一处）→ `pendingToolCalls` 非空则先 `executeToolCalls` 补齐、再走一次 `endTurn` 收尾（R2）→ 否则检查 `maxTurns` → `turns++`。
 5. **投影与钩子**：`project(timeline)` 得到 view 与 `emitted`；emitted 先 `log.append` 再问模型（模型可见 ⟺ 已记录）；各 Socket 的 `beforeModel` 顺序合并补丁，其间 `ctx.emit` 的草稿 `flush` 落库并（非运维类型）并进本轮视图。
 6. **问模型（重试循环）**：每次尝试重新 `toRequest` + `stream`，草稿逐块 append 并 yield；失败时按 `retry.isTransient` 与"本次尝试 `attemptOutput === 0`"共同决定是否重试，要重试就先记一条 `core.error(willRetry)` 再退避；不重试则 `fail()` 返回 error 态——但宿主已中止的（连接阶段被掐，fetch 抛的是 `signal.reason`）走 `pause("host")`。
-7. **收尾**：`afterModel` → `executeToolCalls` 处理本轮 tool_call → append `budget_usage`（带 `contextEstimate`）→ 有中断、或工具批中途被用户停止或其它中止（批里还有没落结果的调用），则按 `pauseReasonOf`（审批 > 预算 > 宿主）暂停（跳过 onTurnEnd，补跑路径同理）→ 否则 `endTurn`：第一个给意见的 Socket 决定 continue / stop / pause / handoff（pause 经 `resolveSocketPause` 变成一条中断；意见里有不合规处先记一条非终结 `core.error` 再照常暂停），handoff 时旧会话记 `core.handoff`、新会话写入 `system_note(摘要) + intent.opening + user_message(triggerMessage)` 三段开场，再在旧会话落 `run_ended(handoff)`，最后回调 `onHandoff`；stop 落 `run_ended(done)`。每个出口恰好一条终结事件（2026-11-15），生成器抛错不补写。
+7. **收尾**：`afterModel` → `executeToolCalls` 处理本轮 tool_call → append `budget_usage`（带 `contextEstimate`：本轮真正送出视图的估算，含 beforeModel 期间注入的说明 / 快照）→ 有中断、或工具批中途被用户停止或其它中止（批里还有没落结果的调用），则按 `pauseReasonOf`（审批 > 预算 > 宿主）暂停（跳过 onTurnEnd，补跑路径同理）→ 否则 `endTurn`：第一个给意见的 Socket 决定 continue / stop / pause / handoff（pause 经 `resolveSocketPause` 变成一条中断；意见里有不合规处先记一条非终结 `core.error` 再照常暂停），handoff 时旧会话记 `core.handoff`、新会话写入 `handoffOpeningDrafts` 给的 `system_note(摘要) + intent.opening + user_message(triggerMessage)` 三段开场（发起者如实记，见文件清单；开场只写日志、不 yield——runLoop 只产出本会话的事件），再在旧会话落 `run_ended(handoff)`，最后回调 `onHandoff`；stop 落 `run_ended(done)`。每个出口恰好一条终结事件（2026-11-15），生成器抛错不补写。
 
 ### 二、单次工具调用的处置顺序（`executeToolCalls`）
 
@@ -196,7 +197,7 @@
 
 1. `project()` 先校验时间线按 seq 严格升序，算出 `reserveTokens`（缺省窗口 15%）、`overheadTokens`（缺省 `contextOverheadOf(timeline)`：上一请求真实上下文 − 当时估算，系统提示 / 工具表等估算不含的部分；负数或非有限数拒绝）、estimate、registry、now、newId。
 2. 逐个策略执行，每个策略拿到新构造的只读 `ProjectionContext`（含完整时间线快照与 `nextSeq()`），返回 `{ events, emitted? }`。
-3. 默认链四步：`visibilityFilter` 剔运维事件 → `foldCompactions` 按 compaction 隐藏区间并把摘要插到区间位置 → `reinjectPins` 把幸存 pin 挪到摘要之后 → `budgetTruncate` 过触发线时按轮裁前缀到回落线以下并新造阈值 compaction。
+3. 默认链四步：`visibilityFilter` 剔运维事件与 `ext.*` → `foldCompactions` 按 compaction 隐藏区间并把摘要插到区间位置 → `reinjectPins` 把幸存 pin 挪到摘要之后 → `budgetTruncate` 过触发线时按轮裁前缀到回落线以下并新造阈值 compaction。
 4. 汇总 `stats`：`estimatedTokens`、`targetTokens`（`contextLimit − reserveTokens`，真实上下文口径）、`overheadTokens`、`overBudget`（裁到只剩最后一轮，估算 + 开销仍超）与逐步 before/after 计数；`emitted` 交给循环 append。
 5. 兜底"要不要裁、裁到哪"与 `overBudget` 都按 `estimateBudgetOf(budget)`（= 目标 − 开销）比估算，与感知读数同一口径（2026-10-30：此前只比估算，感知报 ≥85% 兜底却不折）。
 
@@ -222,7 +223,7 @@
 - **被打断的轮在续跑后才收尾（R2）** — 循环抽出 `endTurn`，补齐 pending 之后也调一次（缺省 continue）。为什么：被审批或中止打断的那一轮原本永远等不到 `onTurnEnd`，模块在那一轮记下的决定（如 handoff 意图）会整个丢失；修循环比让每个模块各自补救干净。边界：`ctx.timeline` 仍是轮开始时的快照，模块要按日志重建意图。
 - **`supersedes` 是撤销一条 pin 的唯一表达（B3）** — 被后来某条 `system_note.supersedes` 指到的事件，一旦被覆盖就不再幸存，不论谁的 `pinsKept` 保留过它；取代者在完整时间线里找，自己被折叠了也算。为什么：append-only 日志里没有"删除"，`pinsKept` 记的是当时的契约，后来的取代说明优先。边界：未折叠时取代不隐藏任何东西，历史原样展示。
 - **摘要放在被覆盖区间的位置** — `foldCompactions` 把 compaction 插到区间之后的第一条可见事件前，而不是它自己的 seq 位置，所以投影输出顺序可以与 seq 不一致。为什么：折叠中间段时"摘要出现在原段位置"读起来才顺；视图是给模型看的，日志才按 seq。边界：`budgetTruncate` 因此必须额外守"seq 封闭"，否则新 `coversSeq` 会误伤保留下来的事件。
-- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reinsjs/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，措辞由调用方给（core 不知道取回工具叫什么）。
+- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reinsjs/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，超出时留最近的（seq 最大的）80 条、较旧的折成标题下一行 `…N earlier (seq a–b)`——几次整理吸收旧摘要后清单只增不减，模型最想取回的是较新那截（2026-11-25 全库审查 #63）；措辞由调用方给（core 不知道取回工具叫什么）。
 - **轮边界按模型输出类型而非 actor（E1，DECISIONS 2026-09-09）** — `replayTurns` 与 `splitTurns` 都按 `model_thinking / model_text / tool_call` 三种类型切轮。为什么：脑子模块在工具执行期间留下的事件 actor 也是 `model`，并行工具时按 actor 切会把它们误当成一个新轮。边界：一条模型输出都没回来的失败轮识别不出请求边界，不计入 turns。
 
 ## 与技术方案的出入（以代码为准）

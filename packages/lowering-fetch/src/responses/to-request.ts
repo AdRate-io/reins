@@ -37,10 +37,12 @@ import {
   acceptsMedia,
   IMAGE_UNAVAILABLE,
   IMAGE_UNAVAILABLE_NOTE,
+  IMAGE_UNSUPPORTED_NOTE,
   type MediaKind,
   mediaOmitted,
   omittedNote,
   RELAY_DIALECT_NOTE,
+  unsupportedImagePlaceholder,
 } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
@@ -119,10 +121,17 @@ function land(
 function contentOf(
   parts: readonly ContentPart[],
   capabilities: LoweringCapabilities,
-): { content: ResponsesInputContent[]; omitted: Set<MediaKind>; relayed: boolean; unavailable: boolean } {
+): {
+  content: ResponsesInputContent[]
+  omitted: Set<MediaKind>
+  relayed: boolean
+  unavailable: boolean
+  badMime: boolean
+} {
   const omitted = new Set<MediaKind>()
   let relayed = false
   let unavailable = false
+  let badMime = false
   const content: ResponsesInputContent[] = []
   for (const p of parts) {
     switch (p.type) {
@@ -141,6 +150,12 @@ function contentOf(
             content.push({ type: "input_text", text: IMAGE_UNAVAILABLE })
             break
           }
+          const placeholder = unsupportedImagePlaceholder(p)
+          if (placeholder) {
+            badMime = true
+            content.push({ type: "input_text", text: placeholder })
+            break
+          }
           if (p.type !== "image") relayed = true
           content.push({ type: "input_image", image_url: `data:${p.mime};base64,${p.data}`, detail: "auto" })
         } else {
@@ -154,7 +169,7 @@ function contentOf(
       }
     }
   }
-  return { content, omitted, relayed, unavailable }
+  return { content, omitted, relayed, unavailable, badMime }
 }
 
 /** tool_call 入参回到线上是 JSON 字符串；读侧解析失败时存的是原始字符串，写侧原样送回 */
@@ -222,7 +237,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           break
         }
         items.push({ role: "user", content: c.content })
-        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable || c.badMime
         land(
           landings,
           item.event,
@@ -234,6 +249,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           item.escaped ? ESCAPED_NOTE : undefined,
           omittedNote(c.omitted),
           c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+          c.badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
@@ -258,7 +274,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           call_id: splitResponsesToolCallId(item.toolCallId).callId,
           output,
         })
-        const lossy = item.escaped || item.isError || c.omitted.size > 0 || c.unavailable
+        const lossy = item.escaped || item.isError || c.omitted.size > 0 || c.unavailable || c.badMime
         land(
           landings,
           item.event,
@@ -269,6 +285,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             : undefined,
           omittedNote(c.omitted),
           c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+          c.badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )

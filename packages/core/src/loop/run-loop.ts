@@ -33,10 +33,12 @@ import { createEvent, type EventDraft } from "../events/create.js"
 import { uuidv7 } from "../events/id.js"
 import { createCoreRegistry, type EventSchemaRegistry } from "../events/registry.js"
 import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../lowering/types.js"
-import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
-import { project } from "../projection/project.js"
+import { estimateTotal, roughTokenEstimate } from "../projection/estimate.js"
+import { isModelInvisibleByDefault } from "../projection/filter.js"
+import { project, resolveReserveTokens } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
+import { handoffOpeningDrafts } from "./handoff.js"
 import {
   type CheckImageRefsContext,
   checkImageRefs,
@@ -313,6 +315,11 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     if (!registry.has(d.type)) throw new RangeError(`input draft type ${d.type} is not registered`)
   }
   const capabilities = lowering.capabilities(model)
+  // 窗口与预留在写日志前校验（与 project() 同一函数）：拖到投影才抛，tools_bound / input 已经落了
+  resolveReserveTokens({
+    contextLimit: capabilities.contextWindow,
+    ...(cfg.projection?.reserveTokens !== undefined ? { reserveTokens: cfg.projection.reserveTokens } : {}),
+  })
   const configHash = await computeConfigHash({
     model,
     tools: baseTools,
@@ -747,12 +754,16 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       ctx.events = visible
       ctx.tools = tools
     }
-    // 钩子期间 emit 的草稿：入日志，且本轮就让模型看到（运维类型除外）
+    // 钩子期间 emit 的草稿：入日志，且本轮就让模型看到（运维类型与 ext.* 除外，与投影同一口径）
     const injected = await flush()
     yield* injected
-    visible = [...visible, ...injected.filter((e) => !DEFAULT_MODEL_INVISIBLE_TYPES.has(e.type))]
+    visible = [...visible, ...injected.filter((e) => !isModelInvisibleByDefault(e.type))]
     ctx.events = visible
     ctx.tools = tools
+    // 进 budget_usage.contextEstimate 的估算取真正送出的视图（补丁改过、注入追加后），不是投影那一刻的：
+    // contextOverheadOf 拿"真实 − 它"当固定开销，本轮注入的说明 / 快照若漏算，就被当成开销、下一轮再随时间线估一遍，
+    // 感知、到线请求与阈值兜底一起高估（全库审查 2026-11-25 #20）。ctx.budget.used 仍是投影估算（beforeModel 时的读数）
+    const sentEstimate = estimateTotal(visible, cfg.projection?.estimate ?? roughTokenEstimate)
 
     // ---- 问模型（瞬断有限重试，见 retry.ts）----
     // 每次尝试重新 toRequest + stream；beforeModel 钩子不重跑（视图、工具、说明都是本轮已定的）。
@@ -926,7 +937,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
           tokens: outcome.usage,
           toolCalls: calls.length,
           wallMs: now() - turnStartedAt,
-          contextEstimate: projected.stats.estimatedTokens,
+          contextEstimate: sentEstimate,
         },
       },
     ])
@@ -959,6 +970,9 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     fallback: TurnDecision,
     flush: () => Promise<Event[]>,
   ): AsyncGenerator<Event, RunResult | undefined> {
+    // 工具批跑完才到这里：墙钟刷新到此刻，onTurnEnd（budget 的 wallMs 上限）看得见本轮工具耗时，
+    // 否则慢工具要到下一轮模型调用后才计入、上限多放一整轮（全库审查 2026-11-25 #24）
+    ctx.budget.wallMs = now() - startedAt
     let decision: TurnDecision = fallback
     for (const s of sockets) {
       const d = await s.onTurnEnd?.(ctx)
@@ -990,7 +1004,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // ---- 交接：旧会话记 handoff，新会话开头 = 摘要说明 + 脑子带来的开场事件（如 pin）+ 触发消息 ----
     const intent = decision.handoff
     const toSessionId = intent.toSessionId ?? newId(now())
-    yield* await append([
+    const handoffEvents = await append([
       {
         type: "core.handoff",
         actor: intent.by ?? "model",
@@ -1002,23 +1016,21 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         },
       },
     ])
+    yield* handoffEvents
     const at = now()
-    const opening: EventDraft[] = [
-      { type: "core.system_note", actor: "host", payload: { kind: "host", text: intent.summary } },
-      ...(intent.opening ?? []),
-    ]
-    if (intent.triggerMessage !== undefined) {
-      opening.push({
-        type: "core.user_message",
-        actor: "user",
-        payload: { content: [{ type: "text", text: intent.triggerMessage }] },
-      })
-    }
+    // 发起者如实记（#52）：触发消息要对照旧会话完整时间线判是不是用户的原话
+    const opening = handoffOpeningDrafts(
+      intent,
+      handoffEvents[0] as Event,
+      await readTimeline(log, sessionId, { registry }),
+    )
     const openingEvents = opening.map((d, i) =>
       createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
     )
+    // 开场写进新会话但不 yield（#55）：runLoop 只产出本会话的事件，消费方（server 的 SSE / onEvent、AG-UI 线程）
+    // 都按"事件属于 sessionId"处理，混进别的会话会让 SSE id 倒退、前端旧线程多出消息、观测记错会话。
+    // 新会话的开场经 RunResult.toSessionId 从日志读
     await log.append(openingEvents)
-    yield* openingEvents
     // 新会话开场写成之后才在旧会话落终结记号：开场写失败时 run 抛错，旧会话判 interrupted，与"交接没完成"一致
     yield* await append([
       { type: "core.run_ended", actor: "system", payload: { status: "handoff", toSessionId } },

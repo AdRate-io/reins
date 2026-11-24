@@ -12,9 +12,10 @@ import {
   type Event,
   hydrateImageRefs,
   InMemoryBlobStore,
+  unsupportedImageText,
 } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
-import { IMAGE_UNAVAILABLE_NOTE } from "./loss-matrix.js"
+import { IMAGE_UNAVAILABLE_NOTE, IMAGE_UNSUPPORTED_NOTE } from "./loss-matrix.js"
 import { eventsToContext } from "./to-request.js"
 
 const registry = createCoreRegistry()
@@ -340,5 +341,28 @@ describe("图片引用形态（2026-11-24 媒体引用方案）", () => {
     expect(landings[0]).toMatchObject({ kind: "lossy", landing: "user", note: IMAGE_UNAVAILABLE_NOTE })
     expect(landings[2]?.kind).toBe("lossy")
     expect(landings[2]?.note).toContain(IMAGE_UNAVAILABLE_NOTE)
+  })
+  // 全库审查 2026-11-25 追加项：白名单之前写进日志的图片照发厂商 400、每轮回放会话卡死
+  it("白名单外的旧图片：落 core 同一句说明、记 lossy；模型不收图时仍是不收图那句", () => {
+    seq = 0
+    const svg = { type: "image", mime: "image/svg+xml", data: "PHN2Zy8+" } as ContentPart
+    const events = [
+      ...withImage(svg),
+      ev("core.tool_call", "model", { toolCallId: "c1", name: "t", args: {} }),
+      ev("core.tool_result", "tool", { toolCallId: "c1", name: "t", content: [svg], isError: false }),
+    ]
+    const { context, landings } = eventsToContext({ events, model, capabilities: caps(true) })
+    expect(context.messages[0]?.content).toEqual([
+      { type: "text", text: "看" },
+      { type: "text", text: unsupportedImageText("image/svg+xml") },
+    ])
+    expect(JSON.stringify(context.messages[2])).not.toContain("PHN2Zy8+")
+    expect(landings[0]).toMatchObject({ kind: "lossy", landing: "user", note: IMAGE_UNSUPPORTED_NOTE })
+    expect(landings[2]?.kind).toBe("lossy")
+    expect(landings[2]?.note).toContain(IMAGE_UNSUPPORTED_NOTE)
+    const off = eventsToContext({ events, model, capabilities: { ...caps(true), images: false } })
+    expect(JSON.stringify(off.context.messages[0])).toContain(
+      "[image omitted: this model does not accept images]",
+    )
   })
 })

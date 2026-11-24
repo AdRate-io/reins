@@ -2,7 +2,8 @@
  * handoff —— 会话交接模块（技术方案 §9.5，B5）。
  *
  * 交接的机械部分在 core 循环里（T9）：`onTurnEnd` 返回 `{ handoff }` → 旧会话 append `core.handoff`，
- * 新会话 seq 1 = `system_note(kind=host, 摘要)`、之后是脑子带来的开场事件、最后 `user_message(触发消息)`，
+ * 新会话 seq 1 = `system_note(kind=host, 摘要)`、之后是脑子带来的开场事件、最后 `user_message(触发消息)`
+ * （形状与发起者由 core `handoffOpeningDrafts` 定：摘要记在模型名下，触发消息逐字是用户原话才记为用户），
  * 调 `cfg.onHandoff(from, to)`，返回 `handoff` 态；续跑新会话由宿主再起一次 runLoop。本模块只让模型能用它（宪法一）：
  *
  * 1. **工具** `handoff({ summary, nextSteps, triggerMessage?, reason? })`，静态贡献 + 规则提示 `HANDOFF_RULES`。

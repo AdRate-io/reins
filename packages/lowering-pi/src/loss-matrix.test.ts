@@ -56,6 +56,24 @@ function variants(api: string, model: { provider: string; id: string }): Variant
   return [
     { label: "user_message", events: [user()] },
     {
+      // 白名单之前写进日志的图片（全库审查 2026-11-25 追加项）：落占位、记 lossy
+      label: "user_message 带白名单外的旧图片",
+      events: [mk("core.user_message", { content: [{ type: "image", mime: "image/svg+xml", data: "AA" }] })],
+    },
+    {
+      label: "tool_result 带白名单外的旧图片",
+      events: [
+        user(),
+        call(),
+        mk("core.tool_result", {
+          toolCallId: "c1",
+          name: "f",
+          content: [{ type: "image", mime: "image/svg+xml", data: "AA" }],
+          isError: false,
+        }),
+      ],
+    },
+    {
       label: "user_message 带视频 / 音频（占位）",
       events: [mk("core.user_message", { content: [video, audio] })],
     },

@@ -18,7 +18,6 @@ import {
   type CoreEvent,
   type Event,
   type EventDraft,
-  isImageRef,
   type LandingRecord,
   type ModelRef,
   markUntrusted,
@@ -29,7 +28,7 @@ import {
   untrustedSourceOf,
 } from "@reinsjs/core"
 import type { ModelMessage, ToolCall as TanstackToolCall } from "@tanstack/ai"
-import { fromTanstackContent, IMAGE_REF_NOTE, partAsText, toTanstackContent } from "./content.js"
+import { fromTanstackContent, partAsText, placeholderNoteOf, toTanstackContent } from "./content.js"
 
 export interface ToModelMessagesOptions {
   /** 当前请求的模型；thinking 签名只对同一来源回放 */
@@ -159,7 +158,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
         flush()
         const c = content(e, e.payload.content)
         const msg: ModelMessage = { role: "user", content: toTanstackContent(c.parts) }
-        const refNote = c.parts.some(isImageRef) ? IMAGE_REF_NOTE : undefined
+        const refNote = placeholderNoteOf(c.parts)
         // 工具结果还没到齐就来了用户消息（续跑带新输入、进程死亡后再发）：后移到同批结果之后，与 lowering-pi 同一规则
         if (awaiting.size > 0) {
           deferred.push({
@@ -223,7 +222,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
       case "core.tool_result": {
         flush()
         const c = content(e, e.payload.content)
-        const refNote = c.parts.some(isImageRef) ? IMAGE_REF_NOTE : undefined
+        const refNote = placeholderNoteOf(c.parts)
         const msg: ModelMessage = {
           role: "tool",
           toolCallId: e.payload.toolCallId,

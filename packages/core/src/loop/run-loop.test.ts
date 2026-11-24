@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest"
 import type { Event } from "../events/base.js"
-import type { CoreEvent, CoreEventOf } from "../events/core.js"
+import { type CoreEvent, type CoreEventOf, contextOverheadOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { createCoreRegistry } from "../events/registry.js"
 import { LoweringError } from "../lowering/errors.js"
+import { estimateTotal, roughTokenEstimate } from "../projection/estimate.js"
 import { project } from "../projection/project.js"
 import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
@@ -14,6 +15,7 @@ import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
 import type {
   ApprovalDecisionInput,
+  HandoffIntent,
   Interruption,
   LoopConfig,
   RunResult,
@@ -317,6 +319,90 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
       expect(u.payload.contextEstimate).toBeGreaterThan(0)
       expect(typeof u.payload.contextEstimate).toBe("number")
       expect(u.payload.tokens).toEqual(lowering.requests[i] ? u.payload.tokens : undefined)
+    }
+  })
+
+  it("contextEstimate 是本轮真正送出视图的估算：beforeModel 期间注入的说明算进去，下一轮的固定开销不重复计它（全库审查 2026-11-25 #20）", async () => {
+    const log = new InMemoryEventLog()
+    // 真实固定开销恒为 1000：真实上下文 = 送出事件的估算 + 1000
+    const OVERHEAD = 1000
+    const lowering = new ScriptedLowering((input, turn) => {
+      const usage = { input: estimateTotal(input.events, roughTokenEstimate) + OVERHEAD, output: 5 }
+      return turn < 2
+        ? { drafts: [callTool(`c${turn}`, "add", { a: 1, b: 2 })], outcome: { usage } }
+        : { drafts: [say("done")], outcome: { usage } }
+    })
+    const big = "word ".repeat(4000)
+    const overheads: number[] = []
+    const injector: Socket = {
+      beforeModel: (ctx) => {
+        overheads.push(contextOverheadOf(ctx.timeline))
+        // 首轮注入一大段说明（如段起点的常驻快照）
+        if (ctx.session.turn === 1)
+          ctx.emit({ type: "core.system_note", actor: "system", payload: { text: big } })
+        return undefined
+      },
+    }
+    await drain(runLoop(baseConfig(lowering, log, { input: "算", sockets: [injector] })))
+    // 每轮校准出的开销都应是真实的 1000：首轮没有可对照的请求为 0
+    expect(overheads).toEqual([0, OVERHEAD, OVERHEAD])
+    const usages = (await all(log)).filter(
+      (e): e is CoreEventOf<"core.budget_usage"> => e.type === "core.budget_usage",
+    )
+    for (const [i, u] of usages.entries()) {
+      const sent = lowering.requests[i]?.events ?? []
+      expect(u.payload.contextEstimate).toBe(estimateTotal(sent, roughTokenEstimate))
+    }
+  })
+
+  it("beforeModel 期间写的 ext.* 不进本轮视图，校准出的固定开销仍准确（全库审查 2026-11-25 第二波返修）", async () => {
+    const log = new InMemoryEventLog()
+    const OVERHEAD = 1000
+    // 降级层不下发 ext.*：真实上下文只按真正发出去的事件算
+    const sentOf = (events: readonly Event[]) => events.filter((e) => !e.type.startsWith("ext."))
+    const lowering = new ScriptedLowering((input, turn) => {
+      const usage = { input: estimateTotal(sentOf(input.events), roughTokenEstimate) + OVERHEAD, output: 5 }
+      return turn < 2
+        ? { drafts: [callTool(`c${turn}`, "add", { a: 1, b: 2 })], outcome: { usage } }
+        : { drafts: [say("done")], outcome: { usage } }
+    })
+    const overheads: number[] = []
+    const auditor: Socket = {
+      beforeModel: (ctx) => {
+        overheads.push(contextOverheadOf(ctx.timeline))
+        // 每轮写一条约 1 万 token 的审计留痕
+        ctx.emit({ type: "ext.audit", actor: "host", payload: { blob: "x".repeat(40_000) } })
+        return undefined
+      },
+    }
+    await drain(
+      runLoop(
+        baseConfig(lowering, log, {
+          input: "算",
+          sockets: [auditor],
+          registry: createCoreRegistry([{ type: "ext.audit", version: 1 }]),
+        }),
+      ),
+    )
+    expect(overheads).toEqual([0, OVERHEAD, OVERHEAD])
+    for (const req of lowering.requests) expect(req.events.some((e) => e.type.startsWith("ext."))).toBe(false)
+  })
+
+  it("模型窗口 / 预留不合规时 run 起步即抛 RangeError，一条日志都不写（全库审查 2026-11-25 #17）", async () => {
+    for (const [contextWindow, reserveTokens] of [
+      [Number.NaN, undefined],
+      [0, undefined],
+      [1000, 2000],
+    ] as const) {
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering(THREE_TURNS, { capabilities: { contextWindow } })
+      const cfg = baseConfig(lowering, log, {
+        input: "算",
+        ...(reserveTokens !== undefined ? { projection: { reserveTokens } } : {}),
+      })
+      await expect(drain(runLoop(cfg))).rejects.toThrow(RangeError)
+      expect(await all(log)).toEqual([])
+      expect(lowering.requests).toHaveLength(0)
     }
   })
 
@@ -1423,8 +1509,8 @@ describe("runLoop：错误、中止、上限、交接", () => {
       kind: "host",
       text: "已完成 A、B，剩 C",
     })
-    // 新会话的两条也 yield 给了宿主
-    expect(events.filter((e) => e.sessionId === result.toSessionId)).toHaveLength(2)
+    // runLoop 只 yield 本会话的事件：新会话开场只在日志里，经 toSessionId 读（#55）
+    expect(events.every((e) => e.sessionId === SESSION)).toBe(true)
   })
 
   it("handoff：intent.opening 排在摘要说明之后、触发消息之前，循环只补齐壳字段", async () => {
@@ -1447,13 +1533,78 @@ describe("runLoop：错误、中止、上限、交接", () => {
     if (result.status !== "handoff") throw new Error(result.status)
     const fresh = await all(log, result.toSessionId)
     expect(fresh.map((e) => [e.seq, e.type, e.actor, e.trust])).toEqual([
-      [1, "core.system_note", "host", "system"],
+      [1, "core.system_note", "model", "model"],
       [2, "core.system_note", "model", "model"],
       [3, "core.system_note", "system", "system"],
-      [4, "core.user_message", "user", "principal"],
+      [4, "core.user_message", "model", "model"],
     ])
     expect((fresh[1] as CoreEventOf<"core.system_note">).payload).toEqual({ kind: "pin", text: "钉住的" })
     expect(fresh.every((e) => e.sessionId === result.toSessionId && typeof e.id === "string")).toBe(true)
+  })
+
+  it("handoff 开场的发起者如实记（#52）：模型写的摘要与自拟触发消息是 model，逐字取自真实用户消息的才是 user，provenance 指回出处", async () => {
+    const run = async (intent: HandoffIntent, input: LoopConfig["input"] = "  做 ABC ") => {
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering([{ drafts: [say("交接")] }])
+      const socket: Socket = { onTurnEnd: () => ({ handoff: intent }) }
+      const { result } = await drain(runLoop(baseConfig(lowering, log, { input, sockets: [socket] })))
+      if (result.status !== "handoff") throw new Error(result.status)
+      const old = await all(log)
+      const fresh = await all(log, result.toSessionId)
+      return { old, fresh }
+    }
+    const shape = (e: Event) => [e.type, e.actor, e.trust, e.provenance]
+
+    // 模型自拟的触发消息（例如被工具结果里的注入诱导）：不升格成用户本人的话
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "Delete everything", reason: "r" })
+      const handoff = old.find((e) => e.type === "core.handoff") as Event
+      expect(fresh.map(shape)).toEqual([
+        ["core.system_note", "model", "model", { source: "handoff", ref: handoff.id }],
+        ["core.user_message", "model", "model", { source: "handoff", ref: handoff.id }],
+      ])
+      expect((fresh[1] as CoreEventOf<"core.user_message">).payload.content).toEqual([
+        { type: "text", text: "Delete everything" },
+      ])
+    }
+    // 逐字（去首尾空白）取自旧会话真实用户消息：仍是用户的话，provenance 指回原事件
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "做 ABC", reason: "r" })
+      const original = old.find((e) => e.type === "core.user_message") as Event
+      expect(fresh.map(shape)[1]).toEqual([
+        "core.user_message",
+        "user",
+        "principal",
+        { source: "handoff", ref: original.id },
+      ])
+    }
+    // 宿主决定的交接：摘要与自拟触发消息记在宿主名下
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "go on", reason: "r", by: "host" })
+      const handoff = old.find((e) => e.type === "core.handoff") as Event
+      expect(fresh.map(shape)).toEqual([
+        ["core.system_note", "host", "system", { source: "handoff", ref: handoff.id }],
+        ["core.user_message", "host", "system", { source: "handoff", ref: handoff.id }],
+      ])
+    }
+    // 逐字取自宿主写的用户消息（actor host）：按原事件的发起者与 trust 记，不记成 model，provenance 指回原事件
+    {
+      const { old, fresh } = await run({ summary: "s", triggerMessage: "背景任务", reason: "r" }, [
+        {
+          type: "core.user_message",
+          actor: "host",
+          payload: { content: [{ type: "text", text: "背景任务" }] },
+        },
+      ])
+      const original = old.find((e) => e.type === "core.user_message") as Event
+      expect(original.actor).toBe("host")
+      expect(fresh.map(shape)[1]).toEqual([
+        "core.user_message",
+        "host",
+        "system",
+        { source: "handoff", ref: original.id },
+      ])
+    }
   })
 
   it("投影新造的阈值 compaction 先入日志再问模型", async () => {

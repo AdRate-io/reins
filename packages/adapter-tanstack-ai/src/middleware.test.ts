@@ -28,6 +28,7 @@ import {
   InMemoryMemoryStore,
   lastRunMarker,
   OUTCOME_UNKNOWN_TEXT,
+  roughTokenEstimate,
   runStatusOf,
   type Socket,
   type ToolBatch,
@@ -171,6 +172,60 @@ function fixture(
 const user = (text: string): ModelMessage => ({ role: "user", content: text })
 
 describe("reinsMiddleware：基本流程", () => {
+  it("窗口 / 预留不合规在构造时就抛 RangeError，不等到投影（此时 tools_bound 与用户消息已落日志）（全库审查 2026-11-25 第二波返修）", () => {
+    const base = { sessionId: SESSION, log: new InMemoryEventLog() }
+    for (const [contextWindow, reserveTokens] of [
+      [Number.NaN, undefined],
+      [0, undefined],
+      [1000, 2000],
+    ] as const) {
+      expect(() =>
+        reinsMiddleware({
+          ...base,
+          capabilities: { contextWindow },
+          ...(reserveTokens !== undefined ? { projection: { reserveTokens } } : {}),
+        }),
+      ).toThrow(RangeError)
+    }
+  })
+
+  it("budget_usage.contextEstimate 含 beforeModel 期间注入的说明，与 runLoop 同口径（全库审查 2026-11-25 #20）", async () => {
+    const big = "word ".repeat(4000)
+    const injector: Socket = {
+      beforeModel: (ctx) => {
+        if (ctx.session.turn === 1)
+          ctx.emit({ type: "core.system_note", actor: "system", payload: { text: big } })
+        return undefined
+      },
+    }
+    const f = fixture([{ blocks: [say("好")] }], [injector])
+    await f.run({ messages: [user("hi")] })
+    const logged = await all(f.log)
+    const usage = logged.find((e): e is CoreEventOf<"core.budget_usage"> => e.type === "core.budget_usage")
+    const note = logged.find((e) => e.type === "core.system_note")
+    if (!usage || !note) throw new Error("budget_usage or injected note missing")
+    expect(usage.payload.contextEstimate).toBeGreaterThan(roughTokenEstimate(note))
+  })
+
+  it("beforeModel 期间写的 ext.* 不进本轮视图、不计入 contextEstimate，与 runLoop 同口径（全库审查 2026-11-25 第二波返修）", async () => {
+    const auditor: Socket = {
+      beforeModel: (ctx) => {
+        ctx.emit({ type: "ext.audit", actor: "host", payload: { blob: "x".repeat(40_000) } })
+        return undefined
+      },
+    }
+    const f = fixture([{ blocks: [say("好")] }], [auditor], {
+      registry: createCoreRegistry([{ type: "ext.audit", version: 1 }]),
+    })
+    await f.run({ messages: [user("hi")] })
+    const logged = await all(f.log)
+    const usage = logged.find((e): e is CoreEventOf<"core.budget_usage"> => e.type === "core.budget_usage")
+    if (!usage) throw new Error("budget_usage missing")
+    expect(logged.some((e) => (e.type as string) === "ext.audit")).toBe(true)
+    // 1 万 token 的留痕不算进送出视图的估算
+    expect(usage.payload.contextEstimate).toBeLessThan(1000)
+  })
+
   it("用户消息进日志 → 模型调工具 → TanStack 执行 → 结果进日志 → 回答；模型每轮看到的是日志投影", async () => {
     const f = fixture([
       { blocks: [think("先算", "SIG"), callTool("c1", "add", { a: 2, b: 3 })] },
@@ -591,6 +646,14 @@ describe("reinsMiddleware：脑子模块", () => {
     expect(events.at(-1)?.payload).toEqual({ status: "handoff", toSessionId: to })
     const opened = await all(f.log, to)
     expect(types(opened)).toEqual(["system_note", "user_message"])
+    // 与 runLoop 同一开场（core handoffOpeningDrafts）：模型写的摘要与自拟触发消息记在模型名下（#52）
+    const ho = events.at(-2)
+    expect(opened.map((e) => [e.actor, e.trust, e.provenance])).toEqual([
+      ["model", "model", { source: "handoff", ref: ho?.id }],
+      ["model", "model", { source: "handoff", ref: ho?.id }],
+    ])
+    // onEvent 只拿本会话的事件，新会话开场只在日志里（#55，与 runLoop 不 yield 同口径）
+    expect(f.events.every((e) => e.sessionId === SESSION)).toBe(true)
     expect(f.adapter.calls).toHaveLength(1)
   })
 })

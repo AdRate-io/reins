@@ -13,8 +13,10 @@
  * - 只包文本片段：图片不包，首尾若是图片就各插一段文本标记
  * - 内容里出现 `</untrusted`（大小写不敏感）会提前闭合标签让注入逃出去，替换成 `<\/untrusted` 并在返回值里报 `escaped`，
  *   降级层据此把落点记成 lossy（有损必声明）
+ * - `tool_reference` 片段保持片段形状（降级层还要按它判原生落点与备注），但它在 untrusted 结果里一律被展开成文本
+ *   （`renderToolReference`），所以名字、描述与 schema 里的每个字符串（含键）同样转义、同样计入 `escaped`
  */
-import type { ContentPart, Event } from "../events/base.js"
+import type { ContentPart, Event, ToolReferencePart } from "../events/base.js"
 
 export const UNTRUSTED_TAG = "untrusted"
 
@@ -51,6 +53,32 @@ export function untrustedOpenTag(source: string): string {
 }
 export const UNTRUSTED_CLOSE_TAG = `</${UNTRUSTED_TAG}>`
 
+/** schema 里的字符串（键与值）逐个转义，命中时在 hit 上记一笔 */
+function escapeDeep(v: unknown, hit: { escaped: boolean }): unknown {
+  if (typeof v === "string") {
+    const e = escapeUntrustedText(v)
+    if (e.escaped) hit.escaped = true
+    return e.text
+  }
+  if (Array.isArray(v)) return v.map((x) => escapeDeep(x, hit))
+  if (v !== null && typeof v === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [k, x] of Object.entries(v)) out[escapeDeep(k, hit) as string] = escapeDeep(x, hit)
+    return out
+  }
+  return v
+}
+
+/** 引用片段展开成文本后落在包装之内，与文本片段同一道转义；无需转义时原样返回同一对象 */
+function escapeToolReference(p: ToolReferencePart): { part: ToolReferencePart; escaped: boolean } {
+  const hit = { escaped: false }
+  const name = escapeDeep(p.name, hit) as string
+  const description = escapeDeep(p.description, hit) as string
+  const inputSchema = escapeDeep(p.inputSchema, hit) as Record<string, unknown>
+  if (!hit.escaped) return { part: p, escaped: false }
+  return { part: { type: "tool_reference", name, description, inputSchema }, escaped: true }
+}
+
 /** 纯文本版：system_note / compaction 这类以字符串落地的内容 */
 export function markUntrustedText(text: string, source: string): { text: string; escaped: boolean } {
   const e = escapeUntrustedText(text)
@@ -61,6 +89,11 @@ export function markUntrustedText(text: string, source: string): { text: string;
 export function markUntrusted(parts: readonly ContentPart[], source: string): MarkedContent {
   let escaped = false
   const body: ContentPart[] = parts.map((p) => {
+    if (p.type === "tool_reference") {
+      const r = escapeToolReference(p)
+      escaped = escaped || r.escaped
+      return r.part
+    }
     if (p.type !== "text") return p
     const e = escapeUntrustedText(p.text)
     escaped = escaped || e.escaped

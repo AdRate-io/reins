@@ -71,7 +71,10 @@ export function foldedToolResults(
 export interface RenderManifestOptions {
   /** 清单标题行；调用方在这里说明怎么取回（core 不知道取回工具叫什么） */
   heading: string
-  /** 最多列几条，其余折成一行"…and N more (seq a–b)"。缺省 80：一条约 25 token，上限约 2k token */
+  /**
+   * 最多列几条，超出时留 seq 最大（最近被折叠）的这些，较旧的折成标题下的一行"…N earlier (seq a–b)"。
+   * 缺省 80：一条约 25 token，上限约 2k token
+   */
   maxItems?: number
   /** 入参 JSON 最多显示多少字符。缺省 100 */
   maxArgsChars?: number
@@ -106,20 +109,33 @@ export function renderFoldedToolResults(
   opts: RenderManifestOptions,
 ): string {
   if (items.length === 0) return ""
-  const maxItems = opts.maxItems ?? 80
-  const lines = [opts.heading]
-  const shown = items.slice(0, maxItems)
+  const { shown, omittedLine } = keepLatest(items, opts.maxItems)
+  const lines = omittedLine ? [opts.heading, omittedLine] : [opts.heading]
   for (const it of shown) {
     const tail = it.spilledBlobId
-      ? `stored as blob "${it.spilledBlobId}", read with fetch_blob`
+      ? // 与 brain recall 的说法一致：core 不知道本 run 有没有 fetch_blob（spill({ tool: false })、后来去掉了 spill），只附条件（第二波返修）
+        `stored as blob "${it.spilledBlobId}"; read it with fetch_blob if that tool is in your tool list`
       : `${fmtChars(it.chars)}${it.isError ? ", error" : ""}`
     lines.push(`- seq ${it.seq} ${it.name}(${digestArgs(it.args, opts.maxArgsChars)}) — ${tail}`)
   }
-  if (items.length > shown.length) {
-    const rest = items.slice(shown.length)
-    lines.push(`- …and ${rest.length} more (seq ${rest[0]?.seq}–${rest[rest.length - 1]?.seq})`)
-  }
   return lines.join("\n")
+}
+
+/**
+ * 超过上限时留最近的 maxItems 条（items 已按 seq 升序），较旧的折成一行（全库审查 2026-11-25 #63）。
+ * 留最近而不是最旧：几次整理吸收旧摘要后清单只增不减，模型最想取回的是较新那截的字段值；
+ * 被省的那几条仍可按 seq 取回，只是看不到工具名与入参
+ */
+function keepLatest<T extends { seq: number }>(
+  items: readonly T[],
+  maxItems = 80,
+): { shown: readonly T[]; omittedLine?: string } {
+  if (items.length <= maxItems) return { shown: items }
+  const cut = items.length - maxItems
+  const first = items[0]?.seq
+  const last = items[cut - 1]?.seq
+  const range = first === last ? `seq ${first}` : `seq ${first}–${last}`
+  return { shown: items.slice(cut), omittedLine: `- …${cut} earlier (${range})` }
 }
 
 /**
@@ -169,9 +185,8 @@ export function renderFoldedUserMedia(
   opts: { heading: string; maxItems?: number },
 ): string {
   if (items.length === 0) return ""
-  const maxItems = opts.maxItems ?? 80
-  const lines = [opts.heading]
-  const shown = items.slice(0, maxItems)
+  const { shown, omittedLine } = keepLatest(items, opts.maxItems)
+  const lines = omittedLine ? [opts.heading, omittedLine] : [opts.heading]
   for (const it of shown) {
     const byType = new Map<string, string[]>()
     for (const m of it.media) byType.set(m.type, [...(byType.get(m.type) ?? []), m.mime])
@@ -179,10 +194,6 @@ export function renderFoldedUserMedia(
       .map(([type, mimes]) => `${mimes.length} ${type}${mimes.length > 1 ? "s" : ""} (${mimes.join(", ")})`)
       .join(", ")
     lines.push(`- seq ${it.seq} user message — ${desc}`)
-  }
-  if (items.length > shown.length) {
-    const rest = items.slice(shown.length)
-    lines.push(`- …and ${rest.length} more (seq ${rest[0]?.seq}–${rest[rest.length - 1]?.seq})`)
   }
   return lines.join("\n")
 }

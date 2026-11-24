@@ -54,11 +54,11 @@
 | `packages/brain/src/shared/batch.ts` | `batchOf(ctx, module)`：取 `ctx.batch`，缺失（宿主装出两份 core、旧循环不填）时抛可读错误；halt-on-failure 与 stop-after 共用 |
 | `packages/brain/src/shared/own-tools.ts` | 自带工具撞名的统一处置（全库审查 #51）：`shadowingToolName(bound, own)`（同名且不是同一对象；给名字时同名即撞）、`shadowedToolWarning`、`ownToolsGuard`（按名字只告警一次）、`ownsTool(ctx, tool)`（钩子确认本 run 绑定的是自家那件）；compact / spill / pins / handoff / memory / skills / lazy-tools 共用 |
 | `packages/brain/src/shared/paths.ts` | memory 与 skills 共用的根目录限定路径规范化 `resolveRootedPath(raw, root, field)`：拒绝 `.` / `..` / 反斜杠 / 百分号编码 / 控制字符 / 段首尾空白，折叠重复斜杠 |
-| `packages/brain/src/shared/segment.ts` | 段判据（compact 与 pins 共用）：`atSegmentStart`、`modelActedSinceLastCompaction`、`currentSegment`、`timelineSoFar`，全从时间线读 |
+| `packages/brain/src/shared/segment.ts` | 段判据（compact、pins、perception 共用）：`atSegmentStart`、`modelActedSinceLastCompaction`、`currentSegment`、`timelineSoFar`，全从时间线读 |
 | `packages/brain/src/shared/view.ts` | 共用的带行号文件视图 `formatFileView`（范围、按字符上限逐行截断并提示续读；`enforceLimit` 硬上限模式给 skills：带范围也截、超长单行切开）与 `byteLength` / `humanSize` / `splitLines` / `numbered` |
 | `packages/brain/src/perception/index.ts` | perception 子模块聚合导出 |
 | `packages/brain/src/perception/perception.ts` | `perception(opts): Socket`：beforeModel 算读数、渲染、与可见的上一条说明按文字判重，不同才 emit `system_note(kind=perception)` |
-| `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数、外溢条数、预算最紧一维余量；上下文开销调 core `contextOverheadOf` 并原名转出 |
+| `packages/brain/src/perception/reading.ts` | 纯函数算读数：模型轮数、会话累计 token、整理次数（按 `timelineSoFar`，含本轮投影新造的阈值 compaction）、外溢条数、预算最紧一维余量；上下文开销调 core `contextOverheadOf` 并原名转出 |
 | `packages/brain/src/perception/render.ts` | 读数 → 给模型看的英文说明文字；含"折叠到底拿走了什么"那句（E3 实测补的） |
 | `packages/brain/src/perception/tiers.ts` | 档位离散化：`rangeTier` / `countTier` / `percent` / `compactNumber`，以及边界严格升序的构造期校验 |
 | `packages/brain/src/perception/perception.test.ts` | perception 的全部用例（档位、判重、校准、与 runLoop 集成） |
@@ -129,7 +129,7 @@
 2. `beforeModel`（`force` 缺省开）：`timelineSoFar(ctx)` 里最后一次 compaction 之后已有 n 条请求 → 看第 n+1 级软线（缺省 `[0.75, 0.8]`）；`contextUsageRatio(ctx)`（估算 + `contextOverheadOf`，与感知、阈值兜底同一把尺）过线、且整理后模型动过（`modelActedSinceLastCompaction`），就 emit 一条 `system_note(kind=budget, directive, meta.compactRequest={usage, autoFoldAt, attempt, at})` 请模型先整理。两级都不理就留给阈值兜底。
 3. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 4. `afterTool` 见到 `compact` 调用：`parseCompactArgs` 拿规范入参 → `planCompaction(ctx.events, args, { protectCallId, timeline, manifest })` 算切点与幸存者 → `ctx.emit` 一条 `core.compaction(decidedBy=forced 或 model, actor=model, parentId=tool_call)`（本段请过即 forced） → 把占位结果换成 `receipt()` 回执。日志顺序是 tool_call → compaction → tool_result。
-5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result` 或 `user_message`，原样返回内容并加说明头；工具结果原件已外溢则指向 blob 让模型用 `fetch_blob`。
+5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result` 或 `user_message`，原样返回内容并加说明头；工具结果原件已外溢则指向 blob 让模型用 `fetch_blob`——这是指路不是失败，回非 isError（否则 `haltOnFailure` 会拦下同批后面的调用）；recall 看不到本 run 的工具表，文案如实附"在表里时"（2026-11-25 全库审查 #66）。
 6. `onTurnEnd`：本轮模型还要继续时，把本轮模型自决的整理数 + 本轮开始时投影新造的阈值兜底整理数 + `trailingCompactionRun(ctx.timeline)` 相加，达到 `maxConsecutive`（缺省 3）即返回 `{ pause: { reason: "budget", code: COMPACT_STALLED_PAUSE_CODE, note } }`（原因码 `reins.compact_stalled`，事后与预算触顶分得开）。
 
 ### pins
@@ -146,13 +146,13 @@
 2. 把结果里全部文本片段拼成正文（图片等非文本片段不度量），`measureText` 估算不超限就原样通过。
 3. 超限且 `overflow: "truncate"`：不存 blob，只留 `previewOf` 的首尾预览，说明里明说中段不可恢复。
 4. 超限且没有 `BlobStore`：外溢关闭，结果原样通过，经 `warn` 告警一次（每个实例只一次）。
-5. 超限且有 `BlobStore`：`ctx.blobs.put(text, { mime, sessionId })` 存全文，结果换成 `[说明 + 首尾预览]` 并在草稿上写 `payload.spilled = { blobId, summary }`；日志里仍只有一条 `tool_result`。
+5. 超限且有 `BlobStore`：`ctx.blobs.put(text, { mime, sessionId })` 存全文，结果换成 `[说明 + 首尾预览]` 并在草稿上写 `payload.spilled = { blobId, summary }`；日志里仍只有一条 `tool_result`。说明里给的首段 `end` 按 min(工具上限, `maxResultTokens`) 算——fetch_blob 单次只按模块上限裁，照工具上限给会被裁；预览字符数缺省按该工具的生效上限派生（`min(2000, 上限 / 4)`），与外溢判定同一口径（2026-11-25 全库审查 #65）。
 6. `fetch_blob({ id, start?, end? })` 的 `execute` 走 `readBlobSlice`：先 `referencedHere` 判本会话日志里有没有 `tool_result.spilled.blobId` 指向它（没有一律当不存在），再整段取回、UTF-8 解码、按**字符**切片、按 token 上限裁，头部写明范围、总长与续读起点。
 
 ### handoff
 
 1. `afterTool` 见到 `handoff` 调用：同轮第二次调用直接以 isError 回绝；否则 `parseHandoffArgs` 解析。
-2. `intentOf(ctx, args)` 组装意图：`composeHandoffNote` 把摘要与编号的下一步排成一段（既是旧会话 `handoff.summary` 也是新会话 seq 1 的文字）；`carriedPins(ctx)` 把可见且未被 `supersedes` 取代的 pin 复制成 `opening` 草稿；触发消息缺省取 `lastVisibleUserMessage(ctx.events)`。
+2. `intentOf(ctx, args)` 组装意图：`composeHandoffNote` 把摘要与编号的下一步排成一段（既是旧会话 `handoff.summary` 也是新会话 seq 1 的文字）；`carriedPins(ctx)` 把可见且未被 `supersedes` 取代的 pin 复制成 `opening` 草稿；触发消息缺省取 `lastVisibleUserMessage(ctx.events)`（逐字是用户原话，core 落成 user；模型显式给的落在模型名下，见 core `handoffOpeningDrafts`）。
 3. 意图记在 `WeakMap<TurnContext>`，把占位结果换成回执（带了几条下一步、几条 pin、有没有触发消息）。同轮其余工具照常执行。
 4. `onTurnEnd`：内存里有意图就返回 `{ handoff: intent }`；没有则用 `unfinishedHandoffArgs(ctx.timeline)` 从日志重建（上一次 run 在这一轮被打断的情形，R2；不限补跑轮，TanStack 的补跑批不调 onTurnEnd、在下一轮重建），回执之后已有用户消息或重建不出就无意见。core 循环随后 append `core.handoff`、开新会话、调 `onHandoff`。
 
@@ -191,8 +191,8 @@
 
 1. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 2. `onTurnEnd`：本轮模型已收尾作答就不拦（循环本来就要停）。
-3. 还要继续时跑 `checkBudget(ctx.budget, limits)`：`contextTokens` 取 `contextTokensOf(lastUsage)`（input + cacheRead + cacheWrite），其余四维直接读 `tokensSpent` / `turns` / `toolCalls` / `wallMs`；**用量 ≥ 上限**即触顶。
-4. 有触顶维度就返回 `{ pause: { reason: "budget", code, note } }`，code 缺省 `BUDGET_PAUSE_CODE`（`reins.budget`，不编维度——可能多维同时触顶；`code` 选项拿 hits 自己算），note（缺省 `defaultBudgetNote`）列出全部触顶维度与用量/上限，进 `Interruption` 给宿主看。上限按每次 run 计，宿主续跑即再批一份。
+3. 还要继续时跑 `checkBudget(ctx.budget, limits)`：`contextTokens` 取 `contextTokensOf(lastUsage)`（input + cacheRead + cacheWrite），其余四维直接读 `tokensSpent` / `turns` / `toolCalls` / `wallMs`（循环进 onTurnEnd 前刷新，含本轮工具耗时）；**用量 ≥ 上限**即触顶。
+4. 有触顶维度就返回 `{ pause: { reason: "budget", code, note } }`，code 缺省 `BUDGET_PAUSE_CODE`（`reins.budget`，不编维度——可能多维同时触顶；`code` 选项拿 hits 自己算），note（缺省 `defaultBudgetNote`）列出全部触顶维度与用量/上限，进 `Interruption` 给宿主看。四个 run 级维度按每次 run 计，宿主续跑即再批一份；`contextTokens` 是最近一次请求的读数，续跑的新 run 从日志继承、不重置，缺省说明对它改说"续跑不重置，续跑后至少还会再停一次（当轮查的是整理前那次请求），之后请求变小才解开"（全库审查 2026-11-25 #23 与第二波返修）。
 
 ### halt-on-failure
 

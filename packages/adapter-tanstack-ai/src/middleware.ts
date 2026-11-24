@@ -36,13 +36,15 @@ import {
   computeConfigHash,
   createCoreRegistry,
   createEvent,
-  DEFAULT_MODEL_INVISIBLE_TYPES,
   type Event,
   type EventDraft,
   type EventLog,
   type EventSchemaRegistry,
   errorMessageOf,
+  estimateTotal,
   type HandoffIntent,
+  handoffOpeningDrafts,
+  isModelInvisibleByDefault,
   isReplayable,
   type LandingRecord,
   type LoweringCapabilities,
@@ -56,8 +58,10 @@ import {
   pendingToolCalls,
   project,
   readTimeline,
+  resolveReserveTokens,
   resolveSocketContributions,
   resolveSocketPause,
+  roughTokenEstimate,
   type Socket,
   type TokenEstimator,
   type TokenUsage,
@@ -181,7 +185,7 @@ interface TurnState {
     held: string[]
     resumed: boolean
   }
-  /** 本轮投影估算，进 budget_usage.contextEstimate */
+  /** 本轮送出视图的估算（beforeModel 补丁与注入之后），进 budget_usage.contextEstimate */
   estimate: number
   startedAt: number
   /** 本次模型响应里的 tool_call 数 */
@@ -270,6 +274,14 @@ export function toReinsUsage(u: TanstackUsage): TokenUsage {
  */
 export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddleware {
   const { sessionId, log, sockets = [] } = options
+  // 窗口与预留在构造时校验（与 runLoop 起步、project() 同一函数）：capabilities 是静态的，拖到 buildTurn 的投影才抛，
+  // tools_bound 与导入的用户消息已经落了日志，会话被判 interrupted（全库审查 2026-11-25 第二波返修）
+  resolveReserveTokens({
+    contextLimit: options.capabilities.contextWindow,
+    ...(options.projection?.reserveTokens !== undefined
+      ? { reserveTokens: options.projection.reserveTokens }
+      : {}),
+  })
   const registry = options.registry ?? createCoreRegistry()
   const now = options.now ?? (() => Date.now())
   const newId = options.newId ?? uuidv7
@@ -541,9 +553,12 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       tctx.tools = tools
     }
     const injected = await flush(ctx, s)
-    visible = [...visible, ...injected.filter((e) => !DEFAULT_MODEL_INVISIBLE_TYPES.has(e.type))]
+    // 运维类型与 ext.* 不进本轮视图：与 runLoop、投影同一口径（core isModelInvisibleByDefault）
+    visible = [...visible, ...injected.filter((e) => !isModelInvisibleByDefault(e.type))]
     tctx.events = visible
     tctx.tools = tools
+    // 与 runLoop 同口径：contextEstimate 取真正送出的视图，注入的说明 / 快照不被当成固定开销重复计（全库审查 2026-11-25 #20）
+    turn.estimate = estimateTotal(visible, options.projection?.estimate ?? roughTokenEstimate)
     s.turn = turn
     s.assembler.reset()
 
@@ -822,7 +837,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
   // ---- 交接：与 runLoop 同一机械（旧会话记 handoff，新会话开头 = 摘要 + 开场 + 触发消息） ----
   const doHandoff = async (ctx: ChatMiddlewareContext, s: RunState, intent: HandoffIntent) => {
     const toSessionId = intent.toSessionId ?? newId(now())
-    await append(ctx, s, [
+    const [handoffEvent] = await append(ctx, s, [
       {
         type: "core.handoff",
         actor: intent.by ?? "model",
@@ -835,21 +850,13 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       },
     ])
     const at = now()
-    const opening: EventDraft[] = [
-      { type: "core.system_note", actor: "host", payload: { kind: "host", text: intent.summary } },
-      ...(intent.opening ?? []),
-    ]
-    if (intent.triggerMessage !== undefined)
-      opening.push({
-        type: "core.user_message",
-        actor: "user",
-        payload: { content: [{ type: "text", text: intent.triggerMessage }] },
-      })
+    // 发起者如实记：与 runLoop 调同一个 handoffOpeningDrafts，触发消息对照旧会话完整时间线判是不是用户原话
+    const opening = handoffOpeningDrafts(intent, handoffEvent as Event, await timelineOf())
     const events = opening.map((d, i) =>
       createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
     )
+    // 与 runLoop 同口径：新会话开场只写日志、不交给本 run 的 onEvent（宿主拿它推旧会话的前端会多出别的会话的消息）
     await log.append(events)
-    for (const e of events) options.onEvent?.(e)
     // 新会话开场写成之后立即在旧会话落终结记号（与 runLoop 同序）。不能留给 onFinish：交接后连接被取消时引擎跳过 onFinish、
     // 改调 onAbort，旧会话就会被记成 paused(host)
     await append(ctx, s, [
