@@ -129,7 +129,7 @@
 2. `beforeModel`（`force` 缺省开）：`timelineSoFar(ctx)` 里最后一次 compaction 之后已有 n 条请求 → 看第 n+1 级软线（缺省 `[0.75, 0.8]`）；`contextUsageRatio(ctx)`（估算 + `contextOverheadOf`，与感知、阈值兜底同一把尺）过线、且整理后模型动过（`modelActedSinceLastCompaction`），就 emit 一条 `system_note(kind=budget, directive, meta.compactRequest={usage, autoFoldAt, attempt, at})` 请模型先整理。两级都不理就留给阈值兜底。
 3. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 4. `afterTool` 见到 `compact` 调用：`parseCompactArgs` 拿规范入参 → `planCompaction(ctx.events, args, { protectCallId, timeline, manifest })` 算切点与幸存者 → `ctx.emit` 一条 `core.compaction(decidedBy=forced 或 model, actor=model, parentId=tool_call)`（本段请过即 forced） → 把占位结果换成 `receipt()` 回执。日志顺序是 tool_call → compaction → tool_result。
-5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result` 或 `user_message`，原样返回内容并加说明头；工具结果原件已外溢则指向 blob 让模型用 `fetch_blob`。
+5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result` 或 `user_message`，原样返回内容并加说明头；工具结果原件已外溢则指向 blob 让模型用 `fetch_blob`——这是指路不是失败，回非 isError（否则 `haltOnFailure` 会拦下同批后面的调用）；recall 看不到本 run 的工具表，文案如实附"在表里时"（2026-11-25 全库审查 #66）。
 6. `onTurnEnd`：本轮模型还要继续时，把本轮模型自决的整理数 + 本轮开始时投影新造的阈值兜底整理数 + `trailingCompactionRun(ctx.timeline)` 相加，达到 `maxConsecutive`（缺省 3）即返回 `{ pause: { reason: "budget", code: COMPACT_STALLED_PAUSE_CODE, note } }`（原因码 `reins.compact_stalled`，事后与预算触顶分得开）。
 
 ### pins
@@ -146,7 +146,7 @@
 2. 把结果里全部文本片段拼成正文（图片等非文本片段不度量），`measureText` 估算不超限就原样通过。
 3. 超限且 `overflow: "truncate"`：不存 blob，只留 `previewOf` 的首尾预览，说明里明说中段不可恢复。
 4. 超限且没有 `BlobStore`：外溢关闭，结果原样通过，经 `warn` 告警一次（每个实例只一次）。
-5. 超限且有 `BlobStore`：`ctx.blobs.put(text, { mime, sessionId })` 存全文，结果换成 `[说明 + 首尾预览]` 并在草稿上写 `payload.spilled = { blobId, summary }`；日志里仍只有一条 `tool_result`。
+5. 超限且有 `BlobStore`：`ctx.blobs.put(text, { mime, sessionId })` 存全文，结果换成 `[说明 + 首尾预览]` 并在草稿上写 `payload.spilled = { blobId, summary }`；日志里仍只有一条 `tool_result`。说明里给的首段 `end` 按 min(工具上限, `maxResultTokens`) 算——fetch_blob 单次只按模块上限裁，照工具上限给会被裁；预览字符数缺省按该工具的生效上限派生（`min(2000, 上限 / 4)`），与外溢判定同一口径（2026-11-25 全库审查 #65）。
 6. `fetch_blob({ id, start?, end? })` 的 `execute` 走 `readBlobSlice`：先 `referencedHere` 判本会话日志里有没有 `tool_result.spilled.blobId` 指向它（没有一律当不存在），再整段取回、UTF-8 解码、按**字符**切片、按 token 上限裁，头部写明范围、总长与续读起点。
 
 ### handoff

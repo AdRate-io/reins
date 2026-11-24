@@ -43,10 +43,12 @@ import {
   acceptsMedia,
   IMAGE_UNAVAILABLE,
   IMAGE_UNAVAILABLE_NOTE,
+  IMAGE_UNSUPPORTED_NOTE,
   type MediaKind,
   mediaOmitted,
   omittedNote,
   RELAY_DIALECT_NOTE,
+  unsupportedImagePlaceholder,
 } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
@@ -164,10 +166,17 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 function blocksOf(
   parts: readonly ContentPart[],
   capabilities: LoweringCapabilities,
-): { blocks: AnthropicContentBlock[]; omitted: Set<MediaKind>; relayed: boolean; unavailable: boolean } {
+): {
+  blocks: AnthropicContentBlock[]
+  omitted: Set<MediaKind>
+  relayed: boolean
+  unavailable: boolean
+  badMime: boolean
+} {
   const omitted = new Set<MediaKind>()
   let relayed = false
   let unavailable = false
+  let badMime = false
   const blocks: AnthropicContentBlock[] = []
   for (const p of parts) {
     switch (p.type) {
@@ -186,6 +195,12 @@ function blocksOf(
             blocks.push({ type: "text", text: IMAGE_UNAVAILABLE })
             break
           }
+          const placeholder = unsupportedImagePlaceholder(p)
+          if (placeholder) {
+            badMime = true
+            blocks.push({ type: "text", text: placeholder })
+            break
+          }
           if (p.type !== "image") relayed = true
           blocks.push({ type: "image", source: { type: "base64", media_type: p.mime, data: p.data } })
         } else {
@@ -199,7 +214,7 @@ function blocksOf(
       }
     }
   }
-  return { blocks, omitted, relayed, unavailable }
+  return { blocks, omitted, relayed, unavailable, badMime }
 }
 
 interface PendingNote {
@@ -293,7 +308,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           break
         }
         openUser().push(...c.blocks)
-        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable || c.badMime
         land(
           landings,
           item.event,
@@ -305,6 +320,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           item.escaped ? ESCAPED_NOTE : undefined,
           omittedNote(c.omitted),
           c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+          c.badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
@@ -338,11 +354,14 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           land(
             landings,
             item.event,
-            aside || item.escaped || rest.omitted.size > 0 || rest.unavailable ? "lossy" : "exact",
+            aside || item.escaped || rest.omitted.size > 0 || rest.unavailable || rest.badMime
+              ? "lossy"
+              : "exact",
             "tool-reference",
             aside ? REF_TEXT_ASIDE_NOTE : undefined,
             omittedNote(rest.omitted),
             rest.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+            rest.badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
             rest.relayed ? RELAY_DIALECT_NOTE : undefined,
             item.escaped ? ESCAPED_NOTE : undefined,
           )
@@ -353,7 +372,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
         openUser().push(block)
         const unbound = refs.length > 0 && capabilities.deferredTools && trusted
         const untrustedRefs = refs.length > 0 && capabilities.deferredTools && !trusted
-        const lossy = item.escaped || c.omitted.size > 0 || c.unavailable || unbound
+        const lossy = item.escaped || c.omitted.size > 0 || c.unavailable || c.badMime || unbound
         land(
           landings,
           item.event,
@@ -363,6 +382,7 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
           untrustedRefs ? REF_UNTRUSTED_NOTE : undefined,
           omittedNote(c.omitted),
           c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+          c.badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )

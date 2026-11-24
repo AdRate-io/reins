@@ -7,7 +7,15 @@
  * 所以内置模型表一律不开 `video` / `audio`，只由宿主对自己的中转站模型声明。
  * ⚠️ 绝不改用 `input_audio`（"官方写法"）：中转站对它回 200 却把音频静默丢掉、模型编造内容，比报错更糟（踩坑 45）。
  */
-import type { AudioPart, ContentPart, ImagePart, LoweringCapabilities, VideoPart } from "@reinsjs/core"
+import {
+  type AudioPart,
+  type ContentPart,
+  type ImagePart,
+  isSupportedImageMime,
+  type LoweringCapabilities,
+  unsupportedImageText,
+  type VideoPart,
+} from "@reinsjs/core"
 
 export type MediaPart = ImagePart | VideoPart | AudioPart
 export type MediaKind = MediaPart["type"]
@@ -81,6 +89,19 @@ export const IMAGE_UNAVAILABLE = "[image unavailable]"
 /** 有图片引用没换回时的落点说明 */
 export const IMAGE_UNAVAILABLE_NOTE =
   "an image stored by reference could not be loaded (blob unavailable: it was removed, or no BlobStore is configured), so it is replaced with placeholder text"
+
+/**
+ * 白名单外的图片（全库审查 2026-11-25 追加项）：core 拦住了新写入的 svg / heic / 错标 mime，但白名单之前写进日志的
+ * 每轮整段回放，照发厂商 400、会话永久卡死。模型收图时落 core 同一句说明（`unsupportedImageText`，与工具结果里
+ * 新写入时被换掉的那句逐字一致）、记 lossy；判定只调 core `isSupportedImageMime`。合规返回 undefined
+ */
+export function unsupportedImagePlaceholder(p: MediaPart): string | undefined {
+  return p.type === "image" && !isSupportedImageMime(p.mime) ? unsupportedImageText(p.mime) : undefined
+}
+
+/** 有白名单外图片被换成占位时的落点说明 */
+export const IMAGE_UNSUPPORTED_NOTE =
+  "an image of a type outside the supported set (image/jpeg, image/png, image/gif, image/webp; logged before that check existed) would be rejected by the provider, so it is replaced with placeholder text naming its type"
 
 /** 有视频 / 音频真的进了图片槽时附的方言说明（落点仍算 exact：内容完整送达） */
 export const RELAY_DIALECT_NOTE =

@@ -29,8 +29,8 @@ export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     ),
     lossy(
       "user",
-      "moved after that batch of tool results (the order changes), untrusted content escaped, images / video / audio replaced with placeholder text because the model takes none of that kind, or an image reference whose blob is unavailable replaced with placeholder text",
-      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take / it carries an image reference whose blob is unavailable",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, images / video / audio replaced with placeholder text because the model takes none of that kind, or an image reference whose blob is unavailable, or an image of an unsupported type logged before the type check, replaced with placeholder text",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take / it carries an image reference whose blob is unavailable / it carries an image whose type is outside image/jpeg, png, gif, webp",
     ),
     dropped(
       "none",
@@ -69,7 +69,7 @@ export const RESPONSES_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     ),
     lossy(
       "function_call_output",
-      "isError is expressed with a [tool error] prefix (the protocol has no error flag), or untrusted content is escaped, or images / video / audio are replaced with placeholder text because the model takes none of that kind (or an image reference's blob is unavailable)",
+      "isError is expressed with a [tool error] prefix (the protocol has no error flag), or untrusted content is escaped, or images / video / audio are replaced with placeholder text because the model takes none of that kind (or an image reference's blob is unavailable, or the image's type is outside image/jpeg, png, gif, webp)",
     ),
   ],
   "core.system_note": [

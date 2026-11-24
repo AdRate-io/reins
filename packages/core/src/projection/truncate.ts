@@ -113,8 +113,10 @@ export const defaultThresholdSummary: ThresholdSummarizer = (removed, ctx) => {
     .join(", ")
 
   const lines = [
+    // 只陈述事实：core 不知道模型手里有没有取回工具（compact 的 recall），怎么取回由装了它的模块在规则里说；
+    // 原先写"由宿主取回"会与 compact 规则"recall 可取回"相左（全库审查 2026-11-25 #66）
     `[Context truncated by budget] Events seq ${from}-${to} were removed to fit the context window. ` +
-      "They remain in the session log and can be recovered by the host if needed.",
+      "They remain in the session log.",
   ]
   if (countText) lines.push(`Removed: ${countText}.`)
   if (prior.length > 0) {

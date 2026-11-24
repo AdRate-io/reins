@@ -93,7 +93,7 @@
 | --- | --- |
 | `projection/index.ts` | 汇总导出全部策略与执行器 |
 | `projection/types.ts` | `ProjectionStrategy` / `ProjectionContext`（只读上下文 + `nextSeq()`）/ `ProjectionStep`（events + emitted）/ `ProjectionStats` / `ProjectionResult` |
-| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（9 种运维事件，含 P1 的 `tools_bound`）+ 宿主可覆盖的 `isVisible` |
+| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（11 种运维事件）+ `ext.*` 缺省剔除（`keepExtEvents` 放开）+ 宿主追加的 `isVisible` |
 | `projection/fold.ts` | 策略 2 折叠：`covers` / `keptBy` / `isPinNote` / `supersededIds` 幸存判定，`foldCompactions` 把摘要插到**被覆盖区间的位置** |
 | `projection/pins.ts` | 策略 3 钉住重注入：把幸存的被覆盖事件挪到覆盖它的最新可见 compaction 之后（去掉本策略投影仍正确，只是顺序不好读） |
 | `projection/truncate.ts` | 策略 5 预算裁剪兜底：过触发线才裁、一裁到回落线（`cutToRatio` 缺省 `DEFAULT_CUT_TO_RATIO` 0.6）；`splitTurns` 切轮、三条切点硬规则、`defaultThresholdSummary` 机械摘要（并入旧摘要 + 用户原话 + 被裁工具结果清单），新造 `compaction(decidedBy=threshold)` 经 `emitted` 交出 |
@@ -197,7 +197,7 @@
 
 1. `project()` 先校验时间线按 seq 严格升序，算出 `reserveTokens`（缺省窗口 15%）、`overheadTokens`（缺省 `contextOverheadOf(timeline)`：上一请求真实上下文 − 当时估算，系统提示 / 工具表等估算不含的部分；负数或非有限数拒绝）、estimate、registry、now、newId。
 2. 逐个策略执行，每个策略拿到新构造的只读 `ProjectionContext`（含完整时间线快照与 `nextSeq()`），返回 `{ events, emitted? }`。
-3. 默认链四步：`visibilityFilter` 剔运维事件 → `foldCompactions` 按 compaction 隐藏区间并把摘要插到区间位置 → `reinjectPins` 把幸存 pin 挪到摘要之后 → `budgetTruncate` 过触发线时按轮裁前缀到回落线以下并新造阈值 compaction。
+3. 默认链四步：`visibilityFilter` 剔运维事件与 `ext.*` → `foldCompactions` 按 compaction 隐藏区间并把摘要插到区间位置 → `reinjectPins` 把幸存 pin 挪到摘要之后 → `budgetTruncate` 过触发线时按轮裁前缀到回落线以下并新造阈值 compaction。
 4. 汇总 `stats`：`estimatedTokens`、`targetTokens`（`contextLimit − reserveTokens`，真实上下文口径）、`overheadTokens`、`overBudget`（裁到只剩最后一轮，估算 + 开销仍超）与逐步 before/after 计数；`emitted` 交给循环 append。
 5. 兜底"要不要裁、裁到哪"与 `overBudget` 都按 `estimateBudgetOf(budget)`（= 目标 − 开销）比估算，与感知读数同一口径（2026-10-30：此前只比估算，感知报 ≥85% 兜底却不折）。
 
@@ -223,7 +223,7 @@
 - **被打断的轮在续跑后才收尾（R2）** — 循环抽出 `endTurn`，补齐 pending 之后也调一次（缺省 continue）。为什么：被审批或中止打断的那一轮原本永远等不到 `onTurnEnd`，模块在那一轮记下的决定（如 handoff 意图）会整个丢失；修循环比让每个模块各自补救干净。边界：`ctx.timeline` 仍是轮开始时的快照，模块要按日志重建意图。
 - **`supersedes` 是撤销一条 pin 的唯一表达（B3）** — 被后来某条 `system_note.supersedes` 指到的事件，一旦被覆盖就不再幸存，不论谁的 `pinsKept` 保留过它；取代者在完整时间线里找，自己被折叠了也算。为什么：append-only 日志里没有"删除"，`pinsKept` 记的是当时的契约，后来的取代说明优先。边界：未折叠时取代不隐藏任何东西，历史原样展示。
 - **摘要放在被覆盖区间的位置** — `foldCompactions` 把 compaction 插到区间之后的第一条可见事件前，而不是它自己的 seq 位置，所以投影输出顺序可以与 seq 不一致。为什么：折叠中间段时"摘要出现在原段位置"读起来才顺；视图是给模型看的，日志才按 seq。边界：`budgetTruncate` 因此必须额外守"seq 封闭"，否则新 `coversSeq` 会误伤保留下来的事件。
-- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reinsjs/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，措辞由调用方给（core 不知道取回工具叫什么）。
+- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reinsjs/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，超出时留最近的（seq 最大的）80 条、较旧的折成标题下一行 `…N earlier (seq a–b)`——几次整理吸收旧摘要后清单只增不减，模型最想取回的是较新那截（2026-11-25 全库审查 #63）；措辞由调用方给（core 不知道取回工具叫什么）。
 - **轮边界按模型输出类型而非 actor（E1，DECISIONS 2026-09-09）** — `replayTurns` 与 `splitTurns` 都按 `model_thinking / model_text / tool_call` 三种类型切轮。为什么：脑子模块在工具执行期间留下的事件 actor 也是 `model`，并行工具时按 actor 切会把它们误当成一个新轮。边界：一条模型输出都没回来的失败轮识别不出请求边界，不计入 turns。
 
 ## 与技术方案的出入（以代码为准）
