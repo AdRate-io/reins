@@ -265,6 +265,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | `authorizeSession` 不设 | 不检查会话归属，知道 sessionId 即可读写 | 单租户与本地开发是主流；README Security notes 明示，**多租户必须设** |
 | `allowConfigDrift: true` | 续跑时配置变了照样放行 | 宿主显式声明自担；缺省拒绝 |
 | spill 缺 BlobStore | 外溢关闭、大结果原样进上下文（不是截断），告警一次 | 静默截断会在宿主不知情时丢数据；感知与预算兜底 |
+| 自带工具的脑子模块被同名工具顶掉（宿主或排在前面的 Socket，如 MCP） | 该模块本 run 整个停摆、告警一次：spill 不外溢（大结果原样进上下文）、compact 不请整理也不数连续整理、handoff / memory / skills / lazy-tools 不注册，pins 只剩宿主 pin | 规则与钩子会把模型和调用导向别人的工具（取回、交接、折叠落错地方），比少一道机制更糟；阈值兜底、感知与预算仍在 |
 | MCP `optional: true` | run 起步 `tools/list` 失败 → 空表 + 告警，run 照跑 | 宿主显式声明这台服务器可缺；缺省抛 |
 | skills 单份 SKILL.md 不合规 | 跳过该份、告警一次，其余技能照常进菜单 | 一份坏技能不该拖垮整个菜单 |
 | `trustMarkers: false` | 不给 untrusted 内容包标记 | 宿主自担风险（例如已在别处处理注入） |
@@ -309,7 +310,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`approval({ ttlMs })` 比的是 `approval_request.at` 与宿主批准事件 `at` 之差（循环时钟），不读墙钟；判定挂在 ask 落点、以 deny + block 落地** — 管线判 allow 的调用不看 ttl；还没批的 pending 不会因为老而过期。
 - **skills 的载体是 `SkillSource = Pick<MemoryStore, "list" | "read">`，布局 `${root}/<name>/SKILL.md`** — `name` 须与目录名一致且匹配 `^[a-z0-9][a-z0-9-]{0,63}$`；缺 source 或无一份合规技能不注册；菜单进 configHash，技能表变了只影响下一 run。
 - **`skill_read` 缺省上限 40k 字符是硬上限（带 range 也截、超长单行切开），`resultPolicy.maxTokens = 2 × maxReadChars + 256`** — 上界不能按"token ≤ 字符"取，core 粗估非 ASCII 一字一 token（踩坑 22 / 23）。若将来允许模型写技能，模型写的必须回 untrusted。
-- **`memories` 段归记忆工具独占：skills 的 root 带它或是 `/memories` 的祖先即构造期拒绝，菜单与 `skill_read` 把带它的键当不存在；memory 的 namespace 也不许带它** — 记忆键恒为 `<namespace>/memories/…`，namespace 撞技能根时模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能；判据只走 `hasMemorySegment`。工具表（宿主 + 排在前面的 Socket，如 MCP）已有同名 `skill_read` 时 skills 整个不注册（去重先到者为准）。
+- **`memories` 段归记忆工具独占：skills 的 root 带它或是 `/memories` 的祖先即构造期拒绝，菜单与 `skill_read` 把带它的键当不存在；memory 的 namespace 也不许带它** — 记忆键恒为 `<namespace>/memories/…`，namespace 撞技能根时模型 `memory create` 一份 SKILL.md 下一 run 就是 system 信任的技能；判据只走 `hasMemorySegment`。工具表已有同名 `skill_read` 时 skills 整个不注册（见下条）。
+- **自带工具的模块（compact / recall、spill、pins、handoff、memory、skills、lazy-tools）见到工具表里已有同名、却不是自家对象的工具（宿主或排在前面的 Socket，如 MCP），整个不注册、钩子停手、告警一次** — core 先到者赢不改；判定只走 `shared/own-tools.ts`（`ownToolsGuard` + 钩子里 `ownsTool`），新加带工具的模块照此接入。spill 停摆即不外溢、pins 退成 `tool: false`；静态贡献因此是按 setup 解析的函数，断言规则文案的用例要经 `resolveSocketContributions` 取。
 - **memory 工具 `risk: "low"` 但 `replayable: false`，每次调用前多一条 `core.tool_started`** — 写命令不幂等，中断后续跑落"结果未知"不重放；断言日志形状的用例要算进去。namespace 返回值每次用前校验，不合规 fail-closed（isError、不碰存储、每实例告警一次）。
 - **AdRate `skills install` 落盘的 SKILL.md 是存根，正文只在 CLI 里** — 示例用 `inlineSkills` 从 CLI 的 `--json` 拼；接任何技能目录前先看一眼正文（踩坑 21）。
 - **lazy-tools 的"已取回"集合从时间线重建（`tool_find` 的 tool_call 与非 isError 的 tool_result 配对 ∩ 当前菜单），菜单按 Tool 对象同一性记** — 没取回就直接调菜单工具会被 `beforeTool` block 并指向 `tool_find`，不是"未知工具"；lazy 工具来自注册在它之后的 Socket 则不藏、告警指出顺序。
@@ -334,7 +336,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败。
 - **内置模型表是最小表，`definitionOf` 内置打底、选项覆盖，表外必须给 `baseUrl`；同一 OpenAI id 两条协议各一份，无协议解析缺省走 Responses** — 测试目标模型显式取条目，别靠无协议解析。
 - **Chat 线有损**：只有思考的一轮（停止 / 断流停在思考阶段）整条不发——assistant 没有 `content` 也没有 `tool_calls` 两家都 400，而时间线整段回放，照发即永久卡死（踩坑 51）；thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点。**工具结果图片缺省上浮**到同批 tool 之后的一条 user（`tool+lifted-images`，`chat.liftToolImages: false` 退回占位）——放出时机是第一个**会下发的**非 tool_result 条目，`dropped` 不算（踩坑 39）。
-- ⚠️ **视频 / 音频能力位为真时三条线都走图片槽，这是中转站方言（官方端点 400），内置表一律不开；绝不改成 `input_audio`——中转站回 200 却静默丢弃（踩坑 45）** — 能力位缺省不收、落占位记 lossy；只有图片时 Chat 上浮输出逐字节不变（快照取自改动前实现），改 `chat/to-request.ts` 先跑它。片段形状真源 core `isContentPart`，图片 mime 白名单真源 core `SUPPORTED_IMAGE_MIMES` / `isSupportedImageMime`（jpeg / png / gif / webp，内联与引用都查；工具结果里只差 mime 的图片逐段换成 `unsupportedImageText`）；server 白名单是独立一份、靠跨包用例锁同口径，图片 mime 那半 server 与 tools-mcp 尚未改调（BUG-261125-1）。
+- ⚠️ **视频 / 音频能力位为真时三条线都走图片槽，这是中转站方言（官方端点 400），内置表一律不开；绝不改成 `input_audio`——中转站回 200 却静默丢弃（踩坑 45）** — 能力位缺省不收、落占位记 lossy；只有图片时 Chat 上浮输出逐字节不变（快照取自改动前实现），改 `chat/to-request.ts` 先跑它。片段形状真源 core `isContentPart`，图片 mime 白名单真源 core `SUPPORTED_IMAGE_MIMES` / `isSupportedImageMime`（jpeg / png / gif / webp，内联与引用都查；工具结果里只差 mime 的图片逐段换成 `unsupportedImageText`）；server 白名单是独立一份（图片 mime 直接调 `isSupportedImageMime`）、靠跨包用例锁同口径；tools-mcp 翻译图片时也调它，不合规换成 `unsupportedImageText`。
 - **`system_note.directive: true` 的说明三条线都走带标签的 user，不看 `midConversationSystem`** — 只给要模型去做的指令用（compact 请求）；写进日志即定格，历史说明升级后送达方式不变。Anthropic 线同轮有感知说明时形状是 user(tool_result + 请求) → system(感知)，请求不是最后一条（用例锁住）。
 - **Anthropic 线的中途 system 攒到下一条 assistant 之前或收尾再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user（含只带 tool_result 的 user）、后接 assistant 或收尾；说明位置比时间线晚一条 user 仍算 exact 并备注。
 - **Anthropic 线缓存断点由本包打：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 占一格；别把断点留在 system 消息上（几乎零命中）。
@@ -360,7 +362,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **补发 end 帧的 `state` 只在会话末尾正是带状态的 `run_paused` 时给，判据是补发读完后再取一次末尾** — 状态是暂停那一刻签的，绝不在 GET 时按当前配置重算（暂停后改过的工具会被签成一致）；宿主若在暂停后自己往日志追加事件（ext.* 等），补发就不再交出状态，等审批的会话只能停止或发新消息。
 - **AG-UI 编码器换块不收尾，思考块与正文块会同时打开；提交时按内容认领（增量拼出的正文与完整事件 trim 后相等的最早同 kind 块），不按顺序** — 降级层整次响应流完才交草稿，退回单槽就会让带思考的轮次每段各发两遍；redacted 思考正文是占位串 `[Reasoning redacted]` 不是空串，按顺序认领会抢走后面真流过的块。对不上就整段照发（宁重复不丢）。server 侧配套：中途挂上的流（非发起者）丢增量直到第一个事件信号，否则客户端拿到半截块（踩坑 49）。
 - **流开了之后的失败是 200 + `error` 帧，不是 4xx** — 此时若 run 尚未 `begin()` 必须 `run.abandon()` 还名额，否则该会话永久 409。
-- **handler 对 `decisions` 的预校验必须与 runLoop 同一口径** — 只有本会话的结论对照本会话 pending，带子会话 id 的原样下传；两处不是同一函数，靠跨包用例锁住（踩坑 20）。
+- **handler 对 `decisions` 的预校验与 runLoop 调同一个 `assertDecisionsAwaitApproval`** — 只有本会话的结论对照本会话正在等审批的调用，带子会话 id 的原样下传；预校验失败时本进程正有该会话的 run 则回 `run_in_progress`（读的是正在前进的日志）。穿过两个入口的用例在 `server/handler.test.ts`（踩坑 20）。
 - **停止请求 `POST { sessionId, stop: true }` 回 JSON 不开流、不等 run 结束；鉴权 `method` 是 "STOP"** — 空闲但有 pending 时起的收尾 run 没有流驱动，handler 自己 drive 并 `waitUntil(run.done)`；只认本进程的 run（跨实例 OPT-261105-5）。
 - **`onEvent` 只观测 live 事件（补发不调），先广播再调；但 run 的 result 帧与 `run.done` 等整条观测链结束** — 异步钩子挂住不返回，run 就永不结束、会话永久 409。
 - **`RunRegistry.create` 是异步的、`ActiveRun.done` 在收尾钩子（删项、租约释放）之后才 resolve，但删项在结束那一刻同步生效** — Workers 的 `waitUntil(run.done)` 靠此覆盖 release；"run 结束后立刻再 POST"的断言等 result 帧即可。多实例部署必须共用 `store.runLease`（pg 有，`createAgent` 自动装），否则两实例同时起 run、第二个浪费一次模型调用后撞 `seq_conflict`；跨实例 GET 只补发不接实时。

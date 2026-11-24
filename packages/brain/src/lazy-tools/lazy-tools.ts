@@ -47,6 +47,7 @@ import {
   type ToolCallEvent,
   type TurnContext,
 } from "@reinsjs/core"
+import { ownToolsGuard } from "../shared/own-tools.js"
 import {
   LAZY_TOOL_RULES,
   type LazyToolMenuEntry,
@@ -203,6 +204,15 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
     warn(message)
   }
 
+  // tool_find 按菜单每次 setup 现造，判撞名时还没有对象：按名字判，此前并入的任何同名工具都算别家的
+  const registers = ownToolsGuard({
+    module: LAZY_TOOLS_SOCKET_NAME,
+    factory: "lazyTools",
+    tools: [TOOL_FIND_TOOL_NAME],
+    warn,
+  })
+  /** 本模块造过的 tool_find：beforeModel 见到绑定的同名工具不在其中，说明被别家顶掉，钩子停手 */
+  const ownFinds = new WeakSet<Tool>()
   /** 哪些 Tool 对象是（某次 setup 的）菜单工具：对象同一性，注册在本模块之后的 Socket 贡献的同名 / 标 lazy 的工具不在其中 */
   const menuTools = new WeakSet<Tool>()
   /** 每次 run 起步 tools 与 systemPrompt 各被解析一次，菜单只算一遍：按 setup 对象缓存 */
@@ -210,13 +220,9 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
   const resolveFor = (setup: SocketSetup): Resolved | undefined => {
     if (resolved.has(setup)) return resolved.get(setup)
     let out: Resolved | undefined
-    if (setup.tools.some((t) => t.name === TOOL_FIND_TOOL_NAME)) {
+    if (!registers(setup)) {
       // 同名以先到者为准（resolveSocketContributions 去重规则）：本模块的工具会被丢掉，菜单却仍会指向 "tool_find"——
-      // 那是宿主或前面某个 Socket 的另一个工具。宁可整个不注册
-      warnOnce(
-        "host-tool",
-        `[reins/lazy-tools] The tool table already has a tool named ${TOOL_FIND_TOOL_NAME} (from the host or a socket registered before lazyTools()), so this module's tool and menu are not registered. Rename that tool to enable them.`,
-      )
+      // 那是宿主或前面某个 Socket 的另一个工具。宁可整个不注册（shared/own-tools.ts，已告警）
     } else {
       const menu = lazyMenuOf(setup.tools, summarize)
       if (menu.tools.length === 0) {
@@ -227,6 +233,7 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
       } else {
         for (const t of menu.tools) menuTools.add(t)
         out = { menu, tool: makeToolFind(menu, maxPerCall) }
+        ownFinds.add(out.tool)
       }
     }
     resolved.set(setup, out)
@@ -243,6 +250,8 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
       return r ? [r.tool] : undefined
     },
     beforeModel(ctx) {
+      // 别家的 tool_find 占着名字：模块这次没注册，lazy 工具全部原样下发，"排序晚了"的告警也不成立
+      if (ctx.tools.some((t) => t.name === TOOL_FIND_TOOL_NAME && !ownFinds.has(t))) return undefined
       const menuNames = new Set<string>()
       const late: string[] = []
       for (const t of ctx.tools) {

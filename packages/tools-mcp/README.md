@@ -20,7 +20,7 @@ export const agent = createAgent({
   model,
   store,
   tools: [myInProcessTool],
-  sockets: [github, spill(), approval()],
+  sockets: [spill(), github, approval()],
 })
 ```
 
@@ -49,9 +49,18 @@ is where reins' "no dynamic registration" stance lands. The loop records the tab
 (invisible to the model) and, when it differs from the previous run's, appends a visible `system_note` naming the
 added and removed tools so the model knows its hands changed.
 
+**Tool names are first come, first served.** When two tools in a run share a name, the loop keeps the first one
+bound — the host's tools, then each socket in order. A server tool whose name is already taken (by a host tool, by
+another server, or by a `@reinsjs/brain` module registered earlier such as `spill()`'s `fetch_blob`) never reaches
+the model, and `mcpTools()` warns once naming it; give the server a `prefix` to keep it. Registering a server
+*before* those brain modules does not help: the module then stands down instead (see the brain README, "Tool name
+clashes"), so put `mcpTools()` after them and before `approval()` — and before `lazyTools()` when it feeds the menu.
+
 **Calls go through `tools/call`.** The result's `content` blocks become reins content parts (text, images and audio as-is;
 embedded binary resources become image / video / audio parts by mime type; resource links and other binary
-resources become one-line descriptions — lossy, and said so). MCP carries no duration, so video and audio are
+resources become one-line descriptions — lossy, and said so). An image, as a block or an embedded resource, whose
+type is not `image/jpeg`, `image/png`, `image/gif` or `image/webp` (an SVG chart, a TIFF) becomes the sentence
+`unsupportedImageText` from `@reinsjs/core` instead: providers reject other types. MCP carries no duration, so video and audio are
 estimated from their byte size, and whether the model actually sees them depends on the lowering's `video` /
 `audio` capabilities (a placeholder otherwise). `isError` passes
 through. A thrown error (unknown tool, dropped connection, timeout) becomes a `tool_result` with `isError: true`;

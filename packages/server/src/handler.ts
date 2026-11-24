@@ -15,6 +15,7 @@
  */
 import {
   type ApprovalDecisionInput,
+  assertDecisionsAwaitApproval,
   awaitingOf,
   type ContentPart,
   checkImageRefs,
@@ -24,6 +25,7 @@ import {
   type EventDraft,
   type EventLog,
   isImageRef,
+  isSupportedImageMime,
   type LoopConfig,
   lastRunMarker,
   type Principal,
@@ -219,7 +221,8 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
  * 网络来的内容片段按白名单重建：非空、只收 text / image / video / audio，每个片段只留该类型的字段（壳字段由服务端定）。
  * 多余字段（如 actor）因此不可能进到循环、改变它对 input 的判别；不合规返回 undefined。
  * 图片两种形态（2026-11-24 媒体引用方案）：内联（mime + data）或引用（mime + blobId，形状直接调 core 的真源 `isImageRef`：
- * mime 以 "image/" 开头、blobId 非空且 ≤ 128 字符），`data` 与 `blobId` 并存即拒；引用的归属在 `rejectImageRefs` 另判。
+ * blobId 非空且 ≤ 128 字符），`data` 与 `blobId` 并存即拒；引用的归属在 `rejectImageRefs` 另判。两种形态的 mime 都直接调
+ * core 的白名单 `isSupportedImageMime`（jpeg / png / gif / webp）：厂商不收的类型一旦进日志，之后每轮整段回放都 400、会话卡死。
  * video / audio 的形状规则与 core `isContentPart` 同口径（mime 以 "video/" / "audio/" 开头、durationSec 缺省或有限正数）；
  * server 不依赖 core 内部判定，两份实现靠跨包用例锁住（同一组坏形状两边都拒）。tool_reference 不收（网络边界不能替模型点亮工具）
  */
@@ -239,10 +242,10 @@ function rebuildContentParts(x: unknown): ContentPart[] | undefined {
     if (part.type === "text" && typeof part.text === "string") out.push({ type: "text", text: part.text })
     else if (part.type === "image" && part.blobId !== undefined) {
       const ref = { type: "image" as const, mime: part.mime, blobId: part.blobId }
-      if (part.data !== undefined || !isImageRef(ref)) return undefined
+      if (part.data !== undefined || !isSupportedImageMime(part.mime) || !isImageRef(ref)) return undefined
       out.push(ref)
-    } else if (part.type === "image" && typeof part.mime === "string" && typeof part.data === "string")
-      out.push({ type: "image", mime: part.mime, data: part.data })
+    } else if (part.type === "image" && isSupportedImageMime(part.mime) && typeof part.data === "string")
+      out.push({ type: "image", mime: part.mime as string, data: part.data })
     else if (
       (part.type === "video" || part.type === "audio") &&
       typeof part.mime === "string" &&
@@ -853,26 +856,29 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
           })
         }
         const pending = pendingToolCalls(timeline)
-        const pendingIds = new Set(pending.map((c) => c.payload.toolCallId))
-        // 与 runLoop 同一口径（§10.1）：只有本会话的结论才对照本会话的 pending；带别的 sessionId 的是给子代理会话的，
-        // 这里不校验、原样下传，由 asTool 在子会话里校验。两处一分叉，经 HTTP 续跑子代理审批就会 409（2026-09-10 审查修）
-        for (const d of body.decisions ?? []) {
-          if (d.sessionId !== undefined && d.sessionId !== sessionId) continue
-          if (!pendingIds.has(d.toolCallId)) {
-            throw new RunStateError(
-              "unknown_tool_call",
-              `approval decision refers to call ${d.toolCallId}, which is not pending`,
-              {
-                toolCallId: d.toolCallId,
-              },
-            )
-          }
-        }
+        // 与 runLoop 调同一个真源（core assertDecisionsAwaitApproval）：本会话的结论只收正在等审批的调用，
+        // 带别的 sessionId 的是给子代理会话的，原样下传、由 asTool 在子会话里校验。两处一分叉，要么经 HTTP 续跑子代理审批 409
+        // （2026-09-10 审查修），要么预批一个没请求过审批的调用拿到 200 + error 帧而不是 409（BUG-261125-1）
+        assertDecisionsAwaitApproval({ sessionId, timeline, decisions: body.decisions ?? [] })
         const checked = checkInput(body.input, timeline, pending, contributions.tools)
         if (!checked.ok) return json(checked.status, { error: checked.error, message: checked.message })
         input = checked.input
       } catch (err) {
-        if (err instanceof RunStateError) return json(409, { error: err.code, message: err.message })
+        if (err instanceof RunStateError) {
+          // 本进程正有 run 在写这条会话：预校验读的是一条正在前进的日志（例如另一个窗口已交了同一份结论、工具在跑），
+          // 判出的"不在等审批 / pending 对不上"只是表象，如实回 run_in_progress（与 runs.create 撞名额同一形状）。
+          // 刻意不分错误码：本进程有 run 在跑时任何 RunStateError（含签名、漂移）都改写成它——这次请求本来就会撞名额，
+          // 等 run 结束再交才拿得到对那时日志的真实判定
+          if (runs.get(sessionId) !== undefined) {
+            const conflict = new RunConflictError(sessionId)
+            return json(
+              409,
+              { error: conflict.code, message: conflict.message },
+              { [SESSION_HEADER]: sessionId },
+            )
+          }
+          return json(409, { error: err.code, message: err.message })
+        }
         throw err
       }
     }

@@ -9,7 +9,9 @@ import {
   InMemoryEventLog,
   type LoopConfig,
   type RunResult,
+  resolveSocketContributions,
   runLoop,
+  type Socket,
   type Tool,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
@@ -20,6 +22,11 @@ import { SPILL_RULES } from "./rules.js"
 import { isTextMime, parseFetchBlobArgs, SPILL_BLOB_MIME, spill } from "./spill.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
+
+/** 静态贡献按 setup 解析（撞名判定要看工具表，工具与规则都是函数形态）：只装这一个 Socket 时的结果 */
+async function contributionsOf(socket: Socket) {
+  return resolveSocketContributions({ log: new InMemoryEventLog(), model: MODEL, sockets: [socket] })
+}
 const SESSION = "s1"
 const registry = createCoreRegistry()
 type ToolResult = CoreEventOf<"core.tool_result">
@@ -472,7 +479,7 @@ describe("spill × runLoop：结果外溢", () => {
     expect(notes[1]?.payload.text).toContain("Tool results spilled out of the context")
   })
 
-  it("构造期校验：非法上限与预览参数拒绝", () => {
+  it("构造期校验：非法上限与预览参数拒绝", async () => {
     expect(() => spill({ maxResultTokens: 0 })).toThrow(RangeError)
     expect(() => spill({ maxResultTokens: 1.5 })).toThrow(RangeError)
     expect(() => spill({ previewLines: -1 })).toThrow(RangeError)
@@ -480,8 +487,8 @@ describe("spill × runLoop：结果外溢", () => {
     expect(() => spill()).not.toThrow()
     expect(spill({ tool: false }).tools).toBeUndefined()
     expect(spill({ tool: false }).systemPrompt).toBeUndefined()
-    expect(spill({ rules: false }).systemPrompt).toBeUndefined()
-    expect(spill({ rules: "自定义" }).systemPrompt).toBe("自定义")
+    expect((await contributionsOf(spill({ rules: false }))).systemPrompt).toBeUndefined()
+    expect((await contributionsOf(spill({ rules: "自定义" }))).systemPrompt).toBe("自定义")
   })
 })
 

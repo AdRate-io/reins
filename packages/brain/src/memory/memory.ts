@@ -16,6 +16,7 @@
  * 工具与规则都不出现，并告警一次 —— 而不是注册一个一用就报错的工具，那会让模型每轮都撞墙。
  */
 import type { Socket, SocketSetup, Tool, ToolContext } from "@reinsjs/core"
+import { ownToolsGuard } from "../shared/own-tools.js"
 import { isCanonicalKeyPrefix } from "../shared/paths.js"
 import {
   bindMemoryFs,
@@ -51,7 +52,10 @@ export interface MemoryOptions {
   directories?: readonly string[]
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
-  /** 告警出口：没有 MemoryStore、namespace 返回值不合规（各自每个 memory() 实例只告警一次）。缺省 console.warn */
+  /**
+   * 告警出口（各自每个 memory() 实例只告警一次）：没有 MemoryStore；namespace 返回值不合规；工具表里已有别家的 memory 工具
+   * （宿主或排在前面的 Socket，如 MCP，此时本模块整个不注册）。缺省 console.warn
+   */
   warn?: (message: string) => void
 }
 
@@ -136,8 +140,17 @@ export function memory(opts: MemoryOptions = {}): Socket {
     },
   }
 
+  // memory 被别家同名工具顶掉时整个不注册（shared/own-tools.ts）：规则会让模型把要记的东西交给别人的工具
+  const registers = ownToolsGuard({
+    module: MEMORY_SOCKET_NAME,
+    factory: "memory",
+    tools: [tool as Tool],
+    warn,
+  })
+
+  /** 本次 setup 下工具与规则是否注册：有 MemoryStore 且没被顶掉。tools 与 systemPrompt 共用，告警各只一次 */
   const available = (setup: SocketSetup): boolean => {
-    if (setup.memory) return true
+    if (setup.memory) return registers(setup)
     if (!warned) {
       warned = true
       warn(
@@ -153,7 +166,7 @@ export function memory(opts: MemoryOptions = {}): Socket {
   }
   if (opts.rules !== false) {
     const rules = opts.rules ?? MEMORY_RULES
-    socket.systemPrompt = (setup) => (setup.memory ? rules : undefined)
+    socket.systemPrompt = (setup) => (available(setup) ? rules : undefined)
   }
   return socket
 }

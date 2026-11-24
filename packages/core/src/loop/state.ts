@@ -329,7 +329,7 @@ export async function validateResume(input: {
  * 只查 pending 的话，一个从没发出审批请求的调用（工具批中途被普通中止、排在后面的）也能被"预先批准"，
  * needsApproval、审批策略的 defer 与 ttl 都会被跳过。同一调用在一批结论里出现两次也拒（第一条落下后它就不在等了）。
  * 指向别的会话（子代理）的结论不在这里校验，原样转发。不合规抛 `RunStateError("unknown_tool_call")`，调用方须在写日志前调。
- * server 的 decisions 预校验第二波改调本函数（BUG-261125-1），在那之前它只查 pending、由 runLoop 兜底（fail-closed，HTTP 客户端拿到 200 + error 帧而不是 409）
+ * server 的 decisions 预校验调本函数（HTTP 回 409），与 runLoop 同判由 server/handler.test.ts 穿过两个入口的用例锁住
  */
 export function assertDecisionsAwaitApproval(input: {
   sessionId: string

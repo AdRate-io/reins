@@ -195,6 +195,48 @@ describe("mcpTools：改写后撞名", () => {
   })
 })
 
+describe("mcpTools：与此前已绑定的工具撞名（全库审查 #51）", () => {
+  it("宿主或排在前面的 Socket 已有同名工具（如 brain 的 fetch_blob）：本服务器那件被 core 丢掉，告警一次指出并建议 prefix；其余照常", async () => {
+    const fx = fixtureServer()
+    fx.server.registerTool(
+      "fetch_blob",
+      { description: "server's own fetch_blob", inputSchema: {} },
+      async () => ({
+        content: [{ type: "text" as const, text: "server blob" }],
+      }),
+    )
+    const warnings: string[] = []
+    const socket = mcpTools({ transport: fx.transport, warn: (m) => warnings.push(m) })
+    const log = new InMemoryEventLog()
+    const blobs = new InMemoryBlobStore()
+    for (let i = 0; i < 2; i++) {
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("c1", "echo", { text: "hi" })] },
+        { drafts: [say("ok")] },
+      ])
+      await drain(runLoop(cfg(lowering, log, { blobs, sockets: [spill(), socket], sessionId: `s${i}` })))
+      const sent = lowering.requests[0]?.tools ?? []
+      expect(sent.filter((t) => t.name === "fetch_blob")).toHaveLength(1)
+      expect(sent.find((t) => t.name === "fetch_blob")?.description).not.toBe("server's own fetch_blob")
+    }
+    expect(warnings).toEqual([expect.stringContaining("fetch_blob")])
+    expect(warnings[0]).toContain("prefix")
+    await socket.close()
+  })
+
+  it("setup 不带 tools（直接调用的旧写法，如 spikes/edge-runtime-check）：照常返回工具表，不抛错", async () => {
+    const fx = fixtureServer()
+    const socket = mcpTools({ transport: fx.transport })
+    const tools = await (socket.tools as unknown as (s: unknown) => Promise<{ name: string }[]>)({
+      log: new InMemoryEventLog(),
+      model: MODEL,
+      hostTools: [],
+    })
+    expect(tools.map((t) => t.name)).toContain("echo")
+    await socket.close()
+  })
+})
+
 describe("mcpTools：tools/call 的结果与失败", () => {
   it("正常结果 → tool_result 文本；服务器 isError 直通；服务器已删掉的工具 → 抛错记成 isError，循环不崩", async () => {
     const fx = fixtureServer()

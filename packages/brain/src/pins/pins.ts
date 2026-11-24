@@ -36,6 +36,7 @@ import {
   type ToolResultDraft,
   type TurnContext,
 } from "@reinsjs/core"
+import { ownsTool, ownToolsGuard } from "../shared/own-tools.js"
 import { atSegmentStart, currentSegment, timelineSoFar } from "../shared/segment.js"
 import { PIN_RULES, PIN_TOOL_NAME, pinToolDescription } from "./rules.js"
 
@@ -70,6 +71,11 @@ export interface PinsOptions {
   overshootTolerance?: number
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
+  /**
+   * 告警出口：工具表里已有别家的 pin 工具（宿主或排在前面的 Socket，如 MCP）时，本模块退成 `tool: false`（宿主 pin 照常），告警一次。
+   * 缺省 console.warn
+   */
+  warn?: (message: string) => void
 }
 
 export const PINS_SOCKET_NAME = "pins"
@@ -329,6 +335,14 @@ export function pins(opts: PinsOptions = {}): Socket {
   }
 
   const snapshots = specs.filter((s) => s.snapshot !== undefined)
+  // pin 被别家同名工具顶掉时退成 tool: false（shared/own-tools.ts）：工具与规则不注册、afterTool 不认别人的 pin 调用；
+  // 宿主声明的 pin 与 pin 工具无关，照常
+  const registers = ownToolsGuard({
+    module: PINS_SOCKET_NAME,
+    factory: "pins",
+    tools: [tool],
+    warn: opts.warn ?? ((message: string) => console.warn(message)),
+  })
 
   const socket: Socket = {
     name: PINS_SOCKET_NAME,
@@ -352,7 +366,8 @@ export function pins(opts: PinsOptions = {}): Socket {
     },
 
     afterTool(ctx: TurnContext, call: ToolCallEvent, result: ToolResultDraft) {
-      if (!withTool || call.payload.name !== PIN_TOOL_NAME || result.payload.isError) return undefined
+      if (!withTool || call.payload.name !== PIN_TOOL_NAME || result.payload.isError || !ownsTool(ctx, tool))
+        return undefined
       // 入参已由 validate 校验过；重新解析拿规范形态（循环不把校验后的入参传给 afterTool）
       let args: PinArgs
       try {
@@ -412,7 +427,10 @@ export function pins(opts: PinsOptions = {}): Socket {
       )
     },
   }
-  if (withTool) socket.tools = [tool]
-  if (withTool && opts.rules !== false) socket.systemPrompt = opts.rules ?? PIN_RULES
+  if (withTool) socket.tools = (setup) => (registers(setup) ? [tool] : undefined)
+  if (withTool && opts.rules !== false) {
+    const rules = opts.rules ?? PIN_RULES
+    socket.systemPrompt = (setup) => (registers(setup) ? rules : undefined)
+  }
   return socket
 }

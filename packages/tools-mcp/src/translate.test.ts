@@ -1,3 +1,4 @@
+import { isContentPart, unsupportedImageText } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { modelToolName, modelToolNames, riskOf, toContentParts, toToolInfo } from "./translate.js"
 
@@ -127,6 +128,29 @@ describe("toContentParts：MCP 内容块 → reins 内容片段，有损处明�
       { type: "text", text: "[audio application/octet-stream, 5 bytes; audio cannot be shown to the model]" },
       { type: "text", text: "[audio audio/wav, 0 bytes; audio cannot be shown to the model]" },
     ])
+  })
+
+  it("图片 mime 不在 core 白名单（svg、tiff、非图片类型）：image 块与内嵌 resource 都换成 core 同一句说明，产出全部合规（BUG-261125-1）", () => {
+    const parts = toContentParts({
+      content: [
+        { type: "image", data: "PHN2Zz4=", mimeType: "image/svg+xml" },
+        { type: "image", data: "AAAA", mimeType: "application/octet-stream" },
+        { type: "image", data: "AAAA", mimeType: "image/jpeg" },
+        { type: "resource", resource: { uri: "file:///c.svg", mimeType: "image/svg+xml", blob: "PHN2Zz4=" } },
+        { type: "resource", resource: { uri: "file:///c.tif", mimeType: "image/tiff", blob: "AAAA" } },
+        { type: "resource", resource: { uri: "file:///c.webp", mimeType: "image/webp", blob: "AAAA" } },
+      ],
+    })
+    expect(parts).toEqual([
+      { type: "text", text: unsupportedImageText("image/svg+xml") },
+      { type: "text", text: unsupportedImageText("application/octet-stream") },
+      { type: "image", mime: "image/jpeg", data: "AAAA" },
+      { type: "text", text: unsupportedImageText("image/svg+xml") },
+      { type: "text", text: unsupportedImageText("image/tiff") },
+      { type: "image", mime: "image/webp", data: "AAAA" },
+    ])
+    // 写日志前 core 的形状校验逐段放行：不再依赖 core 归一时的兜底替换
+    expect(parts.every(isContentPart)).toBe(true)
   })
 
   it("content 为空：有 structuredContent 用它的 JSON，否则空文本", () => {

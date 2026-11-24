@@ -7,6 +7,7 @@ import {
   InMemoryEventLog,
   isContentPart,
   type RunResult,
+  RunStateError,
   runLoop,
   type SerializedRunState,
   type Tool,
@@ -647,6 +648,35 @@ describe("审批暂停与跨请求恢复", () => {
     expect(ok.status).toBe(200)
     await ok.text()
   })
+
+  it("结论指向 pending 但没在等审批的调用：HTTP 与 runLoop 两个入口同判 unknown_tool_call（HTTP 409、一条日志不写；BUG-261125-1）", async () => {
+    // c1 是不要审批的客户端工具：暂停后它是 pending，却从没发出 approval_request——"预先批准"它必须被拒
+    const pick: Tool = { name: "pick_file", description: "让用户选文件", inputSchema: {}, side: "client" }
+    const { handler, log, agent } = setup(
+      [{ drafts: [callTool("c1", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [pick],
+      { secret: "k" },
+    )
+    const { result } = await pauseFirst(handler)
+    const before = (await logged(log, "s1")).length
+    const decisions = [{ toolCallId: "c1", approved: true, by: "boss" }]
+
+    // 入口一：HTTP 预校验
+    const res = await handler(postRequest({ sessionId: "s1", resume: result.state, decisions }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: string; message: string }
+    expect(body.error).toBe("unknown_tool_call")
+
+    // 入口二：同一份日志、同一组结论直接交 runLoop，判定与文案逐字一致
+    const gen = runLoop({ ...agent, sessionId: "s1", resume: result.state, decisions })
+    const err = await gen.next().then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(RunStateError)
+    expect(err).toMatchObject({ code: body.error, message: body.message })
+    expect((await logged(log, "s1")).length).toBe(before)
+  })
 })
 
 describe("请求校验与鉴权", () => {
@@ -966,6 +996,73 @@ describe("数组 input：网络侧只收内容片段（输入多条草稿方案�
       { type: "text", text: "hi" },
       { type: "image", mime: "image/png", data: "AAAA" },
     ])
+  })
+})
+
+describe("内联图片：mime 白名单与 core 同一函数（BUG-261125-1）", () => {
+  /** 形状都对、只差 mime 的内联图：厂商不收，进了日志之后每轮整段回放都 400 */
+  const BAD_IMAGES: unknown[] = [
+    { type: "image", mime: "image/svg+xml", data: "PHN2Zz4=" },
+    { type: "image", mime: "text/plain", data: "aGk=" },
+    { type: "image", mime: "image/jpg", data: "AAAA" },
+    { type: "image", mime: "IMAGE/PNG", data: "AAAA" },
+    { type: "image", mime: "application/octet-stream", data: "AAAA" },
+  ]
+
+  it("server 回 400 且日志不变，core isContentPart 同样判不合规；草稿形态与投递分支同一道闸", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    for (const part of BAD_IMAGES) {
+      expect(isContentPart(part), JSON.stringify(part)).toBe(false)
+      const res = await handler(postRequest({ sessionId: "s1", input: [part] }))
+      expect(res.status, JSON.stringify(part)).toBe(400)
+      expect(await res.json()).toMatchObject({ error: "bad_request" })
+      const draft = await handler(
+        postRequest({ sessionId: "s1", input: { type: "core.user_message", payload: { content: [part] } } }),
+      )
+      expect(draft.status, `draft ${JSON.stringify(part)}`).toBe(400)
+    }
+    expect(await logged(log, "s1")).toHaveLength(0)
+  })
+
+  it("客户端工具 pending 时回填带 svg 图片的 core.tool_result：400、日志不变；改用 png 照常续跑", async () => {
+    const pick: Tool = { name: "pick_file", description: "让用户选文件", inputSchema: {}, side: "client" }
+    const { handler, log } = setup(
+      [{ drafts: [callTool("c1", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [pick],
+    )
+    const first = parseFrames(await (await handler(postRequest({ sessionId: "s1", input: "选" }))).text())
+    expect(resultOf(first)?.status).toBe("paused")
+    const before = (await logged(log, "s1")).length
+    const fill = (mime: string) =>
+      postRequest({
+        sessionId: "s1",
+        input: {
+          type: "core.tool_result",
+          payload: { toolCallId: "c1", content: [{ type: "image", mime, data: "PHN2Zz4=" }] },
+        },
+      })
+    const bad = await handler(fill("image/svg+xml"))
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ error: "bad_request" })
+    expect((await logged(log, "s1")).length).toBe(before)
+    const ok = await handler(fill("image/png"))
+    expect(ok.status).toBe(200)
+    expect(resultOf(parseFrames(await ok.text()))?.status).toBe("done")
+  })
+
+  it("白名单四种照常放行", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    const input = ["image/jpeg", "image/png", "image/gif", "image/webp"].map((mime) => ({
+      type: "image",
+      mime,
+      data: "AAAA",
+    }))
+    for (const part of input) expect(isContentPart(part)).toBe(true)
+    const res = await handler(postRequest({ sessionId: "s1", input }))
+    expect(res.status).toBe(200)
+    expect(resultOf(parseFrames(await res.text()))?.status).toBe("done")
+    const msg = (await logged(log, "s1"))[1] as CoreEventOf<"core.user_message">
+    expect(msg.payload.content).toEqual(input)
   })
 })
 

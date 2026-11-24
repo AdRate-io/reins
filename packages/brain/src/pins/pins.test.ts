@@ -10,7 +10,9 @@ import {
   InMemoryEventLog,
   type LoopConfig,
   type RunResult,
+  resolveSocketContributions,
   runLoop,
+  type Socket,
   supersededIds,
   type TurnContext,
 } from "@reinsjs/core"
@@ -22,6 +24,11 @@ import { PIN_RULES } from "./rules.js"
 
 const registry = createCoreRegistry()
 const MODEL = { provider: "scripted", id: "scripted" }
+
+/** 静态贡献按 setup 解析（撞名判定要看工具表，工具与规则都是函数形态）：只装这一个 Socket 时的结果 */
+async function contributionsOf(socket: Socket) {
+  return resolveSocketContributions({ log: new InMemoryEventLog(), model: MODEL, sockets: [socket] })
+}
 const SESSION = "s1"
 type Note = CoreEventOf<"core.system_note">
 type Compaction = CoreEventOf<"core.compaction">
@@ -396,13 +403,13 @@ describe("pins：构造与纯函数", () => {
     expect(() => pins({ maxTextLength: 0 })).toThrow(RangeError)
   })
 
-  it("tool:false 只留宿主 pin，不带工具与规则；rules 可替换或关闭", () => {
+  it("tool:false 只留宿主 pin，不带工具与规则；rules 可替换或关闭", async () => {
     const hostOnly = pins({ pins: ["p"], tool: false })
     expect(hostOnly.tools).toBeUndefined()
     expect(hostOnly.systemPrompt).toBeUndefined()
-    expect(pins().systemPrompt).toBe(PIN_RULES)
-    expect(pins({ rules: "自家规则" }).systemPrompt).toBe("自家规则")
-    expect(pins({ rules: false }).systemPrompt).toBeUndefined()
+    expect((await contributionsOf(pins())).systemPrompt).toBe(PIN_RULES)
+    expect((await contributionsOf(pins({ rules: "自家规则" }))).systemPrompt).toBe("自家规则")
+    expect((await contributionsOf(pins({ rules: false }))).systemPrompt).toBeUndefined()
   })
 
   it("parsePinArgs：规范化与拒绝", () => {
