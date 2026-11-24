@@ -946,6 +946,45 @@ describe("PiAiLowering — Anthropic 中途 system 落不到 user 之后时退�
     expect(predecessorsOfSystems(body.messages)).toEqual([])
   })
 
+  it("说明前面是纯空白 user（pi-ai 发出时会整条丢掉）：预判按线上算，同样退回 user（返修 R1）", async () => {
+    const { fetch, captured } = fakeFetch(anthropicSse)
+    const lo = new PiAiLowering({ apiKey: () => "sk-test", fetch })
+    seq = 0
+    const events: Event[] = [
+      ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
+      ev("core.model_text", { text: "hello" }, { replay: { ...ANTHROPIC } }),
+      ev("core.user_message", { content: [{ type: "text", text: " " }] }),
+      ev("core.system_note", { kind: "perception", text: "Context <50% used." }),
+    ]
+    const req = lo.toRequest({ events, model: { provider: "anthropic", id: "claude-opus-5" } })
+    expect(req.landings[3]).toMatchObject({ kind: "lossy", landing: "user-role" })
+    await collect(lo.stream(req))
+    const body = captured[0]?.body as { messages: { role: string; content: unknown }[] }
+    // 空白 user 线上被丢：说明不能以 system 落在 assistant 之后
+    expect(predecessorsOfSystems(body.messages)).toEqual([])
+    expect(JSON.stringify(body.messages)).toContain('<system_note kind=\\"perception\\">')
+  })
+
+  it("带图片的空白文本 user 不会被 pi-ai 丢，说明仍是 exact(system)", () => {
+    seq = 0
+    const lo = new PiAiLowering({ apiKey: () => "sk-test" })
+    const req = lo.toRequest({
+      events: [
+        ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
+        ev("core.model_text", { text: "hello" }, { replay: { ...ANTHROPIC } }),
+        ev("core.user_message", {
+          content: [
+            { type: "text", text: " " },
+            { type: "image", mime: "image/png", data: "iVBORw0KGgo=" },
+          ],
+        }),
+        ev("core.system_note", { kind: "perception", text: "s" }),
+      ],
+      model: { provider: "anthropic", id: "claude-opus-5" },
+    })
+    expect(req.landings[3]).toMatchObject({ kind: "exact", landing: "system" })
+  })
+
   it("说明前面就是 user 时不受影响，仍是 exact(system)", () => {
     seq = 0
     const lo = new PiAiLowering({ apiKey: () => "sk-test" })

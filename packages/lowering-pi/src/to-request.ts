@@ -187,12 +187,24 @@ const MISPLACED_NOTE =
   "no user turn precedes the note's place (it would follow the model's answer), and Anthropic rejects a mid-conversation system message there, so it is wrapped in a <system_note> tag and sent with the user role"
 
 /**
+ * pi-ai 0.85.1 `anthropic-messages.js` convertMessages 发出时整条丢掉的 user：字符串 trim 后为空；
+ * 数组里过滤掉空白 text 块后什么都不剩（图片块保留）。只用于中途 system 的落点预判，与上游行为逐条对齐。
+ */
+function droppedOnAnthropicWire(m: Message): boolean {
+  if (m.role !== "user") return false
+  if (typeof m.content === "string") return m.content.trim().length === 0
+  return m.content.every((b) => b.type === "text" && b.text.trim().length === 0)
+}
+
+/**
  * Anthropic 中途 system 的落点预判（全库审查 2026-11-25 #32）：发出前的改写只能把说明挪到下一条 assistant 之前或末尾，
  * 落点前一条若是 assistant（上个 run 以纯文本收尾、新 run 只带说明；说明夹在两段 assistant 之间）厂商 400，
  * 而日志只追加、每轮整段回放，会一直 400。这里用改写同一个归位函数预判，不合法的就地换成带标签的 user、落点改记
  * lossy(user-role)——与 lowering-fetch 的 Anthropic 线同一取向。按时间线顺序逐条判：退回 user 的说明成为普通
  * user 消息，后面同一落点的说明就紧跟它、可以照常走 system，与改写时看到的请求体一致。
- * pi-ai 若在发出时额外丢掉某条 assistant，只会让前一条更可能是 user，预判偏保守，不会放过非法形状。
+ * 预判用的 body 必须与线上一致：pi-ai 0.85.1 的 Anthropic convertMessages 会整条丢掉纯空白的 user（字符串 trim 后为空，
+ * 或数组里没有图片、text 块全是空白），这类消息预判时一并排除（`droppedOnAnthropicWire`），否则"说明前面是 user"
+ * 判为合法、线上前一条却是 assistant（全库审查 2026-11-25 返修 R1；`" "` 经 HTTP 字符串 input 就能进来）。
  */
 function fallBackMisplacedNotes(
   messages: Message[],
@@ -200,11 +212,13 @@ function fallBackMisplacedNotes(
   notes: readonly MidSystemNote[],
 ): void {
   const marked = new Set<Message>(notes.map((n) => n.msg))
+  // 线上会出现的非说明消息（说明本身以标记开头、不是空白，不会被 pi-ai 丢）
+  const onWire = (m: Message): boolean => !marked.has(m) && !droppedOnAnthropicWire(m)
   for (const n of notes) {
     const idx = messages.indexOf(n.msg)
     if (idx === -1) continue
-    const body = messages.filter((m) => !marked.has(m))
-    const afterIndex = messages.slice(0, idx).filter((m) => !marked.has(m)).length
+    const body = messages.filter(onWire)
+    const afterIndex = messages.slice(0, idx).filter(onWire).length
     if (midSystemSlotFollowsUser(body, midSystemSlotOf(body, afterIndex))) continue
     marked.delete(n.msg)
     messages[idx] = { ...n.msg, content: framedSystemNote(n.kind, n.text) } as Message
