@@ -8,6 +8,11 @@
  * "断了"有两种信号：传输关闭（`onclose`，stdio 子进程退出、内存传输关闭）与 HTTP 会话失效（有状态的 Streamable HTTP
  * 服务器重启或会话过期后对带旧 `mcp-session-id` 的请求回 404）。SDK 对后者只抛 `SdkHttpError`、不触发 `onclose`、也不自己
  * 重新 initialize，而 spec 要求客户端此时开新会话——所以这里认出 404 后把连接作废，交给下一次 `ensure()` 重建。
+ *
+ * 作废不掐断在途调用（与 route-pool.ts 的 evict 同一条不变式）：同一条连接上可能有别的 `tools/call` 正在执行
+ * （route 连接池跨会话共享同一个 McpConnection）。SDK 的 `Client.close()` 会以 "Connection closed" 拒掉全部待回应请求、
+ * 中止在途 fetch，而此时 run 的 signal 并未中止——循环会写"失败"，写请求却可能已被服务器接收，模型一重试就是重复写。
+ * 所以作废只清引用，旧 Client 等它上面的在途请求归零再关。
  */
 import { Client, SdkHttpError, type Transport } from "@modelcontextprotocol/client"
 import type { McpCallResult } from "./translate.js"
@@ -21,6 +26,10 @@ export interface McpConnectionOptions {
 export class McpConnection {
   private client: Client | undefined
   private connecting: Promise<Client> | undefined
+  /** 每个 Client 上正在进行的请求数（`tools/list` 与 `tools/call`）；作废的旧 Client 靠它判断何时可关 */
+  private readonly inflight = new Map<Client, number>()
+  /** 已作废、等在途归零再关的旧 Client。`close()` 收摊时一并关掉 */
+  private readonly retired = new Set<Client>()
 
   constructor(
     readonly transport: McpTransport,
@@ -70,14 +79,34 @@ export class McpConnection {
   }
 
   /**
-   * 把这条连接作废（会话已失效）：清掉引用让下一次 `ensure()` 重建，旧 Client 尽力关掉。
+   * 在 `client` 上发一个请求并计入在途数；撞会话失效（404）时把该连接作废。
+   * 在途数在 finally 里减：作废发生在 catch 里，此刻本请求仍算在途，所以旧 Client 至少要等本请求收尾才关
+   */
+  private async track<T>(client: Client, send: () => Promise<T>): Promise<T> {
+    this.inflight.set(client, (this.inflight.get(client) ?? 0) + 1)
+    try {
+      return await send()
+    } catch (err) {
+      if (isSessionGone(err)) this.discard(client)
+      throw err
+    } finally {
+      const left = (this.inflight.get(client) ?? 1) - 1
+      if (left > 0) this.inflight.set(client, left)
+      else {
+        this.inflight.delete(client)
+        if (this.retired.delete(client)) closeQuietly(client)
+      }
+    }
+  }
+
+  /**
+   * 把这条连接作废（会话已失效）：清掉引用让下一次 `ensure()` 重建；旧 Client 上还有在途请求就等归零再关（见文件头）。
    * 只在引用仍指向它时清：并发的几次调用同时撞 404，后到的不能把先到者刚重建的新连接清掉
    */
   private discard(client: Client): void {
     if (this.client === client) this.client = undefined
-    client.close().catch(() => {
-      // 旧连接关不掉也无所谓：它的会话在服务端已经不存在了
-    })
+    if ((this.inflight.get(client) ?? 0) > 0) this.retired.add(client)
+    else closeQuietly(client)
   }
 
   /**
@@ -107,12 +136,9 @@ export class McpConnection {
 
   private async listOnce(signal: AbortSignal | undefined): Promise<{ tools: unknown[] }> {
     const client = await this.ensure()
-    try {
-      return await client.listTools({}, { cacheMode: "bypass", ...(signal ? { signal } : {}) })
-    } catch (err) {
-      if (isSessionGone(err)) this.discard(client)
-      throw err
-    }
+    return this.track(client, () =>
+      client.listTools({}, { cacheMode: "bypass", ...(signal ? { signal } : {}) }),
+    )
   }
 
   /**
@@ -125,20 +151,17 @@ export class McpConnection {
     opts: { signal?: AbortSignal; timeoutMs: number },
   ): Promise<McpCallResult> {
     const client = await this.ensure()
-    try {
-      const result = await client.callTool(
+    const result = await this.track(client, () =>
+      client.callTool(
         { name, arguments: (args ?? {}) as Record<string, unknown> },
         { timeout: opts.timeoutMs, ...(opts.signal ? { signal: opts.signal } : {}) },
-      )
-      return result as McpCallResult
-    } catch (err) {
-      if (isSessionGone(err)) this.discard(client)
-      throw err
-    }
+      ),
+    )
+    return result as McpCallResult
   }
 
   /**
-   * 关掉当前连接（宿主热轮换 Socket、进程收尾）。
+   * 关掉当前连接（宿主热轮换 Socket、进程收尾），连同已作废、还在等在途归零的旧 Client——收摊不等在途调用。
    * 正在建连时调用：等这次建连有结果再关——否则 `ensure()` 完成后会把新 Client 挂回 `this.client`，
    * 连接泄漏、`onclose` 回调悬挂（2026-09-10 审查修）。建连失败本来就没有连接，吞掉那个错误。
    */
@@ -152,6 +175,8 @@ export class McpConnection {
     }
     const client = this.client
     this.client = undefined
+    for (const old of this.retired) closeQuietly(old)
+    this.retired.clear()
     if (client) await client.close()
   }
 }
@@ -162,6 +187,11 @@ export class McpConnection {
  */
 function isSessionGone(err: unknown): boolean {
   return SdkHttpError.isInstance(err) && err.status === 404
+}
+
+/** 关掉已作废的旧 Client：关不掉也无所谓，它的会话在服务端已经不存在了 */
+function closeQuietly(client: Client): void {
+  client.close().catch(() => {})
 }
 
 function messageOf(err: unknown): string {
