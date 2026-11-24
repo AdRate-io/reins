@@ -6,6 +6,7 @@ import {
   InMemoryEventLog,
   type LoopConfig,
   type RunResult,
+  RunStop,
   runLoop,
   type Tool,
 } from "@reinsjs/core"
@@ -438,6 +439,34 @@ describe("handoff × 审批同轮（R2）", () => {
     const ho = old.at(-2) as Handoff
     expect(ho.payload).toMatchObject({ summary: NOTE, triggerMessage: "把库迁移到 pg，必须保留旧表" })
     expect(types(await all(log, second.result.toSessionId))).toEqual(["system_note", "user_message"])
+  })
+
+  it("用户停止后发新消息：普通轮次不重建旧意图（快照里看不到本轮模型输出，只有补跑轮才重建）", async () => {
+    const deploy = defineTool<{ env: string }>({
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: ({ env }) => `已上线 ${env}`,
+    })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [doHandoff("h1", ARGS), callTool("c2", "deploy", { env: "prod" })] },
+      { drafts: [say("好，换个事")] },
+    ])
+    const cfg = config(lowering, log, { tools: [addTool, deploy] })
+    const first = await drain(runLoop(cfg))
+    expect(first.result.status).toBe("paused")
+    // 用户点停止：收尾 run 把 deploy 记为没执行，按设计不调 onTurnEnd
+    const { input: _noInput, ...stopCfg } = cfg
+    const ac = new AbortController()
+    ac.abort(new RunStop("user"))
+    const stopped = await drain(runLoop({ ...stopCfg, sockets: [handoff()], signal: ac.signal }))
+    expect(stopped.result.status).toBe("paused")
+    // 用户改了方向，模型只回一段文字：不该兑现旧的交接
+    const third = await drain(runLoop({ ...cfg, sockets: [handoff()], input: "算了，换个事" }))
+    expect(third.result.status).toBe("done")
+    expect(types(await all(log))).not.toContain("handoff")
   })
 
   it("已交接过、或回执之后模型又开了新一轮：不重建意图", async () => {
