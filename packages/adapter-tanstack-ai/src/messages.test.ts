@@ -1,7 +1,13 @@
-import { type CoreEvent, createCoreEvent, createCoreRegistry, type Event } from "@reinsjs/core"
+import {
+  type CoreEvent,
+  createCoreEvent,
+  createCoreRegistry,
+  type Event,
+  unsupportedImageText,
+} from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { BlockAssembler } from "./assembler.js"
-import { fromTanstackContent, toTanstackContent, toTanstackParts } from "./content.js"
+import { fromTanstackContent, IMAGE_UNSUPPORTED_NOTE, toTanstackContent, toTanstackParts } from "./content.js"
 import { TANSTACK_LOSS_MATRIX } from "./loss-matrix.js"
 import {
   COMPACTION_PREFIX,
@@ -246,6 +252,8 @@ describe("toModelMessages", () => {
         },
         { actor: "tool" },
       ),
+      // 白名单之前写进日志的图片（全库审查 2026-11-25 第二波返修）：落占位、记 lossy
+      ev("core.user_message", { content: [{ type: "image", mime: "image/svg+xml", data: "AA" }] }),
       ev("core.system_note", { kind: "pin", text: "p" }, { actor: "system" }),
       ev(
         "core.compaction",
@@ -449,6 +457,32 @@ describe("BlockAssembler", () => {
         replay: ORIGIN,
       },
     ])
+  })
+})
+
+describe("白名单外的旧图片（全库审查 2026-11-25 第二波返修）", () => {
+  it("用户消息与工具结果里的 svg 落 core 同一句说明、记 lossy；合规图片照发", () => {
+    seq = 0
+    const svg = { type: "image", mime: "image/svg+xml", data: "PHN2Zy8+" } as const
+    const png = { type: "image", mime: "image/png", data: "iVBO" } as const
+    const events = [
+      ev("core.user_message", { content: [{ type: "text", text: "看" }, svg, png] }),
+      ev("core.tool_call", { toolCallId: "c1", name: "t", args: {} }),
+      ev(
+        "core.tool_result",
+        { toolCallId: "c1", name: "t", content: [svg], isError: false },
+        { actor: "tool" },
+      ),
+    ]
+    const { messages, landings } = toModelMessages(events, { model: MODEL, trustMarkers: false })
+    expect(messages[0]?.content).toEqual([
+      { type: "text", content: "看" },
+      { type: "text", content: unsupportedImageText("image/svg+xml") },
+      { type: "image", source: { type: "data", value: "iVBO", mimeType: "image/png" } },
+    ])
+    expect(JSON.stringify(messages)).not.toContain("PHN2Zy8+")
+    expect(landings[0]).toMatchObject({ kind: "lossy", landing: "user", note: IMAGE_UNSUPPORTED_NOTE })
+    expect(landings[2]).toMatchObject({ kind: "lossy", landing: "tool", note: IMAGE_UNSUPPORTED_NOTE })
   })
 })
 

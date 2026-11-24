@@ -21,7 +21,7 @@ export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>
     exact("user"),
     lossy(
       "user",
-      "a user message sitting between a tool_call and its tool_result is moved after that batch of results (tool results must immediately follow their call), untrusted content is escaped, or an image stored by reference is replaced with placeholder text (the TanStack path does not load blobs)",
+      "a user message sitting between a tool_call and its tool_result is moved after that batch of results (tool results must immediately follow their call), untrusted content is escaped, or an image stored by reference is replaced with placeholder text (the TanStack path does not load blobs), or an image whose type is outside image/jpeg, png, gif, webp (logged before that check existed) is replaced with placeholder text naming its type",
     ),
   ],
   "core.model_text": [
@@ -37,7 +37,7 @@ export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>
     exact("tool"),
     lossy(
       "tool",
-      "untrusted content is escaped, or an image stored by reference is replaced with placeholder text (the TanStack path does not load blobs)",
+      "untrusted content is escaped, or an image stored by reference is replaced with placeholder text (the TanStack path does not load blobs), or an image whose type is outside image/jpeg, png, gif, webp (logged before that check existed) is replaced with placeholder text naming its type",
     ),
     lossy(
       "tool-error-field",
