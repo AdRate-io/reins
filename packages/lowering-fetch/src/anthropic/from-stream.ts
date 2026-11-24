@@ -289,6 +289,8 @@ function apply(ev: AnthropicStreamEvent, a: AnthropicAssembly, ctx: LoweringStre
  * - refusal → error 并把 stop_details 写进 errorMessage（厂商分类器拒答，不是瞬断，core 不会重试）；
  * - 没等到 message_stop 也没有 stop_reason → error "stream ended before message_stop"（可重试）；
  * - 其余（end_turn / stop_sequence / pause_turn / tool_use / 未知值）：有 tool_use 块即 toolUse，否则 stop。
+ * "可重试"只指本次尝试还没落任何输出：已流出正文或 tool_use 草稿时 core 一律不重试（重试判据是"落了几条输出"），
+ * run 以 error 结束，半截 / 拒答后的 tool_use 留成 pending，下一个 run 会补跑执行它；length 结局本轮就照常执行（core 侧缺陷 BUG-261125-1）。
  */
 /**
  * 缓存写里 1 小时存活期的 token 数：优先读厂商的 cache_creation 分档（后到的 message_delta 为准）；

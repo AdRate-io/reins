@@ -182,6 +182,8 @@ function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
  * - 没有 finish_reason：没等到 [DONE]，或等到了却既无正文也无 tool_call → error "stream ended before finish_reason"（可重试）；
  * - 其余（stop / tool_calls / 未知值、或 [DONE] 收尾但网关吞了 finish_reason）：有 tool_call 就是 toolUse
  *   （强制 tool_choice 时官方 finish_reason 是 stop，F0 实测），否则 stop。
+ * "可重试"只指本次尝试还没落任何输出：已流出正文或 tool_call 草稿时 core 一律不重试（重试判据是"落了几条输出"），
+ * run 以 error 结束，半截 / 拒答后的 tool_call 留成 pending，下一个 run 会补跑执行它；length 结局本轮就照常执行（core 侧缺陷 BUG-261125-1）。
  */
 function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolean): LoweringOutcome {
   const usage = usageOf(a.usage)

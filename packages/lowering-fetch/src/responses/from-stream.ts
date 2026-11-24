@@ -343,6 +343,8 @@ function apply(ev: ResponsesStreamEvent, a: ResponsesAssembly, ctx: LoweringStre
  * - 没等到终态事件 → error "stream ended before response.completed"（可重试）；
  * - incomplete + max_output_tokens → length、incomplete + content_filter 等 → error（厂商内容过滤，不重试）；cancelled → error；
  * - 其余（completed / 未知状态）：有 function_call 项即 toolUse，否则 stop。
+ * "可重试"只指本次尝试还没落任何输出：已流出 function_call 草稿时 core 一律不重试，run 以 error 结束、调用留成
+ * pending，下一个 run 会补跑执行它；length 结局本轮就照常执行（core 侧缺陷 BUG-261125-1）。
  */
 function outcomeOf(a: ResponsesAssembly, cost: ModelCost | undefined): LoweringOutcome {
   const usage = usageOf(a.usage)
