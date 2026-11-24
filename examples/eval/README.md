@@ -13,7 +13,7 @@ node examples/eval/report.ts examples/eval/out/<run> --candidate brain-lean --re
 
 `run.ts` 一格一落盘（指标 JSON + 全链时间线 JSONL + 探针事件），可按臂拆进程并行、可用 `--repeat-start N` 只补跑失败的格；
 `report.ts --rescore` 用落盘的时间线按当前评分器重算完成度、按探针记录重判召回，改口径不必重跑模型。
-**结果**：`results/2026-09-09-deepseek-v4-flash/`（四轮 99 格的结论与各轮报告）；`results/2026-09-14-tool-discovery/`（D1 工具懒发现两族报告）；`results/2026-09-15-lowering-fetch/`（0.2 发前切 fetch 版后两族复跑：Sonnet 5 全过、DeepSeek token 项未过且实证是模型行为变化而非代码，含三组对照）。`results/2026-11-24-deepseek-patrol-recheck/`（OPT-260915-1 复测：deepseek-flash 6 遍，候选 token +1.4%、在噪声内，09-15 的 disable 差未复现）。
+**结果**：`results/2026-09-09-deepseek-v4-flash/`（四轮 99 格的结论与各轮报告）；`results/2026-09-14-tool-discovery/`（D1 工具懒发现两族报告）；`results/2026-09-15-lowering-fetch/`（0.2 发前切 fetch 版后两族复跑：Sonnet 5 全过、DeepSeek token 项未过且实证是模型行为变化而非代码，含三组对照）。`results/2026-11-24-deepseek-patrol-recheck/`（OPT-260915-1 复测：deepseek-flash 12 遍门禁四条全过，候选总 token −10.3%、计费等价打平；09-15 的 disable 差未复现，6 遍时还按字面未过——DeepSeek 上 token 项至少 12 遍）。
 
 ## fixtures/tool-discovery：200 件工具里找靶（D1 工具懒发现的门禁）
 
