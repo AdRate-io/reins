@@ -29,7 +29,7 @@
  */
 import type { SkillSource, Socket, SocketSetup, Tool } from "@reinsjs/core"
 import { hasMemorySegment, MEMORY_ROOT } from "../memory/paths.js"
-import { resolveRootedPath } from "../shared/paths.js"
+import { isCanonicalKeyPrefix, resolveRootedPath } from "../shared/paths.js"
 import { formatFileView } from "../shared/view.js"
 import { DEFAULT_SKILLS_ROOT, SKILL_FILE_NAME, SKILL_NAME_RE } from "./constants.js"
 import { parseSkillMarkdown } from "./frontmatter.js"
@@ -170,11 +170,7 @@ export function parseSkillReadInput(raw: unknown, root = DEFAULT_SKILLS_ROOT): S
 
 /** root 必须是规范的绝对路径（`/a/b`，无空段、无 `.`/`..`），且不能与记忆根相同或互为前缀、不能含 `memories` 段 */
 export function assertSkillsRoot(root: string): void {
-  const segments = root.split("/")
-  const bad =
-    !root.startsWith("/") ||
-    segments.length < 2 ||
-    segments.slice(1).some((s) => s.length === 0 || s === "." || s === ".." || /\s/.test(s))
+  const bad = !isCanonicalKeyPrefix(root) || /\s/.test(root)
   if (bad) {
     throw new RangeError(
       `skills.root must be a canonical path starting with "/", not ending with "/", with no empty, . or .. segments, got ${JSON.stringify(root)}`,
