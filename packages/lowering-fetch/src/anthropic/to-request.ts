@@ -47,6 +47,7 @@ import {
   RELAY_DIALECT_NOTE,
 } from "../media.js"
 import type { FetchModel } from "../models.js"
+import { anthropicToolCallId } from "../tool-call-id.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
 export interface AnthropicCacheControl {
@@ -310,7 +311,10 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
         const refs = item.parts.filter(
           (p): p is Extract<ContentPart, { type: "tool_reference" }> => p.type === "tool_reference",
         )
-        const block: AnthropicUserBlock = { type: "tool_result", tool_use_id: item.toolCallId }
+        const block: AnthropicUserBlock = {
+          type: "tool_result",
+          tool_use_id: anthropicToolCallId(item.toolCallId),
+        }
         if (item.isError) block.is_error = true
         // 原生落点只给 system 信任的结果（tool_find / skill_read 这类宿主配置的内容）：untrusted 工具输出不能替模型点亮工具
         const trusted = item.event.trust === "system"
@@ -505,7 +509,7 @@ function assistantBlocks(
         const wrapped = !isPlainObject(b.args)
         out.push({
           type: "tool_use",
-          id: b.id,
+          id: anthropicToolCallId(b.id),
           name: b.name,
           input: wrapped ? { value: b.args } : (b.args as Record<string, unknown>),
         })

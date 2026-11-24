@@ -78,6 +78,43 @@ function encode(
 const roles = (messages: AnthropicMessage[]) => messages.map((m) => m.role)
 const landingOf = (r: ReturnType<typeof encode>, e: Event) => r.landings.find((l) => l.eventId === e.id)
 
+describe("encodeAnthropicRequest — 工具调用 id 规整（全库审查 #29）", () => {
+  it("别家 / 别的降级层写下的 id（pi 版 Responses 的 'call_x|fc_y'）规整成厂商字符集、截到 64 位，tool_use 与 tool_result 同一结果", () => {
+    const piOrigin = { provider: "openai", api: "openai-responses", model: "gpt-5" }
+    const piCall = ev(
+      "core.tool_call",
+      "model",
+      { toolCallId: "call_abc|fc_0123", name: "f", args: { q: 1 } },
+      { replay: piOrigin },
+    )
+    const long = `x.${"y".repeat(80)}`
+    const r = encode([
+      user("q"),
+      piCall,
+      result("call_abc|fc_0123"),
+      call(long),
+      result(long),
+      call("toolu_ok-1"),
+    ])
+    const ids = r.body.messages.flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content.flatMap((b) =>
+            b.type === "tool_use" ? [b.id] : b.type === "tool_result" ? [b.tool_use_id] : [],
+          )
+        : [],
+    )
+    const normalizedLong = `x_${"y".repeat(62)}`
+    expect(ids).toEqual([
+      "call_abc_fc_0123",
+      "call_abc_fc_0123",
+      normalizedLong,
+      normalizedLong,
+      "toolu_ok-1",
+    ])
+    for (const id of ids) expect(id).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+  })
+})
+
 describe("encodeAnthropicRequest — 基本形状", () => {
   it("system 进顶层 system 数组（末块带断点）、tools 末项带断点、最后一条 user 末块带断点；max_tokens 缺省取模型声明；stream 固定", () => {
     const r = encode([user("hi")], opus, { tools: true, systemPrompt: "be terse" })
