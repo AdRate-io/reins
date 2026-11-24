@@ -6,6 +6,7 @@ import {
   createCoreEvent,
   createCoreRegistry,
   createEvent,
+  decodeToolArgumentsText,
   type Event,
 } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
@@ -156,6 +157,17 @@ describe("字段细节", () => {
     expect(out[2]).toMatchObject({ type: "TOOL_CALL_END", toolCallId: "c1" })
     const bare = mapEvent(ev("core.tool_call", SAMPLES["core.tool_call"]))
     expect("parentMessageId" in (bare[0] as object)).toBe(false)
+  })
+
+  it("tool_call：入参是字符串（解析失败存的线上原文）时 ARGS 原样给原文，不再套一层 JSON 字符串", () => {
+    const raw = '{"a":1'
+    expect(decodeToolArgumentsText(raw).args).toBe(raw)
+    const out = mapEvent(ev("core.tool_call", { toolCallId: "c1", name: "add", args: raw }))
+    expect(out[1]).toMatchObject({ type: "TOOL_CALL_ARGS", delta: raw })
+    // 入参缺省（undefined）仍是 {}
+    const empty = mapEvent(ev("core.tool_call", { toolCallId: "c2", name: "add", args: undefined }))
+    expect(empty[1]).toMatchObject({ type: "TOOL_CALL_ARGS", delta: "{}" })
+    assertValidAgui(out)
   })
 
   it("tool_result：role tool、isError 与 spilled 进 metadata.reins", () => {
