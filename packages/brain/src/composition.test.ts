@@ -93,10 +93,15 @@ const tools = () => [
   tool("ads_disable", { lazy: true, risk: "high" }),
 ]
 
+/**
+ * 同一会话跨多次 run 时传同一个 clock：每次新建 deterministic() 会让事件 id 从 id1 重新编号、at 回退，
+ * 同一日志里撞号，按 id 判定的逻辑（supersedes、pinsKept）会误判
+ */
 function config(
   lowering: ScriptedLowering,
   log: InMemoryEventLog,
   extra: Partial<LoopConfig> = {},
+  clock: ReturnType<typeof deterministic> = deterministic(),
 ): LoopConfig {
   return {
     sessionId: SESSION,
@@ -105,7 +110,7 @@ function config(
     model: MODEL,
     tools: tools(),
     sockets: stack(),
-    ...deterministic(),
+    ...clock,
     ...extra,
   }
 }
@@ -139,14 +144,18 @@ describe("脑子模块整套同装（README 推荐顺序）", () => {
       },
       { drafts: [say("好，换个事")] },
     ])
-    const first = await drain(runLoop(config(lowering, log, { input: "上线" })))
+    const clock = deterministic()
+    const first = await drain(runLoop(config(lowering, log, { input: "上线" }, clock)))
     expect(first.result.status).toBe("paused")
     const ac = new AbortController()
     ac.abort(new RunStop("user"))
-    const stopped = await drain(runLoop(config(lowering, log, { signal: ac.signal })))
+    const stopped = await drain(runLoop(config(lowering, log, { signal: ac.signal }, clock)))
     expect(stopped.result.status).toBe("paused")
-    const third = await drain(runLoop(config(lowering, log, { input: "算了，换个事" })))
+    const third = await drain(runLoop(config(lowering, log, { input: "算了，换个事" }, clock)))
     expect(third.result.status).toBe("done")
-    expect((await all(log)).some((e) => e.type === "core.handoff")).toBe(false)
+    const events = await all(log)
+    expect(events.some((e) => e.type === "core.handoff")).toBe(false)
+    // 三次 run 共用一个时钟：同一会话里事件 id 不撞号
+    expect(new Set(events.map((e) => e.id)).size).toBe(events.length)
   })
 })
