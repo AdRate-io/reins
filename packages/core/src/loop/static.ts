@@ -30,7 +30,8 @@ async function resolve<T>(
 }
 
 /**
- * 宿主工具 + 各 Socket 的静态工具（同名以宿主为准，宿主想覆盖模块的默认实现时用）；
+ * 宿主工具 + 各 Socket 的静态工具（同名以宿主为准，宿主想覆盖模块的默认实现时用——但对 brain 自带工具的模块，按名字覆盖会让
+ * 整个模块停摆，见 brain `shared/own-tools.ts`；只想换读法用 `spill({ tool: false })` 这类开关）；
  * 宿主系统提示在前，各 Socket 的规则片段按注册顺序追加，空行分隔；都没有则 undefined。
  *
  * 异步（P1）：贡献函数可以 await（MCP 的 `tools/list`）。各 Socket 仍按注册顺序**依次**解析而不是并发 ——
