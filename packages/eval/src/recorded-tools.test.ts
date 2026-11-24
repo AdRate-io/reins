@@ -53,10 +53,11 @@ const run = (
   tools: { name: string; execute?: unknown }[],
   name: string,
   args: unknown,
+  sessionId = ctx.sessionId,
 ): Promise<ToolResult> => {
   const tool = tools.find((t) => t.name === name)
   if (!tool?.execute) throw new Error(`没有工具 ${name}`)
-  return (tool.execute as (i: unknown, c: ToolContext) => Promise<ToolResult>)(args, ctx)
+  return (tool.execute as (i: unknown, c: ToolContext) => Promise<ToolResult>)(args, { ...ctx, sessionId })
 }
 
 describe("recordedTools：从录像回放确定性工具", () => {
@@ -96,6 +97,18 @@ describe("recordedTools：从录像回放确定性工具", () => {
     expect((await run(seqMode, "list", { page: 98 })).content).toEqual(text("page2"))
     expect((await run(seqMode, "list", { page: 97 })).content).toEqual(text("page1-second"))
     expect((await run(seqMode, "list", { page: 96 })).isError).toBe(true)
+  })
+
+  it("回放进度按会话各记各的：同一批工具对象跨格复用，后跑的格看到的世界与先跑的一样", async () => {
+    const { tools } = recordedTools(recording(), { sequence: true })
+    // 格 A 把 page 1 的轮转推进一次，并用 sequence 消耗掉一条录像
+    expect((await run(tools, "list", { page: 1 }, "cellA")).content).toEqual(text("page1-first"))
+    expect((await run(tools, "list", { page: 9 }, "cellA")).content).toEqual(text("page2"))
+    // 格 B 是全新会话：从第一次录像起，sequence 也从头给
+    expect((await run(tools, "list", { page: 1 }, "cellB")).content).toEqual(text("page1-first"))
+    expect((await run(tools, "list", { page: 9 }, "cellB")).content).toEqual(text("page2"))
+    // 格 A 自己的进度不受格 B 影响
+    expect((await run(tools, "list", { page: 1 }, "cellA")).content).toEqual(text("page1-second"))
   })
 
   it("specs 覆盖模型可见声明与风险；only 只建指定工具", () => {

@@ -70,6 +70,8 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 4. 还没有 → `opts.sequence === true` 时给该工具**下一条没被 `used` 标记过的**录像结果（模型换写法但意图相近）；缺省关闭；
 5. 都没有 → `noRecording()` 返回 `isError: true` 的英文说明（"这是回放环境，只有之前观察过的调用有数据"），而不是随便给一条。
 
+`cursor` 与 `used` **按 `ctx.sessionId` 分桶**：fixture 的工具对象只建一次、`runEval` 跨臂跨重复复用同一批，进度挂在工具对象上会让先跑的格推进后跑的格的世界（同参录过多次拿到下一份、sequence 直接回 noRecording）。边界：handoff 接到的新会话也从头回放。
+
 工具声明来自 `opts.specs[name]`（description / inputSchema / risk / needsApproval / resultPolicy），缺省是一句通用说明 + `{ type: "object", additionalProperties: true }`；`opts.only` 可限定只为哪些工具建回放。
 
 ### 3.2 执行：`runEval` 的每一格
