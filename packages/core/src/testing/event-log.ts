@@ -27,6 +27,64 @@ export function makeEvents(sessionId: string, n: number, startSeq = 1): Event[] 
   )
 }
 
+/**
+ * 造三条"壳字段齐全"的事件，seq 从 startSeq 起：可选壳字段（parentId / provenance / replay）、非 ASCII 与大载荷、
+ * 非当前 schemaVersion 的 ext.* 事件。存储必须逐字段原样存取——不升级、不丢字段、不重排键（续跑签名按 JSON 文本算）。
+ * replay 里是 thinking 签名、Responses 项 id、加密推理项：漏存不报错，只会让回放静默降级。
+ */
+export function makeRichEvents(sessionId: string, startSeq = 1): Event[] {
+  const at = 1_700_000_000_000
+  // 约 20 万字符：中文、emoji、行分隔符、引号与反斜杠（JSON 文本里要转义的都带上）
+  const big = '长文本 long text ✓ 😀   "quoted" \\backslash\\ '.repeat(5_000)
+  return [
+    {
+      id: `rich-${startSeq}`,
+      sessionId,
+      seq: startSeq,
+      at,
+      type: "core.user_message",
+      schemaVersion: 1,
+      actor: "user",
+      trust: "principal",
+      provenance: { source: "user:ana", ref: "msg-1" },
+      payload: { content: [{ type: "text", text: `مرحبا 你好 𠀀 ${big}` }] },
+    },
+    {
+      id: `rich-${startSeq + 1}`,
+      sessionId,
+      seq: startSeq + 1,
+      at: at + 1,
+      type: "core.model_text",
+      schemaVersion: 1,
+      actor: "model",
+      parentId: `rich-${startSeq}`,
+      trust: "model",
+      replay: {
+        provider: "anthropic",
+        thinkingSignature: "c2lnbmF0dXJl+/=",
+        redacted: true,
+        itemId: "fc_0123",
+        encrypted: { content: "gAAAA…", items: [1, 2.5, null, false, { deep: ["x"] }] },
+      },
+      // 键故意不按字母序：重排键的后端（如 jsonb）在这里现形
+      payload: { text: "zebra first, then alpha", z: 1, a: 2 },
+    },
+    {
+      id: `rich-${startSeq + 2}`,
+      sessionId,
+      seq: startSeq + 2,
+      at: at + 2,
+      type: "ext.host_marker",
+      schemaVersion: 7,
+      actor: "host",
+      parentId: `rich-${startSeq + 1}`,
+      trust: "untrusted",
+      provenance: { source: "tool:search" },
+      payload: { nested: { list: [{ k: "v" }], empty: {}, nil: null }, count: 0 },
+    },
+  ]
+}
+
 const seqs = (events: Event[]) => events.map((e) => e.seq)
 
 export function eventLogConformance(t: TestHarness, factory: () => EventLog | Promise<EventLog>): void {
@@ -43,6 +101,17 @@ export function eventLogConformance(t: TestHarness, factory: () => EventLog | Pr
       await log.append(events)
       assertEqual(await collect(log.read("s1")), events, "full read")
     })
+
+    t.it(
+      "every shell field and the payload round-trip verbatim: parentId, provenance, nested replay, non-ASCII and large payloads, a non-current schemaVersion and ext.* types",
+      async () => {
+        const log = await factory()
+        const events = makeRichEvents("s1")
+        await log.append(events)
+        assertEqual(await collect(log.read("s1")), events, "full read")
+        assertEqual(await log.tail("s1", 2), events.slice(1), "tail")
+      },
+    )
 
     t.it("successive append batches accumulate", async () => {
       const log = await factory()
@@ -172,6 +241,18 @@ export function eventLogConformance(t: TestHarness, factory: () => EventLog | Pr
       assertEqual(
         forked,
         src.slice(0, 2).map((e) => ({ ...e, sessionId: "s2" })),
+        "forked content",
+      )
+    })
+
+    t.it("fork keeps every shell field of the copied events", async () => {
+      const log = await factory()
+      const src = makeRichEvents("s1")
+      await log.append(src)
+      await log.fork("s1", 3, "s2")
+      assertEqual(
+        await collect(log.read("s2")),
+        src.map((e) => ({ ...e, sessionId: "s2" })),
         "forked content",
       )
     })
