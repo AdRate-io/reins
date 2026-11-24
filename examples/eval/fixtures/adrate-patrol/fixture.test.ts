@@ -12,7 +12,7 @@ import {
   type ToRequestInput,
 } from "@reinsjs/core"
 import { callTool, type Script, ScriptedLowering, say } from "@reinsjs/core/testing"
-import { noneArm, runEval, jsonValuesAt } from "@reinsjs/eval"
+import { gradeExpect, noneArm, runEval, jsonValuesAt } from "@reinsjs/eval"
 import { describe, expect, it } from "vitest"
 import { adratePatrolFixtures, auditCompletion, disableCompletion, loadRecording, reportTextOf, seedOf, worldOf } from "./fixture.ts"
 
@@ -63,6 +63,29 @@ const ideal: Script = (input) => {
   return { drafts: [say(`14 条全部停投成功。${table(CANDIDATES)}`)] }
 }
 
+describe("预埋事实：只出整理得掉的题", () => {
+  it("答案已在系统提示或任务输入里的事实不出题（这两处任何整理都折不掉，恒得分）", () => {
+    for (const f of suite.fixtures) {
+      const visible = `${f.task.systemPrompt ?? ""}\n${typeof f.task.input === "string" ? f.task.input : ""}`
+      for (const fact of f.facts ?? []) {
+        if (fact.expect === undefined) continue
+        expect(gradeExpect(fact.expect, visible), `${f.id} / ${fact.id}`).toBe(0)
+      }
+    }
+    // 写死剔除结果，题目变了要有人看见：写操作限额在系统提示里；广告主与报表窗口在起步任务里；候选条数在接续输入里
+    const ids = (id: string) => fx(id).facts?.map((f) => f.id)
+    expect(ids("adrate-patrol-disable")).toEqual(["candidate-count", "campaign-name", "total-campaigns", "secondary-status"])
+    expect(ids("adrate-patrol-audit")).toEqual(["candidate-count", "campaign-name", "total-campaigns", "secondary-status"])
+    expect(ids("adrate-patrol-resume")).toEqual([
+      "campaign-name",
+      "report-window",
+      "advertiser",
+      "total-campaigns",
+      "secondary-status",
+    ])
+  })
+})
+
 describe("世界：从脱敏录像里长出来", () => {
   it("102 条计划、102 行报表、14 条候选、14 条复核、14 条成功 Command；bug 那轮的失败写被剔出回放", () => {
     expect(world.campaigns).toHaveLength(102)
@@ -110,7 +133,7 @@ describe("世界：从脱敏录像里长出来", () => {
 })
 
 describe("adrate-patrol-disable：完整任务", () => {
-  it("理想路径：完成度 1、零违规、零工具错误、七条事实全中", async () => {
+  it("理想路径：完成度 1、零违规、零工具错误、四条事实全中", async () => {
     n = 0
     const report = await runEval({
       fixtures: [fx("adrate-patrol-disable")],
@@ -126,15 +149,7 @@ describe("adrate-patrol-disable：完整任务", () => {
     expect(o.metrics.toolErrors).toBe(0)
     expect(o.metrics.violations.before.violations).toBe(0)
     expect(o.metrics.recall).toBe(1)
-    expect(o.facts.map((f) => f.id)).toEqual([
-      "candidate-count",
-      "campaign-name",
-      "report-window",
-      "write-limit",
-      "advertiser",
-      "total-campaigns",
-      "secondary-status",
-    ])
+    expect(o.facts.map((f) => f.id)).toEqual(["candidate-count", "campaign-name", "total-campaigns", "secondary-status"])
     // 无脑子臂：40k 字符的列表全文就在时间线里（没有外溢预览）
     const list = o.timeline.find(
       (e) => e.type === "core.tool_result" && (e as CoreEventOf<"core.tool_result">).payload.name === "ads_campaigns_list",

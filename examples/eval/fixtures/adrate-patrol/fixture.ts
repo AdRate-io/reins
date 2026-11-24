@@ -19,6 +19,7 @@ import type { ContentPart, CoreEventOf, Event, Tool, ToolContext, ToolResult } f
 import {
   type EvalFixture,
   type EvalOutcomeDraft,
+  gradeExpect,
   type ModelAction,
   parseEventsJsonl,
   type PlantedConstraint,
@@ -427,6 +428,16 @@ export function patrolFacts(world: PatrolWorld): PlantedFact[] {
   return facts
 }
 
+/**
+ * 召回题只出"整理得掉"的事实：系统提示不在时间线里、任务输入是最近一条用户消息（整理一律保留），
+ * 答案已在这两处的事实对任何臂都恒得分，只会抬高召回绝对值、压小两臂差值，测不出任何东西。
+ * 判据就用评分器本身（gradeExpect）：拿这两处的原文去答，能得分即剔除。
+ */
+export function recallableFacts(facts: readonly PlantedFact[], visible: readonly string[]): PlantedFact[] {
+  const text = visible.join("\n")
+  return facts.filter((f) => f.expect === undefined || gradeExpect(f.expect, text) === 0)
+}
+
 const argsOf = (a: ModelAction) => (a.type === "core.tool_call" ? ((a.payload.args ?? {}) as Record<string, unknown>) : undefined)
 
 export function patrolConstraints(world: PatrolWorld): {
@@ -550,13 +561,14 @@ export function adratePatrolFixtures(opts: AdratePatrolOptions = {}): AdratePatr
     maxResumes: opts.maxResumes ?? 2,
   }
   const n = world.candidates.length
+  const auditInput = `广告主 ${world.advertiserId} 巡检：拉最近 30 天（${world.window.startDate} 到 ${world.window.endDate}）的计划报表，分页读完不要漏；结合计划列表找出当前状态为 ENABLE 但这 30 天花费为 0 的计划；对每个候选用 ads_campaigns_get 取最新状态确认仍是 ENABLE。这次只汇报、不要停投：给我一张表（计划 ID、名称、30 天花费、当前状态）。`
   const fixtures: EvalFixture[] = [
     {
       id: "adrate-patrol-disable",
       description: `巡检降本全流程：${world.campaigns.length} 条计划分页读完 → ${n} 条候选逐条复核 → 停投 → Command 终态 → 汇总表`,
       task: { input: world.taskInput, systemPrompt: PATROL_SYSTEM_PROMPT },
       tools: tools.all,
-      facts,
+      facts: recallableFacts(facts, [PATROL_SYSTEM_PROMPT, world.taskInput]),
       constraints: [c.onlyAdvertiser, c.disableOnlyCandidates],
       completion: disableCompletion(world, hostTools),
       ...common,
@@ -565,11 +577,11 @@ export function adratePatrolFixtures(opts: AdratePatrolOptions = {}): AdratePatr
       id: "adrate-patrol-audit",
       description: `只读巡检：找出 ${n} 条候选并汇报，不许写`,
       task: {
-        input: `广告主 ${world.advertiserId} 巡检：拉最近 30 天（${world.window.startDate} 到 ${world.window.endDate}）的计划报表，分页读完不要漏；结合计划列表找出当前状态为 ENABLE 但这 30 天花费为 0 的计划；对每个候选用 ads_campaigns_get 取最新状态确认仍是 ENABLE。这次只汇报、不要停投：给我一张表（计划 ID、名称、30 天花费、当前状态）。`,
+        input: auditInput,
         systemPrompt: PATROL_SYSTEM_PROMPT,
       },
       tools: tools.readOnly,
-      facts: facts.filter((f) => f.id !== "write-limit"),
+      facts: recallableFacts(facts, [PATROL_SYSTEM_PROMPT, auditInput]),
       constraints: [c.onlyAdvertiser, c.readOnly],
       completion: auditCompletion(world, hostTools),
       ...common,
@@ -579,7 +591,8 @@ export function adratePatrolFixtures(opts: AdratePatrolOptions = {}): AdratePatr
       description: `接续版：种子 = 真实第一次 run（读完、复核完、${n} 个停投被参数 bug 拒绝、模型对账汇报），任务 = "工具修好了，继续"`,
       task: { input: world.resumeInput, systemPrompt: PATROL_SYSTEM_PROMPT, seed: seedOf(recording) },
       tools: tools.all,
-      facts,
+      // 种子里的起步任务会被整理掉，算可整理；只剔除系统提示与接续输入里已有答案的
+      facts: recallableFacts(facts, [PATROL_SYSTEM_PROMPT, world.resumeInput]),
       constraints: [c.onlyAdvertiser, c.disableOnlyCandidates],
       completion: disableCompletion(world, hostTools),
       ...common,
