@@ -36,6 +36,7 @@ export const agent = createAgent({ model: claude, store, tools })
 - Thinking blocks are replayed only with a signature from the same provider and model.
 - Anthropic cache breakpoints: at most four block-level breakpoints are set; when they are exhausted the top-level breakpoint is silently skipped rather than producing a 400.
 - pi-ai 0.85.1 has no `system` role for injected content; the layer rewrites the payload in pi-ai's `onPayload` hook. The `LoweredRequest.payload` you can inspect shows the pre-rewrite shape — remember that when debugging a 400.
+- `PiAiLowering` tags those notes with a fresh random marker per request, so user text can never be promoted to `system`. If you call the advanced exports yourself (`eventsToContext`, `markSystemNote`, `rewritePayload`, `rewriteAnthropicPayload`, `rewriteOpenAIResponsesPayload`), pass the same `newSystemNoteMark()` value to both sides (`systemNoteMark` / `mark`): without it they fall back to the fixed `SYSTEM_NOTE_MARK`, and any user text starting with it would be rewritten into a system message.
 
 ## Runtime footprint
 
