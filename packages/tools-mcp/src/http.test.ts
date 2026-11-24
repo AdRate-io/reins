@@ -330,8 +330,9 @@ describe("httpTransport：有状态服务器的会话失效（404）", () => {
     expect(results[0]?.payload.isError).toBe(true)
     expect(results[1]?.payload.isError ?? false).toBe(false)
     expect(results[1]?.payload.content).toEqual([{ type: "text", text: "echo:two" }])
-    // 撞 404 的那次调用没有在新会话上重放：重建后只有 c2 一次 tools/call 到了服务器
-    expect(srv.seen.filter((s) => s === "POST:404:sid")).toHaveLength(1)
+    // 撞 404 的那次调用（c1）没有在新会话上重放：服务器只执行过 c2 一次。
+    // 不用 POST:404 的次数断言——重放会发生在新会话上（表现为 POST:200），那个计数锁不住它
+    expect(srv.calls).toEqual(["two"])
     await socket.close()
   })
 
