@@ -36,7 +36,6 @@ import {
   computeConfigHash,
   createCoreRegistry,
   createEvent,
-  DEFAULT_MODEL_INVISIBLE_TYPES,
   type Event,
   type EventDraft,
   type EventLog,
@@ -45,6 +44,7 @@ import {
   estimateTotal,
   type HandoffIntent,
   handoffOpeningDrafts,
+  isModelInvisibleByDefault,
   isReplayable,
   type LandingRecord,
   type LoweringCapabilities,
@@ -544,7 +544,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       tctx.tools = tools
     }
     const injected = await flush(ctx, s)
-    visible = [...visible, ...injected.filter((e) => !DEFAULT_MODEL_INVISIBLE_TYPES.has(e.type))]
+    // 运维类型与 ext.* 不进本轮视图：与 runLoop、投影同一口径（core isModelInvisibleByDefault）
+    visible = [...visible, ...injected.filter((e) => !isModelInvisibleByDefault(e.type))]
     tctx.events = visible
     tctx.tools = tools
     // 与 runLoop 同口径：contextEstimate 取真正送出的视图，注入的说明 / 快照不被当成固定开销重复计（全库审查 2026-11-25 #20）

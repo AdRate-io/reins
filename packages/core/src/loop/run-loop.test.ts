@@ -355,6 +355,39 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
     }
   })
 
+  it("beforeModel 期间写的 ext.* 不进本轮视图，校准出的固定开销仍准确（全库审查 2026-11-25 第二波返修）", async () => {
+    const log = new InMemoryEventLog()
+    const OVERHEAD = 1000
+    // 降级层不下发 ext.*：真实上下文只按真正发出去的事件算
+    const sentOf = (events: readonly Event[]) => events.filter((e) => !e.type.startsWith("ext."))
+    const lowering = new ScriptedLowering((input, turn) => {
+      const usage = { input: estimateTotal(sentOf(input.events), roughTokenEstimate) + OVERHEAD, output: 5 }
+      return turn < 2
+        ? { drafts: [callTool(`c${turn}`, "add", { a: 1, b: 2 })], outcome: { usage } }
+        : { drafts: [say("done")], outcome: { usage } }
+    })
+    const overheads: number[] = []
+    const auditor: Socket = {
+      beforeModel: (ctx) => {
+        overheads.push(contextOverheadOf(ctx.timeline))
+        // 每轮写一条约 1 万 token 的审计留痕
+        ctx.emit({ type: "ext.audit", actor: "host", payload: { blob: "x".repeat(40_000) } })
+        return undefined
+      },
+    }
+    await drain(
+      runLoop(
+        baseConfig(lowering, log, {
+          input: "算",
+          sockets: [auditor],
+          registry: createCoreRegistry([{ type: "ext.audit", version: 1 }]),
+        }),
+      ),
+    )
+    expect(overheads).toEqual([0, OVERHEAD, OVERHEAD])
+    for (const req of lowering.requests) expect(req.events.some((e) => e.type.startsWith("ext."))).toBe(false)
+  })
+
   it("模型窗口 / 预留不合规时 run 起步即抛 RangeError，一条日志都不写（全库审查 2026-11-25 #17）", async () => {
     for (const [contextWindow, reserveTokens] of [
       [Number.NaN, undefined],

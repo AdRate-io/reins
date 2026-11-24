@@ -190,6 +190,25 @@ describe("reinsMiddleware：基本流程", () => {
     expect(usage.payload.contextEstimate).toBeGreaterThan(roughTokenEstimate(note))
   })
 
+  it("beforeModel 期间写的 ext.* 不进本轮视图、不计入 contextEstimate，与 runLoop 同口径（全库审查 2026-11-25 第二波返修）", async () => {
+    const auditor: Socket = {
+      beforeModel: (ctx) => {
+        ctx.emit({ type: "ext.audit", actor: "host", payload: { blob: "x".repeat(40_000) } })
+        return undefined
+      },
+    }
+    const f = fixture([{ blocks: [say("好")] }], [auditor], {
+      registry: createCoreRegistry([{ type: "ext.audit", version: 1 }]),
+    })
+    await f.run({ messages: [user("hi")] })
+    const logged = await all(f.log)
+    const usage = logged.find((e): e is CoreEventOf<"core.budget_usage"> => e.type === "core.budget_usage")
+    if (!usage) throw new Error("budget_usage missing")
+    expect(logged.some((e) => (e.type as string) === "ext.audit")).toBe(true)
+    // 1 万 token 的留痕不算进送出视图的估算
+    expect(usage.payload.contextEstimate).toBeLessThan(1000)
+  })
+
   it("用户消息进日志 → 模型调工具 → TanStack 执行 → 结果进日志 → 回答；模型每轮看到的是日志投影", async () => {
     const f = fixture([
       { blocks: [think("先算", "SIG"), callTool("c1", "add", { a: 2, b: 3 })] },

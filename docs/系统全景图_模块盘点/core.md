@@ -93,7 +93,7 @@
 | --- | --- |
 | `projection/index.ts` | 汇总导出全部策略与执行器 |
 | `projection/types.ts` | `ProjectionStrategy` / `ProjectionContext`（只读上下文 + `nextSeq()`）/ `ProjectionStep`（events + emitted）/ `ProjectionStats` / `ProjectionResult` |
-| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（11 种运维事件）+ `ext.*` 缺省剔除（`keepExtEvents` 放开）+ 宿主追加的 `isVisible` |
+| `projection/filter.ts` | 策略 1 可见性过滤：`DEFAULT_MODEL_INVISIBLE_TYPES`（11 种运维事件）+ `ext.*` 缺省剔除（`keepExtEvents` 放开）+ 宿主追加的 `isVisible`；`isModelInvisibleByDefault` 是"缺省不可见"的真源，runLoop / TanStack 的注入过滤也调它 |
 | `projection/fold.ts` | 策略 2 折叠：`covers` / `keptBy` / `isPinNote` / `supersededIds` 幸存判定，`foldCompactions` 把摘要插到**被覆盖区间的位置** |
 | `projection/pins.ts` | 策略 3 钉住重注入：把幸存的被覆盖事件挪到覆盖它的最新可见 compaction 之后（去掉本策略投影仍正确，只是顺序不好读） |
 | `projection/truncate.ts` | 策略 5 预算裁剪兜底：过触发线才裁、一裁到回落线（`cutToRatio` 缺省 `DEFAULT_CUT_TO_RATIO` 0.6）；`splitTurns` 切轮、三条切点硬规则、`defaultThresholdSummary` 机械摘要（并入旧摘要 + 用户原话 + 被裁工具结果清单），新造 `compaction(decidedBy=threshold)` 经 `emitted` 交出 |

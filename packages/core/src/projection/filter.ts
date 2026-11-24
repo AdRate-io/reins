@@ -38,6 +38,16 @@ export const DEFAULT_MODEL_INVISIBLE_TYPES: ReadonlySet<string> = new Set([
   "core.run_ended",
 ])
 
+/**
+ * "缺省对模型不可见"的唯一口径（真源索引）：运维事件表 + `ext.*` 前缀。
+ * visibilityFilter 缺省配置、runLoop 与 TanStack 适配器对 beforeModel 期间注入事件的过滤都调它——
+ * 注入过滤若只看运维事件表，Socket 写的 ext.* 会进本轮视图、被算进送出估算却不下发，
+ * contextOverheadOf 校准出的固定开销随之偏低（全库审查 2026-11-25 第二波返修）
+ */
+export function isModelInvisibleByDefault(type: string): boolean {
+  return DEFAULT_MODEL_INVISIBLE_TYPES.has(type) || type.startsWith("ext.")
+}
+
 export interface VisibilityFilterOptions {
   /** 覆盖默认的不可见 core 类型集合（ext.* 另由 keepExtEvents 管，不受它影响） */
   invisibleTypes?: Iterable<string>
@@ -51,18 +61,19 @@ export interface VisibilityFilterOptions {
 }
 
 export function visibilityFilter(opts: VisibilityFilterOptions = {}): ProjectionStrategy {
-  const invisible = opts.invisibleTypes ? new Set(opts.invisibleTypes) : DEFAULT_MODEL_INVISIBLE_TYPES
   const extra = opts.isVisible
   const keepExt = opts.keepExtEvents === true
+  // 缺省配置直接用真源；覆盖了不可见集合或放开 ext.* 时按选项拼同一形状的判定
+  const custom = opts.invisibleTypes ? new Set(opts.invisibleTypes) : undefined
+  const hidden =
+    !custom && !keepExt
+      ? isModelInvisibleByDefault
+      : (type: string) =>
+          (custom ?? DEFAULT_MODEL_INVISIBLE_TYPES).has(type) || (!keepExt && type.startsWith("ext."))
   return {
     name: "visibility-filter",
     apply(events) {
-      return {
-        events: events.filter(
-          (e) =>
-            !invisible.has(e.type) && (keepExt || !e.type.startsWith("ext.")) && (extra ? extra(e) : true),
-        ),
-      }
+      return { events: events.filter((e) => !hidden(e.type) && (extra ? extra(e) : true)) }
     },
   }
 }
