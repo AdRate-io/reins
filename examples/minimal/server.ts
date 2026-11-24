@@ -33,7 +33,11 @@ const port = Number(process.env.PORT ?? 8787)
 
 /** 允许的 Host 头（小写，带端口）；判定见文件头 */
 const allowedHosts = (() => {
-  if (process.env.HOST === undefined) return new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`])
+  if (process.env.HOST === undefined) {
+    const local = ["127.0.0.1", "localhost", "[::1]"]
+    // 端口 80 时浏览器发的 Host 不带端口，两种写法都认
+    return new Set(local.flatMap((h) => (port === 80 ? [`${h}:${port}`, h] : [`${h}:${port}`])))
+  }
   const list = (process.env.ALLOWED_HOSTS ?? "")
     .split(",")
     .map((h) => h.trim().toLowerCase())
