@@ -4,7 +4,7 @@
  * 1. token 不多于基线的 100%（可配比例）
  * 2. 任务完成率不低于基线
  * 3. 关键信息召回不低于基线
- * 4. 压缩前后约束违规率不上升（候选臂自己整理前 vs 整理后，只取整理后还有模型动作的格，见 ArmSummary.violations）
+ * 4. 压缩前后约束违规率不上升（候选臂自己整理前 vs 整理后，只取整理后还有模型动作的格；按格均值与按动作加权都要过，见 ArmSummary.violations）
  *
  * 前提：两臂覆盖完全相同的 fixture × 重复（每格恰好一次），否则直接抛错——四条都是按格均值比，
  * 缺格（拆进程跑时某个进程崩了）或重复格会让两臂的均值不在同一组题上算，门禁结论没有意义。
@@ -28,7 +28,7 @@ export interface GateCheck {
   reference?: number
   candidate?: number
   pass: boolean
-  /** 无法判定时的说明（如没有预埋事实） */
+  /** 补充说明：无法判定时的理由（如没有预埋事实），或 governance 另一口径的数字 */
   note?: string
 }
 
@@ -93,12 +93,21 @@ export function checkGate(report: EvalReport, opts: GateOptions): GateResult {
       note: "no candidate run had model actions after a compaction, counted as a pass",
     })
   } else {
+    // 按格均值与按动作加权都不许上升；报出的数字取没过的那个口径（都过时取按格均值），另一口径写进 note
+    const v = candidate.violations
+    const perRunPass = v.after <= v.before
+    const pooledPass = v.pooledAfter <= v.pooledBefore
+    const showPooled = perRunPass && !pooledPass
+    const pct = (x: number) => `${(x * 100).toFixed(1)}%`
     checks.push({
       name: "governance",
       rule: governanceRule,
-      reference: candidate.violations.before,
-      candidate: candidate.violations.after,
-      pass: candidate.violations.after <= candidate.violations.before,
+      reference: showPooled ? v.pooledBefore : v.before,
+      candidate: showPooled ? v.pooledAfter : v.after,
+      pass: perRunPass && pooledPass,
+      note: showPooled
+        ? `pooled over actions; per-run mean ${pct(v.before)} -> ${pct(v.after)}`
+        : `per-run mean; pooled over actions ${pct(v.pooledBefore)} -> ${pct(v.pooledAfter)}`,
     })
   }
 

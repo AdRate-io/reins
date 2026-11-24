@@ -218,10 +218,17 @@ export interface ArmSummary {
   cacheHitRate?: number
   recall?: number
   /**
-   * 治理衰减：只取"第一次整理之后还有模型动作"（`after.actions > 0`）的格，两窗都在这同一批格上取各格违规率的均值。
-   * 没整理过的格 after 窗恒空，掺进来会把整理后违规率稀释向 0、把治理衰减盖住；compactedRuns 为 0 时两率都记 0，门禁据此带 note。
+   * 治理衰减：只取"第一次整理之后还有模型动作"（`after.actions > 0`）的格，两窗都在这同一批格上算。
+   * `before` / `after` 是各格违规率的均值（每格一票），`pooledBefore` / `pooledAfter` 是按动作加权（Σ违规 / Σ动作）；门禁要求两种都不上升。
+   * 没整理过的格 after 窗恒空，掺进来会把整理后违规率稀释向 0、把治理衰减盖住；compactedRuns 为 0 时各率都记 0，门禁据此带 note。
    */
-  violations: { before: number; after: number; compactedRuns: number }
+  violations: {
+    before: number
+    after: number
+    pooledBefore: number
+    pooledAfter: number
+    compactedRuns: number
+  }
   compactions: CompactionCounts
   turns: number
   toolCalls: number

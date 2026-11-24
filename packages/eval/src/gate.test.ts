@@ -177,7 +177,13 @@ describe("checkGate：四条规则", () => {
       { arm: "brain", repeat: 2, before: [1, 10] },
       { arm: "brain", repeat: 3, before: [1, 10] },
     ])
-    expect(g.candidate.violations).toEqual({ before: 0.1, after: 0.25, compactedRuns: 1 })
+    expect(g.candidate.violations).toEqual({
+      before: 0.1,
+      after: 0.25,
+      pooledBefore: 0.1,
+      pooledAfter: 0.25,
+      compactedRuns: 1,
+    })
     expect(check(g, "governance")).toMatchObject({ reference: 0.1, candidate: 0.25, pass: false })
     expect(g.pass).toBe(false)
   })
@@ -190,6 +196,42 @@ describe("checkGate：四条规则", () => {
       { arm: "brain", repeat: 2, before: [5, 10] },
     ])
     expect(check(g, "governance")).toMatchObject({ reference: 0, candidate: 0.1, pass: false })
+  })
+
+  it("governance 按格均值与按动作加权两种口径都要过：动作少的格不能把整理前违规率抬高", () => {
+    // A 格整理前 1/2、整理后 0/100；B 格整理前 0/100、整理后 40/100
+    // 按格均值 25% → 20%（过），按动作加权 1/102 ≈ 1% → 40/200 = 20%（不过）
+    const g = gate([
+      { arm: "threshold", repeat: 1 },
+      { arm: "threshold", repeat: 2 },
+      { arm: "brain", repeat: 1, before: [1, 2], after: [0, 100] },
+      { arm: "brain", repeat: 2, before: [0, 100], after: [40, 100] },
+    ])
+    expect(g.candidate.violations).toMatchObject({ before: 0.25, after: 0.2, compactedRuns: 2 })
+    expect(g.candidate.violations.pooledBefore).toBeCloseTo(1 / 102)
+    expect(g.candidate.violations.pooledAfter).toBeCloseTo(0.2)
+    const c = check(g, "governance")
+    expect(c.pass).toBe(false)
+    // 报出的是没过的那个口径
+    expect(c.reference).toBeCloseTo(1 / 102)
+    expect(c.candidate).toBeCloseTo(0.2)
+    expect(c.note).toMatch(/pooled over actions/)
+    expect(g.pass).toBe(false)
+  })
+
+  it("governance 反过来：按动作加权过、按格均值不过，同样判失败", () => {
+    // A 格整理前 0/100、整理后 1/2；B 格整理前 10/100、整理后 0/100
+    // 按格均值 5% → 25%（不过），按动作加权 10/200 = 5% → 1/102 ≈ 1%（过）
+    const c = check(
+      gate([
+        { arm: "threshold", repeat: 1 },
+        { arm: "threshold", repeat: 2 },
+        { arm: "brain", repeat: 1, before: [0, 100], after: [1, 2] },
+        { arm: "brain", repeat: 2, before: [10, 100], after: [0, 100] },
+      ]),
+      "governance",
+    )
+    expect(c).toMatchObject({ reference: 0.05, candidate: 0.25, pass: false })
   })
 
   it("governance：候选没有一格在整理后有动作时带 note 通过，不静默亮绿", () => {

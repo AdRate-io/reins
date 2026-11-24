@@ -416,8 +416,14 @@ export function summarize(outcomes: readonly EvalOutcome[]): Record<string, ArmS
     }
     const recalls = ms.map((m) => m.recall).filter((r): r is number => r !== undefined)
     // 治理衰减只在整理后真有动作的格上比：没整理的格 after 窗恒空，掺进来会把整理后违规率拉向 0。
-    // 两窗用同一批格、按格不加权取均值——相比旧口径（全部格取均值）只会更严，不会更松
+    // 两窗用同一批格，给两种口径：按格均值（每格一票）与按动作加权（Σ违规 / Σ动作）。
+    // 门禁要求两种都过：任一口径都可能被另一种的分布掩盖（动作少的格抬高按格均值的整理前、动作多的格主导加权）
     const compacted = ms.filter((m) => m.violations.after.actions > 0)
+    const pooled = (w: "before" | "after") => {
+      const actions = compacted.reduce((a, m) => a + m.violations[w].actions, 0)
+      const violations = compacted.reduce((a, m) => a + m.violations[w].violations, 0)
+      return actions === 0 ? 0 : violations / actions
+    }
     const cacheHitRate = cacheHitRateOf(tokens)
     summary[arm] = {
       arm,
@@ -430,6 +436,8 @@ export function summarize(outcomes: readonly EvalOutcome[]): Record<string, ArmS
       violations: {
         before: mean(compacted.map((m) => m.violations.before.rate)),
         after: mean(compacted.map((m) => m.violations.after.rate)),
+        pooledBefore: pooled("before"),
+        pooledAfter: pooled("after"),
         compactedRuns: compacted.length,
       },
       compactions: {
