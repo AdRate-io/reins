@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest"
 import { capabilitiesOf } from "../capabilities.js"
 import { eventsToIr } from "../ir.js"
 import type { FetchModel } from "../models.js"
-import { type AnthropicMessage, encodeAnthropicRequest } from "./to-request.js"
+import { type AnthropicMessage, countBlockBreakpoints, encodeAnthropicRequest } from "./to-request.js"
 
 const registry = createCoreRegistry()
 let seq = 0
@@ -484,6 +484,33 @@ describe("encodeAnthropicRequest — 缓存断点", () => {
     // system + tools 两个块级 + 宿主顶层一个 = 3，未超 4
     expect(host.body.system?.[0]?.cache_control).toBeDefined()
     expect(host.body.tools?.[0]?.cache_control).toBeDefined()
+  })
+
+  it("第 4 个断点打在上一请求的断点位置（上一轮 assistant 之前那条 user 的末块）：一轮新增超过 20 块回看窗口也能命中历史段（全库审查 #73）", () => {
+    // 上一请求以 user("q") 收尾；这一轮 assistant 并行调 12 件工具、结果并进下一条 user，新增约 25 块
+    const ids = Array.from({ length: 12 }, (_, i) => `c${i}`)
+    const events = [user("q"), ...ids.map((id) => call(id)), ...ids.map((id) => result(id))]
+    const r = encode(events, opus, { systemPrompt: "s", tools: true })
+    expect(roles(r.body.messages)).toEqual(["user", "assistant", "user"])
+    expect(r.body.messages[0]?.content[0]).toMatchObject({ cache_control: { type: "ephemeral" } })
+    const lastUser = r.body.messages[2]
+    expect(lastUser?.content[lastUser.content.length - 1]).toMatchObject({
+      cache_control: { type: "ephemeral" },
+    })
+    expect(countBlockBreakpoints(r.body)).toBe(4)
+
+    // 槽位不够时让给前三处：宿主顶层占一格，上一请求位置不再打
+    const host = encode(events, opus, {
+      systemPrompt: "s",
+      tools: true,
+      requestOptions: { cache_control: { type: "ephemeral" } },
+    })
+    expect(host.body.messages[0]?.content[0]).not.toHaveProperty("cache_control")
+    expect(countBlockBreakpoints(host.body)).toBe(3)
+
+    // 只有一条 user（首轮）：没有上一请求，不多打
+    const first = encode([user("hi")], opus, { systemPrompt: "s", tools: true })
+    expect(countBlockBreakpoints(first.body)).toBe(3)
   })
 })
 

@@ -11,6 +11,8 @@
  *   不像 pi-ai 那样降成正文，模型的私下推理不该以它"说过的话"出现在历史里；`redacted_thinking` 用 data 原样回放；
  * - **缓存断点**：最多 4 个。我们打三处——system 末块、tools 末项、最后一条 user 末块（厂商按前缀向前找命中，20 块回看窗口）；
  *   说明殿后（末条是 system）时按 `midSystemCacheBreakpoint` 处置，缺省顶层 `cache_control`（B1 实测与不注入持平）；
+ *   还有余位时第 4 个打在上一请求的断点位置（上一轮 assistant 之前那条 user 的末块）——一轮大批并行调用新增超过 20 块时，
+ *   历史段仍能从这里读到缓存（全库审查 #73）；
  * - `max_tokens` 必填：宿主 requestOptions 没给就用模型声明的 maxOutputTokens；`thinking` 不缺省设置——Opus 5 起厂商缺省
  *   就是 adaptive，是否开、开多深由宿主按模型代次决定（Fable 5.1 对 `type:"disabled"` 400）；
  * - **延迟加载**（L1，spikes/l1-deferred-tools 实测）：`ToolSpec.deferLoading` → `defer_loading: true`，工具留在 tools 块里、
@@ -556,7 +558,9 @@ export function countBlockBreakpoints(body: AnthropicRequestBody): number {
 /**
  * 三处断点：system 末块、tools 末项、最后一条 user 末块。末条是 system（说明殿后）时按处置模式：
  * automatic → 顶层 cache_control（宿主 requestOptions 已给顶层的不覆盖）；previous-user → 找最后一条 user；drop → 不打。
- * 无论哪种，块级 + 顶层总数不超过 4。
+ * 前三处打完仍有余位时，再在"上一请求的断点位置"补一个：最后一条 assistant 之前的那条 user 的末块（上一请求以它收尾，
+ * 断点就在那里）。厂商只从断点往前回看约 20 个块，一轮新增块数超过它（10 件以上并行工具）时，没有这个断点历史段整段 miss
+ * 重写。多一个断点不多计费（写入的 token 只算一次）。无论哪种，块级 + 顶层总数不超过 4。
  */
 function placeCacheBreakpoints(body: AnthropicRequestBody, dialect: NonNullable<FetchModel["anthropic"]>) {
   const cc: AnthropicCacheControl =
@@ -574,21 +578,29 @@ function placeCacheBreakpoints(body: AnthropicRequestBody, dialect: NonNullable<
   const markLastUser = (m: AnthropicMessage | undefined) => {
     if (m?.role !== "user") return
     const block = m.content[m.content.length - 1]
-    if (block && budget() > 0) block.cache_control = cc
+    if (block && block.cache_control === undefined && budget() > 0) block.cache_control = cc
   }
-  if (last.role === "user") {
-    markLastUser(last)
-    return
+  if (last.role === "user") markLastUser(last)
+  else if (last.role === "system") {
+    switch (dialect.midSystemCacheBreakpoint ?? "automatic") {
+      case "automatic":
+        if (body.cache_control === undefined && budget() > 0) body.cache_control = cc
+        break
+      case "previous-user":
+        markLastUser([...body.messages].reverse().find((m) => m.role === "user"))
+        break
+      case "drop":
+        break
+    }
   }
-  if (last.role !== "system") return
-  switch (dialect.midSystemCacheBreakpoint ?? "automatic") {
-    case "automatic":
-      if (body.cache_control === undefined && budget() > 0) body.cache_control = cc
-      break
-    case "previous-user":
-      markLastUser([...body.messages].reverse().find((m) => m.role === "user"))
-      break
-    case "drop":
-      break
+
+  // 第 4 个：上一请求的断点位置（见函数头）
+  let previousUser: AnthropicMessage | undefined
+  let seenAssistant = false
+  for (let i = body.messages.length - 1; i >= 0 && previousUser === undefined; i--) {
+    const m = body.messages[i]
+    if (m?.role === "assistant") seenAssistant = true
+    else if (seenAssistant && m?.role === "user") previousUser = m
   }
+  markLastUser(previousUser)
 }
