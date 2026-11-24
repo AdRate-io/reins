@@ -114,12 +114,15 @@ resolved at run start. A platform that stores each user's MCP servers in a datab
 when a request arrives, builds (or fetches from cache) the matching `mcpTools()` sockets, and runs. A server
 added or removed by the user takes effect on their next message; the loop tells the model what changed.
 
-One consequence to know about: a run paused for approval is signed with the tool table it had. If the
-configuration changes while it is paused, resuming is rejected as configuration drift (`RunStateError`
-`config_mismatch`). Hosts have three honest options: wait for the session to finish before applying the change,
-accept that the paused run is abandoned and start a new one, or pass `allowConfigDrift: true` to resume anyway —
-that resume also emits the tool-change note. What the library will not do is silently resume with a different
-tool table than the one the approver saw.
+This also holds while a run is paused for approval. A paused run is signed with the model and with the
+definitions of the tools behind its pending calls, not with the whole tool table: adding a server, or removing
+one that none of the pending calls use, does not block the resume — the loop appends the tool-change note and
+carries on. Resuming is rejected as configuration drift (`RunStateError` `config_mismatch`) only when the model
+changed, or when a tool a pending call depends on was removed or changed its definition (description or input
+schema), because the approver approved that call against that definition. States written before core 0.10
+still compare the whole configuration and are rejected by any change. When a resume is rejected, the honest
+options are: wait for the session to finish before applying the change, accept that the paused run is abandoned
+and start a new one, or pass `allowConfigDrift: true` to resume anyway.
 
 ## Expiring credentials
 
@@ -288,7 +291,7 @@ The executable version of this recipe is `packages/brain/src/gateway-tool.recipe
 case that proves the name-based rule lets a delete through.
 
 With no rules configured the default is safe but blunt: such a server declares no annotations, so the translated
-tool carries no `risk`, and `unmatched: "byRisk"` sends **every** call — reads included — to a human. That is
+tool defaults to `risk: "medium"`, and `unmatched: "byRisk"` sends **every** call — reads included — to a human. That is
 fail-closed by design; open up the read path with the recipe above rather than by allowing the dispatcher wholesale.
 
 Two more things worth knowing about servers of this shape:
