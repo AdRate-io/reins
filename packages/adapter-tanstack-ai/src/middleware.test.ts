@@ -116,6 +116,8 @@ interface Fixture {
     onChunk?: (chunk: StreamChunk) => void
     /** 宿主自己的中间件，排在 reins 之后 */
     hostMiddleware?: AnyChatMiddleware[]
+    /** 宿主自己的中间件，排在 reins 之前 */
+    leadingMiddleware?: AnyChatMiddleware[]
   }): Promise<StreamChunk[]>
 }
 
@@ -155,7 +157,7 @@ function fixture(
           messages: input.messages ?? [],
           tools: input.tools ?? [addTool],
           systemPrompts: input.systemPrompts ?? ["你是计算器"],
-          middleware: [middleware, ...(input.hostMiddleware ?? [])],
+          middleware: [...(input.leadingMiddleware ?? []), middleware, ...(input.hostMiddleware ?? [])],
           // 漏登记在类型层就会被 ReinsChatMiddleware 的第二个类型参数报出来，这里靠 unknown 绕过去只为测运行时那道闸
           ...(input.withoutInterrupts ? {} : { interrupts: [reinsApprovalInterrupt] }),
           agentLoopStrategy: maxIterations(10),
@@ -1602,6 +1604,100 @@ describe("reinsMiddleware：审批", () => {
         ["tanstack", true],
         ["approval.expired", false],
       ])
+    })
+
+    it("R2 客户端工具（needsApproval + .client()）被 Socket rewrite 判拦下：引擎不再把原入参交给前端，日志如实记拦下（第三轮返修）", async () => {
+      const clientDeploy = toolDefinition({
+        name: "deploy",
+        description: "上线",
+        inputSchema: { type: "object", properties: { env: { type: "string" } } },
+        needsApproval: true,
+      }).client()
+      const rewriter: Socket = { name: "rewriter", beforeTool: () => ({ rewrite: { env: "safe" } }) }
+      const f = fixture(
+        [{ blocks: [callTool("c1", "deploy", { env: "staging" })] }, { blocks: [say("好了")] }],
+        [rewriter],
+      )
+      const chunks = await f.run({ messages: [user("上线")], tools: [clientDeploy] })
+      // 不出原生卡、也不出 client_tool 请求：前端拿不到这次调用
+      expect(finishedInterrupts(chunks)).toEqual([])
+      const events = await all(f.log)
+      const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(true)
+      expect((result.payload.content[0] as { text: string }).text).toMatch(/^Tool call blocked: .*rewritten/)
+      expect(types(events)).not.toContain("error")
+      expect(types(events).at(-1)).toBe("run_ended")
+    })
+
+    it('R3 普通客户端工具配 approval({ deny: ["wipe"] })：同一 run 里引擎不发 client_tool，结果是拦下（第三轮返修）', async () => {
+      const wipe = toolDefinition({
+        name: "wipe",
+        description: "清空",
+        inputSchema: { type: "object", properties: {} },
+      }).client()
+      const f = fixture(
+        [{ blocks: [callTool("c1", "wipe", {})] }, { blocks: [say("不能清空")] }],
+        [approval({ deny: ["wipe"] })],
+      )
+      const chunks = await f.run({ messages: [user("清空")], tools: [wipe] })
+      expect(finishedInterrupts(chunks)).toEqual([])
+      const events = await all(f.log)
+      expect(decisionsOf(events)).toEqual([[expect.any(String), false]])
+      expect(events.some((e) => e.type === "core.run_paused")).toBe(false)
+      const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(true)
+      expect((result.payload.content[0] as { text: string }).text).toMatch(/^Tool call blocked: /)
+      expect(types(events).at(-1)).toBe("run_ended")
+    })
+
+    it("R3 兜底：引擎没按 reins 的取消拦住（前面的中间件把取消集合换成了副本），前端真执行了——照实记结果，另记一条模型不可见的 core.error（第三轮返修）", async () => {
+      const shared = { log: new InMemoryEventLog() }
+      const wipe = toolDefinition({
+        name: "wipe",
+        description: "清空",
+        inputSchema: { type: "object", properties: {} },
+      }).client()
+      // 每次都把引擎的取消集合换成副本：reins 往里加的 id 到不了引擎
+      const copier: AnyChatMiddleware = {
+        name: "copier",
+        onConfig: (_ctx, config) => ({
+          resumeToolState: {
+            ...config.resumeToolState,
+            cancelledToolCallIds: new Set(config.resumeToolState?.cancelledToolCallIds ?? []),
+          },
+        }),
+      }
+      const sockets = [approval({ deny: ["wipe"] })]
+      const f = fixture([{ blocks: [callTool("c1", "wipe", {})] }], sockets, {}, shared)
+      const first = await f.run({ messages: [user("清空")], tools: [wipe], leadingMiddleware: [copier] })
+      const asked = finishedInterrupts(first)
+      expect(asked).toHaveLength(1)
+      const runId = (first.find((c) => c.type === "RUN_FINISHED") as unknown as { runId: string }).runId
+      const f2 = fixture([{ blocks: [say("清完了")] }], sockets, {}, shared)
+      await f2.run({
+        messages: stagingHistory("wipe", "{}"),
+        tools: [wipe],
+        parentRunId: runId,
+        leadingMiddleware: [copier],
+        resume: asked.map((i) => ({
+          interruptId: i.id,
+          status: "resolved" as const,
+          payload: { ok: "wiped" },
+        })),
+      })
+      const events = await all(shared.log)
+      const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(false)
+      expect(JSON.stringify(result.payload.content)).toContain("wiped")
+      const error = events.find((e) => e.type === "core.error") as CoreEventOf<"core.error">
+      expect(error.seq).toBeGreaterThan(result.seq)
+      expect(error.payload).toMatchObject({
+        category: "tanstack-ai",
+        retryable: false,
+        detail: { toolCallId: "c1" },
+      })
+      expect(error.payload.message).toContain("not enforced")
+      expect(types(events).at(-1)).toBe("run_ended")
     })
 
     it('S2 引擎的发现工具缺省按只读：approval({ ask: ["deploy"] }) 下发现不停下来问人', async () => {

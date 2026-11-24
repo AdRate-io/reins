@@ -277,6 +277,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | Socket 暂停意见里的 `code` / `reason` 不合规 | 改正（丢码、按 host）后照常暂停，记一条模型不可见的 `core.error(input)` | 标注写错不能把受控暂停变成 error、丢掉续跑凭据；记在时间线上，不是静默 |
 | `pullInput` 回调抛错 | 记一条模型不可见的 `core.error(host)`，当这次没有、run 照跑 | 后果只是晚一个空档送达，消息仍在宿主队列；返回值不合规不在此列（fail-closed） |
 | 图片引用的 blob 取不到（`not_found` / 没配 BlobStore） | 引用原样交给降级层，落 `[image unavailable]` 占位、记 lossy，run 照跑 | 被清理的一张旧图不该让整个会话卡死；其它存储错误不在此列（走模型调用失败与重试判定） |
+| TanStack 路径客户端工具的 Socket block，引擎取消集合被前面的中间件换成副本（或升级后不再共享引用） | 前端照常执行，结果照实入日志，追加一条模型不可见的 `core.error(tanstack-ai)` | 客户端工具的执行者是客户端，本库只能借引擎的取消集合拦；拦不住时如实记录比改写结果诚实（宪法二）。要硬拦用静态 `needsApproval` 或在前端拦 |
 | lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限；Haiku 5.5、gpt-5.4 / 5.5 存低档价，长提示是下限） | 价目只用于报告，不影响请求正确性 |
 
 ### 循环与时间线（core）
@@ -386,6 +387,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **导入客户端消息的幂等键是"客户端消息 id，没有就用它在客户端数组里的位置"，还要内容逐字相同才算重发** — 客户端自行裁剪历史让位置漂移时退化成不去重而不是误删。
 - **宿主漏登记 `reinsApprovalInterrupt` 时，运行时 init 查引擎登记表，没登记则需审批的调用降级为拒绝并留 `approval_decision(by: "reins")`** — 判据是引用同一性，装了两份 `@tanstack/ai` 也会判成没登记。
 - **一个调用只一张审批卡；原生审批的结论在 `beforeTools` 边界从 init 读到的 `config.resume` 原件落日志，改参批准（`editedArgs` 与日志入参不同）一律不执行** — reins 工具不透传 `needsApproval`（透传就是两张卡、只答一张引擎拒续跑）；宿主原生工具被 Socket defer 时并到原生卡上。答复要在 Socket 管线之前落，approval ttl 才看得见；UIMessage `approval-responded` 通道不经 resume，靠 `onBeforeToolCall` 补记并重跑管线只认 block。改参批准靠 init 把调用并进引擎的 `cancelledToolCallIds` 拦（客户端工具不经 `onBeforeToolCall`，只能在这拦），日志结论只是记录；`onBeforeToolCall` 再核对引擎执行的调用原文（`toolCall.function.arguments`，按引擎同一规则解析）与日志入参作纵深，所有工具同一口径、不经 schema——schema 输出可能带每次不同的缺省值（randomUUID），拿它比会误拦；原生卡上的调用拒收通用答复，被 Socket rewrite 的一律拦下（卡上是原入参）。改参照执行就是"日志写 A、实际做了 B"，要支持须先在 core 给结论加入参落点（OPT-261125-8）。
+- **客户端工具不经 `onBeforeToolCall`，Socket 的 block 靠 beforeTools 边界往引擎的 `cancelledToolCallIds` 原件里加 id 落实** — 依赖 0.53.0 整个 run 只有一个 Set、每次 onConfig 交的都是它本身（公开类型是 ReadonlySet），升级 `@tanstack/ai` 先跑 R2 / R3 用例；`onToolPhaseComplete` 只对真拦住的（引擎回"已取消"、引擎按原生审批拒、服务端工具）写拦截说明，客户端真执行了的照实记结果再追加模型不可见的 `core.error`，别改回"判了 block 就写拦截说明"（违反宪法二）。
 - **模型看到的历史与 TanStack 手上的 `messages` 是两份，只有日志是真源** — 宿主另装中间件再改 messages 会静默覆盖 compact / spill / pin 的效果。
 
 ### eval
