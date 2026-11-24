@@ -23,27 +23,31 @@ import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { approval, type PolicyRule } from "./approval/index.js"
 
+// operationOf 取网关工具真正要执行的操作名；写操作问人、只读转发放行，判据都是入参里的操作名而不是工具名
+
 // ---- 配方本体（与 tools-mcp README 逐字一致，改一处要同步另一处）----
 
-/** 网关工具真正要执行的操作名藏在这个入参字段里 */
+/** The operation a gateway call actually runs is in this argument */
 const operationOf = (args: unknown): string =>
   typeof args === "object" && args !== null && "tool_name" in args
     ? String((args as { tool_name?: unknown }).tool_name ?? "")
     : ""
 
-/** 写操作要问人：判据是**入参里的操作名**，不是工具名 */
+/** Writes ask a human. The test is the operation name in the arguments, not the tool name. */
 const gatewayWrites: PolicyRule = {
   id: "gateway.writes",
   match: (call) =>
     call.name === "tool_execute" && /_(create|update|delete|upload)$/.test(operationOf(call.args)),
-  summary: (call) => `TikTok ${operationOf(call.args)}`,
+  summary: (call) => `TikTok ${operationOf(call.args)}`, // the approver sees the real operation
 }
 
-/** 只读转发不问人：同样按入参判 */
+/** Reads pass without asking, decided the same way */
 const gatewayReads: PolicyRule = {
   id: "gateway.reads",
   match: (call) => call.name === "tool_execute" && /_(get|list|search)$/.test(operationOf(call.args)),
 }
+
+// ---- 配方本体结束 ----
 
 // ---- 下面是把配方跑起来的脚手架 ----
 

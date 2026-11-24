@@ -4,7 +4,7 @@
 
 reins is an embeddable agent library. Install it, plug in your own model, and you get an agent that knows how to drive a long task: it sees its own context, decides when to tidy it, never loses the constraints you pinned, hands off to a fresh session with a proper summary, remembers what matters, and leaves a timeline you can replay and fork at any point.
 
-The loop is a few hundred lines you can read and copy. Nothing is hidden. Every part is removable. The core is written against Web standards only and is verified on Node 22, Cloudflare Workers (strictest compat, no `nodejs_compat`), Bun, Deno and Vercel's Edge Runtime — the same built artifacts, the same probes, every cell checked on content (`spikes/edge-runtime-check`, `spikes/runtime-matrix`).
+The loop is one plain async generator in one file — well over a thousand lines, because pause, stop, retry and resume are handled in the open rather than behind abstractions, but with no private state, so you can read it top to bottom and copy it (together with the few internal helpers it imports). Nothing is hidden. Every part is removable. The core is written against Web standards only and is verified on Node 22, Cloudflare Workers (strictest compat, no `nodejs_compat`), Bun, Deno and Vercel's Edge Runtime — the same built artifacts, the same probes, every cell checked on content (`spikes/edge-runtime-check`, `spikes/runtime-matrix`).
 
 ## Two principles
 
@@ -13,9 +13,9 @@ The loop is a few hundred lines you can read and copy. Nothing is hidden. Every 
 
 ## Status
 
-**0.3.0** (`@reinsjs/lowering-fetch` 0.4.0) — twelve packages, ~50k lines of TypeScript (tests included), 1,244 tests, every default measured on real models (see `examples/eval`). New in 0.3: tools contributed by sockets — MCP servers in particular — can sit on the `lazyTools()` menu and load on demand (`SocketSetup.tools`; see the tools-mcp README for the TikTok recipe). New in lowering-fetch 0.4: on Chat Completions, images in tool results reach models that take images (they move into a `user` message right after the batch of `tool` messages; `chat.liftToolImages: false` restores the placeholder). New since 0.1: `@reinsjs/lowering-fetch` (a zero-dependency lowering layer for OpenAI Chat Completions, Anthropic Messages and OpenAI Responses — now the recommended one, and what every example uses), lazy tool discovery with Anthropic's native deferred loading, approvals that expire, a run registry that spans processes, an `onEvent` observer on the HTTP handler, MCP auth for expiring credentials, and English runtime messages throughout. Public types are frozen within a minor line; breaking changes bump the minor version until 1.0.
+Pre-1.0. The twelve packages are versioned and released independently under `@reinsjs/*` on npm; each package's `CHANGELOG.md` lists its current version and what changed. Every default is measured on real models before it becomes a default (see `examples/eval`). Of the two lowering layers, `@reinsjs/lowering-fetch` (zero dependencies; OpenAI Chat Completions, Anthropic Messages, OpenAI Responses) is the recommended one and what every example uses. Public types are frozen within a minor line; breaking changes bump the minor version until 1.0.
 
-Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add @reinsjs/agent @reinsjs/lowering-fetch @reinsjs/brain` (or `@reinsjs/lowering-pi` for the pi-ai-based lowering layer; see "Choosing between" in `@reinsjs/lowering-fetch`'s README) — Node ≥ 22, Cloudflare Workers, Bun, Deno or Vercel's Edge Runtime (all verified; runtime notes at the end of this README).
+Design documents live in `docs/` and are written in Chinese; every package has an English README. Install with `pnpm add @reinsjs/agent @reinsjs/lowering-fetch @reinsjs/brain` (or `@reinsjs/lowering-pi` for the pi-ai-based lowering layer; see "Choosing between" in `@reinsjs/lowering-fetch`'s README) — Node ≥ 22 or Cloudflare Workers; Bun, Deno and Vercel's Edge Runtime are verified for the core, both lowering layers and the `@reinsjs/tools-mcp` main entry, not yet for `@reinsjs/server` (and so the handler `@reinsjs/agent` re-exports), the brain or the stores (runtime notes at the end of this README).
 
 ## Try it
 
@@ -39,7 +39,7 @@ Observing a run needs no hook in-process: `agent.run()` is an async generator th
 | package | what |
 | --- | --- |
 | `@reinsjs/core` | event timeline, store interfaces, projection, loop, run state, socket, replay |
-| `@reinsjs/brain` | perception, compact, pins, spill, handoff, memory, approval, budget, skills, lazy-tools (`./node` has `fsSkillSource`) |
+| `@reinsjs/brain` | perception, compact, pins, spill, handoff, memory, approval, budget, skills, lazy-tools, halt-on-failure, stop-after (`./node` has `fsSkillSource`) |
 | `@reinsjs/lowering-fetch` | zero-dependency provider lowering on `fetch`: OpenAI Chat Completions, Anthropic Messages, OpenAI Responses |
 | `@reinsjs/lowering-pi` | provider lowering on top of pi-ai |
 | `@reinsjs/server` | Web-standard `(Request) => Response` handler, SSE, replay from `lastSeq`; `./node` adapter |
@@ -118,6 +118,7 @@ that is what gets logged. Put this socket **first** in `sockets`, so `spill()`, 
 `pins()` only ever see the cleaned text — `spill()` in particular copies oversized results into
 the `BlobStore` from this same draft:
 
+<!-- recipe: packages/brain/src/redaction.recipe.test.ts#tool -->
 ```ts
 import type { ContentPart, Socket } from "@reinsjs/core"
 
@@ -147,6 +148,7 @@ the host fills in over `POST`, and events emitted by brain modules do not pass t
 Only writes are intercepted; `read`, `tail` and `fork` pass straight through, and the store never
 holds the original:
 
+<!-- recipe: packages/brain/src/redaction.recipe.test.ts#log -->
 ```ts
 import type { CoreEvent, Event, EventLog } from "@reinsjs/core"
 

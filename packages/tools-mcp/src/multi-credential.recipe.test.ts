@@ -69,6 +69,8 @@ const routeByAccount = (ids: Identities): McpRoute => ({
   transportFor: (identity) => ids.transport(identity),
 })
 
+// ---- 配方本体结束 ----
+
 // ---- 测试设施：一台网关式服务器（tool_list / tool_execute / advertiser_get），垫片记下每个 tools/call 带的令牌 ----
 
 function gatewayServer() {

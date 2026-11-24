@@ -54,7 +54,7 @@
 | `core.model_thinking` | `REASONING_START` → `REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END` → `REASONING_END` |
 | `core.tool_call` | `TOOL_CALL_START` → `TOOL_CALL_ARGS`（整段一次给出、不分片：入参是对象时 `JSON.stringify`；是字符串时原样给原文——core 不变式下字符串入参就是模型写的线上原文，再 stringify 一层前端只看到带引号的字符串字面量，与 lowering-fetch 写侧 `argumentsOf` 同口径，2026-11-25）→ `TOOL_CALL_END` |
 | `core.tool_result` | `TOOL_CALL_RESULT`（role=tool） |
-| `core.system_note` / `approval_request` / `approval_decision` / `compaction` / `handoff` / `memory_op` / `budget_usage` / `run_paused` / `run_resumed` / `core.error` / `ext.*` | `CUSTOM`（`name` = 事件 type，`value` = 事件本身） |
+| `core.system_note` / `approval_request` / `approval_decision` / `compaction` / `handoff` / `memory_op` / `budget_usage` / `run_paused` / `run_resumed` / `tools_bound` / `tool_started` / `run_ended` / `core.error` / `ext.*` | `CUSTOM`（`name` = 事件 type，`value` = 事件本身） |
 
 1. `messageId` 一律取 `event.id`；`timestamp` 取 `event.at`；每条都带 `metadata.reins = { seq, eventId, type, dropped? }`（user_message 与 tool_result 另有下面 4～6 条的字段），客户端据此去重或定位回时间线。
 2. **没有任何事件被丢弃**：`switch` 的 `default` 分支兜底成 `CUSTOM`，所以新增事件类型不会静默消失，只是前端可能不认识。

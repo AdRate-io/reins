@@ -24,17 +24,19 @@ import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { spill } from "./spill/index.js"
 
-// ---- 配方本体（与 README 逐字一致，改一处要同步另一处）----
+// 配方分两段，对应 README 的两个代码块：
+// - tool：redact 换掉卡号与 token（规则宿主自定）；服务端工具结果在 afterTool 草稿上脱敏，放 sockets 最前面，
+//   spill / compact / pins 拿到的就已经是干净的
+// - log：其它事件包住 append。只有写入被拦，read / tail / fork 原样透传——日志里从没有过原文
 
-/** 把文本里的秘密换成占位符；宿主自己定规则，这里以卡号与 token 为例 */
-function redact(text: string): string {
-  return text.replace(/\b\d{16}\b/g, "[card]").replace(/sk-[A-Za-z0-9]{8,}/g, "[token]")
-}
+// ---- 配方本体 tool（与根 README 逐字一致，改一处要同步另一处）----
+
+const redact = (text: string) =>
+  text.replace(/\b\d{16}\b/g, "[card]").replace(/sk-[A-Za-z0-9]{8,}/g, "[token]")
 
 const redactParts = (parts: ContentPart[]): ContentPart[] =>
   parts.map((p) => (p.type === "text" ? { ...p, text: redact(p.text) } : p))
 
-/** 服务端工具结果：在草稿上脱敏。放在 sockets 最前面，spill / compact / pins 拿到的就已经是干净的 */
 const redactingTool: Socket = {
   name: "redact",
   afterTool: (_ctx, _call, result) => ({
@@ -43,7 +45,10 @@ const redactingTool: Socket = {
   }),
 }
 
-/** 其它事件：包住 append。只有写入被拦，read / tail / fork 原样透传——日志里从没有过原文 */
+// ---- 配方本体结束 ----
+
+// ---- 配方本体 log（与根 README 逐字一致，改一处要同步另一处）----
+
 function redactingLog(log: EventLog): EventLog {
   const clean = (e: Event): Event => {
     const c = e as CoreEvent
@@ -64,6 +69,8 @@ function redactingLog(log: EventLog): EventLog {
     fork: (from, at, to) => log.fork(from, at, to),
   }
 }
+
+// ---- 配方本体结束 ----
 
 // ---- 用例 ----
 
