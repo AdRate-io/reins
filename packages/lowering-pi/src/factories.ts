@@ -49,7 +49,7 @@ function bound(
     const ignored = BASE_URL_ONLY.filter((k) => opts[k] !== undefined)
     if (ignored.length > 0) {
       throw new RangeError(
-        `${ignored.join(", ")} must be used with baseUrl, got ${ignored.length === 1 ? "it" : "them"} without baseUrl (without baseUrl the capabilities come from pi-ai's built-in model table)`,
+        `${ignored.join(", ")} must be used with baseUrl, got no baseUrl (without baseUrl the capabilities come from pi-ai's built-in model table)`,
       )
     }
   }

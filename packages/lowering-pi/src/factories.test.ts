@@ -35,7 +35,7 @@ describe("anthropic() / openai() 工厂", () => {
 
   it("能力覆盖项只在 baseUrl 模式生效：没给 baseUrl 时构造期就拒绝，不静默忽略（全库审查 2026-11-25 #96）", () => {
     expect(() => anthropic("claude-sonnet-4-5", { apiKey: "k", contextWindow: 50_000 })).toThrow(
-      /contextWindow must be used with baseUrl/,
+      /^contextWindow must be used with baseUrl, got no baseUrl \(/,
     )
     expect(() => openai("gpt-5.5", { apiKey: "k", images: false, midConversationSystem: true })).toThrow(
       /images, midConversationSystem must be used with baseUrl/,
