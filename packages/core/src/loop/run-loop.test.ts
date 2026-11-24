@@ -2144,6 +2144,49 @@ describe("模型响应落下 tool_call 后才失败（全库审查 2026-11-25 #1
   )
 })
 
+describe("起步 input 的 tool_result 对账 pending（全库审查 2026-11-25 #15）", () => {
+  const pick: Tool = {
+    name: "pick_file",
+    description: "",
+    inputSchema: { type: "object" },
+    side: "client",
+  }
+  const filled = (toolCallId: string, name = "pick_file") => ({
+    type: "core.tool_result" as const,
+    actor: "tool" as const,
+    payload: { toolCallId, name, content: [{ type: "text" as const, text: "a.txt" }], isError: false },
+  })
+
+  it("重复回填、孤儿 id、名字对不上、同一批两条：RangeError，一条日志都不写", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "pick_file", {})] },
+      { drafts: [say("收到")] },
+      { drafts: [say("不该到这")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [pick] })
+    const first = await drain(runLoop({ ...cfg, input: "选" }))
+    expect(first.result.status).toBe("paused")
+
+    // 还在等时：名字对不上、同一批两条都拒
+    for (const input of [[filled("c1", "other")], [filled("c1"), filled("c1")]]) {
+      const before = (await all(log)).length
+      await expect(drain(runLoop({ ...cfg, input }))).rejects.toThrow(RangeError)
+      expect((await all(log)).length).toBe(before)
+    }
+
+    const second = await drain(runLoop({ ...cfg, input: [filled("c1")] }))
+    expect(second.result.status).toBe("done")
+
+    // 回答过之后：重复回填与孤儿 id 都拒
+    for (const id of ["c1", "nope"]) {
+      const before = (await all(log)).length
+      await expect(drain(runLoop({ ...cfg, input: [filled(id)] }))).rejects.toThrow(/not pending/)
+      expect((await all(log)).length).toBe(before)
+    }
+  })
+})
+
 describe("厂商复用 / 不给 toolCallId（全库审查 2026-11-25 #50）", () => {
   const toolCalls = async (log: InMemoryEventLog) =>
     (await all(log)).filter((e): e is CoreEventOf<"core.tool_call"> => e.type === "core.tool_call")

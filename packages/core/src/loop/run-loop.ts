@@ -249,6 +249,32 @@ function isInputArray(
   return Array.isArray(input)
 }
 
+/**
+ * 起步 input 里的 tool_result 草稿对账 pending（全库审查 2026-11-25 #15）：toolCallId 必须正 pending、名字与那次调用相同、
+ * 同一批里不重复。不过就抛 RangeError（调用方在写任何日志之前调）。日志只追加，重复或孤儿结果一旦写下，
+ * 降级层每次请求都会原样下发，厂商持续 400；pullInput 干脆不收 tool_result，server 对不在 pending 的回 409，口径一致
+ */
+function checkInputToolResults(input: readonly EventDraft[], timeline: readonly Event[]): void {
+  const results = input.filter((d) => d.type === "core.tool_result")
+  if (results.length === 0) return
+  const pending = new Map(pendingToolCalls(timeline).map((c) => [c.payload.toolCallId, c.payload.name]))
+  const seen = new Set<string>()
+  for (const d of results) {
+    // 形状已由 checkInputDraft 校验：toolCallId 与 name 都是字符串
+    const { toolCallId, name } = d.payload as { toolCallId: string; name: string }
+    const expected = pending.get(toolCallId)
+    if (expected === undefined || seen.has(toolCallId)) {
+      throw new RangeError(
+        `input draft core.tool_result: call ${toolCallId} is not pending (already answered, unknown, or answered twice in this input)`,
+      )
+    }
+    if (name !== expected) {
+      throw new RangeError(`input draft core.tool_result: name must be ${expected}, got ${name}`)
+    }
+    seen.add(toolCallId)
+  }
+}
+
 /** 输入草稿里可能带图片引用的内容片段：user_message / tool_result 的 content（形状已由 checkInputDraft 校验），其余为空 */
 function draftParts(draft: EventDraft): readonly ContentPart[] {
   if (draft.type !== "core.user_message" && draft.type !== "core.tool_result") return []
@@ -283,6 +309,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   // 起步先把整条日志过一遍注册表：有读不出来的事件（未登记的 ext.*、未来版本）就在写任何东西之前拒绝（P9 fail-closed）
   const startTimeline = await readTimeline(log, sessionId, { registry })
   let lastSeq = startTimeline.at(-1)?.seq ?? 0
+  // 回填的工具结果对账 pending（与 server checkInput 同一口径）：在写任何东西之前拒
+  checkInputToolResults(input, startTimeline)
   /** run 级图片缓存（blobId → base64）：写入校验与换回共用，同一 blob 一个 run 只读一次 */
   const imageCache: ImageRefCache = new Map()
   // 起步 input 里的图片引用（媒体引用方案）：归属 / mime 不过抛 RangeError、一条不写，与片段形状校验同口径；

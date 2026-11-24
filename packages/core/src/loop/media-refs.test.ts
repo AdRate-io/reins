@@ -393,6 +393,8 @@ describe("写入校验：统一文案、越权当不存在", () => {
     const c = cases[0]
     if (!c) throw new Error("no case")
     const log = new InMemoryEventLog()
+    // 回填的结果须对应一个 pending 调用（全库审查 2026-11-25 #15），先种一条
+    await seed(log, "s1", [callTool("c1", "pick", {}) as EventDraft])
     const gen = runLoop(
       base(log, new ScriptedLowering([]), {
         blobs,
