@@ -475,7 +475,11 @@ export interface LoopConfig {
    * 不传也能续跑（同一 sessionId 再跑一次），只是少了这层校验。
    */
   resume?: SerializedRunState
-  /** 宿主给 pending 调用的审批结论，先记成 approval_decision 再执行；指向非 pending 调用即拒绝 */
+  /**
+   * 宿主给**正在等审批**的调用（有 approval_request、还没有结论）的审批结论，先记成 approval_decision 再执行。
+   * 指向不在等审批的调用（不 pending、或从没发出审批请求）、或同一调用给了两条，即抛 RunStateError("unknown_tool_call")、不写日志
+   * （`assertDecisionsAwaitApproval`）。要取消一个没在等审批的 pending 调用，用停止（`RunStop`）
+   */
   decisions?: readonly ApprovalDecisionInput[]
   /** 状态签名密钥。给了就签发与校验；没给则状态不签名、恢复不验签（只适合可信环境） */
   secret?: string

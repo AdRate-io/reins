@@ -50,9 +50,9 @@ import { MAX_TURNS_PAUSE_CODE, pauseDetailOf, resolveSocketPause } from "./pause
 import { type ModelCallFailure, resolveRetry } from "./retry.js"
 import { awaitingOf } from "./run-status.js"
 import {
+  assertDecisionsAwaitApproval,
   computeConfigHash,
   pendingToolCalls,
-  RunStateError,
   serializeRunState,
   validateResume,
 } from "./state.js"
@@ -435,19 +435,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         ...(cfg.allowConfigDrift !== undefined ? { allowConfigDrift: cfg.allowConfigDrift } : {}),
       })
     }
-    const decisions = ownDecisions
-    const pendingIds = new Set(pendingToolCalls(timeline).map((c) => c.payload.toolCallId))
-    for (const d of decisions) {
-      if (!pendingIds.has(d.toolCallId)) {
-        throw new RunStateError(
-          "unknown_tool_call",
-          `approval decision refers to call ${d.toolCallId}, which is not pending`,
-          {
-            toolCallId: d.toolCallId,
-          },
-        )
-      }
-    }
+    // 结论只收正在等审批的调用（不只是 pending）：口径在 state.ts，server 预校验调同一个函数
+    assertDecisionsAwaitApproval({ sessionId, timeline, decisions: ownDecisions })
   }
 
   // ---- 工具表快照（P1）：每次 run 起步一条模型不可见的 tools_bound；与上一条比对有增删则再追加模型可见的说明 ----

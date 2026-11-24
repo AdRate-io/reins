@@ -8,7 +8,8 @@
 import type { Event } from "../events/base.js"
 import type { CoreEvent, CoreEventOf } from "../events/core.js"
 import type { ModelRef } from "../lowering/types.js"
-import type { SerializedRunState, Tool, ToolCallEvent } from "./types.js"
+import { awaitingOf } from "./run-status.js"
+import type { ApprovalDecisionInput, SerializedRunState, Tool, ToolCallEvent } from "./types.js"
 
 /** 时间线里还没有 tool_result 的 tool_call，按 seq 升序。进程死亡、审批暂停、客户端工具都会留下它们 */
 export function pendingToolCalls(timeline: readonly Event[]): ToolCallEvent[] {
@@ -320,4 +321,46 @@ export async function validateResume(input: {
     )
   }
   return pending
+}
+
+/**
+ * 本会话审批结论的对账（真源索引，全库审查 2026-11-25 #12）：每条结论指向的调用必须**正在等审批**——
+ * pending、有 approval_request、还没有结论，判定只走 `awaitingOf`（与 run_paused.awaiting 同一口径）。
+ * 只查 pending 的话，一个从没发出审批请求的调用（工具批中途被普通中止、排在后面的）也能被"预先批准"，
+ * needsApproval、审批策略的 defer 与 ttl 都会被跳过。同一调用在一批结论里出现两次也拒（第一条落下后它就不在等了）。
+ * 指向别的会话（子代理）的结论不在这里校验，原样转发。不合规抛 `RunStateError("unknown_tool_call")`，调用方须在写日志前调
+ */
+export function assertDecisionsAwaitApproval(input: {
+  sessionId: string
+  timeline: readonly Event[]
+  decisions: readonly ApprovalDecisionInput[]
+}): void {
+  const pending = pendingToolCalls(input.timeline)
+  const pendingIds = new Set(pending.map((c) => c.payload.toolCallId))
+  const awaiting = new Set(
+    awaitingOf({ timeline: input.timeline, pending, tools: [], interruptions: [] })
+      .filter((a) => a.kind === "approval")
+      .map((a) => a.toolCallId),
+  )
+  const seen = new Set<string>()
+  for (const d of input.decisions) {
+    if (d.sessionId !== undefined && d.sessionId !== input.sessionId) continue
+    const problem = !pendingIds.has(d.toolCallId)
+      ? "which is not pending"
+      : !awaiting.has(d.toolCallId)
+        ? "which is not waiting for approval"
+        : seen.has(d.toolCallId)
+          ? "more than once in the same request"
+          : undefined
+    if (problem !== undefined) {
+      throw new RunStateError(
+        "unknown_tool_call",
+        `approval decision refers to call ${d.toolCallId}, ${problem}`,
+        {
+          toolCallId: d.toolCallId,
+        },
+      )
+    }
+    seen.add(d.toolCallId)
+  }
 }
