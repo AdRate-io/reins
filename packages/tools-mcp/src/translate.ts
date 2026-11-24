@@ -5,7 +5,7 @@
  * 有损的地方都在这里明说（P7）：reins 的 ContentPart 只有文本与图片，MCP 的 audio / 二进制 resource
  * 翻成一行说明文字告诉模型"有这么个东西但看不到"，不静默丢。
  */
-import type { ContentPart, Tool } from "@reinsjs/core"
+import { type ContentPart, isSupportedImageMime, type Tool, unsupportedImageText } from "@reinsjs/core"
 import type { McpToolAnnotations, McpToolInfo } from "./types.js"
 
 /** Anthropic / OpenAI 对工具名的共同要求；MCP 没有这个限制，不合规的名字要改写，否则请求 400 */
@@ -94,6 +94,13 @@ function base64Bytes(b64: string): number {
   return Math.max(0, Math.floor((b64.length * 3) / 4) - padding)
 }
 
+/** 图片块 → 图片片段；mime 不在 core 白名单就换成 core 那句说明（与 core 归一工具结果时的替换逐字相同） */
+function imagePart(mime: string, data: string): ContentPart {
+  return isSupportedImageMime(mime)
+    ? { type: "image", mime, data }
+    : { type: "text", text: unsupportedImageText(mime) }
+}
+
 /** `tools/call` 结果的形状（只取我们用到的字段；SDK 类型不出本包） */
 export interface McpCallResult {
   content?: unknown
@@ -103,11 +110,12 @@ export interface McpCallResult {
 
 /**
  * MCP 内容块 → reins 内容片段。
- * - text → 文本；image → 图片（mime + base64）
+ * - text → 文本；image → 图片（mime + base64）。图片 mime 只收 core 白名单（`isSupportedImageMime`：jpeg / png / gif / webp），
+ *   其余（svg、tiff、非图片类型）换成 core 同一句说明 `unsupportedImageText`——厂商不收，进了日志之后每轮整段回放都 400
  * - audio → 音频片段（2026-11-05 起；MCP 没有时长，估算走字节折算）；缺 data 或 mime 不是 audio/* 时一行说明
  * - resource_link → 一行 "Resource link: uri (name) [mime]"
  * - resource（内嵌）：文本资源 → 带 uri 头的文本；image/* / video/* / audio/* 二进制 → 对应片段（MCP 没有 video 块，
- *   视频只会从这里来）；其他二进制 → 一行说明
+ *   视频只会从这里来；image/* 同上过白名单）；其他二进制 → 一行说明
  * 模型收不收视频 / 音频由降级层按能力位处置（不收落占位），这里只管如实翻译
  * - 不认识的块 → JSON 文本（不静默丢）
  * - content 为空而有 structuredContent → 其 JSON；都没有 → 空文本（模型总得有个结果块）
@@ -123,7 +131,7 @@ export function toContentParts(result: McpCallResult): ContentPart[] {
         break
       case "image":
         if (typeof b.data === "string" && typeof b.mimeType === "string")
-          parts.push({ type: "image", mime: b.mimeType, data: b.data })
+          parts.push(imagePart(b.mimeType, b.data))
         else parts.push({ type: "text", text: "[image block without data/mimeType]" })
         break
       case "audio": {
@@ -155,7 +163,7 @@ export function toContentParts(result: McpCallResult): ContentPart[] {
         if (typeof r.text === "string") {
           parts.push({ type: "text", text: `[resource ${uri}${mime ? ` (${mime})` : ""}]\n${r.text}` })
         } else if (typeof r.blob === "string" && mime?.startsWith("image/")) {
-          parts.push({ type: "image", mime, data: r.blob })
+          parts.push(imagePart(mime, r.blob))
         } else if (typeof r.blob === "string" && mime?.startsWith("video/")) {
           parts.push({ type: "video", mime, data: r.blob })
         } else if (typeof r.blob === "string" && mime?.startsWith("audio/")) {

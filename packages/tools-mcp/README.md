@@ -51,7 +51,9 @@ added and removed tools so the model knows its hands changed.
 
 **Calls go through `tools/call`.** The result's `content` blocks become reins content parts (text, images and audio as-is;
 embedded binary resources become image / video / audio parts by mime type; resource links and other binary
-resources become one-line descriptions — lossy, and said so). MCP carries no duration, so video and audio are
+resources become one-line descriptions — lossy, and said so). An image, as a block or an embedded resource, whose
+type is not `image/jpeg`, `image/png`, `image/gif` or `image/webp` (an SVG chart, a TIFF) becomes the sentence
+`unsupportedImageText` from `@reinsjs/core` instead: providers reject other types. MCP carries no duration, so video and audio are
 estimated from their byte size, and whether the model actually sees them depends on the lowering's `video` /
 `audio` capabilities (a placeholder otherwise). `isError` passes
 through. A thrown error (unknown tool, dropped connection, timeout) becomes a `tool_result` with `isError: true`;
