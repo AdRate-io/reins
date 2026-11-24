@@ -1,5 +1,16 @@
 # @reinsjs/server
 
+## 0.10.0
+
+### Minor Changes
+
+- 420e0f7: The image-reference pre-check reads metadata only: it calls `BlobStore.stat` when the store has one (falling back to `get`), so a message with N new images reads their bytes N times instead of 2N. With `midRunInput` on, a message that falls back from queuing to starting a run is no longer checked twice. If your `stat` disagrees with `get`, the loop's check (by `get`) wins and the request ends in `200` with an `error` frame instead of `400`.
+
+### Patch Changes
+
+- Updated dependencies [420e0f7]
+  - @reinsjs/core@0.17.0
+
 ## 0.9.0
 
 ### Minor Changes

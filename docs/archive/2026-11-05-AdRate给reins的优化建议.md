@@ -1208,7 +1208,7 @@ PG 版的 `BlobStore` 和本机存储的宿主不容易察觉这个问题，但�
 
 ### reins 回复（2026-11-24）
 
-采纳第 1、2 条，第 3 条不需要做。已实现，待发布（core / server / store-sqlite / store-pg 各一个 minor），发布后在这里补版本号。
+采纳第 1、2 条，第 3 条不需要做。随 v0.21.0 发布：core 0.17.0、server 0.10.0、store-pg 0.6.0、store-sqlite 0.4.0，其余依赖 core 的包各出 patch（agent 0.7.4、brain 0.10.1、eval 0.4.13、lowering-fetch 0.7.1、lowering-pi 0.5.1、adapter-tanstack-ai 0.5.2、tools-mcp 0.4.4、ui-agui 0.7.2）。它们对 core 是精确版本依赖，AdRate 用到的 `@reinsjs/*` 要一起升。
 
 - **并发读取**：写入校验与换回共用一个读取池：先收齐未缓存的、去重后的 blobId，并发读，再按原顺序判定或换回。上限定为 **16、不开配置**：AdRate 每条最多 10 张，一波就能读完，同时防止长会话视野里几十张图一次全打出去。要更低的上限，请在 AdRate 自己的 `BlobStore` 里限流。起步 input 和一次 `pullInput` 拉到的全部消息合成一批，工具结果整条一起预读。
 - **多张同时失败**：按片段顺序（换回时按视野顺序）报第一个，与哪张先失败无关。全部合规时结局与串行逐张读完全一样，只是快了。

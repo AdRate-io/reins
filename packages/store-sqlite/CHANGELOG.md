@@ -1,5 +1,16 @@
 # @reinsjs/store-sqlite
 
+## 0.4.0
+
+### Minor Changes
+
+- 420e0f7: `BlobStore.stat(id)` returns a blob's metadata without reading the bytes column (same row conversion as `get`, `not_found` for an unknown id). `@reinsjs/server` uses it for the image-reference pre-check.
+
+### Patch Changes
+
+- Updated dependencies [420e0f7]
+  - @reinsjs/core@0.17.0
+
 ## 0.3.14
 
 ### Patch Changes
