@@ -322,7 +322,9 @@ describe("approval：evaluatePolicy 管线", () => {
     expect(out).toEqual({
       verdict: "deny",
       policyId: "deploy-gate",
-      reason: expect.stringMatching(/^policy deploy-gate threw while being evaluated and is treated as a denial: /),
+      reason: expect.stringMatching(
+        /^policy deploy-gate threw while being evaluated and is treated as a denial: /,
+      ),
     })
     expect(onError).toHaveBeenCalledWith("deploy-gate", expect.any(TypeError))
   })
