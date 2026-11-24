@@ -257,7 +257,7 @@ describe("httpTransport：有状态服务器的会话失效（404）", () => {
   it("tools/list 撞 404：丢掉旧连接、同一次调用里重新握手一次，后续 run 照常", async () => {
     const srv = statefulServer()
     const socket = mcpTools({ transport: httpTransport({ url: "http://mcp.local/mcp", fetch: srv.fetch }) })
-    const list = socket.tools as () => Promise<{ name: string }[]>
+    const list = socket.tools as unknown as () => Promise<{ name: string }[]>
     expect((await list()).map((t) => t.name)).toEqual(["echo"])
     srv.restart()
     // 修复前：连接引用永不清，之后每次都带旧 sid 撞 404，从不重新 initialize

@@ -107,7 +107,7 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
           const result = await target.callTool(info.name, args, callOptions)
           return { content: toContentParts(result), isError: result.isError === true }
         } finally {
-          if (entry) pool.release(entry)
+          if (entry) pool?.release(entry)
         }
       },
     })

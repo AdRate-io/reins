@@ -169,7 +169,7 @@ describe("mcpTools：改写后撞名", () => {
     const warnings: string[] = []
     const socket = mcpTools({ transport: fx.transport, warn: (m) => warnings.push(m) })
     const tools = await (
-      socket.tools as () => Promise<{ name: string; description: string; risk?: string }[]>
+      socket.tools as unknown as () => Promise<{ name: string; description: string; risk?: string }[]>
     )()
     const byDesc = new Map(tools.map((t) => [t.description, t]))
     // 修复前：files.delete 被改写成 files_delete，与只读的那件撞名，core 静默丢掉后到者
