@@ -15,7 +15,7 @@ export interface BoundModelOptions {
   baseUrl?: string
   /** 透传给 pi-ai 的请求选项（thinkingEnabled、reasoningEffort、maxTokens…） */
   requestOptions?: Record<string, unknown>
-  /** 仅 baseUrl 模式下需要：模型能力。缺省 200k 窗口、16k 输出、支持推理与图片 */
+  /** 仅 baseUrl 模式：模型能力。缺省 200k 窗口、16k 输出、支持推理与图片；没给 baseUrl 却传了这几项（含 midConversationSystem）构造期抛 RangeError */
   contextWindow?: number
   maxOutputTokens?: number
   reasoning?: boolean
@@ -28,12 +28,31 @@ export interface BoundModelOptions {
   trustMarkers?: boolean
 }
 
+/** 只在 baseUrl 模式下登记进 ModelDefinition 的能力字段 */
+const BASE_URL_ONLY = [
+  "contextWindow",
+  "maxOutputTokens",
+  "reasoning",
+  "images",
+  "midConversationSystem",
+] as const
+
 function bound(
   provider: "anthropic" | "openai",
   api: string,
   id: string,
   opts: BoundModelOptions,
 ): BoundModel {
+  // 没给 baseUrl 时这些字段无处登记、能力全按 pi-ai 内置表算：静默忽略会让宿主以为窗口 / 能力已改（全库审查 2026-11-25 #96），
+  // 所以构造期就拒绝（fail-closed）
+  if (!opts.baseUrl) {
+    const ignored = BASE_URL_ONLY.filter((k) => opts[k] !== undefined)
+    if (ignored.length > 0) {
+      throw new RangeError(
+        `${ignored.join(", ")} must be used with baseUrl, got ${ignored.length === 1 ? "it" : "them"} without baseUrl (without baseUrl the capabilities come from pi-ai's built-in model table)`,
+      )
+    }
+  }
   const models: ModelDefinition[] = opts.baseUrl
     ? [
         {
