@@ -39,7 +39,7 @@ export const COMPACT_TOOL_DESCRIPTION = compactToolDescription(true)
 export const RECALL_TOOL_DESCRIPTION = [
   "Bring back, verbatim, a tool result or user message that was folded away by a compaction.",
   "Each summary lists its folded tool results as `seq N tool(arguments)`, and folded user messages that carried images, video or audio as `seq N user message`; pass that `seq`.",
-  "The original is returned exactly as it was logged, media included (large tool outputs are stored as blobs and read with fetch_blob instead).",
+  "The original is returned exactly as it was logged, media included (large tool outputs are stored as blobs instead; read those with fetch_blob if that tool is in your tool list).",
   "Use it when you need a value that the summary only mentioned or left out; each recall costs a turn and stays in context afterwards.",
 ].join(" ")
 

@@ -453,13 +453,15 @@ describe("被折叠工具结果清单（manifest）", () => {
         "H",
         '- seq 4 read({"a":"x","b":1}) — 12k chars',
         "- seq 5 read() — 7 chars, error",
-        '- seq 6 big({}) — stored as blob "blob-9", read with fetch_blob',
+        '- seq 6 big({}) — stored as blob "blob-9"; read it with fetch_blob if that tool is in your tool list',
       ].join("\n"),
     )
     expect(renderFoldedToolResults(items, { heading: "H", maxItems: 1 })).toBe(
-      ["H", "- …2 earlier (seq 4–5)", '- seq 6 big({}) — stored as blob "blob-9", read with fetch_blob'].join(
-        "\n",
-      ),
+      [
+        "H",
+        "- …2 earlier (seq 4–5)",
+        '- seq 6 big({}) — stored as blob "blob-9"; read it with fetch_blob if that tool is in your tool list',
+      ].join("\n"),
     )
     // 全库审查 2026-11-25 #63：超限时留最近的，较旧的折成一行；只省一条时不写成 "seq 4–4"
     expect(renderFoldedToolResults(items, { heading: "H", maxItems: 2 })).toBe(
@@ -467,7 +469,7 @@ describe("被折叠工具结果清单（manifest）", () => {
         "H",
         "- …1 earlier (seq 4)",
         "- seq 5 read() — 7 chars, error",
-        '- seq 6 big({}) — stored as blob "blob-9", read with fetch_blob',
+        '- seq 6 big({}) — stored as blob "blob-9"; read it with fetch_blob if that tool is in your tool list',
       ].join("\n"),
     )
     expect(digestArgs({ z: [3, { y: 1, x: 2 }], a: null })).toBe('{"a":null,"z":[3,{"x":2,"y":1}]}')

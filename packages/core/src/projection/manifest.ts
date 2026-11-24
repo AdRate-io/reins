@@ -113,7 +113,8 @@ export function renderFoldedToolResults(
   const lines = omittedLine ? [opts.heading, omittedLine] : [opts.heading]
   for (const it of shown) {
     const tail = it.spilledBlobId
-      ? `stored as blob "${it.spilledBlobId}", read with fetch_blob`
+      ? // 与 brain recall 的说法一致：core 不知道本 run 有没有 fetch_blob（spill({ tool: false })、后来去掉了 spill），只附条件（第二波返修）
+        `stored as blob "${it.spilledBlobId}"; read it with fetch_blob if that tool is in your tool list`
       : `${fmtChars(it.chars)}${it.isError ? ", error" : ""}`
     lines.push(`- seq ${it.seq} ${it.name}(${digestArgs(it.args, opts.maxArgsChars)}) — ${tail}`)
   }

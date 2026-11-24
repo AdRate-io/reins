@@ -35,7 +35,7 @@ import {
   isCompactRequest,
   renderCompactRequest,
 } from "./request.js"
-import { COMPACT_REQUEST_RULE, COMPACT_RULES } from "./rules.js"
+import { COMPACT_REQUEST_RULE, COMPACT_RULES, RECALL_TOOL_DESCRIPTION } from "./rules.js"
 
 const registry = createCoreRegistry()
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -660,6 +660,8 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
         text: '[seq 1 list() was too large to keep inline; its full output is stored verbatim as blob "b-1". Read it with fetch_blob({ id: "b-1" }) if that tool is in your tool list; recall cannot return it.]',
       },
     ])
+    // 第二波返修：清单行、recall 结果、recall 工具说明三处对 fetch_blob 同一种说法（模型手里不一定有它）
+    expect(RECALL_TOOL_DESCRIPTION).toContain("read those with fetch_blob if that tool is in your tool list")
     // 别的会话看不到
     expect(await recallResult({ seq: 1 }, ctxOf("other"))).toMatchObject({
       isError: true,
