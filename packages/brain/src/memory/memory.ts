@@ -35,7 +35,7 @@ export interface MemoryOptions {
    * `namespace: (ctx) => \`/users/${ctx.principal?.id ?? "anonymous"}\``。缺省无前缀（全体共享一块 /memories）。
    * 返回值每次调用前校验（fail-closed）：须是空串，或 `/` 起、不以 `/` 收、无空段与 `.` / `..` 段、不含 `memories` 段的路径——
    * 否则两个前缀可能互相嵌套（`/a` 的 `/memories/x/memories/f` 就是 `/a/memories/x` 的 `/memories/f`）。
-   * 不合规时本次调用 isError、不碰存储，经 `warn` 告警一次。principal id 里可能带 `/` 时宿主自己先编码
+   * 不合规时本次调用 isError、不碰存储，经 `warn` 告警（每个 memory() 实例只告一次，报第一个坏值）。principal id 里可能带 `/` 时宿主自己先编码
    */
   namespace?: (ctx: ToolContext) => string
   /** 单文件上限（UTF-8 字节）。缺省 64 KiB：记忆是给未来的自己看的摘记，不是数据仓库 */
@@ -51,7 +51,7 @@ export interface MemoryOptions {
   directories?: readonly string[]
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
-  /** 告警出口：没有 MemoryStore（每个 memory() 实例只告警一次）、namespace 返回值不合规（每个值一次）。缺省 console.warn */
+  /** 告警出口：没有 MemoryStore、namespace 返回值不合规（各自每个 memory() 实例只告警一次）。缺省 console.warn */
   warn?: (message: string) => void
 }
 
@@ -77,8 +77,11 @@ export function memory(opts: MemoryOptions = {}): Socket {
   const namespace = opts.namespace ?? (() => "")
   const warn = opts.warn ?? ((message: string) => console.warn(message))
   let warned = false
-  /** 已告警过的不合规 namespace 值：每个值只告警一次 */
-  const badNamespaces = new Set<string>()
+  /**
+   * 不合规的 namespace 只告警一次（每个实例）：namespace 多由 principal id 拼成，按值去重的集合会随租户增多在长驻进程里一直涨；
+   * 返回坏值是宿主代码的 bug，报出第一个就够定位
+   */
+  let warnedNamespace = false
 
   const tool: Tool<MemoryCommand> = {
     name: MEMORY_TOOL_NAME,
@@ -102,11 +105,10 @@ export function memory(opts: MemoryOptions = {}): Socket {
       const prefix = namespace(ctx)
       if (!isValidNamespace(prefix)) {
         // fail-closed：不合规的前缀可能与别的 principal 的记忆互相嵌套，一个键都不碰。细节只给宿主（可能含 principal id）
-        const key = typeof prefix === "string" ? prefix : `<${typeof prefix}>`
-        if (!badNamespaces.has(key)) {
-          badNamespaces.add(key)
+        if (!warnedNamespace) {
+          warnedNamespace = true
           warn(
-            `[reins/memory] memory.namespace must return "" or a path starting with "/", not ending with "/", with no empty, . or .. segments and no "${MEMORY_ROOT.slice(1)}" segment, got ${JSON.stringify(prefix) ?? String(prefix)}. The memory tool refuses every call in sessions that get it.`,
+            `[reins/memory] memory.namespace must return "" or a path starting with "/", not ending with "/", with no empty, . or .. segments and no "${MEMORY_ROOT.slice(1)}" segment, got ${JSON.stringify(prefix) ?? String(prefix)}. The memory tool refuses every call in sessions that get an invalid namespace; further invalid values are not reported.`,
           )
         }
         return {
