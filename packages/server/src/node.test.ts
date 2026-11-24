@@ -4,7 +4,7 @@
  */
 import { createServer, request, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest"
 import { nodeListener } from "./node.js"
 import type { AgentHandler } from "./types.js"
 
@@ -77,6 +77,13 @@ describe("nodeListener：handler 抛错", () => {
   })
 
   it("响应体读到一半出错：连接被销毁，不挂住、不崩进程", async () => {
+    // 显式断言"没有未处理的 rejection"，不靠 vitest 把它记成文件级错误才拦下（旧实现下这一格本身是通过的）
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on("unhandledRejection", onUnhandled)
+    onTestFinished(() => {
+      process.off("unhandledRejection", onUnhandled)
+    })
     const base = await serve(async () => {
       const body = new ReadableStream<Uint8Array>({
         start(c) {
@@ -89,6 +96,14 @@ describe("nodeListener：handler 抛错", () => {
     const res = await fetch(`${base}/`, { signal: AbortSignal.timeout(2000) })
     expect(res.status).toBe(200)
     await expect(res.text()).rejects.toThrow()
+    // 兜底接住了这次失败（先 console.error 再 destroy，客户端看到断开时日志已写）
+    expect(console.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ message: "store gone" }),
+    )
+    // 给可能的 unhandledRejection 一个事件循环周期再判
+    await new Promise((r) => setTimeout(r, 20))
+    expect(unhandled).toEqual([])
   })
 })
 
