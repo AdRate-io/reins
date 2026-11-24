@@ -5,7 +5,7 @@
 import { PGlite } from "@electric-sql/pglite"
 import { defineTool, type RunStatus, runLoop } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { type PgClient, PgRunLease, pgRunStates, pgStores } from "./index.js"
 
 // ---- 配方本体（与 README 逐字一致，改一处要同步另一处）----
@@ -37,6 +37,8 @@ async function canDelete(client: PgClient, sessionId: string): Promise<boolean> 
 // ---- 配方本体结束 ----
 
 const pglite = new PGlite()
+// PGlite 的 WASM 冷启动在这台机器上约 6 秒：在这里等就绪并单给宽限，免得算进第一条用例的 5 秒上限
+beforeAll(() => pglite.waitReady, 60_000)
 afterAll(() => pglite.close())
 const MODEL = { provider: "scripted", id: "scripted" }
 

@@ -6,10 +6,12 @@ import { PGlite } from "@electric-sql/pglite"
 import { defineTool, RUN_MARKER_TYPES, type RunLease, type RunResult } from "@reinsjs/core"
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { createAgentHandler, leasedRunRegistry } from "@reinsjs/server"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { pgRunStates, pgStores } from "./index.js"
 
 const pglite = new PGlite()
+// PGlite 的 WASM 冷启动在这台机器上约 6 秒：在这里等就绪并单给宽限，免得算进第一条用例的 5 秒上限
+beforeAll(() => pglite.waitReady, 60_000)
 afterAll(() => pglite.close())
 
 const MODEL = { provider: "scripted", id: "scripted" }
