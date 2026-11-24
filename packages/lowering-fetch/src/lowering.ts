@@ -16,11 +16,11 @@ import {
   type ToRequestInput,
 } from "@reinsjs/core"
 import { consumeAnthropicStream } from "./anthropic/from-stream.js"
-import { encodeAnthropicRequest } from "./anthropic/to-request.js"
+import { encodeAnthropicRequest, uniformCacheTtl } from "./anthropic/to-request.js"
 import { capabilitiesOf } from "./capabilities.js"
 import { consumeChatStream } from "./chat/from-stream.js"
 import { encodeChatRequest } from "./chat/to-request.js"
-import { DEFAULT_TIMEOUT_MS, postJson, requestSignals } from "./http.js"
+import { DEFAULT_TIMEOUT_MS, postJson, requestSignals, touchChunks, touchEach } from "./http.js"
 import { eventsToIr } from "./ir.js"
 import { endpointOf, type FetchApi, type FetchModel, resolveModel } from "./models.js"
 import { consumeResponsesStream } from "./responses/from-stream.js"
@@ -44,7 +44,11 @@ export interface FetchLoweringOptions {
    * parallel_tool_calls …），键名以厂商文档为准。按模型返回，便于分族配置。messages / tools / model / stream 不可覆盖。
    */
   requestOptions?: (model: ModelRef) => Record<string, unknown>
-  /** 整条请求（含读完流）的时限，缺省 600 000 ms；到点判 error（可重试），宿主 signal 中止判 aborted */
+  /**
+   * 本地时限，缺省 600 000 ms：管"发出请求到收到响应头"与"流里任意两帧之间的空档"，不限整条流的总时长
+   * （与两家 SDK 一样不掐正在出字的长流）。到点判 error：还没有任何输出时 core 按瞬断重试，流中途已有输出则不重试；
+   * 宿主 signal 中止判 aborted。总时长要封顶由宿主自己的 signal 决定
+   */
   timeoutMs?: number
   /**
    * trust 标注（技术方案 §14）：trust=untrusted 的事件翻译时包上 `<untrusted source="tool:<name>">…</untrusted>`，
@@ -116,15 +120,24 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
   ): AsyncGenerator<CoreEventDraft, LoweringOutcome> {
     const model = resolveModel(req.model, this.extraModels)
     const headers = this.headersFor(model)
+    // 时限只管"到响应头"与"流里两帧之间的空档"，不限流的总时长（见 DEFAULT_TIMEOUT_MS）
     const signals = requestSignals(ctx.signal, this.timeoutMs)
-    const res = await postJson({
-      url: endpointOf(model),
-      headers,
-      body: req.payload.body,
-      signal: signals.signal,
-      ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
-    })
+    let res: Response
+    try {
+      res = await postJson({
+        url: endpointOf(model),
+        headers,
+        body: req.payload.body,
+        signal: signals.signal,
+        ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
+      })
+    } catch (err) {
+      signals.dispose()
+      throw err
+    }
+    signals.touch()
     if (!res.body) {
+      signals.dispose()
       return {
         stopReason: "error",
         usage: { input: 0, output: 0 },
@@ -132,12 +145,17 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       }
     }
     const streamInput = {
-      messages: parseSse(res.body),
+      messages: touchEach(parseSse(touchChunks(res.body, signals)), signals),
       origin: { provider: model.provider, api: model.api, model: model.id },
       ...(model.cost ? { cost: model.cost } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
       timedOut: signals.timedOut,
       timeoutMs: this.timeoutMs,
+      // 上游没给缓存写分档时据此定价：只有真发出去的断点全是 1h 才按 1h 算，混用（宿主顶层 cache_control 的 ttl 与本包
+      // 断点不同）时一律按 5 分钟价，costUsd 偏低、不偏高（全库审查 #74 返修）
+      ...(req.payload.api === "anthropic-messages" && uniformCacheTtl(req.payload.body) === "1h"
+        ? { cacheTtl: "1h" as const }
+        : {}),
     }
     switch (req.payload.api) {
       case "openai-chat":
@@ -147,6 +165,8 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       case "openai-responses":
         return yield* consumeResponsesStream(streamInput, ctx)
       default:
+        // touchEach 的 finally 只在消息流被迭代过才走到，这里没迭代，计时器要自己清
+        signals.dispose()
         throw new LoweringError("unsupported_api", `unsupported wire protocol ${req.payload.api}`, {
           api: req.payload.api,
         })

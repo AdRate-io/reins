@@ -43,6 +43,7 @@ import {
 } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
+import { chatToolCallId } from "../tool-call-id.js"
 
 export type ChatContentPart =
   | { type: "text"; text: string }
@@ -310,7 +311,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         const c = toolContent(item.parts, capabilities, liftMedia)
         messages.push({
           role: "tool",
-          tool_call_id: item.toolCallId,
+          tool_call_id: chatToolCallId(item.toolCallId),
           content: item.isError ? ERROR_PREFIX + c.text : c.text,
         })
         const mediaLifted = c.media.length > 0
@@ -484,7 +485,7 @@ function assistantMessage(
   }
   if (calls.length > 0) {
     msg.tool_calls = calls.map((c) => ({
-      id: c.id,
+      id: chatToolCallId(c.id),
       type: "function",
       function: { name: c.name, arguments: argumentsOf(c.args) },
     }))

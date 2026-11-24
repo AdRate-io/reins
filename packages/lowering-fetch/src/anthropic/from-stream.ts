@@ -32,6 +32,8 @@ interface AnthropicUsage {
   output_tokens?: unknown
   cache_creation_input_tokens?: unknown
   cache_read_input_tokens?: unknown
+  /** 缓存写按存活期拆开（厂商字段）；没有时按宿主配的 cacheTtl 算 */
+  cache_creation?: { ephemeral_5m_input_tokens?: unknown; ephemeral_1h_input_tokens?: unknown } | null
 }
 
 interface AnthropicStreamEvent {
@@ -76,6 +78,8 @@ export interface AnthropicStreamInput {
   signal?: AbortSignal
   timedOut?: () => boolean
   timeoutMs?: number
+  /** 请求里全部断点共同的存活期（`uniformCacheTtl` 判出，混用时不给）；上游没给缓存写分档时据此决定按哪档价算（全库审查 #74） */
+  cacheTtl?: "5m" | "1h"
 }
 
 /** pi-ai 对 redacted_thinking 的正文约定，两条降级路线的事件互换 */
@@ -278,15 +282,33 @@ function apply(ev: AnthropicStreamEvent, a: AnthropicAssembly, ctx: LoweringStre
 }
 
 /**
- * 停止原因：有 tool_use 块即 toolUse；end_turn / stop_sequence / pause_turn → stop；max_tokens 与
- * model_context_window_exceeded → length；refusal → error 并把 stop_details 写进 errorMessage（厂商分类器拒答，
- * 不是瞬断，core 不会重试）；流里的 error 事件 → error（overloaded_error 的文案含 Overloaded，core 判可重试）；
- * 没等到 message_stop 也没有 stop_reason → error "stream ended before message_stop"（可重试）。
+ * 停止原因，判定顺序固定：流里的 error → 截断 / 拒答 / 没收尾 → 最后才看有没有 tool_use 块——
+ * 半截 tool_use 也是 tool_use 块，先判 toolUse 会把截断与拒答藏起来（全库审查 #28）。
+ * - 流里的 error 事件 → error（overloaded_error 的文案含 Overloaded，core 判可重试）；
+ * - max_tokens 与 model_context_window_exceeded → length；
+ * - refusal → error 并把 stop_details 写进 errorMessage（厂商分类器拒答，不是瞬断，core 不会重试）；
+ * - 没等到 message_stop 也没有 stop_reason → error "stream ended before message_stop"（可重试）；
+ * - 其余（end_turn / stop_sequence / pause_turn / tool_use / 未知值）：有 tool_use 块即 toolUse，否则 stop。
+ * "可重试"只指本次尝试还没落任何输出：已流出正文或 tool_use 草稿时 core 一律不重试（重试判据是"落了几条输出"），
+ * run 以 error 结束时 core 把这次响应里的 tool_use 收尾成"没执行"（全库审查 #13）；length 结局本轮仍照常执行（OPT-261125-2）。
  */
-function outcomeOf(a: AnthropicAssembly, cost: ModelCost | undefined): LoweringOutcome {
+/**
+ * 缓存写里 1 小时存活期的 token 数：优先读厂商的 cache_creation 分档（后到的 message_delta 为准）；
+ * 没有分档时，只有请求里的断点全是 1h（cacheTtl "1h"）才全部算 1 小时；混用时按 5 分钟价，成本偏低不偏高。
+ */
+function oneHourWritesOf(a: AnthropicAssembly, usage: TokenUsage, cacheTtl: "5m" | "1h" | undefined): number {
+  const reported =
+    num(a.delta?.cache_creation?.ephemeral_1h_input_tokens) ??
+    num(a.start?.cache_creation?.ephemeral_1h_input_tokens)
+  if (reported !== undefined) return reported
+  const hasSplit = a.delta?.cache_creation != null || a.start?.cache_creation != null
+  return !hasSplit && cacheTtl === "1h" ? (usage.cacheWrite ?? 0) : 0
+}
+
+function outcomeOf(a: AnthropicAssembly, input: AnthropicStreamInput): LoweringOutcome {
   const usage = usageOf(a.start, a.delta)
   const out: LoweringOutcome = { stopReason: "stop", usage }
-  const c = costOf(usage, cost)
+  const c = costOf(usage, input.cost, { cacheWrite1h: oneHourWritesOf(a, usage, input.cacheTtl) })
   if (c !== undefined) out.costUsd = c
   if (a.responseModel) out.responseModel = a.responseModel
 
@@ -295,36 +317,30 @@ function outcomeOf(a: AnthropicAssembly, cost: ModelCost | undefined): LoweringO
     out.errorMessage = `${a.error.type}: ${a.error.message}`
     return out
   }
-  if (a.hasToolUse()) {
-    out.stopReason = "toolUse"
-    return out
-  }
   switch (a.stopReason) {
-    case "end_turn":
-    case "stop_sequence":
-    case "pause_turn":
-    case "tool_use":
-      break
     case "max_tokens":
     case "model_context_window_exceeded":
       out.stopReason = "length"
-      break
+      return out
     case "refusal": {
       out.stopReason = "error"
       const category = str(a.stopDetails?.category)
       const explanation = str(a.stopDetails?.explanation)
       out.errorMessage = `stop_reason=refusal${category ? ` (${category})` : ""}: the provider's classifier refused to answer${explanation ? `: ${explanation}` : ""}`
-      break
+      return out
     }
     case undefined:
       if (!a.sawStop) {
         out.stopReason = "error"
         out.errorMessage = "stream ended before message_stop"
+        return out
       }
       break
     default:
+      // end_turn / stop_sequence / pause_turn / tool_use / 未知值
       break
   }
+  if (a.hasToolUse()) out.stopReason = "toolUse"
   return out
 }
 
@@ -347,18 +363,18 @@ export async function* consumeAnthropicStream(
     }
   } catch (err) {
     yield* a.drafts(input.origin)
-    const base = outcomeOf(a, input.cost)
+    const base = outcomeOf(a, input)
     if (input.signal?.aborted) return { ...base, stopReason: "aborted", errorMessage: "aborted by host" }
     if (input.timedOut?.())
       return {
         ...base,
         stopReason: "error",
-        errorMessage: `request timed out after ${input.timeoutMs ?? "?"}ms (stream ended before message_stop)`,
+        errorMessage: `request timed out: no data for ${input.timeoutMs ?? "?"}ms (stream ended before message_stop)`,
       }
     return { ...base, stopReason: "error", errorMessage: errorText(err) }
   }
   yield* a.drafts(input.origin)
-  return outcomeOf(a, input.cost)
+  return outcomeOf(a, input)
 }
 
 function errorText(err: unknown): string {

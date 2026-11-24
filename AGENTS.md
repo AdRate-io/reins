@@ -273,7 +273,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | Socket 暂停意见里的 `code` / `reason` 不合规 | 改正（丢码、按 host）后照常暂停，记一条模型不可见的 `core.error(input)` | 标注写错不能把受控暂停变成 error、丢掉续跑凭据；记在时间线上，不是静默 |
 | `pullInput` 回调抛错 | 记一条模型不可见的 `core.error(host)`，当这次没有、run 照跑 | 后果只是晚一个空档送达，消息仍在宿主队列；返回值不合规不在此列（fail-closed） |
 | 图片引用的 blob 取不到（`not_found` / 没配 BlobStore） | 引用原样交给降级层，落 `[image unavailable]` 占位、记 lossy，run 照跑 | 被清理的一张旧图不该让整个会话卡死；其它存储错误不在此列（走模型调用失败与重试判定） |
-| lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限） | 价目只用于报告，不影响请求正确性 |
+| lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限；Haiku 5.5、gpt-5.4 / 5.5 存低档价，长提示是下限） | 价目只用于报告，不影响请求正确性 |
 
 ### 循环与时间线（core）
 
@@ -329,7 +329,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - ⚠️ **DeepSeek 带 `tools` 时每条历史 assistant 都必须带 `reasoning_content`，缺了 400、空串可过** — DeepSeek 缺省就是 thinking 模式，宿主不配 `thinking` 也会撞（踩坑 29）。
 - **共用层 `eventsToIr` 只记事实（分组 / deferred / escaped / 来源），exact 还是 lossy 由协议 encoder 判；落点记完要 `orderLandings` 排回输入顺序** — 矩阵测试断言 `landings[i].eventId === events[i].id`。运维事件 dropped 不打断 assistant 分组。
 - **`tool_call.args` 是字符串 ⟺ 它就是线上原文；整个入参被二次编码时读侧多解一层、标 `payload.meta.argumentsUnwrapped: true`** — Chat / Responses 写侧把字符串入参原样当 JSON 文本送回，所以没解成对象的（解析失败、解一次得 `"[1,2]"` / `"hello"`）一律存原文，绝不存"解过一层的字符串"，否则历史与工具拿到的说法不一；多解那层容忍字符串里的裸换行。规则在 core `decodeToolArgumentsText` / `unwrapToolArguments`，往返用例锁住（OnSet 建议 8）。
-- **`HttpError` 文案是 SDK 同款 `"<status> <body>"`、对象带 `status` / `headers`** — 别在本包里再判重试；超时走 `AbortSignal.timeout`（可重试），宿主中止 AbortError 不重试，两者都发生算宿主中止。
+- **`HttpError` 文案是 SDK 同款 `"<status> <body>"`、对象带 `status` / `headers`** — 别在本包里再判重试；`timeoutMs` 管到响应头与流里两块字节之间的空档、不限总时长（每块字节含 SSE 注释保活都续命），超时以 TimeoutError 中止（可重试），宿主中止 AbortError 不重试，两者都发生算宿主中止。
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败。
 - **内置模型表是最小表，`definitionOf` 内置打底、选项覆盖，表外必须给 `baseUrl`；同一 OpenAI id 两条协议各一份，无协议解析缺省走 Responses** — 测试目标模型显式取条目，别靠无协议解析。
 - **Chat 线有损**：只有思考的一轮（停止 / 断流停在思考阶段）整条不发——assistant 没有 `content` 也没有 `tool_calls` 两家都 400，而时间线整段回放，照发即永久卡死（踩坑 51）；thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点。**工具结果图片缺省上浮**到同批 tool 之后的一条 user（`tool+lifted-images`，`chat.liftToolImages: false` 退回占位）——放出时机是第一个**会下发的**非 tool_result 条目，`dropped` 不算（踩坑 39）。

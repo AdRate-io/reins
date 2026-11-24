@@ -75,6 +75,46 @@ function encode(
 }
 const roles = (messages: ChatMessage[]) => messages.map((m) => m.role)
 
+describe("encodeChatRequest — 工具调用 id 规整（全库审查 #29 返修）", () => {
+  it("pi 版 Responses 的复合 id 规整到 40 位以内，与 pi-ai 逐字相同；共用 call_id 的并行调用互不相同；本线 id 原样", () => {
+    seq = 0
+    const piOrigin = { provider: "openai", api: "openai-responses", model: "gpt-5" }
+    const fcA = `fc_${"a".repeat(60)}`
+    const fcB = `fc_${"b".repeat(60)}`
+    const ids = [
+      `call_shared|${fcA}`,
+      `call_shared|${fcB}`,
+      "call_abc|fc_01",
+      `x.${"y".repeat(50)}`,
+      "call_00_native",
+    ]
+    const events: Event[] = [ev("core.user_message", "user", { content: [{ type: "text", text: "q" }] })]
+    for (const id of ids)
+      events.push(ev("core.tool_call", "model", { toolCallId: id, name: "f", args: {} }, piOrigin))
+    for (const id of ids)
+      events.push(
+        ev("core.tool_result", "tool", {
+          toolCallId: id,
+          name: "f",
+          content: [{ type: "text", text: "r" }],
+          isError: false,
+        }),
+      )
+    const r = encode(deepseek, events)
+    const assistant = r.body.messages.find((m) => m.role === "assistant")
+    const callIds = assistant?.role === "assistant" ? (assistant.tool_calls ?? []).map((c) => c.id) : []
+    const resultIds = r.body.messages.flatMap((m) => (m.role === "tool" ? [m.tool_call_id] : []))
+    // 前三个期望值由 pi-ai 0.85.1 openai-completions convertMessages 对同一组 id 实算得出（跨模型回放路径）
+    expect(callIds.slice(0, 3)).toEqual(["call_shared_9wmkj6py", "call_shared_2e77iduv", "call_abc_fc_01"])
+    // 不含 `|` 的超长 id：pi-ai 只对 provider openai 截断，本包一律按哈希缩短（截断会让同前缀的 id 撞号）
+    expect(callIds[3]).toMatch(/^x_y{29}_[a-z0-9]{8}$/)
+    expect(callIds[4]).toBe("call_00_native")
+    expect(resultIds).toEqual(callIds)
+    expect(new Set(callIds).size).toBe(ids.length)
+    for (const id of callIds) expect(id).toMatch(/^[a-zA-Z0-9_-]{1,40}$/)
+  })
+})
+
 describe("encodeChatRequest", () => {
   it("系统提示是首条 system；一轮 thinking+text+tool_call 合成一条 assistant，reasoning_content 回填；tool 消息紧跟", () => {
     seq = 0

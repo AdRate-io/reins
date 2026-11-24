@@ -5,13 +5,17 @@ import type { LoweringCapabilities } from "@reinsjs/core"
 import type { FetchModel } from "./models.js"
 
 /**
- * S1 / F0 核实：Anthropic 带正文的中途 system 消息支持 Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8；Sonnet 5、Haiku 4.5 及更早
- * 回厂商原文 400。按 id 前缀匹配，带日期后缀的 id 也能命中；第三方 Anthropic 协议上游（如 DeepSeek 兼容端口）由宿主声明。
+ * Anthropic 带正文的中途 system 消息（S1 / F0 实测 + 官方支持清单 2026-11-03）：Fable 5.x / Mythos 5.x / Opus 5 / Opus 5.5 /
+ * Opus 4.8 / Sonnet 5.5 / Haiku 5.5 支持；Sonnet 5、Opus 4.7、Haiku 4.5 及更早回厂商原文 400。按 id 前缀匹配，带日期后缀的
+ * id 也能命中（`opus-5` 同时覆盖 `opus-5-5`）；第三方 Anthropic 协议上游（如 DeepSeek 兼容端口）由宿主声明。
  */
-const ANTHROPIC_MID_SYSTEM = /^claude-(fable-5|mythos-5|opus-5|opus-4-8)(-|$)/
+const ANTHROPIC_MID_SYSTEM = /^claude-(fable-5|mythos-5|opus-5|opus-4-8|sonnet-5-5|haiku-5-5)(-|$)/
 
-/** 服务端 task budget 仅 Opus 5 与 Fable 5.1（DECISIONS 2026-09-08） */
-const ANTHROPIC_TASK_BUDGET = /^claude-(opus-5|fable-5-1)(-|$)/
+/**
+ * 服务端 task budget（beta，官方支持清单 2026-11-03）：上面那一组再加 Opus 4.7；不含 Sonnet 5。
+ * 只是能力位，漏判只少用一项功能、不报错。
+ */
+const ANTHROPIC_TASK_BUDGET = /^claude-(fable-5|mythos-5|opus-5|opus-4-8|opus-4-7|sonnet-5-5|haiku-5-5)(-|$)/
 
 export function capabilitiesOf(model: FetchModel): LoweringCapabilities {
   const base = {

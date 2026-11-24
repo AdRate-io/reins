@@ -159,6 +159,26 @@ describe("consumeChatStream", () => {
     expect((await run([finish("aborted"), { data: "[DONE]" }])).outcome.stopReason).toBe("error")
   })
 
+  it("有 tool_call 时截断与异常仍按 finish_reason 判：length → length、content_filter → error、没收尾 → error，不被 toolUse 盖掉（全库审查 #28）", async () => {
+    const cut = chunk({
+      tool_calls: [{ index: 0, id: "c", function: { name: "f", arguments: '{"amount": 10' } }],
+    })
+    const length = (await run([cut, finish("length"), { data: "[DONE]" }])).outcome
+    expect(length.stopReason).toBe("length")
+    const filtered = (await run([cut, finish("content_filter"), { data: "[DONE]" }])).outcome
+    expect(filtered.stopReason).toBe("error")
+    expect(filtered.errorMessage).toContain("content_filter")
+    const unfinished = await run([cut])
+    expect(unfinished.drafts).toHaveLength(1)
+    expect(unfinished.outcome).toMatchObject({
+      stopReason: "error",
+      errorMessage: "stream ended before finish_reason",
+    })
+    // 有 [DONE] 但网关吞了 finish_reason：与只有正文时同口径，流已正常收尾，按 toolUse
+    const swallowed = chunk({ tool_calls: [{ index: 0, id: "c", function: { name: "f", arguments: "{}" } }] })
+    expect((await run([swallowed, { data: "[DONE]" }])).outcome.stopReason).toBe("toolUse")
+  })
+
   it("没有 [DONE] 也没有 finish_reason：已拼出的内容照样交出去，outcome 记 error（core 判可重试）", async () => {
     const { drafts, outcome } = await run([chunk({ content: "半" }), chunk({ content: "截" })])
     expect(drafts).toEqual([
@@ -166,6 +186,24 @@ describe("consumeChatStream", () => {
     ])
     expect(outcome.stopReason).toBe("error")
     expect(outcome.errorMessage).toBe("stream ended before finish_reason")
+  })
+
+  it("流里的 error 帧（中转站常见）：带厂商 code 与 message 收尾，不再报成可重试的'流没收尾'；已拼草稿先交出（全库审查 #72）", async () => {
+    const { drafts, outcome } = await run([
+      chunk({ content: "半截" }),
+      {
+        data: JSON.stringify({
+          error: { message: "quota exceeded", type: "billing", code: "insufficient_quota" },
+        }),
+      },
+      chunk({ content: "不该到这里" }),
+    ])
+    expect(drafts).toEqual([
+      { type: "core.model_text", actor: "model", payload: { text: "半截" }, replay: origin },
+    ])
+    expect(outcome).toMatchObject({ stopReason: "error", errorMessage: "insufficient_quota: quota exceeded" })
+    const bare = (await run([{ data: JSON.stringify({ error: { message: "boom" } }) }])).outcome
+    expect(bare).toMatchObject({ stopReason: "error", errorMessage: "error: boom" })
   })
 
   it("有 [DONE] 但网关吞了 finish_reason：有正文按 stop 收尾", async () => {
@@ -181,6 +219,21 @@ describe("consumeChatStream", () => {
       { data: "[DONE]" },
     ])
     expect(drafts).toHaveLength(1)
+  })
+
+  it("兼容端点省略 tool_calls[].index：新的非空 id 开新槽，不带 id 的增量续到当前槽（全库审查 #71）", async () => {
+    const { drafts, outcome } = await run([
+      chunk({ tool_calls: [{ id: "c1", function: { name: "a", arguments: '{"x":' } }] }),
+      chunk({ tool_calls: [{ function: { arguments: "1}" } }] }),
+      chunk({ tool_calls: [{ id: "c2", function: { name: "b", arguments: '{"y":2}' } }] }),
+      finish("tool_calls"),
+      { data: "[DONE]" },
+    ])
+    expect(drafts.map((d) => d.payload)).toEqual([
+      { toolCallId: "c1", name: "a", args: { x: 1 } },
+      { toolCallId: "c2", name: "b", args: { y: 2 } },
+    ])
+    expect(outcome.stopReason).toBe("toolUse")
   })
 
   it("入参 JSON 解析失败：args 存原始字符串；空入参 → {}", async () => {
@@ -237,7 +290,7 @@ describe("consumeChatStream", () => {
 
     const t = await consume(iter(msgs, { throwAfter: 1 }), { timedOut: () => true, timeoutMs: 5 })
     expect(t.outcome.stopReason).toBe("error")
-    expect(t.outcome.errorMessage).toContain("timed out after 5ms")
+    expect(t.outcome.errorMessage).toContain("timed out: no data for 5ms")
     expect(t.drafts).toEqual([
       { type: "core.model_text", actor: "model", payload: { text: "半" }, replay: origin },
     ])

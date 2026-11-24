@@ -11,6 +11,8 @@
  *   不像 pi-ai 那样降成正文，模型的私下推理不该以它"说过的话"出现在历史里；`redacted_thinking` 用 data 原样回放；
  * - **缓存断点**：最多 4 个。我们打三处——system 末块、tools 末项、最后一条 user 末块（厂商按前缀向前找命中，20 块回看窗口）；
  *   说明殿后（末条是 system）时按 `midSystemCacheBreakpoint` 处置，缺省顶层 `cache_control`（B1 实测与不注入持平）；
+ *   还有余位时第 4 个打在上一请求的断点位置（上一轮 assistant 之前那条 user 的末块）——一轮大批并行调用新增超过 20 块时，
+ *   历史段仍能从这里读到缓存（全库审查 #73）；
  * - `max_tokens` 必填：宿主 requestOptions 没给就用模型声明的 maxOutputTokens；`thinking` 不缺省设置——Opus 5 起厂商缺省
  *   就是 adaptive，是否开、开多深由宿主按模型代次决定（Fable 5.1 对 `type:"disabled"` 400）；
  * - **延迟加载**（L1，spikes/l1-deferred-tools 实测）：`ToolSpec.deferLoading` → `defer_loading: true`，工具留在 tools 块里、
@@ -48,6 +50,7 @@ import {
 } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
+import { anthropicToolCallId } from "../tool-call-id.js"
 
 export interface AnthropicCacheControl {
   type: "ephemeral"
@@ -310,7 +313,10 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
         const refs = item.parts.filter(
           (p): p is Extract<ContentPart, { type: "tool_reference" }> => p.type === "tool_reference",
         )
-        const block: AnthropicUserBlock = { type: "tool_result", tool_use_id: item.toolCallId }
+        const block: AnthropicUserBlock = {
+          type: "tool_result",
+          tool_use_id: anthropicToolCallId(item.toolCallId),
+        }
         if (item.isError) block.is_error = true
         // 原生落点只给 system 信任的结果（tool_find / skill_read 这类宿主配置的内容）：untrusted 工具输出不能替模型点亮工具
         const trusted = item.event.trust === "system"
@@ -431,8 +437,9 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
 /**
  * 一轮模型输出 → assistant 的内容块。
  * - 正文：Anthropic 接受多个 text 块，逐段原样（空段跳过并声明）；
- * - thinking：signature 在且来源同家（provider + api）→ thinking 块；redacted → redacted_thinking(data)；
- *   无签名或别家 → dropped。同家不同型号（换代、日期后缀、网关改名）照发并备注，能否读由厂商定（读不了它会丢弃、不计费）；
+ * - thinking：signature 在且 provider + api + model 三者一致 → thinking 块；redacted → redacted_thinking(data)；
+ *   无签名、别家、同家不同型号（换代、日期后缀、网关改名）一律 dropped——签名绑定产出它的型号，2026-09-15 实测照发别的
+ *   型号的签名厂商 400（踩坑 37），别"修"成照发；
  * - tool_call：input 必须是对象，不是对象的包成 { value }（lossy wrapped-args）。
  */
 function assistantBlocks(
@@ -505,7 +512,7 @@ function assistantBlocks(
         const wrapped = !isPlainObject(b.args)
         out.push({
           type: "tool_use",
-          id: b.id,
+          id: anthropicToolCallId(b.id),
           name: b.name,
           input: wrapped ? { value: b.args } : (b.args as Record<string, unknown>),
         })
@@ -539,6 +546,31 @@ export function encodeTools(specs: readonly ToolSpec[], deferredTools: boolean):
   })
 }
 
+/**
+ * 请求里所有缓存断点（块级 + 顶层）是否同一个存活期：全是 1h 回 "1h"、全是 5 分钟（不写 ttl 即 5 分钟）回 "5m"、
+ * 两种都有回 "mixed"、一个断点都没有回 undefined。读的是真发出去的请求体——本包打的断点与宿主 requestOptions
+ * 带的顶层 `cache_control` 都在里面。上游没给缓存写分档时，只有 "1h" 才能把全部缓存写算成 1 小时（全库审查 #74 返修）。
+ * 入参按 unknown 读：payload 可能被宿主改过。
+ */
+export function uniformCacheTtl(body: Record<string, unknown>): "5m" | "1h" | "mixed" | undefined {
+  const ttls = new Set<"5m" | "1h">()
+  const visit = (b: unknown) => {
+    if (typeof b !== "object" || b === null) return
+    const cc = (b as { cache_control?: unknown }).cache_control
+    if (typeof cc !== "object" || cc === null) return
+    ttls.add((cc as { ttl?: unknown }).ttl === "1h" ? "1h" : "5m")
+  }
+  const each = (xs: unknown, f: (x: unknown) => void) => {
+    if (Array.isArray(xs)) for (const x of xs) f(x)
+  }
+  visit(body)
+  each(body.system, visit)
+  each(body.tools, visit)
+  each(body.messages, (m) => each((m as { content?: unknown } | null)?.content, visit))
+  if (ttls.size === 0) return undefined
+  return ttls.size > 1 ? "mixed" : [...ttls][0]
+}
+
 /** 数请求里块级 cache_control 的个数：system 数组、tools 数组、messages 的内容块 */
 export function countBlockBreakpoints(body: AnthropicRequestBody): number {
   const has = (b: unknown) => typeof b === "object" && b !== null && "cache_control" in b
@@ -552,7 +584,9 @@ export function countBlockBreakpoints(body: AnthropicRequestBody): number {
 /**
  * 三处断点：system 末块、tools 末项、最后一条 user 末块。末条是 system（说明殿后）时按处置模式：
  * automatic → 顶层 cache_control（宿主 requestOptions 已给顶层的不覆盖）；previous-user → 找最后一条 user；drop → 不打。
- * 无论哪种，块级 + 顶层总数不超过 4。
+ * 前三处打完仍有余位时，再在"上一请求的断点位置"补一个：最后一条 assistant 之前的那条 user 的末块（上一请求以它收尾，
+ * 断点就在那里）。厂商只从断点往前回看约 20 个块，一轮新增块数超过它（10 件以上并行工具）时，没有这个断点历史段整段 miss
+ * 重写。多一个断点不多计费（写入的 token 只算一次）。无论哪种，块级 + 顶层总数不超过 4。
  */
 function placeCacheBreakpoints(body: AnthropicRequestBody, dialect: NonNullable<FetchModel["anthropic"]>) {
   const cc: AnthropicCacheControl =
@@ -570,21 +604,29 @@ function placeCacheBreakpoints(body: AnthropicRequestBody, dialect: NonNullable<
   const markLastUser = (m: AnthropicMessage | undefined) => {
     if (m?.role !== "user") return
     const block = m.content[m.content.length - 1]
-    if (block && budget() > 0) block.cache_control = cc
+    if (block && block.cache_control === undefined && budget() > 0) block.cache_control = cc
   }
-  if (last.role === "user") {
-    markLastUser(last)
-    return
+  if (last.role === "user") markLastUser(last)
+  else if (last.role === "system") {
+    switch (dialect.midSystemCacheBreakpoint ?? "automatic") {
+      case "automatic":
+        if (body.cache_control === undefined && budget() > 0) body.cache_control = cc
+        break
+      case "previous-user":
+        markLastUser([...body.messages].reverse().find((m) => m.role === "user"))
+        break
+      case "drop":
+        break
+    }
   }
-  if (last.role !== "system") return
-  switch (dialect.midSystemCacheBreakpoint ?? "automatic") {
-    case "automatic":
-      if (body.cache_control === undefined && budget() > 0) body.cache_control = cc
-      break
-    case "previous-user":
-      markLastUser([...body.messages].reverse().find((m) => m.role === "user"))
-      break
-    case "drop":
-      break
+
+  // 第 4 个：上一请求的断点位置（见函数头）
+  let previousUser: AnthropicMessage | undefined
+  let seenAssistant = false
+  for (let i = body.messages.length - 1; i >= 0 && previousUser === undefined; i--) {
+    const m = body.messages[i]
+    if (m?.role === "assistant") seenAssistant = true
+    else if (seenAssistant && m?.role === "user") previousUser = m
   }
+  markLastUser(previousUser)
 }

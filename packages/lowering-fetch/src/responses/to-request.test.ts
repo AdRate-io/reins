@@ -244,6 +244,23 @@ describe("encodeResponsesRequest", () => {
     expect(landingOf(r, other)?.note).toContain("the model changed")
   })
 
+  it("pi 版写进日志的复合 id 'call_x|fc_y'：拆成 call_id 与 fc_ 项 id，function_call_output 用同一个 call_id（全库审查 #29）", () => {
+    const piCall = call("call_abc|fc_0123")
+    const r = encode([user("q"), piCall, result("call_abc|fc_0123", [{ type: "text", text: "ok" }])])
+    const items = r.body.input.filter((i) => "type" in i && i.type.startsWith("function_call"))
+    expect(items).toEqual([
+      { type: "function_call", id: "fc_0123", call_id: "call_abc", name: "f", arguments: '{"q":1}' },
+      { type: "function_call_output", call_id: "call_abc", output: "ok" },
+    ])
+    // 换了型号：fc_ 项 id 照规矩不带回，call_id 仍拆开
+    const other = call("call_def|fc_9", { q: 1 }, { ...origin, model: "gpt-5" })
+    const r2 = encode([user("q"), other, result("call_def|fc_9", [{ type: "text", text: "ok" }])])
+    expect(r2.body.input.filter((i) => "type" in i && i.type.startsWith("function_call"))).toEqual([
+      { type: "function_call", call_id: "call_def", name: "f", arguments: '{"q":1}' },
+      { type: "function_call_output", call_id: "call_def", output: "ok" },
+    ])
+  })
+
   it("function_call_output：只有文本是字符串；isError 加前缀记 lossy；带图片且模型收图时是内容块数组；不收图换占位并记 lossy", () => {
     const image = { type: "image" as const, mime: "image/png", data: "AA" }
     const plain = result("c1", [{ type: "text", text: "ok" }])

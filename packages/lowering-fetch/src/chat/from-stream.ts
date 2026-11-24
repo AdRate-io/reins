@@ -32,6 +32,8 @@ interface ChatChunk {
     finish_reason?: unknown
   }[]
   usage?: ChatUsage | null
+  /** 中转站 / 兼容端点在流里下发的错误帧：`data: {"error":{"message","type","code"}}` */
+  error?: { message?: unknown; type?: unknown; code?: unknown } | null
 }
 
 interface ChatUsage {
@@ -57,9 +59,13 @@ class ChatAssembly {
   reasoning = ""
   text = ""
   readonly calls = new Map<number, { id: string; name: string; args: string }>()
+  /** 最近写入的工具调用槽：上游省略 index 时，不带新 id 的增量续到这里 */
+  lastCallIndex: number | undefined
   finish: string | undefined
   usage: ChatUsage | undefined
   responseModel: string | undefined
+  /** 流里的 error 帧（与 Anthropic / Responses 线的 error 事件同口径：文案 "<code>: <message>"） */
+  error: { code: string; message: string } | undefined
   /** onDelta 用的块序号：按首次出现顺序分配 */
   private readonly blockIndex = new Map<string, number>()
 
@@ -105,7 +111,35 @@ export function usageOf(u: ChatUsage | undefined): TokenUsage {
   return usage
 }
 
+/**
+ * tool_calls 增量落哪个槽。OpenAI 规范要求带 index，按它拼；个别兼容端点省略 index（每个调用整块下发、只带 id），
+ * 这时一律塞进 0 号槽会把并行调用并成一个、入参拼成 '{..}{..}'（全库审查 #71）。省略时：来了与当前槽不同的非空 id
+ * 就开新槽（编号接在已有最大号之后），否则续到当前槽（分片的后续增量通常不再带 id）。
+ */
+function callSlotOf(tc: { index?: unknown; id?: unknown }, a: ChatAssembly): number {
+  const given = num(tc.index)
+  if (given !== undefined) return given
+  const current = a.lastCallIndex === undefined ? undefined : a.calls.get(a.lastCallIndex)
+  const id = typeof tc.id === "string" && tc.id !== "" ? tc.id : undefined
+  if (
+    current !== undefined &&
+    a.lastCallIndex !== undefined &&
+    (id === undefined || current.id === "" || current.id === id)
+  )
+    return a.lastCallIndex
+  return a.calls.size === 0 ? 0 : Math.max(...a.calls.keys()) + 1
+}
+
 function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
+  if (chunk.error && typeof chunk.error === "object") {
+    const e = chunk.error
+    const code = typeof e.code === "string" || typeof e.code === "number" ? String(e.code) : undefined
+    a.error = {
+      code: code ?? (typeof e.type === "string" && e.type !== "" ? e.type : "error"),
+      message: typeof e.message === "string" ? e.message : "",
+    }
+    return
+  }
   if (typeof chunk.model === "string" && chunk.model !== "") a.responseModel = chunk.model
   if (chunk.usage && typeof chunk.usage === "object") a.usage = chunk.usage
   const choice = chunk.choices?.[0]
@@ -121,7 +155,8 @@ function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
       ctx.onDelta?.({ kind: "text", index: a.indexOf("text"), delta: d.content })
     }
     for (const tc of d.tool_calls ?? []) {
-      const index = num(tc.index) ?? 0
+      const index = callSlotOf(tc, a)
+      a.lastCallIndex = index
       let call = a.calls.get(index)
       if (!call) {
         call = { id: "", name: "", args: "" }
@@ -139,9 +174,16 @@ function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
 }
 
 /**
- * 停止原因：有 tool_call 就是 toolUse（强制 tool_choice 时官方 finish_reason 是 stop，F0 实测）；
- * content_filter / insufficient_system_resource（DeepSeek 服务端资源不足）/ aborted（服务端中止）都是"没正常说完"，
- * 记 error 并把原因写进 errorMessage——core 只按文案判是否重试，资源不足那条写明 temporarily unavailable 让它值得再试。
+ * 停止原因，判定顺序固定：先看 finish_reason 是否"没正常说完"，最后才看有没有 tool_call——
+ * 截断（length）、过滤、没收尾的流里也可能已有半截 tool_call，先判 toolUse 会把截断藏起来（全库审查 #28）。
+ * - 流里的 error 帧 → error，文案 "<code>: <message>" 带厂商原文（rate_limit 之类 core 按文案判可重试，额度 / 鉴权不重试）；
+ * - length → length；content_filter / insufficient_system_resource（DeepSeek 服务端资源不足）/ aborted（服务端中止）
+ *   → error 并把原因写进 errorMessage——core 只按文案判是否重试，资源不足那条写明 temporarily unavailable 让它值得再试；
+ * - 没有 finish_reason：没等到 [DONE]，或等到了却既无正文也无 tool_call → error "stream ended before finish_reason"（可重试）；
+ * - 其余（stop / tool_calls / 未知值、或 [DONE] 收尾但网关吞了 finish_reason）：有 tool_call 就是 toolUse
+ *   （强制 tool_choice 时官方 finish_reason 是 stop，F0 实测），否则 stop。
+ * "可重试"只指本次尝试还没落任何输出：已流出正文或 tool_call 草稿时 core 一律不重试（重试判据是"落了几条输出"），
+ * run 以 error 结束时 core 把这次响应里的 tool_call 收尾成"没执行"（全库审查 #13）；length 结局本轮仍照常执行（OPT-261125-2）。
  */
 function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolean): LoweringOutcome {
   const usage = usageOf(a.usage)
@@ -150,37 +192,39 @@ function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolea
   if (c !== undefined) out.costUsd = c
   if (a.responseModel) out.responseModel = a.responseModel
 
-  if (a.calls.size > 0) out.stopReason = "toolUse"
-  else {
-    switch (a.finish) {
-      case "stop":
-      case "tool_calls":
-        break
-      case "length":
-        out.stopReason = "length"
-        break
-      case "content_filter":
-        out.stopReason = "error"
-        out.errorMessage = "finish_reason=content_filter: the provider's content filter cut this output short"
-        break
-      case "insufficient_system_resource":
-        out.stopReason = "error"
-        out.errorMessage = "finish_reason=insufficient_system_resource (service temporarily unavailable)"
-        break
-      case "aborted":
-        out.stopReason = "error"
-        out.errorMessage = "finish_reason=aborted: the server aborted this generation"
-        break
-      case undefined:
-        if (!sawDone || a.text.length === 0) {
-          out.stopReason = "error"
-          out.errorMessage = "stream ended before finish_reason"
-        }
-        break
-      default:
-        break
-    }
+  if (a.error) {
+    out.stopReason = "error"
+    out.errorMessage = `${a.error.code}: ${a.error.message}`
+    return out
   }
+  switch (a.finish) {
+    case "length":
+      out.stopReason = "length"
+      return out
+    case "content_filter":
+      out.stopReason = "error"
+      out.errorMessage = "finish_reason=content_filter: the provider's content filter cut this output short"
+      return out
+    case "insufficient_system_resource":
+      out.stopReason = "error"
+      out.errorMessage = "finish_reason=insufficient_system_resource (service temporarily unavailable)"
+      return out
+    case "aborted":
+      out.stopReason = "error"
+      out.errorMessage = "finish_reason=aborted: the server aborted this generation"
+      return out
+    case undefined:
+      if (!sawDone || (a.text.length === 0 && a.calls.size === 0)) {
+        out.stopReason = "error"
+        out.errorMessage = "stream ended before finish_reason"
+        return out
+      }
+      break
+    default:
+      // stop / tool_calls / 未知值
+      break
+  }
+  if (a.calls.size > 0) out.stopReason = "toolUse"
   return out
 }
 
@@ -204,6 +248,7 @@ export async function* consumeChatStream(
         continue
       }
       apply(chunk, a, ctx)
+      if (a.error) break
     }
   } catch (err) {
     yield* a.drafts(input.origin)
@@ -213,7 +258,7 @@ export async function* consumeChatStream(
       return {
         ...base,
         stopReason: "error",
-        errorMessage: `request timed out after ${input.timeoutMs ?? "?"}ms (stream ended before finish_reason)`,
+        errorMessage: `request timed out: no data for ${input.timeoutMs ?? "?"}ms (stream ended before finish_reason)`,
       }
     return { ...base, stopReason: "error", errorMessage: errorText(err) }
   }

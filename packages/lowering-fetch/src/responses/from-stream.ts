@@ -337,9 +337,14 @@ function apply(ev: ResponsesStreamEvent, a: ResponsesAssembly, ctx: LoweringStre
 }
 
 /**
- * 停止原因：流里的 error / response.failed → error（文案 "<code>: <message>"，rate_limit_exceeded 之类 core 判可重试）；
- * 有 function_call 项即 toolUse；completed → stop；incomplete + max_output_tokens → length、incomplete + content_filter → error
- * （厂商内容过滤，不重试）；cancelled → error；没等到终态事件 → error "stream ended before response.completed"（可重试）。
+ * 停止原因，判定顺序固定：流内错误 → 没收尾 → 截断 / 过滤 / 取消 → 最后才看有没有 function_call 项——
+ * incomplete 时也可能已有半截 function_call，先判 toolUse 会把截断藏起来（全库审查 #28）。
+ * - 流里的 error / response.failed → error（文案 "<code>: <message>"，rate_limit_exceeded 之类 core 判可重试）；
+ * - 没等到终态事件 → error "stream ended before response.completed"（可重试）；
+ * - incomplete + max_output_tokens → length、incomplete + content_filter 等 → error（厂商内容过滤，不重试）；cancelled → error；
+ * - 其余（completed / 未知状态）：有 function_call 项即 toolUse，否则 stop。
+ * "可重试"只指本次尝试还没落任何输出：已流出 function_call 草稿时 core 一律不重试，run 以 error 结束，core 把这次
+ * 响应里的调用收尾成"没执行"（全库审查 #13）；length 结局本轮仍照常执行（OPT-261125-2）。
  */
 function outcomeOf(a: ResponsesAssembly, cost: ModelCost | undefined): LoweringOutcome {
   const usage = usageOf(a.usage)
@@ -358,13 +363,7 @@ function outcomeOf(a: ResponsesAssembly, cost: ModelCost | undefined): LoweringO
     out.errorMessage = "stream ended before response.completed"
     return out
   }
-  if (a.hasFunctionCall()) {
-    out.stopReason = "toolUse"
-    return out
-  }
   switch (a.status) {
-    case "completed":
-      break
     case "incomplete":
       if (a.incompleteReason === "max_output_tokens") out.stopReason = "length"
       else {
@@ -374,15 +373,17 @@ function outcomeOf(a: ResponsesAssembly, cost: ModelCost | undefined): LoweringO
             ? "status=incomplete (content_filter): the provider's content filter cut this output short"
             : `status=incomplete${a.incompleteReason ? ` (${a.incompleteReason})` : ""}: the provider did not finish`
       }
-      break
+      return out
     case "cancelled":
     case "failed":
       out.stopReason = "error"
       out.errorMessage = `status=${a.status}`
-      break
+      return out
     default:
+      // completed / 未知状态
       break
   }
+  if (a.hasFunctionCall()) out.stopReason = "toolUse"
   return out
 }
 
@@ -412,7 +413,7 @@ export async function* consumeResponsesStream(
       return {
         ...base,
         stopReason: "error",
-        errorMessage: `request timed out after ${input.timeoutMs ?? "?"}ms (stream ended before response.completed)`,
+        errorMessage: `request timed out: no data for ${input.timeoutMs ?? "?"}ms (stream ended before response.completed)`,
       }
     return { ...base, stopReason: "error", errorMessage: errorText(err) }
   }

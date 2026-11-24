@@ -44,6 +44,7 @@ import {
 } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
+import { splitResponsesToolCallId } from "../tool-call-id.js"
 
 export type ResponsesInputContent =
   | { type: "input_text"; text: string }
@@ -252,7 +253,11 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
               ...c.content.filter((b) => b.type === "input_image"),
             ]
           : prefixed
-        items.push({ type: "function_call_output", call_id: item.toolCallId, output })
+        items.push({
+          type: "function_call_output",
+          call_id: splitResponsesToolCallId(item.toolCallId).callId,
+          output,
+        })
         const lossy = item.escaped || item.isError || c.omitted.size > 0 || c.unavailable
         land(
           landings,
@@ -441,11 +446,14 @@ function assistantItems(
         break
       }
       case "tool_call": {
-        const itemId = sameModel && typeof b.replay.itemId === "string" ? b.replay.itemId : undefined
+        // pi 版写下的复合 id（call_x|fc_y）拆开：fc_ 项 id 与 replay.itemId 同等对待（同一模型才带回）
+        const split = splitResponsesToolCallId(b.id)
+        const recordedItemId = typeof b.replay.itemId === "string" ? b.replay.itemId : split.itemId
+        const itemId = sameModel ? recordedItemId : undefined
         out.push({
           type: "function_call",
           ...(itemId !== undefined ? { id: itemId } : {}),
-          call_id: b.id,
+          call_id: split.callId,
           name: b.name,
           arguments: argumentsOf(b.args),
         })
@@ -454,7 +462,7 @@ function assistantItems(
           b.event,
           "exact",
           "function_call",
-          itemId === undefined && typeof b.replay.itemId === "string"
+          itemId === undefined && recordedItemId !== undefined
             ? "the model changed, so the fc_ item id is not carried back"
             : undefined,
         )
