@@ -83,6 +83,8 @@ function variants(api: string, model: { provider: string; id: string }): Variant
   const image = { type: "image", mime: "image/png", data: "AA" }
   /** 未换回的图片引用（blob 不在了，媒体引用方案）：降级层落占位、记 lossy */
   const imageRef = { type: "image", mime: "image/png", blobId: "gone" }
+  /** 白名单之前写进日志的图片（全库审查 2026-11-25 追加项）：降级层落占位、记 lossy */
+  const svg = { type: "image", mime: "image/svg+xml", data: "AA" }
   const video = { type: "video", mime: "video/mp4", data: "AA", durationSec: 72 }
   const audio = { type: "audio", mime: "audio/mpeg", data: "AA" }
   const call = (id: string, args: unknown = {}) =>
@@ -113,6 +115,14 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     {
       label: "tool_result 带未换回的图片引用",
       events: [user(), call("c1"), result("c1", [{ type: "text", text: "see" }, imageRef])],
+    },
+    {
+      label: "user_message 带白名单外的旧图片",
+      events: [mk("core.user_message", { content: [{ type: "text", text: "看" }, svg] })],
+    },
+    {
+      label: "tool_result 带白名单外的旧图片",
+      events: [user(), call("c1"), result("c1", [{ type: "text", text: "see" }, svg])],
     },
     {
       label: "user_message 带视频 / 音频",

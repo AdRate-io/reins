@@ -19,6 +19,7 @@ import {
   type CoreEvent,
   type Event,
   isImageRef,
+  isSupportedImageMime,
   type LandingRecord,
   type LoweringCapabilities,
   markUntrusted,
@@ -27,12 +28,14 @@ import {
   renderToolReference,
   type SystemNotePayload,
   type ToolSpec,
+  unsupportedImageText,
   untrustedSourceOf,
 } from "@reinsjs/core"
 import {
   ESCAPED_NOTE,
   IMAGE_OMITTED_NOTE,
   IMAGE_UNAVAILABLE_NOTE,
+  IMAGE_UNSUPPORTED_NOTE,
   MEDIA_PLACEHOLDER_NOTE,
 } from "./loss-matrix.js"
 import type { PiModel } from "./models.js"
@@ -94,12 +97,13 @@ function toPiContent(
   capabilities: LoweringCapabilities,
 ): {
   content: (TextContent | { type: "image"; data: string; mimeType: string })[]
-  /** 有片段被换成占位时的落点说明（模型不收的图片、视频 / 音频、未换回的图片引用）；没有为 undefined */
+  /** 有片段被换成占位时的落点说明（模型不收的图片、视频 / 音频、未换回的图片引用、白名单外的图片）；没有为 undefined */
   mediaNote: string | undefined
 } {
   let mediaDropped = false
   let unavailable = false
   let imageOmitted = false
+  let badMime = false
   const content = parts.map((p): TextContent | { type: "image"; data: string; mimeType: string } => {
     switch (p.type) {
       case "text":
@@ -116,6 +120,12 @@ function toPiContent(
           imageOmitted = true
           return { type: "text", text: IMAGE_OMITTED }
         }
+        // 白名单之前写进日志的图片（svg、错标 mime）：照发厂商 400、每轮回放会话卡死；落 core 同一句说明
+        // 与 fetch 版同口径（全库审查 2026-11-25 追加项）
+        if (!isSupportedImageMime(p.mime)) {
+          badMime = true
+          return { type: "text", text: unsupportedImageText(p.mime) }
+        }
         return { type: "image", data: p.data, mimeType: p.mime }
       case "video":
       case "audio":
@@ -131,6 +141,7 @@ function toPiContent(
     imageOmitted ? IMAGE_OMITTED_NOTE : undefined,
     mediaDropped ? MEDIA_NOTE : undefined,
     unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+    badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
   ]
   const mediaNote = notes.filter(Boolean).join("; ")
   return { content, mediaNote: mediaNote.length > 0 ? mediaNote : undefined }

@@ -88,6 +88,9 @@ export const MEDIA_PLACEHOLDER_NOTE = "pi-ai has no video / audio content; repla
 /** 未换回的图片引用（2026-11-24 媒体引用方案）：to-request.ts 落点 note 用同一常量 */
 export const IMAGE_UNAVAILABLE_NOTE =
   "an image stored by reference could not be loaded (blob unavailable: it was removed, or no BlobStore is configured), so it is replaced with placeholder text"
+/** 白名单外的图片（全库审查 2026-11-25 追加项）：与 fetch 版同一句；to-request.ts 落点 note 用同一常量 */
+export const IMAGE_UNSUPPORTED_NOTE =
+  "an image of a type outside the supported set (image/jpeg, image/png, image/gif, image/webp; logged before that check existed) would be rejected by the provider, so it is replaced with placeholder text naming its type"
 /** untrusted 内容里提前闭合的 </untrusted 被转义；to-request.ts 落点 note 用同一常量 */
 export const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
 /** 宿主标成 untrusted 的中途 system 说明，正文被转义时的落点（全库审查 2026-11-25 #75） */
@@ -101,9 +104,9 @@ const escapedSystem = (landing: string) =>
 /** 模型不收图（capabilities.images 为 false）：本包自己落占位，不交给 pi-ai 静默替换；to-request.ts 落点 note 用同一常量 */
 export const IMAGE_OMITTED_NOTE =
   "the model does not accept images (capabilities.images is false); replaced with placeholder text"
-const MEDIA_NOTE_ALL = `${IMAGE_OMITTED_NOTE}; or ${MEDIA_PLACEHOLDER_NOTE}; or ${IMAGE_UNAVAILABLE_NOTE}`
+const MEDIA_NOTE_ALL = `${IMAGE_OMITTED_NOTE}; or ${MEDIA_PLACEHOLDER_NOTE}; or ${IMAGE_UNAVAILABLE_NOTE}; or ${IMAGE_UNSUPPORTED_NOTE}`
 const MEDIA_WHEN =
-  "the content carries an image the model does not accept, video or audio, or an image reference whose blob is unavailable"
+  "the content carries an image the model does not accept, video or audio, an image reference whose blob is unavailable, or an image whose type is outside image/jpeg, png, gif, webp"
 
 export const LOSS_MATRIX: LossMatrix = {
   "anthropic-messages": {

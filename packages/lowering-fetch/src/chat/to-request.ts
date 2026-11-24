@@ -34,12 +34,14 @@ import {
   acceptsMedia,
   IMAGE_UNAVAILABLE,
   IMAGE_UNAVAILABLE_NOTE,
+  IMAGE_UNSUPPORTED_NOTE,
   type MediaKind,
   type MediaPart,
   mediaNouns,
   mediaOmitted,
   omittedNote,
   RELAY_DIALECT_NOTE,
+  unsupportedImagePlaceholder,
 } from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
@@ -114,6 +116,8 @@ interface MediaOutcome {
   relayed: boolean
   /** 有图片引用没换回（blob 不在了），落了 `[image unavailable]` 占位 */
   unavailable: boolean
+  /** 有白名单外的图片（旧日志），落了 core 的说明占位 */
+  badMime: boolean
 }
 
 /** 用户内容：只有一段文本就用字符串（最兼容），否则用 content parts；模型收的媒体一律走 image_url data URI（视频 / 音频是方言） */
@@ -124,6 +128,7 @@ function userContent(
   const omitted = new Set<MediaKind>()
   let relayed = false
   let unavailable = false
+  let badMime = false
   const out: ChatContentPart[] = parts.map((p): ChatContentPart => {
     switch (p.type) {
       case "text":
@@ -141,6 +146,13 @@ function userContent(
           unavailable = true
           return { type: "text", text: IMAGE_UNAVAILABLE }
         }
+        {
+          const placeholder = unsupportedImagePlaceholder(p)
+          if (placeholder) {
+            badMime = true
+            return { type: "text", text: placeholder }
+          }
+        }
         if (p.type !== "image") relayed = true
         return { type: "image_url", image_url: { url: `data:${p.mime};base64,${p.data}` } }
       default: {
@@ -150,8 +162,8 @@ function userContent(
     }
   })
   if (out.length === 1 && out[0]?.type === "text")
-    return { content: out[0].text, omitted, relayed, unavailable }
-  return { content: out, omitted, relayed, unavailable }
+    return { content: out[0].text, omitted, relayed, unavailable, badMime }
+  return { content: out, omitted, relayed, unavailable, badMime }
 }
 
 /**
@@ -170,12 +182,14 @@ function toolContent(
   textOnly: Set<MediaKind>
   relayed: boolean
   unavailable: boolean
+  badMime: boolean
 } {
   const unsupported = new Set<MediaKind>()
   const textOnly = new Set<MediaKind>()
   const media: MediaPart[] = []
   let relayed = false
   let unavailable = false
+  let badMime = false
   const text = parts
     .map((p) => {
       switch (p.type) {
@@ -191,6 +205,12 @@ function toolContent(
           if (accepted && isImageRef(p)) {
             unavailable = true
             return IMAGE_UNAVAILABLE
+          }
+          // 白名单外的旧图片：不上浮（上浮了照样 400），原位落 core 的说明
+          const placeholder = accepted ? unsupportedImagePlaceholder(p) : undefined
+          if (placeholder) {
+            badMime = true
+            return placeholder
           }
           if (accepted && lift) {
             media.push(p)
@@ -211,7 +231,7 @@ function toolContent(
       }
     })
     .join("\n")
-  return { text, media, unsupported, textOnly, relayed, unavailable }
+  return { text, media, unsupported, textOnly, relayed, unavailable, badMime }
 }
 
 /** tool 消息只收文本、媒体换成占位的 note；只有图片时与改动前逐字一致 */
@@ -284,7 +304,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
       case "user": {
         const c = userContent(item.parts, capabilities)
         messages.push({ role: "user", content: c.content })
-        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable || c.badMime
         land(
           landings,
           item.event,
@@ -296,6 +316,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
           item.escaped ? ESCAPED_NOTE : undefined,
           omittedNote(c.omitted),
           c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+          c.badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
@@ -316,7 +337,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         })
         const mediaLifted = c.media.length > 0
         if (mediaLifted) lifted.push(...liftedAttachment(item, c.media))
-        const dropped = c.unsupported.size > 0 || c.textOnly.size > 0 || c.unavailable
+        const dropped = c.unsupported.size > 0 || c.textOnly.size > 0 || c.unavailable || c.badMime
         const lossy = item.escaped || item.isError || dropped || mediaLifted
         land(
           landings,
@@ -330,6 +351,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
           toolOmittedNote(c.textOnly),
           omittedNote(c.unsupported),
           c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+          c.badMime ? IMAGE_UNSUPPORTED_NOTE : undefined,
           mediaLifted
             ? c.media.every((m) => m.type === "image")
               ? "a tool message takes text only, so its images move into a user message after this batch of tool messages, labelled as tool output"
