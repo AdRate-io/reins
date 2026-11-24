@@ -114,12 +114,15 @@ resolved at run start. A platform that stores each user's MCP servers in a datab
 when a request arrives, builds (or fetches from cache) the matching `mcpTools()` sockets, and runs. A server
 added or removed by the user takes effect on their next message; the loop tells the model what changed.
 
-One consequence to know about: a run paused for approval is signed with the tool table it had. If the
-configuration changes while it is paused, resuming is rejected as configuration drift (`RunStateError`
-`config_mismatch`). Hosts have three honest options: wait for the session to finish before applying the change,
-accept that the paused run is abandoned and start a new one, or pass `allowConfigDrift: true` to resume anyway —
-that resume also emits the tool-change note. What the library will not do is silently resume with a different
-tool table than the one the approver saw.
+This also holds while a run is paused for approval. A paused run is signed with the model and with the
+definitions of the tools behind its pending calls, not with the whole tool table: adding a server, or removing
+one that none of the pending calls use, does not block the resume — the loop appends the tool-change note and
+carries on. Resuming is rejected as configuration drift (`RunStateError` `config_mismatch`) only when the model
+changed, or when a tool a pending call depends on was removed or changed its definition (description or input
+schema), because the approver approved that call against that definition. States written before core 0.10
+still compare the whole configuration and are rejected by any change. When a resume is rejected, the honest
+options are: wait for the session to finish before applying the change, accept that the paused run is abandoned
+and start a new one, or pass `allowConfigDrift: true` to resume anyway.
 
 ## Expiring credentials
 
@@ -156,6 +159,7 @@ separate OAuth token, each seeing the same tool catalog but a different set of a
 decide *what to do to which account*; which identity carries the call is an authorization rule, and it belongs to
 the host. Pass `route`:
 
+<!-- recipe: packages/tools-mcp/src/multi-credential.recipe.test.ts -->
 ```ts
 import { httpTransport, type McpRoute, type McpTransport, mcpTools } from "@reinsjs/tools-mcp"
 
@@ -252,37 +256,42 @@ are unaffected. **But it silently defeats approval policies written against tool
 changing a budget and deleting an asset group are all called `tool_execute`; what actually happens is in the
 arguments.
 
+<!-- recipe: packages/brain/src/gateway-tool.recipe.test.ts -->
 ```ts
+import { approval, type PolicyRule } from "@reinsjs/brain"
+
 // WRONG — this never matches. Every operation is named tool_execute.
 approval({ deny: ["*_delete"], allow: ["*"] })
 
 // RIGHT — decide on the operation name inside the arguments.
+/** The operation a gateway call actually runs is in this argument */
 const operationOf = (args: unknown): string =>
   typeof args === "object" && args !== null && "tool_name" in args
     ? String((args as { tool_name?: unknown }).tool_name ?? "")
     : ""
 
-approval({
-  ask: [{
-    id: "gateway.writes",
-    match: (call) =>
-      call.name === "tool_execute" && /_(create|update|delete|upload)$/.test(operationOf(call.args)),
-    summary: (call) => `TikTok ${operationOf(call.args)}`,   // the approver sees the real operation
-  }],
-  allow: [
-    { id: "gateway.reads", match: (call) =>
-        call.name === "tool_execute" && /_(get|list|search)$/.test(operationOf(call.args)) },
-    "tool_list",
-    "tool_get",
-  ],
-})
+/** Writes ask a human. The test is the operation name in the arguments, not the tool name. */
+const gatewayWrites: PolicyRule = {
+  id: "gateway.writes",
+  match: (call) =>
+    call.name === "tool_execute" && /_(create|update|delete|upload)$/.test(operationOf(call.args)),
+  summary: (call) => `TikTok ${operationOf(call.args)}`, // the approver sees the real operation
+}
+
+/** Reads pass without asking, decided the same way */
+const gatewayReads: PolicyRule = {
+  id: "gateway.reads",
+  match: (call) => call.name === "tool_execute" && /_(get|list|search)$/.test(operationOf(call.args)),
+}
+
+approval({ ask: [gatewayWrites], allow: [gatewayReads, "tool_list", "tool_get"] })
 ```
 
 The executable version of this recipe is `packages/brain/src/gateway-tool.recipe.test.ts`, including the negative
 case that proves the name-based rule lets a delete through.
 
 With no rules configured the default is safe but blunt: such a server declares no annotations, so the translated
-tool carries no `risk`, and `unmatched: "byRisk"` sends **every** call — reads included — to a human. That is
+tool defaults to `risk: "medium"`, and `unmatched: "byRisk"` sends **every** call — reads included — to a human. That is
 fail-closed by design; open up the read path with the recipe above rather than by allowing the dispatcher wholesale.
 
 Two more things worth knowing about servers of this shape:
@@ -303,9 +312,11 @@ out of the model's reach entirely (they go through your own tools, with your own
 and stop sending two hundred tool definitions on every request. Both are one `override` plus
 `@reinsjs/brain`'s `lazyTools()`:
 
+<!-- recipe: packages/tools-mcp/src/readonly-lazy.recipe.test.ts -->
 ```ts
 import { lazyTools } from "@reinsjs/brain"
 import { normalizeToolOutput, type Tool, type ToolResult } from "@reinsjs/core"
+import { type McpToolsOptions, mcpTools } from "@reinsjs/tools-mcp"
 
 /** TikTok puts business errors in a successful result: text = {"code": <non-zero>, "message": ...} */
 const businessErrorOf = (result: ToolResult): string | undefined => {
@@ -334,7 +345,7 @@ const withBusinessErrors = (tool: Tool): Tool => ({
 })
 
 /** reads: on the menu, loaded on demand; everything else: not a tool the model has */
-const readOnlyLazy = (tool: Tool, info: McpToolInfo) =>
+const readOnlyLazy: McpToolsOptions["override"] = (tool, info) =>
   info.annotations?.readOnlyHint === true ? withBusinessErrors({ ...tool, lazy: true }) : false
 
 const tiktok = mcpTools({ transport, override: readOnlyLazy })

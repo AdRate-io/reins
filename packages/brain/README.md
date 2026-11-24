@@ -34,7 +34,7 @@ const agent = createAgent({
 
 | module | what the model gets | what it costs you |
 | --- | --- | --- |
-| `perception()` | A `system_note` at the end of the timeline with context usage, history length and budget headroom, in coarse tiers so it does not change every turn (cache-friendly). Calibrated against the last real `budget_usage`. | nothing |
+| `perception()` | A `system_note` at the end of the timeline with context usage (and where auto-folding starts), compactions so far, budget headroom and spilled results, in coarse tiers so it does not change every turn (cache-friendly). Calibrated against the last real `budget_usage`. Unfolded turns and session tokens are measured too but only kept in `meta.reading` (pass your own `render` to show them). | nothing |
 | `compact()` | A `compact` tool: the model summarizes a range of old turns itself; the summary carries a manifest of the folded tool results, plus a second list of folded user messages that carried images, video or audio, and a `recall({ seq })` tool fetches any of them back verbatim (a recalled user message comes back as an `untrusted` tool result, media included). When the window passes 75% and the model has not compacted since the last fold, it appends a note asking the model to compact first, and asks once more, more bluntly, at 80% (`decidedBy: "forced"`; `force: false` turns this off, `force: { at, render, directive }` tunes it — `at` takes one ratio or an ascending list). The request is marked as a directive, so lowerings deliver it as a tagged user note even where mid-conversation system messages are accepted: some upstreams accept those but do not act on instructions inside them. If the model still does not compact, a threshold fallback at 85% folds the oldest turns down to 60%. Compacting `maxConsecutive` (default 3) times in a row without a turn of progress pauses the run with `reason: "budget"` and `code: "reins.compact_stalled"`. **Recommended on** since 2026-09-10: measured on DeepSeek and Claude, recall stayed at 100% while tokens went down. | a `BlobStore` is not required |
 | `pins()` | Host-declared constraints (static text or extracted from the conversation) plus a `pin` tool. Pinned notes survive compaction and are re-injected when they scroll out. A host spec can also be a **resident snapshot** (`{ name, snapshot }`, sync or async): taken at the start of each segment — the session's first turn and the first turn after every compaction — and appended only when it differs from the copy in view, so an index of the model's memory stays at hand without being rewritten mid-task (see below). | nothing |
 | `spill()` | Tool results above a size limit are stored whole in the `BlobStore`; the model sees head + tail + a blob id and pages through with `fetch_blob`. Without a `BlobStore` the module warns once and passes results through unchanged (no silent truncation). | a `BlobStore` |
@@ -55,6 +55,7 @@ const agent = createAgent({
 
 `haltOnFailure` and `stopAfter` read `ctx.batch` — the calls of the current batch, the results logged so far, the calls left waiting, and whether this is a resumed batch — and work together:
 
+<!-- recipe: packages/brain/src/act-then-announce.recipe.test.ts -->
 ```ts
 const sockets = [
   haltOnFailure({ applies: (_call, tool) => tool?.risk !== "low" }), // first: a held-back call never reaches the others
@@ -76,6 +77,7 @@ Any `MemoryStore` (in-memory, `@reinsjs/store-sqlite`, `@reinsjs/store-pg`) is a
 
 Compaction folds the conversation, not the system prompt or the tool list, so the model keeps who it is and what it can do. What it loses is context you attached to the conversation — an index of its memory, the item it is working on. Declare that as a resident snapshot instead:
 
+<!-- recipe: packages/brain/src/resident-context.recipe.test.ts -->
 ```ts
 /** One line per memory file: the index, not the content. The model opens a file with its `memory` tool. */
 function memoryIndex(store: MemoryStore) {

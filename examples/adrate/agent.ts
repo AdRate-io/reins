@@ -100,6 +100,20 @@ const model =
         midConversationSystem: false,
       })
 
+/**
+ * 签名暂停状态（续跑凭据）的密钥。没设 REINS_SECRET 就每个进程随机一把并告警一次，不用写死的开发值
+ * （照抄进宿主时，写死的值等于人人都能伪造续跑状态）。随机密钥下暂停状态只在本进程有效：run.ts 在同一进程里
+ * 审批续跑没问题；数据库是持久的，换进程后旧的暂停续不上，只能对同一会话发新消息——要跨进程续跑就设 REINS_SECRET。
+ */
+function signingSecret(): string {
+  const configured = process.env.REINS_SECRET
+  if (configured) return configured
+  console.warn(
+    "REINS_SECRET is not set: using a random per-process secret. Paused runs cannot be resumed after a restart or on another instance; set REINS_SECRET to resume across processes.",
+  )
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("")
+}
+
 export const agent = createAgent({
   model,
   store: (() => {
@@ -120,5 +134,5 @@ export const agent = createAgent({
     approval({ unmatched: "byRisk" }), // 读放行、写先问人；放最后，判定的是真正要执行的入参
   ],
   maxTurns: 150,
-  secret: process.env.REINS_SECRET ?? "dogfood-only-secret",
+  secret: signingSecret(),
 })
