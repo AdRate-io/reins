@@ -113,7 +113,7 @@
 
 **有损矩阵是合同，测试守着** — `LOSS_MATRIX` 声明 api × 事件 type 的所有可能落点，`toRequest` 记录的每条实际落点必须命中其中一条，且矩阵里不能有从未被命中的死条目（`loss-matrix.test.ts`）。新增事件类型或新 API 不补表，测试就红。边界：矩阵只覆盖"落到哪"，不覆盖"落得对不对"，后者靠 `pi-lowering.test.ts` 的假 fetch 请求体断言。
 
-**运维事件一律不下发** — `approval_request` / `approval_decision` / `run_paused` / `run_resumed` / `budget_usage` / `memory_op` / `handoff` / `core.error` 记 `dropped/none`，`ext.*` 同样（`NOT_SENT`）。这些信息由别的事件承载（审批结果在 `tool_result.isError`、交接由新会话首条 user 承载）。边界：投影层默认已经过滤掉它们，矩阵这一层是**第二道声明**而非唯一防线；宿主要让模型看见 `ext.*`，得在投影层翻成 core 事件。
+**运维事件一律不下发** — `approval_request` / `approval_decision` / `run_paused` / `run_resumed` / `budget_usage` / `memory_op` / `handoff` / `core.error` 记 `dropped/none`，`ext.*` 同样（`NOT_SENT`）。这些信息由别的事件承载（审批结果在 `tool_result.isError`、交接由新会话首条 user 承载）。边界：投影层默认已经过滤掉它们（`ext.*` 由 `visibilityFilter` 按前缀剔除，2026-11-25 起），矩阵这一层是**第二道声明**而非唯一防线；宿主要让模型看见 `ext.*`，得设 `keepExtEvents` 并在投影层翻成 core 事件。
 
 **思考的来源判定与 pi-ai 同口径：provider + api + model 三者一致**（2026-11-24 改，原为只比 provider + api）— 落点声明的是 pi-ai 实际怎么发，而 pi-ai 回放时按 `transform-messages` 的 `isSameModel` 三者严格比，不一致就把带签名的思考降成纯文本、redacted / 空的丢掉；原来"只是 id 不同仍记 exact"（DECISIONS 2026-09-08，顾虑厂商回报的 id 带日期后缀或被网关改名）因此是没声明的有损。型号 id 取自厂商在 `message_start` 的回报（anthropic-messages 线），`spikes/pi-reported-model/` 只实测了 DeepSeek Anthropic 端口与官方 Haiku 5.5 两处，回报与请求逐字一致——这两处只在会话中途换型号时触发；请求别名而厂商回报带日期的 id、或经会改名的中转站时未测，那时每轮都会降级（落点如实记有损）。Responses 线记录请求的 id，不漂移。同一情形下 Responses 线正文的消息 id / phase（pi-ai 剥掉 textSignature）与工具调用的 namespace 也不回放，记 lossy；`fc_` 项 id 不回放只影响配对，exact 加备注。用例直接调 pi-ai 的 `transformMessages` 锁住口径，上游升级改了判据会红。边界：只改落点记录，请求体不变；fetch 版同样三者一致，但换型号是 dropped（它自己不发），两包口径一致。
 

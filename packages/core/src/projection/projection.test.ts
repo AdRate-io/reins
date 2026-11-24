@@ -211,6 +211,41 @@ describe("visibilityFilter", () => {
     }).apply(timeline, ctxOf(timeline))
     expect(seqs(events)).toEqual([2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13])
   })
+
+  // 全库审查 2026-11-25 #19：ext.* 三条降级线都 dropped 不下发，投影留着它就会把模型看不到的字节算进估算
+  const extRegistry = createCoreRegistry([{ type: "ext.audit", version: 1 }])
+  const extEvent = (seq: number, size: number): Event => ({
+    id: idOf(seq),
+    sessionId: SESSION,
+    seq,
+    at: NOW,
+    type: "ext.audit",
+    schemaVersion: 1,
+    actor: "host",
+    trust: "system",
+    payload: { blob: "x".repeat(size) },
+  })
+
+  it("ext.* 缺省不可见；keepExtEvents 留给宿主自己的策略翻译；覆盖 invisibleTypes 不改变 ext 口径", () => {
+    const tl = [user(1, "hi"), extEvent(2, 10), text(3, "ok")]
+    expect(seqs(visibilityFilter().apply(tl, ctxOf(tl)).events)).toEqual([1, 3])
+    expect(seqs(visibilityFilter({ invisibleTypes: [] }).apply(tl, ctxOf(tl)).events)).toEqual([1, 3])
+    expect(seqs(visibilityFilter({ keepExtEvents: true }).apply(tl, ctxOf(tl)).events)).toEqual([1, 2, 3])
+  })
+
+  it("缺省投影不把 ext.* 的字节算进估算，也不因它触发兜底裁剪", () => {
+    const tl = [user(1, "hi"), extEvent(2, 40_000), user(3, "next")]
+    const r = project({
+      timeline: tl,
+      budget: { contextLimit: 12_000 },
+      registry: extRegistry,
+      now: NOW,
+      newId: () => "n",
+    })
+    expect(r.events.map((e) => e.type)).toEqual(["core.user_message", "core.user_message"])
+    expect(r.stats.estimatedTokens).toBeLessThan(100)
+    expect(r.stats.overBudget).toBe(false)
+  })
 })
 
 describe("foldCompactions", () => {
