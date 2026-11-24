@@ -7,6 +7,7 @@ import {
   InMemoryEventLog,
   isContentPart,
   type RunResult,
+  RunStateError,
   runLoop,
   type SerializedRunState,
   type Tool,
@@ -646,6 +647,35 @@ describe("审批暂停与跨请求恢复", () => {
     const ok = await handler(postRequest({ sessionId: "s1", resume: result.state, decisions }))
     expect(ok.status).toBe(200)
     await ok.text()
+  })
+
+  it("结论指向 pending 但没在等审批的调用：HTTP 与 runLoop 两个入口同判 unknown_tool_call（HTTP 409、一条日志不写；BUG-261125-1）", async () => {
+    // c1 是不要审批的客户端工具：暂停后它是 pending，却从没发出 approval_request——"预先批准"它必须被拒
+    const pick: Tool = { name: "pick_file", description: "让用户选文件", inputSchema: {}, side: "client" }
+    const { handler, log, agent } = setup(
+      [{ drafts: [callTool("c1", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [pick],
+      { secret: "k" },
+    )
+    const { result } = await pauseFirst(handler)
+    const before = (await logged(log, "s1")).length
+    const decisions = [{ toolCallId: "c1", approved: true, by: "boss" }]
+
+    // 入口一：HTTP 预校验
+    const res = await handler(postRequest({ sessionId: "s1", resume: result.state, decisions }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: string; message: string }
+    expect(body.error).toBe("unknown_tool_call")
+
+    // 入口二：同一份日志、同一组结论直接交 runLoop，判定与文案逐字一致
+    const gen = runLoop({ ...agent, sessionId: "s1", resume: result.state, decisions })
+    const err = await gen.next().then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(RunStateError)
+    expect(err).toMatchObject({ code: body.error, message: body.message })
+    expect((await logged(log, "s1")).length).toBe(before)
   })
 })
 

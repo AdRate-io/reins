@@ -485,7 +485,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         ...(cfg.allowConfigDrift !== undefined ? { allowConfigDrift: cfg.allowConfigDrift } : {}),
       })
     }
-    // 结论只收正在等审批的调用（不只是 pending）：口径在 state.ts。server 预校验眼下仍只查 pending，第二波改调同一个函数（BUG-261125-1）
+    // 结论只收正在等审批的调用（不只是 pending）：口径在 state.ts，server 的 HTTP 预校验调同一个函数
     assertDecisionsAwaitApproval({ sessionId, timeline, decisions: ownDecisions })
   }
 

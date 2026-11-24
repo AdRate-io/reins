@@ -58,7 +58,7 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 - **Resume is validated before anything is written.** Signature (when `secret` is set) and the digest of pending tool calls must match the log, and the model and the definitions of the tools behind the pending calls must be unchanged (states from before 0.10 still compare the whole configuration hash); drift answers `409 config_mismatch` unless the host passes `allowConfigDrift`. A request carrying `decisions` must carry `resume` as well (`400` otherwise); the state is in the `result` frame of the paused run and in the `end` frame of a replay.
 - **Session ids** must be non-empty printable ASCII without spaces (`400` otherwise).
 - Failures after the stream has opened arrive as a `200` with an `error` frame, and the run slot is released so the session does not stay `409` forever.
-- **Approval decisions are checked against the right session.** A decision without `sessionId` (or with this session's id) must point at one of this session's pending calls, else `409 unknown_tool_call`; a decision carrying a sub-agent's `childSessionId` is passed through untouched and checked by the sub-agent's own run.
+- **Approval decisions are checked against the right session.** A decision without `sessionId` (or with this session's id) must point at one of this session's calls that is waiting for approval (pending, with an approval request and no decision yet), else `409 unknown_tool_call` — the same check `runLoop` makes, so a pending call that never asked for approval cannot be approved in advance; a decision carrying a sub-agent's `childSessionId` is passed through untouched and checked by the sub-agent's own run.
 
 ## Options
 

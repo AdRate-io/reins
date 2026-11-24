@@ -15,6 +15,7 @@
  */
 import {
   type ApprovalDecisionInput,
+  assertDecisionsAwaitApproval,
   awaitingOf,
   type ContentPart,
   checkImageRefs,
@@ -853,26 +854,27 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
           })
         }
         const pending = pendingToolCalls(timeline)
-        const pendingIds = new Set(pending.map((c) => c.payload.toolCallId))
-        // 与 runLoop 同一口径（§10.1）：只有本会话的结论才对照本会话的 pending；带别的 sessionId 的是给子代理会话的，
-        // 这里不校验、原样下传，由 asTool 在子会话里校验。两处一分叉，经 HTTP 续跑子代理审批就会 409（2026-09-10 审查修）
-        for (const d of body.decisions ?? []) {
-          if (d.sessionId !== undefined && d.sessionId !== sessionId) continue
-          if (!pendingIds.has(d.toolCallId)) {
-            throw new RunStateError(
-              "unknown_tool_call",
-              `approval decision refers to call ${d.toolCallId}, which is not pending`,
-              {
-                toolCallId: d.toolCallId,
-              },
-            )
-          }
-        }
+        // 与 runLoop 调同一个真源（core assertDecisionsAwaitApproval）：本会话的结论只收正在等审批的调用，
+        // 带别的 sessionId 的是给子代理会话的，原样下传、由 asTool 在子会话里校验。两处一分叉，要么经 HTTP 续跑子代理审批 409
+        // （2026-09-10 审查修），要么预批一个没请求过审批的调用拿到 200 + error 帧而不是 409（BUG-261125-1）
+        assertDecisionsAwaitApproval({ sessionId, timeline, decisions: body.decisions ?? [] })
         const checked = checkInput(body.input, timeline, pending, contributions.tools)
         if (!checked.ok) return json(checked.status, { error: checked.error, message: checked.message })
         input = checked.input
       } catch (err) {
-        if (err instanceof RunStateError) return json(409, { error: err.code, message: err.message })
+        if (err instanceof RunStateError) {
+          // 本进程正有 run 在写这条会话：预校验读的是一条正在前进的日志（例如另一个窗口已交了同一份结论、工具在跑），
+          // 判出的"不在等审批 / pending 对不上"只是表象，如实回 run_in_progress（与 runs.create 撞名额同一形状）
+          if (runs.get(sessionId) !== undefined) {
+            const conflict = new RunConflictError(sessionId)
+            return json(
+              409,
+              { error: conflict.code, message: conflict.message },
+              { [SESSION_HEADER]: sessionId },
+            )
+          }
+          return json(409, { error: err.code, message: err.message })
+        }
         throw err
       }
     }
