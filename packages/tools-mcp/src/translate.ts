@@ -22,8 +22,10 @@ export function modelToolName(mcpName: string, prefix = ""): string {
 /**
  * 一台服务器全部工具的模型侧名字，保证互不相同。改写（换字符、截断）会让不同原名落到同一个名字上（`a.b` 与 `a_b`、
  * 前 64 位相同的两个长名）；core 对同名工具先到者赢、后到者静默丢掉，模型永远看不到它——所以撞名必须在这里消掉。
- * 规则：合规原名（不需改写的）先占名，与服务器列出的顺序无关，这样加了一件改写工具不会挤走已有工具的名字；
- * 改写过的按列出顺序取 `modelToolName`，被占就在末尾追加 `_2`、`_3`…（必要时截掉尾部给后缀让位，仍不超 64）。
+ * 规则：合规原名（不需改写的）先占名，这样加了一件改写工具不会挤走已有工具的名字；
+ * 改写过的按**原名排序**（码元序，不随 locale 变）依次取 `modelToolName`，被占就在末尾追加 `_2`、`_3`…
+ * （必要时截掉尾部给后缀让位，仍不超 64）。按原名排序而不是按列出顺序：服务器换了列出顺序，名字不跟着换主。
+ * 仍不保证跨服务器变更稳定：新增一件合规名字恰好等于某个改写名时，原占用者会被挤到带后缀的名字（README 写明）。
  * 返回值与入参一一对应；与 `modelToolName` 的结果不同即是撞名改的，调用方应在告警里说明
  */
 export function modelToolNames(mcpNames: readonly string[], prefix = ""): string[] {
@@ -34,9 +36,11 @@ export function modelToolNames(mcpNames: readonly string[], prefix = ""): string
     taken.add(raw)
     return raw
   })
-  return mcpNames.map((n, i) => {
-    const done = out[i]
-    if (done !== undefined) return done
+  const rewritten = mcpNames
+    .map((n, i) => ({ n, i }))
+    .filter(({ i }) => out[i] === undefined)
+    .sort((a, b) => (a.n < b.n ? -1 : a.n > b.n ? 1 : 0))
+  for (const { n, i } of rewritten) {
     const base = modelToolName(n, prefix)
     let name = base
     for (let k = 2; taken.has(name); k++) {
@@ -44,8 +48,9 @@ export function modelToolNames(mcpNames: readonly string[], prefix = ""): string
       name = `${base.slice(0, 64 - suffix.length)}${suffix}`
     }
     taken.add(name)
-    return name
-  })
+    out[i] = name
+  }
+  return out as string[]
 }
 
 /**

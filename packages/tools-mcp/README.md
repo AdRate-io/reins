@@ -378,6 +378,9 @@ Tool names that the model APIs reject (`^[A-Za-z0-9_-]{1,64}$`) are rewritten (`
 one-time warning; the original name is used on the wire. If a rewrite lands on a name another tool of the same
 server already uses (`files.delete` next to `files_delete`, or two long names sharing their first 64 characters), the
 rewritten one gets a `_2`, `_3`… suffix and the warning names the clash — names that need no rewrite keep theirs.
+Suffixes are handed out in order of the original names, so a server listing its tools in a different order does
+not change them. They are not stable across server changes, though: if the server adds a tool whose valid name
+equals a rewritten one, the rewritten tool moves to a suffixed name.
 
 Not supported: sampling, elicitation, resources, prompts, MCP Apps, and driving an OAuth authorization
 prompt (obtain tokens in your application and hand them over through `auth`).

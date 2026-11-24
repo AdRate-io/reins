@@ -13,15 +13,25 @@ describe("modelToolName：模型侧工具名", () => {
 })
 
 describe("modelToolNames：一台服务器的模型侧名字互不相同", () => {
-  it("合规原名先占名（与列出顺序无关）；改写后撞名追加 _2、_3；后缀让位截断仍 ≤ 64", () => {
+  it("合规原名先占名（与列出顺序无关）；改写后撞名按原名排序追加 _2、_3；后缀让位截断仍 ≤ 64", () => {
     expect(modelToolNames(["a.b", "a_b"])).toEqual(["a_b_2", "a_b"])
-    expect(modelToolNames(["a.b", "a-b", "a b", "a_b"])).toEqual(["a_b_2", "a-b", "a_b_3", "a_b"])
+    // "a b"（空格 0x20）排在 "a.b"（0x2e）前，先拿 _2
+    expect(modelToolNames(["a.b", "a-b", "a b", "a_b"])).toEqual(["a_b_3", "a-b", "a_b_2", "a_b"])
     expect(modelToolNames(["a.b", "a_b_2", "a_b"])).toEqual(["a_b_3", "a_b_2", "a_b"])
     const long = "y".repeat(70)
     const names = modelToolNames([`${long}1`, `${long}2`], "p_")
     expect(names).toEqual([`p_${"y".repeat(62)}`, `p_${"y".repeat(60)}_2`])
     expect(names.every((n) => n.length <= 64)).toBe(true)
     expect(modelToolNames(["ok", "files.read"])).toEqual(["ok", "files_read"])
+  })
+
+  it("改写名不随服务器列出顺序变：同一组原名任意顺序列出，每个原名拿到的模型侧名字相同", () => {
+    const names = ["a.b", "a b", "a/b", "a_b", "c.d"]
+    const expected = new Map(names.map((n, i) => [n, modelToolNames(names)[i]]))
+    for (const order of [[...names].reverse(), ["c.d", "a/b", "a_b", "a b", "a.b"]]) {
+      const got = modelToolNames(order)
+      expect(new Map(order.map((n, i) => [n, got[i]]))).toEqual(expected)
+    }
   })
 })
 
