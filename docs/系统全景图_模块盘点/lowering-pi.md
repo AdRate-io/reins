@@ -6,7 +6,7 @@
 
 本包是 `@reinsjs/core` 的 `Lowering` 接口在 **pi-ai** 上的第一个实现，只做两件事：把投影后的事件翻成某家 API 的请求（`toRequest`），把流式响应翻回事件草稿（`stream`）。它是整个仓库里唯一允许出现"角色"概念的地方（宪法二）。
 
-依赖只有两个：`@earendil-works/pi-ai` **pin 精确版本 `0.85.1`**（package.json 里没有 `^`，S4 决策）与 `@reinsjs/core`（workspace）。第一版只认两条线协议：`anthropic-messages` 与 `openai-responses`（`SUPPORTED_APIS`），其余在 `resolveModel` 里就抛 `LoweringError("unsupported_api")`。
+依赖只有两个：`@earendil-works/pi-ai` **pin 精确版本 `0.85.1`**（package.json 里没有 `^`，S4 决策）与 `@reinsjs/core`（workspace）。第一版只认两条线协议：`anthropic-messages` 与 `openai-responses`（`SUPPORTED_APIS`），其余在 `resolveModel` 里就抛 `LoweringError("unsupported_api")`。要加 `openai-completions` 先补"只有思考的一轮"的 dropped 落点：pi-ai 在那条线上整条跳过既无内容又无工具调用的 assistant（踩坑 51 同类约束），用例锁住它目前被拒。
 
 翻译分两跳，这是理解本包的关键：
 

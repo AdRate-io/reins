@@ -677,6 +677,27 @@ describe("PiAiLowering — 错误与矩阵", () => {
       ],
     })
     expect(() => custom.capabilities({ provider: "x", id: "m" })).toThrow("[unsupported_api]")
+    // openai-completions 必须被拒：pi-ai 在这条线上整条跳过只有思考的 assistant，本包没有为它声明 dropped 落点
+    const completions = new PiAiLowering({
+      apiKey: () => "k",
+      models: [
+        {
+          provider: "deepseek",
+          id: "deepseek-flash",
+          api: "openai-completions",
+          baseUrl: "https://x",
+          reasoning: true,
+          contextWindow: 1,
+          maxOutputTokens: 1,
+        },
+      ],
+    })
+    expect(() => completions.capabilities({ provider: "deepseek", id: "deepseek-flash" })).toThrow(
+      "[unsupported_api]",
+    )
+    expect(() =>
+      completions.toRequest({ events: [], model: { provider: "deepseek", id: "deepseek-flash" } }),
+    ).toThrow("[unsupported_api]")
     const req = lowering.toRequest({ events: [], model: { provider: "anthropic", id: "claude-opus-5" } })
     await expect(collect(lowering.stream(req))).rejects.toThrow("[missing_api_key]")
   })

@@ -13,7 +13,13 @@ import { LoweringError, type ModelRef } from "@reinsjs/core"
 /** 本包内部使用的 pi-ai 模型类型 */
 export type PiModel = Model<Api>
 
-/** 第一版支持的线协议 */
+/**
+ * 第一版支持的线协议。
+ *
+ * 加 openai-completions 之前先补"只有思考的一轮"的落点：pi-ai 0.85.1 在 `api/openai-completions.js`
+ * 的 convertMessages 里整条跳过既无内容又无工具调用的 assistant（踩坑 51 的同类约束），
+ * 此时思考要记 dropped，不能沿用 exact。本表外的协议在 resolveModel 处即拒，用例锁住。
+ */
 export const SUPPORTED_APIS: ReadonlySet<string> = new Set(["anthropic-messages", "openai-responses"])
 
 /** 宿主自定义模型：用我们的词汇描述，字段与 LoweringCapabilities 对齐 */
