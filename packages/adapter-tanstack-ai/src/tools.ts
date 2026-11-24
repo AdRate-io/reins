@@ -17,7 +17,7 @@ import {
   type ToolResult,
 } from "@reinsjs/core"
 import type { AnyTool, JSONSchema, ToolExecutionContext } from "@tanstack/ai"
-import { convertSchemaToJsonSchema } from "@tanstack/ai"
+import { convertSchemaToJsonSchema, DISCOVERY_TOOL_NAME } from "@tanstack/ai"
 import { partAsText, toTanstackContent } from "./content.js"
 
 /** 视图标记：这是 TanStack 宿主工具在 reins 这边的影子，不由 reins 执行 */
@@ -57,6 +57,9 @@ export function viewOfTanstackTool(tool: AnyTool, warn?: (message: string) => vo
     side: tool.execute ? "server" : "client",
   }
   if (tool.needsApproval === true) view.needsApproval = true
+  // 引擎为 lazy 工具自造的发现工具（`__lazy__tool__discovery__`）宿主声明不了 metadata：它只读、只回工具定义，
+  // 与 brain 的 tool_find 同类，缺省按 low（第二波返修 S2）。否则 approval 缺省 byRisk 每次发现都停下来问人
+  if (tool.name === DISCOVERY_TOOL_NAME) view.risk = "low"
   const declared = (tool.metadata as { reins?: unknown } | undefined)?.reins
   if (typeof declared === "object" && declared !== null) {
     const { risk, replayable } = declared as { risk?: unknown; replayable?: unknown }
