@@ -430,16 +430,17 @@ describe("reinsMiddleware：脑子模块", () => {
       "user_message",
       "tool_call",
       "budget_usage",
+      "tool_started", // memory 不可重放
       "memory_op",
       "tool_result",
       "model_text",
       "budget_usage",
       "run_ended",
     ])
-    const op = events[4] as CoreEventOf<"core.memory_op">
+    const op = events[5] as CoreEventOf<"core.memory_op">
     expect(op.payload).toMatchObject({ op: "create", path: "/memories/a.md" })
     expect(op.provenance?.ref).toBe("c1")
-    expect((events[5] as CoreEventOf<"core.tool_result">).payload.isError).toBe(false)
+    expect((events[6] as CoreEventOf<"core.tool_result">).payload.isError).toBe(false)
   })
 
   it("skills：菜单进系统提示，skill_read 的结果 trust=system、模型看到的不套 <untrusted>（与 runLoop 同一口径的 resultTrust）", async () => {

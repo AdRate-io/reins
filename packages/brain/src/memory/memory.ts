@@ -86,6 +86,9 @@ export function memory(opts: MemoryOptions = {}): Socket {
     inputSchema: MEMORY_INPUT_SCHEMA as unknown as Record<string, unknown>,
     validate: parseMemoryCommand,
     risk: "low",
+    // low 只表示不用问人；insert / str_replace / delete / rename 不幂等（再跑一遍会插重复行、把成功的删除报成不存在），
+    // 开始动手后被中断的调用续跑时不能重放，落"结果未知"由模型 view 后自己判断
+    replayable: false,
     async execute(cmd, ctx) {
       if (!ctx.memory) {
         // 正常装法到不了这里（没有 MemoryStore 时工具不注册）；宿主自己把工具塞进 LoopConfig.tools 才会
