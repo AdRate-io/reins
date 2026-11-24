@@ -50,7 +50,7 @@ function isDuration(x: unknown): boolean {
 /**
  * 图片片段可写进日志的 mime 白名单（真源索引）：Anthropic / OpenAI / Gemini 都收的四种，逐字比对、不做大小写或别名归一。
  * 不在表里的（svg、heic、`image/jpg` 写法、非图片类型）一旦以图片片段进日志，之后每次请求都整段回放、厂商回非瞬断 400，
- * 会话卡死（全库审查 2026-11-25 #9）。片段形状（`isContentPart`）与各入口、降级层的图片白名单都调这一份
+ * 会话卡死（全库审查 2026-11-25 #9）。片段形状（`isContentPart`）调这一份；server、tools-mcp、降级层第二波改调（BUG-261125-1），在那之前那几处仍只查字符串
  */
 export const SUPPORTED_IMAGE_MIMES: ReadonlySet<string> = new Set([
   "image/jpeg",
