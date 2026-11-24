@@ -29,8 +29,24 @@ export function isNativeToolView(tool: ReinsTool | undefined): tool is NativeToo
   return tool !== undefined && (tool as Partial<NativeToolView>)[NATIVE_TOOL] === true
 }
 
-/** TanStack 工具 → reins 只读视图 */
-export function viewOfTanstackTool(tool: AnyTool): NativeToolView {
+/**
+ * 宿主在 TanStack 工具上给 reins 看的声明：`toolDefinition({ …, metadata: { reins: { risk: "low" } } })`。
+ * 与 reins `Tool` 同名同义——`risk` 给 approval 的缺省 byRisk 与"中断不重放"用（没声明 = 写工具、要问人），
+ * `replayable` 覆盖由 risk 推出的可重放性
+ */
+export interface ReinsToolMetadata {
+  risk?: "low" | "medium" | "high"
+  replayable?: boolean
+}
+
+const RISKS: ReadonlySet<unknown> = new Set(["low", "medium", "high"])
+
+/**
+ * TanStack 工具 → reins 只读视图。`metadata.reins` 里的 `risk` / `replayable` 抄进视图（全库审查 2026-11-25 #31：
+ * 此前视图带不了 risk，approval 缺省 byRisk 让每个宿主工具都要问人，README 的 `approval({ ask: ["deploy"] })` 名不副实）。
+ * 值不合规的字段 fail-closed：当没声明（仍按写工具、要问人），经 `warn` 报出
+ */
+export function viewOfTanstackTool(tool: AnyTool, warn?: (message: string) => void): NativeToolView {
   const view: NativeToolView = {
     [NATIVE_TOOL]: true,
     name: tool.name,
@@ -41,6 +57,20 @@ export function viewOfTanstackTool(tool: AnyTool): NativeToolView {
     side: tool.execute ? "server" : "client",
   }
   if (tool.needsApproval === true) view.needsApproval = true
+  const declared = (tool.metadata as { reins?: unknown } | undefined)?.reins
+  if (typeof declared === "object" && declared !== null) {
+    const { risk, replayable } = declared as { risk?: unknown; replayable?: unknown }
+    if (RISKS.has(risk)) view.risk = risk as NonNullable<ReinsToolMetadata["risk"]>
+    else if (risk !== undefined)
+      warn?.(
+        `tool ${tool.name}: metadata.reins.risk must be "low", "medium" or "high", got ${JSON.stringify(risk)}; treated as undeclared`,
+      )
+    if (typeof replayable === "boolean") view.replayable = replayable
+    else if (replayable !== undefined)
+      warn?.(
+        `tool ${tool.name}: metadata.reins.replayable must be a boolean, got ${JSON.stringify(replayable)}; treated as undeclared`,
+      )
+  }
   return view
 }
 

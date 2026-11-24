@@ -351,6 +351,13 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
   const now = options.now ?? (() => Date.now())
   const newId = options.newId ?? uuidv7
   const warn = options.warn ?? ((m: string) => console.warn(`[reins/adapter-tanstack-ai] ${m}`))
+  /** 同一句只告一次（每个中间件实例）：宿主工具声明写错这类每个 run 都会再撞一遍的告警走这里 */
+  const warned = new Set<string>()
+  const warnOnce = (m: string) => {
+    if (warned.has(m)) return
+    warned.add(m)
+    warn(m)
+  }
   const emitCustom = options.emitCustomEvents ?? true
   const states = new WeakMap<ChatMiddlewareContext, RunState>()
 
@@ -435,7 +442,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     const timeline = await timelineOf()
     const hostTools = new Map<string, AnyTool>()
     for (const t of config.tools) hostTools.set(t.name, t)
-    const hostViews = config.tools.map(viewOfTanstackTool)
+    // 不能写 map(viewOfTanstackTool)：第二个参数是告警出口，会把数组下标吃进去
+    const hostViews = config.tools.map((t) => viewOfTanstackTool(t, warnOnce))
     const setupCfg = {
       log,
       model,
@@ -1116,7 +1124,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (v.kind === "block") return { type: "skip", result: { error: `Tool call blocked: ${v.text}` } }
       if (v.kind === "unknown") return { type: "skip", result: { error: v.text } }
       // 引擎逐个 await 本钩子后立刻执行该工具，所以这里就是"execute 之前"：不可重放的先记开始动手（与 runLoop 同一判据；
-      // TanStack 宿主工具的视图不带 risk，按缺省口径一律算写工具）
+      // TanStack 宿主工具的 risk 只从 metadata.reins 读，没声明的按缺省口径算写工具）
       const tool = toolNamed(s, hookCtx.toolName)
       // 原生审批的第二条答复通道：UIMessage 的 approval-responded 部件（引擎构造时读出，不经 resume，init 看不到）。
       // 引擎只在批准后才对带静态 needsApproval 的工具调本钩子，所以这里见到仍在等审批的调用 = 已批准，执行前补记结论（#5）

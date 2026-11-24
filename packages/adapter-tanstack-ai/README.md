@@ -9,12 +9,20 @@ pnpm add @reinsjs/adapter-tanstack-ai @tanstack/ai@0.53.0
 ```ts
 import { reinsApprovalInterrupt, reinsMiddleware } from "@reinsjs/adapter-tanstack-ai"
 import { approval, compact, perception, spill } from "@reinsjs/brain"
-import { chat } from "@tanstack/ai"
+import { chat, toolDefinition } from "@tanstack/ai"
+
+// approval() asks about every tool whose risk it does not know: declare it on read-only host tools
+const lookup = toolDefinition({
+  name: "lookup",
+  description: "Look up an order",
+  inputSchema,
+  metadata: { reins: { risk: "low" } },
+}).server(findOrder)
 
 const stream = chat({
   adapter,
   messages,
-  tools,
+  tools: [lookup, deploy],
   systemPrompts: ["You are…"],
   middleware: [
     reinsMiddleware({
@@ -41,6 +49,7 @@ const stream = chat({
 
 - **Register the interrupt.** If `reinsApprovalInterrupt` is missing from `chat({ interrupts })`, the type layer complains; at run time the middleware also checks the engine's registry, warns once, and treats every call that would need approval as **denied** (an `approval_decision` with `by: "reins"` is left in the log) instead of letting the engine throw mid-run.
 - **`defer` pauses the whole tool batch**, not just the call that needs approval — that is where TanStack's boundary sits.
+- **Declare `risk` on host tools.** The brain reads a TanStack tool's risk from `metadata.reins` (`ReinsToolMetadata`: `risk`, `replayable`), the same fields a reins `Tool` has. Without it the tool counts as a write tool: `approval()`'s default `byRisk` asks a human before every call (so `approval({ ask: ["deploy"] })` alone also asks about `lookup`), and each call logs a `tool_started` first. A value outside the allowed ones is treated as undeclared and reported through `warn`.
 - **One approval card per call.** Reins tools (brain tools, MCP tools from `@reinsjs/tools-mcp`) are asked only through `reinsApprovalInterrupt`, whatever form their `needsApproval` takes. A host tool with TanStack's static `needsApproval: true` is asked only through TanStack's native approval, even when a socket such as `approval()` also wants to ask; the `approval_request` then carries the socket's policy and summary. Native answers are logged as `approval_decision` (`by: "tanstack"`) before the tool runs.
 - **Approval answers come from the client.** TanStack does not sign generic-interrupt continuations, so the `key` and the `by` of a `reinsApprovalInterrupt` answer are whatever the resuming client sends. The middleware only records answers for calls of this session that are waiting for approval (one answer per call); anything else is dropped with a warning. If who approved matters, check `resume` before calling `chat()`.
 - **Edited arguments are not executed.** If the approver answers TanStack's native approval with `editedArgs` that differ from the call the model made, the call is denied instead (`approval_decision` with `by: "reins"`, whose reason names the edited arguments): the log keeps the model's call as it was written, so running other arguments would make it lie. The model sees the arguments the approver wanted and can make the call again.

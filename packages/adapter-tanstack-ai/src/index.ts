@@ -56,6 +56,7 @@ export {
   isNativeToolView,
   NATIVE_TOOL,
   type NativeToolView,
+  type ReinsToolMetadata,
   type ToolBridge,
   toTanstackTool,
   viewOfTanstackTool,

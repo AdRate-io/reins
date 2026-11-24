@@ -235,7 +235,7 @@ describe("reinsMiddleware：基本流程", () => {
 
     const events = await all(f.log)
     // 每次请求 initRun 先落一条工具表快照 tools_bound（模型不可见），再导入客户端新消息
-    // TanStack 宿主工具的视图不带 risk，按缺省口径算写工具：执行前（onBeforeToolCall）先记 tool_started
+    // 没在 metadata.reins 声明 risk 的 TanStack 宿主工具按缺省口径算写工具：执行前（onBeforeToolCall）先记 tool_started
     expect(types(events)).toEqual([
       "tools_bound",
       "user_message",
@@ -1300,6 +1300,51 @@ describe("reinsMiddleware：审批", () => {
       role: "tool",
       error: expect.stringContaining("Approval denied"),
     })
+  })
+
+  it('宿主工具经 metadata.reins 声明 risk：README 的 approval({ ask: ["deploy"] }) 不再问只读工具；没声明的仍按缺省问人（全库审查 2026-11-25 #31）', async () => {
+    const lookup = toolDefinition({
+      name: "lookup",
+      description: "查询",
+      inputSchema: { type: "object", properties: {} },
+      metadata: { reins: { risk: "low" } },
+    }).server(async () => "found")
+    const sockets = [approval({ ask: ["deploy"] })]
+    const f = fixture([{ blocks: [callTool("c1", "lookup", {})] }, { blocks: [say("查到了")] }], sockets)
+    await f.run({ messages: [user("查一下")], tools: [lookup, deployTool] })
+    const events = await all(f.log)
+    expect(types(events)).toEqual([
+      "tools_bound",
+      "user_message",
+      "tool_call",
+      "budget_usage",
+      // risk: "low" 同时意味着可重放：不写 tool_started（与 runLoop 同一判据 isReplayable）
+      "tool_result",
+      "model_text",
+      "budget_usage",
+      "run_ended",
+    ])
+
+    // 没声明 risk 的宿主工具：fail-closed 不变，仍按缺省 byRisk 问人
+    const g = fixture([{ blocks: [callTool("c1", "add", { a: 1, b: 2 })] }], sockets)
+    await g.run({ messages: [user("算")], tools: [addTool, deployTool] })
+    expect(types(await all(g.log))).toContain("approval_request")
+  })
+
+  it("metadata.reins 的 risk 写错：不当声明（仍问人）并告警一次", async () => {
+    const warns: string[] = []
+    const odd = toolDefinition({
+      name: "odd",
+      description: "写错 risk",
+      inputSchema: { type: "object", properties: {} },
+      metadata: { reins: { risk: "lowish" } },
+    }).server(async () => "ok")
+    const f = fixture([{ blocks: [callTool("c1", "odd", {})] }], [approval({ ask: ["deploy"] })], {
+      warn: (m) => warns.push(m),
+    })
+    await f.run({ messages: [user("go")], tools: [odd] })
+    expect(types(await all(f.log))).toContain("approval_request")
+    expect(warns).toEqual([expect.stringContaining("odd")])
   })
 
   it("approval 模块 deny：留痕 approval_decision 后拦截，模型看到错误结果", async () => {
