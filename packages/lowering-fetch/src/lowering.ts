@@ -16,7 +16,7 @@ import {
   type ToRequestInput,
 } from "@reinsjs/core"
 import { consumeAnthropicStream } from "./anthropic/from-stream.js"
-import { encodeAnthropicRequest } from "./anthropic/to-request.js"
+import { encodeAnthropicRequest, uniformCacheTtl } from "./anthropic/to-request.js"
 import { capabilitiesOf } from "./capabilities.js"
 import { consumeChatStream } from "./chat/from-stream.js"
 import { encodeChatRequest } from "./chat/to-request.js"
@@ -151,7 +151,11 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       ...(ctx.signal ? { signal: ctx.signal } : {}),
       timedOut: signals.timedOut,
       timeoutMs: this.timeoutMs,
-      ...(model.anthropic?.cacheTtl ? { cacheTtl: model.anthropic.cacheTtl } : {}),
+      // 上游没给缓存写分档时据此定价：只有真发出去的断点全是 1h 才按 1h 算，混用（宿主顶层 cache_control 的 ttl 与本包
+      // 断点不同）时一律按 5 分钟价，costUsd 偏低、不偏高（全库审查 #74 返修）
+      ...(req.payload.api === "anthropic-messages" && uniformCacheTtl(req.payload.body) === "1h"
+        ? { cacheTtl: "1h" as const }
+        : {}),
     }
     switch (req.payload.api) {
       case "openai-chat":

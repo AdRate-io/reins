@@ -13,7 +13,12 @@ import { describe, expect, it } from "vitest"
 import { capabilitiesOf } from "../capabilities.js"
 import { eventsToIr } from "../ir.js"
 import type { FetchModel } from "../models.js"
-import { type AnthropicMessage, countBlockBreakpoints, encodeAnthropicRequest } from "./to-request.js"
+import {
+  type AnthropicMessage,
+  countBlockBreakpoints,
+  encodeAnthropicRequest,
+  uniformCacheTtl,
+} from "./to-request.js"
 
 const registry = createCoreRegistry()
 let seq = 0
@@ -77,6 +82,22 @@ function encode(
 }
 const roles = (messages: AnthropicMessage[]) => messages.map((m) => m.role)
 const landingOf = (r: ReturnType<typeof encode>, e: Event) => r.landings.find((l) => l.eventId === e.id)
+
+describe("uniformCacheTtl（全库审查 #74 返修）", () => {
+  it("断点全是 1h 才回 1h；宿主顶层 cache_control 的 ttl 与本包断点不同回 mixed；没有断点回 undefined", () => {
+    const oneHour: FetchModel = { ...opus, anthropic: { cacheTtl: "1h" } }
+    const all1h = encode([user("q")], oneHour, { tools: true, systemPrompt: "s" })
+    expect(uniformCacheTtl(all1h.body)).toBe("1h")
+    const mixed = encode([user("q")], oneHour, {
+      systemPrompt: "s",
+      requestOptions: { cache_control: { type: "ephemeral" } },
+    })
+    expect(mixed.body.cache_control).toEqual({ type: "ephemeral" })
+    expect(uniformCacheTtl(mixed.body)).toBe("mixed")
+    expect(uniformCacheTtl(encode([user("q")], opus, { systemPrompt: "s" }).body)).toBe("5m")
+    expect(uniformCacheTtl({ messages: [{ role: "user", content: "plain" }] })).toBeUndefined()
+  })
+})
 
 describe("encodeAnthropicRequest — 工具调用 id 规整（全库审查 #29）", () => {
   it("别家 / 别的降级层写下的 id（pi 版 Responses 的 'call_x|fc_y'）规整成厂商字符集、截到 64 位，tool_use 与 tool_result 同一结果", () => {

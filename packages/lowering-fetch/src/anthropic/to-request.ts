@@ -546,6 +546,31 @@ export function encodeTools(specs: readonly ToolSpec[], deferredTools: boolean):
   })
 }
 
+/**
+ * 请求里所有缓存断点（块级 + 顶层）是否同一个存活期：全是 1h 回 "1h"、全是 5 分钟（不写 ttl 即 5 分钟）回 "5m"、
+ * 两种都有回 "mixed"、一个断点都没有回 undefined。读的是真发出去的请求体——本包打的断点与宿主 requestOptions
+ * 带的顶层 `cache_control` 都在里面。上游没给缓存写分档时，只有 "1h" 才能把全部缓存写算成 1 小时（全库审查 #74 返修）。
+ * 入参按 unknown 读：payload 可能被宿主改过。
+ */
+export function uniformCacheTtl(body: Record<string, unknown>): "5m" | "1h" | "mixed" | undefined {
+  const ttls = new Set<"5m" | "1h">()
+  const visit = (b: unknown) => {
+    if (typeof b !== "object" || b === null) return
+    const cc = (b as { cache_control?: unknown }).cache_control
+    if (typeof cc !== "object" || cc === null) return
+    ttls.add((cc as { ttl?: unknown }).ttl === "1h" ? "1h" : "5m")
+  }
+  const each = (xs: unknown, f: (x: unknown) => void) => {
+    if (Array.isArray(xs)) for (const x of xs) f(x)
+  }
+  visit(body)
+  each(body.system, visit)
+  each(body.tools, visit)
+  each(body.messages, (m) => each((m as { content?: unknown } | null)?.content, visit))
+  if (ttls.size === 0) return undefined
+  return ttls.size > 1 ? "mixed" : [...ttls][0]
+}
+
 /** 数请求里块级 cache_control 的个数：system 数组、tools 数组、messages 的内容块 */
 export function countBlockBreakpoints(body: AnthropicRequestBody): number {
   const has = (b: unknown) => typeof b === "object" && b !== null && "cache_control" in b

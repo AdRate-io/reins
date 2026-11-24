@@ -78,7 +78,7 @@ export interface AnthropicStreamInput {
   signal?: AbortSignal
   timedOut?: () => boolean
   timeoutMs?: number
-  /** 请求里断点的存活期（anthropic.cacheTtl）；上游没给缓存写分档时据此决定按哪档价算（全库审查 #74） */
+  /** 请求里全部断点共同的存活期（`uniformCacheTtl` 判出，混用时不给）；上游没给缓存写分档时据此决定按哪档价算（全库审查 #74） */
   cacheTtl?: "5m" | "1h"
 }
 
@@ -294,7 +294,7 @@ function apply(ev: AnthropicStreamEvent, a: AnthropicAssembly, ctx: LoweringStre
  */
 /**
  * 缓存写里 1 小时存活期的 token 数：优先读厂商的 cache_creation 分档（后到的 message_delta 为准）；
- * 没有分档时，宿主配了 cacheTtl "1h" 就全部算 1 小时（本包打的断点都带同一个 ttl）。
+ * 没有分档时，只有请求里的断点全是 1h（cacheTtl "1h"）才全部算 1 小时；混用时按 5 分钟价，成本偏低不偏高。
  */
 function oneHourWritesOf(a: AnthropicAssembly, usage: TokenUsage, cacheTtl: "5m" | "1h" | undefined): number {
   const reported =
