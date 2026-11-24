@@ -248,6 +248,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 用户停止：runLoop vs TanStack 适配器 | runLoop 在所有暂停出口把 pending 收尾成"没执行"等结果；TanStack 引擎自己处理中止，适配器在它的边界上做不到对等，停止后 pending 照旧留着 |
 | 审批答复的可信度：server vs TanStack 适配器 | server 的 `decisions` 须连同验签的 `resume` 交、过 `authorizeSession`；TanStack 通用中断的续跑不签名、key 与 `by` 都是客户端自报，适配器只能按同一个 `assertDecisionsAwaitApproval` 收窄到正在等审批的调用（其余告警丢弃）——要审批人身份可信，宿主在调 `chat()` 前自己核 `resume` |
 | run 内工具表：runLoop vs TanStack 适配器 | runLoop 的工具表 run 内不变；TanStack 跟着引擎原生 lazy 工具的发现补进新工具、撤下发现工具（只增不删，其余删除可能是排在后面的宿主中间件按轮过滤），不另记 tools_bound——不跟就把刚发现的工具盖掉、调用撞 Unknown tool |
+| 审批结论的 `parentId`：runLoop vs TanStack 适配器 | 两边都先 `run_resumed`（带第一条结论的 by）再写结论；runLoop 的宿主结论不带 parentId（结论来自 `decisions` 入参、不查调用事件），TanStack 的结论都挂在对应 tool_call 下（它本来就要查 pending 定收不收），多一项信息、不影响判定 |
 | 续跑校验：runLoop / server vs TanStack 适配器 | 前两者调同一个 `validateResume`（D4 收窄）；TanStack 路径本来就不做续跑校验，只为 `tools_bound` 算 configHash，写的 `run_paused` 也不带 `state` |
 | `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从该 run 的信箱拉（共用 `runs` 的 handler 都能往里投），asTool 子 run 与停止收尾 run 仍不拉 |
 | run 结束时未拉走的中途消息：进程内宿主 vs HTTP handler（`midRunInput`） | 进程内宿主须再查一次自己的队列（消息在它手里）；handler 随 run 直接丢弃信箱，靠客户端按时间线判未送达后重发——不在 result 帧带未投递列表，送达判据只有时间线一条 |
@@ -384,7 +385,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 - **导入客户端消息的幂等键是"客户端消息 id，没有就用它在客户端数组里的位置"，还要内容逐字相同才算重发** — 客户端自行裁剪历史让位置漂移时退化成不去重而不是误删。
 - **宿主漏登记 `reinsApprovalInterrupt` 时，运行时 init 查引擎登记表，没登记则需审批的调用降级为拒绝并留 `approval_decision(by: "reins")`** — 判据是引用同一性，装了两份 `@tanstack/ai` 也会判成没登记。
-- **一个调用只一张审批卡；原生审批的结论在 `beforeTools` 边界从 init 读到的 `config.resume` 原件落日志，改参批准（`editedArgs` 与日志入参不同）一律不执行** — reins 工具不透传 `needsApproval`（透传就是两张卡、只答一张引擎拒续跑）；宿主原生工具被 Socket defer 时并到原生卡上。答复要在 Socket 管线之前落，approval ttl 才看得见；UIMessage `approval-responded` 通道不经 resume，靠 `onBeforeToolCall` 补记。改参照执行就是"日志写 A、实际做了 B"，要支持须先在 core 给结论加入参落点。
+- **一个调用只一张审批卡；原生审批的结论在 `beforeTools` 边界从 init 读到的 `config.resume` 原件落日志，改参批准（`editedArgs` 与日志入参不同）一律不执行** — reins 工具不透传 `needsApproval`（透传就是两张卡、只答一张引擎拒续跑）；宿主原生工具被 Socket defer 时并到原生卡上。答复要在 Socket 管线之前落，approval ttl 才看得见；UIMessage `approval-responded` 通道不经 resume，靠 `onBeforeToolCall` 补记并重跑管线只认 block。改参批准靠 init 把调用并进引擎的 `cancelledToolCallIds` 拦（客户端工具不经 `onBeforeToolCall`，只能在这拦），日志结论只是记录；`onBeforeToolCall` 再核对执行入参与日志入参作纵深（Standard Schema 工具不比）；原生卡上的调用拒收通用答复。改参照执行就是"日志写 A、实际做了 B"，要支持须先在 core 给结论加入参落点（OPT-261125-8）。
 - **模型看到的历史与 TanStack 手上的 `messages` 是两份，只有日志是真源** — 宿主另装中间件再改 messages 会静默覆盖 compact / spill / pin 的效果。
 
 ### eval
