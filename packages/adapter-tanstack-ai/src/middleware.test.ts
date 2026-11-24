@@ -1420,7 +1420,7 @@ describe("reinsMiddleware：审批", () => {
       expect(result.payload.isError).toBe(true)
     })
 
-    it("B1 纵深对 Standard Schema 工具同样生效：按引擎同一个 parseWithStandardSchema 解析日志入参再比（第二轮返修）", async () => {
+    it("B1 纵深对 Standard Schema 工具同样生效：执行前比对调用原文与日志入参（第三轮返修）", async () => {
       const shared = { log: new InMemoryEventLog() }
       const received: unknown[] = []
       // 最小的 Standard Schema（Zod 等同形）：validate 原样返回
