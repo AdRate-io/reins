@@ -90,7 +90,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 18. **`onAbort` / `onError`**：都先 `assembler.finish()` 保住半截输出，再分别落 `core.run_paused(host)` / `core.error(category: "tanstack-ai")`。
 19. 贯穿全程的 `append()`：唯一分配 `seq` 的地方（与 runLoop 同约定），落日志后把 `tool_call` / `tool_result` 登记进当前轮的 `ctx.batch`（2026-11-02；`held` 恒空，补跑批在 `beforeTools` 首次造轮时经 core `toolBatchOf` 预置并标 `resumed`），`createEvent` 过注册表 → `log.append` → 回调 `onEvent` → 非正文类事件（不在 `CONTENT_TYPES` 里的）以 AG-UI `CUSTOM` chunk 推给前端（`emitCustomEvents` 缺省开）。
 
-> 已知局限（第二波返修 S3 / N2）：① 客户端工具（`.client()` + 静态 `needsApproval`）经 UIMessage `approval-responded` 通道批准时，结论要到下一次请求带回客户端结果时由 `onToolPhaseComplete` 按 `approved: !isError` 补记，客户端执行失败会被记成拒绝（经 `resume` 答复的不受影响，续跑开头即记）。② 原生卡合并后，若排在前面的 Socket 先 `rewrite` 了入参，原生卡展示的是模型原入参、执行的是改写后的；改走 reins 卡会让同一调用再出原生卡（#4），故登记为已知问题，宿主别对静态 `needsApproval` 工具做 rewrite。
+> 已知局限（第二波返修 S3 及第二轮返修）：① 客户端工具（`.client()` + 静态 `needsApproval`）经 UIMessage `approval-responded` 通道批准时，结论要到下一次请求带回客户端结果时由 `onToolPhaseComplete` 按 `approved: !isError` 补记，客户端执行失败会被记成拒绝（经 `resume` 答复的不受影响，续跑开头即记）。② 原生卡上的调用被 Socket `rewrite` 时一律拦下（`passVerdict`，第二轮返修 N2）：原生卡展示的是模型原入参，照改写后的执行就是"批 A 执行 B"，改走 reins 卡又会再出原生卡（#4）。引擎先出卡、批准后才调 `onBeforeToolCall`，所以人仍被问一次、批了也不执行。
 
 ## 4 核心设计决策
 

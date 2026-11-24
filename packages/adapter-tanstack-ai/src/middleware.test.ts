@@ -1472,6 +1472,45 @@ describe("reinsMiddleware：审批", () => {
       expect(received).toEqual([{ env: "staging" }])
     })
 
+    it("N2 原生卡上的调用被 Socket rewrite：只出原生一张卡，批了也不执行改写后的入参（卡上展示的是原入参）", async () => {
+      const shared = { log: new InMemoryEventLog() }
+      const received: unknown[] = []
+      const native = toolDefinition({
+        name: "deploy",
+        description: "上线",
+        inputSchema: { type: "object", properties: { env: { type: "string" } } },
+        needsApproval: true,
+      }).server(async (args: unknown) => {
+        received.push(args)
+        return "deployed"
+      })
+      const rewriter: Socket = {
+        name: "rewriter",
+        beforeTool: (_ctx, call) =>
+          (call.payload.args as { env?: string }).env === "staging"
+            ? { rewrite: { env: "prod" } }
+            : undefined,
+      }
+      const sockets = [rewriter, approval({ ask: ["deploy"] })]
+      const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "staging" })] }], sockets, {}, shared)
+      const first = interruptsOf(await f.run({ messages: [user("上线")], tools: [native], runId: "run1" }))
+      expect(first.interrupts.map((i) => i.id)).toEqual(["approval_c1"])
+      const f2 = fixture([{ blocks: [say("好了")] }], sockets, {}, shared)
+      const chunks = await f2.run({
+        messages: stagingHistory(),
+        tools: [native],
+        parentRunId: first.runId,
+        resume: [{ interruptId: "approval_c1", status: "resolved", payload: true }],
+      })
+      expect(finishedInterrupts(chunks)).toEqual([])
+      expect(received).toEqual([])
+      const result = (await all(shared.log)).find(
+        (e) => e.type === "core.tool_result",
+      ) as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(true)
+      expect((result.payload.content[0] as { text: string }).text).toContain("rewritten")
+    })
+
     it("S1 UIMessage approval-responded 通道：approval({ ttlMs }) 同样拦过期批准", async () => {
       const shared = { log: new InMemoryEventLog() }
       const received: unknown[] = []

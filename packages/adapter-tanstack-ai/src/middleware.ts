@@ -756,6 +756,20 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     await flush(ctx, s)
     return refused
   }
+  /**
+   * 放行时的结论。原生卡上的调用（宿主工具静态 needsApproval: true）被 Socket rewrite 过就拦下（第二轮返修 N2）：
+   * 原生卡展示的是模型原入参，照改写后的执行就是"审批人批 A、实际执行 B"；改走 reins 卡又会让同一调用再出原生卡（#4）。
+   * 引擎只在批准后才对这类调用调 onBeforeToolCall，所以人仍会被问一次，批了也不执行；拒了照常落拒绝
+   */
+  const passVerdict = (s: RunState, name: string, rewritten: boolean, args: unknown): Verdict => {
+    if (!rewritten) return { kind: "proceed" }
+    if (onNativeCard(s, name))
+      return {
+        kind: "block",
+        text: "the arguments were rewritten by a socket, but TanStack's native approval card shows the arguments the model wrote, so the call was not executed",
+      }
+    return { kind: "rewrite", args }
+  }
   /** 宿主工具自带静态 needsApproval: true：它的审批只走 TanStack 原生卡，reins 卡从不为它发 */
   const onNativeCard = (s: RunState, name: string): boolean => s.hostTools.get(name)?.needsApproval === true
 
@@ -932,7 +946,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
               payload: { toolCallId, policyId: approval.policyId, summary: approval.summary },
             })
           }
-          s.verdicts.set(toolCallId, rewritten ? { kind: "rewrite", args } : { kind: "proceed" })
+          s.verdicts.set(toolCallId, passVerdict(s, name, rewritten, args))
           continue
         }
         if (!requested.has(toolCallId)) {
@@ -968,7 +982,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         s.verdicts.set(toolCallId, { kind: "await" })
         continue
       }
-      s.verdicts.set(toolCallId, rewritten ? { kind: "rewrite", args } : { kind: "proceed" })
+      s.verdicts.set(toolCallId, passVerdict(s, name, rewritten, args))
     }
     await flush(ctx, s)
     if (interrupts.length === 0) return undefined

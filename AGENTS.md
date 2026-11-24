@@ -385,7 +385,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 - **导入客户端消息的幂等键是"客户端消息 id，没有就用它在客户端数组里的位置"，还要内容逐字相同才算重发** — 客户端自行裁剪历史让位置漂移时退化成不去重而不是误删。
 - **宿主漏登记 `reinsApprovalInterrupt` 时，运行时 init 查引擎登记表，没登记则需审批的调用降级为拒绝并留 `approval_decision(by: "reins")`** — 判据是引用同一性，装了两份 `@tanstack/ai` 也会判成没登记。
-- **一个调用只一张审批卡；原生审批的结论在 `beforeTools` 边界从 init 读到的 `config.resume` 原件落日志，改参批准（`editedArgs` 与日志入参不同）一律不执行** — reins 工具不透传 `needsApproval`（透传就是两张卡、只答一张引擎拒续跑）；宿主原生工具被 Socket defer 时并到原生卡上。答复要在 Socket 管线之前落，approval ttl 才看得见；UIMessage `approval-responded` 通道不经 resume，靠 `onBeforeToolCall` 补记并重跑管线只认 block。改参批准靠 init 把调用并进引擎的 `cancelledToolCallIds` 拦（客户端工具不经 `onBeforeToolCall`，只能在这拦），日志结论只是记录；`onBeforeToolCall` 再核对执行入参与日志入参作纵深（Standard Schema 工具先对日志入参走引擎同一个 `parseWithStandardSchema` 再比，解析抛错按拦截）；原生卡上的调用拒收通用答复。改参照执行就是"日志写 A、实际做了 B"，要支持须先在 core 给结论加入参落点（OPT-261125-8）。
+- **一个调用只一张审批卡；原生审批的结论在 `beforeTools` 边界从 init 读到的 `config.resume` 原件落日志，改参批准（`editedArgs` 与日志入参不同）一律不执行** — reins 工具不透传 `needsApproval`（透传就是两张卡、只答一张引擎拒续跑）；宿主原生工具被 Socket defer 时并到原生卡上。答复要在 Socket 管线之前落，approval ttl 才看得见；UIMessage `approval-responded` 通道不经 resume，靠 `onBeforeToolCall` 补记并重跑管线只认 block。改参批准靠 init 把调用并进引擎的 `cancelledToolCallIds` 拦（客户端工具不经 `onBeforeToolCall`，只能在这拦），日志结论只是记录；`onBeforeToolCall` 再核对执行入参与日志入参作纵深（Standard Schema 工具先对日志入参走引擎同一个 `parseWithStandardSchema` 再比，解析抛错按拦截）；原生卡上的调用拒收通用答复，被 Socket rewrite 的一律拦下（卡上是原入参）。改参照执行就是"日志写 A、实际做了 B"，要支持须先在 core 给结论加入参落点（OPT-261125-8）。
 - **模型看到的历史与 TanStack 手上的 `messages` 是两份，只有日志是真源** — 宿主另装中间件再改 messages 会静默覆盖 compact / spill / pin 的效果。
 
 ### eval
