@@ -65,7 +65,7 @@
 | `packages/brain/src/compact/plan.ts` | 纯函数 `planCompaction`：算切点、幸存者、被吸收的旧摘要、被折叠工具结果清单；另有按轮分段与连续整理计数 |
 | `packages/brain/src/compact/request.ts` | 到线请模型整理：`DEFAULT_FORCE_AT`（两级）、`renderCompactRequest`（按 attempt 换措辞）、`isCompactRequest`、`compactRequestedSinceLastCompaction` / `compactRequestsSinceLastCompaction`、`contextUsageRatio`（全从时间线读，无跨轮状态）；`modelActedSinceLastCompaction` / `timelineSoFar` 从 shared/segment.ts 再导出 |
 | `packages/brain/src/compact/recall.ts` | `recall({ seq })` 工具：从本会话日志按 seq 逐字取回一条被折叠的工具结果或用户消息（含媒体） |
-| `packages/brain/src/compact/rules.ts` | compact / recall 的工具名、工具说明与规则提示 `COMPACT_RULES`（英文常量） |
+| `packages/brain/src/compact/rules.ts` | compact / recall 的工具名、工具说明与规则提示 `COMPACT_RULES`（英文常量）；`recall: false` 用的 `COMPACT_RECALL_RULE` / `COMPACT_NO_RECALL_RULE` 与 `compactToolDescription(recall)` |
 | `packages/brain/src/compact/compact.test.ts` | compact 的全部用例（自决整理、阈值兜底与连续上限、recall、纯函数层） |
 | `packages/brain/src/pins/index.ts` | pins 子模块聚合导出 |
 | `packages/brain/src/pins/pins.ts` | `pins(opts): Socket`：宿主 `PinSpec` 在 beforeModel 判重追加（常驻快照 `snapshot` 只在段起点取，`refreshSnapshots`），模型 `pin` 工具在 afterTool 落事件；含入参解析与查找辅助、`isSnapshotPin` |
@@ -81,9 +81,9 @@
 | `packages/brain/src/handoff/rules.ts` | `handoff` 工具名、工具说明与规则提示 `HANDOFF_RULES` |
 | `packages/brain/src/handoff/handoff.test.ts` | handoff 的全部用例（交接流程、带 pin、同轮多工具、审批同轮的 R2 重建） |
 | `packages/brain/src/memory/index.ts` | memory 子模块聚合导出 |
-| `packages/brain/src/memory/memory.ts` | `memory(opts): Socket`：只有静态贡献；工具 execute 里执行命令、成功则 emit `memory_op`；缺 MemoryStore 则不注册并告警一次 |
+| `packages/brain/src/memory/memory.ts` | `memory(opts): Socket`：只有静态贡献；工具（`risk: low`、`replayable: false`）execute 先校验 namespace 返回值（不合规 isError、每实例告警一次），再执行命令、成功则 emit `memory_op`；缺 MemoryStore 则不注册并告警一次 |
 | `packages/brain/src/memory/commands.ts` | 六个 command 的入参 schema、解析与在 `MemoryFs` 上的执行（view / create / str_replace / insert / delete / rename），命名空间与常设目录绑定 `bindMemoryFs`，常设目录补祖先 `expandMemoryDirectories` |
-| `packages/brain/src/memory/paths.ts` | `MEMORY_ROOT` 与 `resolveMemoryPath`：把 `/memories` 传给 shared 的 `resolveRootedPath`，薄包装 |
+| `packages/brain/src/memory/paths.ts` | `MEMORY_ROOT` 与 `resolveMemoryPath`：把 `/memories` 传给 shared 的 `resolveRootedPath`，薄包装；`hasMemorySegment`（键含 `memories` 段 ⇔ 模型经 memory 可写），memory 的 namespace 校验与 skills 共用，登记全景图真源索引 |
 | `packages/brain/src/memory/rules.ts` | `memory` 工具名、工具说明与规则提示 `MEMORY_RULES` |
 | `packages/brain/src/memory/memory.test.ts` | memory 的全部用例（路径限定、入参解析、六个命令、命名空间、常设目录、与 runLoop 集成） |
 | `packages/brain/src/approval/index.ts` | approval 子模块聚合导出 |
@@ -100,7 +100,7 @@
 | `packages/brain/src/stop-after/stop-after.ts` | `stopAfter({ tools, warn? }): Socket`：构造期校验名单；beforeModel 对照 `ctx.tools` 告警拼错的名字；onTurnEnd 本批名单工具成功、无失败无挂起、补跑批后无新用户消息即 `"stop"` |
 | `packages/brain/src/stop-after/stop-after.test.ts` | 用例：成功即停且先于 budget、失败 / 自身 isError / 被拦不停、审批续跑无新输入收尾、遗留收尾遇新输入不停、[handoff, end_run] 交接兑现、构造校验与告警、batch 缺失报错 |
 | `packages/brain/src/skills/index.ts` | skills 子模块聚合导出 |
-| `packages/brain/src/skills/skills.ts` | `skills(opts): Socket`：`assertSkillsRoot`（拒绝与 `/memories` 重叠）、`loadSkillMenu` 读菜单（按 setup 缓存、按 name 排序）、`parseSkillReadInput` 校验入参、`skill_read` 工具（`risk: low`、`resultTrust: system`、硬上限视图、`resultPolicy.maxTokens = 2 × maxReadChars + 256`、载体异常兜住只告警）；缺 source / 空菜单 / 宿主同名工具都不注册 |
+| `packages/brain/src/skills/skills.ts` | `skills(opts): Socket`：`assertSkillsRoot`（拒绝带 `memories` 段或是 `/memories` 祖先的 root）、`loadSkillMenu` 读菜单（按 setup 缓存、按 name 排序）、`parseSkillReadInput` 校验入参、`skill_read` 工具（`risk: low`、`resultTrust: system`、硬上限视图、`resultPolicy.maxTokens = 2 × maxReadChars + 256`、载体异常兜住只告警）；菜单与 `skill_read` 把带 `memories` 段的键当不存在；缺 source / 空菜单 / 工具表（宿主或排在前面的 Socket）已有同名都不注册 |
 | `packages/brain/src/skills/constants.ts` | 零依赖字面常量：`DEFAULT_SKILLS_ROOT`、`SKILL_FILE_NAME`、`SKILL_NAME_RE`（node.ts 与 inline.ts 共用同一份） |
 | `packages/brain/src/skills/frontmatter.ts` | 纯函数 `parseSkillMarkdown`：只认 `name` / `description`，逐行 `key: value`，对齐 YAML 的几处语义（BOM、`>` / `\|` 块标量、` #` 注释、重复键后者优先、嵌套字段跳过）；description ≤ 1024 |
 | `packages/brain/src/skills/inline.ts` | `inlineSkills({ name: SKILL.md 文本 \| { 文件: 内容 } }, { root? })`：字符串预填的只读 SkillSource（Workers、或正文来自别处如 AdRate CLI）；键与文件路径不合规直接抛错 |
@@ -152,13 +152,13 @@
 1. `afterTool` 见到 `handoff` 调用：同轮第二次调用直接以 isError 回绝；否则 `parseHandoffArgs` 解析。
 2. `intentOf(ctx, args)` 组装意图：`composeHandoffNote` 把摘要与编号的下一步排成一段（既是旧会话 `handoff.summary` 也是新会话 seq 1 的文字）；`carriedPins(ctx)` 把可见且未被 `supersedes` 取代的 pin 复制成 `opening` 草稿；触发消息缺省取 `lastVisibleUserMessage(ctx.events)`。
 3. 意图记在 `WeakMap<TurnContext>`，把占位结果换成回执（带了几条下一步、几条 pin、有没有触发消息）。同轮其余工具照常执行。
-4. `onTurnEnd`：内存里有意图就返回 `{ handoff: intent }`；没有则用 `unfinishedHandoffArgs(ctx.timeline)` 从日志重建（上一次 run 在这一轮被打断的情形，R2），重建不出就无意见。core 循环随后 append `core.handoff`、开新会话、调 `onHandoff`。
+4. `onTurnEnd`：内存里有意图就返回 `{ handoff: intent }`；没有则用 `unfinishedHandoffArgs(ctx.timeline)` 从日志重建（上一次 run 在这一轮被打断的情形，R2；不限补跑轮，TanStack 的补跑批不调 onTurnEnd、在下一轮重建），回执之后已有用户消息或重建不出就无意见。core 循环随后 append `core.handoff`、开新会话、调 `onHandoff`。
 
 ### memory
 
 1. run 起步：静态贡献是函数形态——`SocketSetup.memory` 存在才返回 `[memory 工具]` 与 `MEMORY_RULES`；不存在则两者都不注册并经 `warn` 告警一次。本模块没有任何钩子。
 2. 工具 `validate` 走 `parseMemoryCommand`：认出六个 command 之一，每个路径都先过 `resolveMemoryPath` 规范化（防穿越）。
-3. `execute`：`bindMemoryFs(ctx.memory, namespace(ctx), directories)` 把命名空间前缀与常设目录绑上（模型看到的路径始终是 `/memories/...`；`directories` 构造期经 `resolveMemoryPath` 规范化并补齐祖先），再 `executeMemoryCommand(fs, cmd, limits)` 执行。
+3. `execute`：先校验 `namespace(ctx)` 的返回值（`""` 或规范路径且不含 `memories` 段，不合规 isError、一个键都不碰、每实例告警一次），再 `bindMemoryFs(ctx.memory, namespace(ctx), directories)` 把命名空间前缀与常设目录绑上（模型看到的路径始终是 `/memories/...`；`directories` 构造期经 `resolveMemoryPath` 规范化并补齐祖先），再 `executeMemoryCommand(fs, cmd, limits)` 执行。
 4. 成功的读写 `ctx.emit` 一条 `core.memory_op(actor=model, provenance.ref=toolCallId)`，循环把它排在 `tool_result` 之前；失败不留（tool_call 入参 + isError 结果已是审计痕）。`memory_op` 被投影过滤，模型看不见。
 
 ### skills
@@ -222,11 +222,11 @@
 
 **被折叠范围内最近的一条用户消息由库保住**（B2）— 真模型实测：用户说"先整理，然后做 X"，模型整理时把这条也折了进去，摘要只写"接着做第二部分"，整理完反问第二部分是什么。模型没法复述它还没开始处理的指令。边界：`keepLatestUserMessage: false` 可关。
 
-**摘要之后自动附被折叠工具结果清单，并给 `recall({ seq })` 取回**（E3c）— 整理丢细节是机制本身的代价（两个模型族都把"复核过的字段值"整理成"状态正常"一句结论），与其教模型该留什么，不如让它知道什么还能拿回来；原件本来就在日志里，缺的只是一条读回去的路。清单范围含被吸收旧摘要盖住的原件（从完整时间线补回），脑子自己的回执（compact / pin / recall / fetch_blob）不列。带图片 / 视频 / 音频的被折叠用户消息另列一节（`MEDIA_MANIFEST_HEADING`，2026-11-24），纯文本用户消息不列（要点由摘要承载），但 `recall` 接受任何 user_message 的 seq。边界：`manifest: false` 关清单时应一并换 `rules`，缺省文案里关于清单的说法就不成立了。
+**摘要之后自动附被折叠工具结果清单，并给 `recall({ seq })` 取回**（E3c）— 整理丢细节是机制本身的代价（两个模型族都把"复核过的字段值"整理成"状态正常"一句结论），与其教模型该留什么，不如让它知道什么还能拿回来；原件本来就在日志里，缺的只是一条读回去的路。清单范围含被吸收旧摘要盖住的原件（从完整时间线补回），脑子自己的回执（compact / pin / recall / fetch_blob）不列。带图片 / 视频 / 音频的被折叠用户消息另列一节（`MEDIA_MANIFEST_HEADING`，2026-11-24），纯文本用户消息不列（要点由摘要承载），但 `recall` 接受任何 user_message 的 seq。边界：`manifest: false` 关清单时应一并换 `rules`，缺省文案里关于清单的说法就不成立了。`recall: false` 则由模块自己兑现（全库审查 2026-11-25）：没自定义 `rules` 时 recall 那行换成 `COMPACT_NO_RECALL_RULE`，`compact` 工具说明由 `compactToolDescription(recall)` 生成，清单标题换成不提 recall 的一对（"still in the session log, by seq"，与 core 机械裁剪同措辞）——告诉模型的事框架必须兑现，与 `force: false` 去掉对应规则行同一做法。
 
 **清单与取回用 tool_result 的 seq，不用 toolCallId 或事件 id**（E3c 附）— seq 短、模型能抄；fork 出的会话（eval 探针、宿主分叉）三种存储实现都保留 seq，子会话里照样有效；toolCallId 是厂商格式且长，事件 id 36 位。
 
-**pin 有取代机制、没有 unpin，模型只能替换自己钉的**（B3）— 不加取代，抽取式 pin 每变一次就永久多一条、模型改口也会留下两条互相矛盾的 pin。append-only 日志里唯一的撤销表达就是"被后来者取代"。宿主钉的是宿主的约束，模型动不了（指向宿主 pin 报错）。
+**pin 有取代机制、没有 unpin，模型只能替换自己钉的**（B3）— 不加取代，抽取式 pin 每变一次就永久多一条、模型改口也会留下两条互相矛盾的 pin。append-only 日志里唯一的撤销表达就是"被后来者取代"。宿主钉的是宿主的约束，模型动不了（指向宿主 pin 报错）。判重与 `replaces` 只认现行的 pin（全库审查 2026-11-25）：取代关系用 core `supersededIds`，与整理时的幸存规则同一个函数——被取代的旧 pin 在下次整理前仍在视图里，按文字找会让"再钉一次旧文字"回 Already pinned、对旧 pin 的 `replaces` 取代错对象，回执与框架行为不一致；指向已被取代的旧 pin 时报错并请模型传现行那条的文字。
 
 **pin 字数校验加两成容差，报错仍报声明值**（E3c 附）— 上限写进工具说明与 schema `maxLength` 后，Sonnet 5 仍写出 502 / 545 / 558 字符：模型瞄着上限写、数不准自己的字数，差几个字就拒掉只是白费一轮。声明值仍是 500，容差只吃掉数错的那一点；`overshootTolerance: 0` 可严格。
 
@@ -240,9 +240,9 @@
 
 **批准有效期只看时间线上两条事件的 `at`，判定挂在 ask 落点上**（D3）— 不读墙钟，同一条日志在哪台机器回放结论都一样；宿主的批准事件是循环在续跑时按 `cfg.now` 写的，它的 `at` 就是"批准到达的时刻"。挂在 ask 落点而不是 beforeTool 入口，是因为只有"管线本该问人、放行靠的是宿主批准"时过期才有意义——策略改成 allow 的调用本就不需要批准。用 deny + block 而不是重新 defer：block 不会被已有批准略过，重新 defer 会被循环略过直接执行。宿主那条 approved=true 照记不动（它确实批了），模块再追加一条拒绝，审计能看到"批了但太晚"。边界：还没批的 pending 请求不会因为老而过期，等多久都是 pending；模型可以再调一次拿新请求。
 
-**deny 留痕、allow 不留痕、任何异常按 deny**（B7）— deny 先 emit `approval_decision(by=规则 id)` 再 block，谁拒的、为什么有据可查；allow 每次记一条会让日志翻倍而信息量为零（tool_call → tool_result 已是完整记录）。fail-closed 覆盖规则与 `needsApproval` 函数两处。
+**deny 留痕、allow 不留痕、任何异常按 deny**（B7）— deny 先 emit `approval_decision(by=规则 id)` 再 block，谁拒的、为什么有据可查；allow 每次记一条会让日志翻倍而信息量为零（tool_call → tool_result 已是完整记录）。fail-closed 覆盖规则匹配、`needsApproval` 函数与 ask 段的 `summary` 三处（`summary` 读的是模型给的入参，工具没写 `validate` 时形状不可预期；全库审查 2026-11-25 补上）。
 
-**handoff 的意图按日志重建，不只靠内存**（R2）— 模型调了 handoff 拿到回执、那一轮却因审批暂停或宿主中止没走到 `onTurnEnd` 时，`WeakMap` 里的意图随之丢失。`unfinishedHandoffArgs` 的判据：最后一条成功的 handoff 回执之后既没有 `core.handoff`（还没交接）也没有新的模型输出（没开新的一轮）。这是宪法二的直接推论——回执与入参都在日志里，换进程续跑也成立。
+**handoff 的意图按日志重建，不只靠内存**（R2）— 模型调了 handoff 拿到回执、那一轮却因审批暂停或宿主中止没走到 `onTurnEnd` 时，`WeakMap` 里的意图随之丢失。`unfinishedHandoffArgs` 的判据：最后一条成功的 handoff 回执之后既没有 `core.handoff`（还没交接）、也没有新的模型输出（没开新的一轮）、也没有新的用户消息（用户又开口了，旧意图作废，由模型看过新话再定）。这是宪法二的直接推论——回执与入参都在日志里，换进程续跑也成立。用户消息这一条不能省也不能换成"只在补跑轮重建"（全库审查 2026-11-25）：普通轮次的 `ctx.timeline` 是轮起点快照、看不到本轮模型输出，停止后发新消息时只靠模型输出判不出过时；而 TanStack 的补跑批不调 onTurnEnd，限补跑轮会让它与审批同批的交接静默失效。边界：续跑时带了新用户消息的，同批的交接也作废，回执说"已安排"但不兑现——用户已改口，由模型重新决定。
 
 **pin 作为独立事件跟着交接走，不并进摘要**（B5）— pin 塞进摘要正文就不再是 pin，在新会话里穿不过那边的折叠，pins() 的判重也失效。落成 `HandoffIntent.opening`（摘要一条 + pin 各一条），保留 actor 与 `meta.pin`、provenance 指回旧事件。
 
@@ -272,9 +272,13 @@
 
 **`skill_read` 缺省上限 40000 字符而不是 memory view 的 16000，是硬上限，且 spill 不再切它**（S1 实测 + 发前审查）— Agent Skills 规范建议 SKILL.md ≤ 500 行（约 40k 字符）；AdRate 24.5k 字符的技能在 16k 上限下被截掉 110 行（含"Keep Campaign writes server-owned"），DeepSeek 与 Claude 都没有按截断提示续读就开工。"先读再动手"的说明书被截断等于没读全，缺省要让规范内的技能一次读完。spill 不切它靠 `resultPolicy.maxTokens = 2 × maxReadChars + 256`：首版按"token ≤ 字符"取 `maxReadChars`，审查复现 40k 字符中文技能照样被外溢（core 粗估非 ASCII 一字一 token，行号再加 8%），取回来还是 untrusted；软上限又能被 `range: [1, -1]` 与单行 200k 字符绕过。所以视图对 skills 改硬上限（`enforceLimit`），上界才可证明：正文 ≤ maxReadChars token（全非 ASCII 最坏）+ 行号 ≤ 2 × (maxReadChars / 2) token + 表头。memory 的 view 仍是软上限（模型自己在分页）。
 
-**缺 source、空菜单、宿主同名 `skill_read` 都不注册，告警一次**（S1 + 审查）— 与 memory 的"缺则不注册"同理：空菜单加一个一用就"不存在"的工具只会让被规则要求"先读技能"的模型撞墙；宿主工具表里已有 `skill_read` 时去重以宿主为准，菜单会指向那个语义与 trust 都不同的工具，宁可整个不注册。不合规的单份 SKILL.md 单独跳过（各告警一次），一份坏文件不拖垮整个菜单。空菜单的告警文案列出三个最常见原因（root 不一致、目录布局、name 与目录名不符）——审查指出 README 示例用相对路径照抄会静默走到这条分支。
+**缺 source、空菜单、同名 `skill_read` 已在工具表都不注册，告警一次**（S1 + 审查）— 与 memory 的"缺则不注册"同理：空菜单加一个一用就"不存在"的工具只会让被规则要求"先读技能"的模型撞墙；工具表里已有 `skill_read` 时去重以先到者为准，菜单会指向那个语义与 trust 都不同的工具，宁可整个不注册。同名检查看 `setup.tools`（宿主 + 排在前面的 Socket，如暴露 `skill_read` 的 MCP 服务器），与 lazy-tools 同口径（全库审查 2026-11-25，原先只看宿主）。不合规的单份 SKILL.md 单独跳过（各告警一次），一份坏文件不拖垮整个菜单。空菜单的告警文案列出三个最常见原因（root 不一致、目录布局、name 与目录名不符）——审查指出 README 示例用相对路径照抄会静默走到这条分支。
 
-**`root` 不得与 `/memories` 相同或互为前缀**（审查）— 文件头推荐"同一个 MemoryStore 同时给 memory 与 skills"，但 `root: "/memories"` 曾被接受：模型 `memory create` 一份 `/memories/evil/SKILL.md`，下一 run 它就在系统提示菜单里、`skill_read` 读出来是 system 信任——模型给自己写 system 信任的说明书。构造期 fail-closed 拒绝，`.` / `..` 段也拒。
+**`memories` 段归记忆独占：带它的 root 构造期拒绝、带它的键在技能侧一律当不存在**（审查 + 全库审查 2026-11-25）— 文件头推荐"同一个 MemoryStore 同时给 memory 与 skills"，但 `root: "/memories"` 曾被接受：模型 `memory create` 一份 `/memories/evil/SKILL.md`，下一 run 它就在系统提示菜单里、`skill_read` 读出来是 system 信任——模型给自己写 system 信任的说明书。只拒 `/memories` 本身不够：记忆键恒为 `<namespace>/memories/…`，namespace 恰好等于技能根（或某个技能目录）时同样能写进来。所以判据换成"含 `memories` 段"（`hasMemorySegment`，与 memory 的 namespace 校验同一函数）：root 带它或是 `/memories` 的祖先即拒，菜单与 `skill_read` 遇到带它的键当不存在。代价：技能不能叫 `memories`、附件不能放在 `memories/` 目录下。`.` / `..` 段也拒。
+
+**memory 的 namespace 返回值用前校验，不合规 fail-closed**（全库审查 2026-11-25）— 原先任何字符串原样当前缀，`/a` 与 `/a/memories/x` 两个前缀会互相嵌套（前者的 `/memories/x/memories/f` 就是后者的 `/memories/f`），一个 principal 能读写另一个的记忆。现在须是 `""` 或规范路径（`/` 起、不以 `/` 收、无空段与 `.` / `..`、不含 `memories` 段），否则本次调用 isError、一个键都不碰。告警每个 `memory()` 实例只一次、报第一个坏值：namespace 多由 principal id 拼成，按值去重的集合在长驻进程里会随租户一直涨，而返回坏值是宿主代码 bug，一条足以定位。边界：principal id 里可能带 `/` 时宿主自己先编码。
+
+**memory 工具 low 风险但不可重放**（全库审查 2026-11-25 #69）— `risk: "low"` 只表示不用问人；insert / str_replace / delete / rename 不幂等，被当成可重放时崩溃后续跑会再执行一次（插出重复行、把成功的删除报成不存在）。显式 `replayable: false`，审批口径不变；代价是每次调用前多一条 `core.tool_started`，中断的调用落"结果未知"由模型 view 后自己判断。
 
 **`resultTrust` 只开 system / untrusted 两档，落法是 core 一份纯函数、四处都调**（审查）— 首版 `Trust` 全开且只落了 runLoop 执行结果与 TanStack afterToolCall 两处，宿主经 HTTP 回填的客户端工具结果与 TanStack toolPhaseComplete 兜底路径静默降级为 untrusted；工具输出冒充 principal / model 都不对。`toolResultTrust(tool, isError)` 现在是唯一判定点，runLoop 接受 `input` 为 tool_result 草稿时也查工具表（草稿自带 trust 优先）。
 
