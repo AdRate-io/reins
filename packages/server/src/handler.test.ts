@@ -1188,7 +1188,7 @@ describe("BUG-261105-2 第二步：authorizeSession 看得见这次带的审批�
 
     // by 是客户端自报的，写成 approver 也没用：宿主只看 principal
     const withResume = await handler(
-      postRequest({ sessionId: "s1", resume: paused.state, decisions: approve }),
+      asUser("owner", { sessionId: "s1", resume: paused.state, decisions: approve }),
     )
     expect(withResume.status).toBe(404)
     // 不带 resume 的口子（循环不验签）在鉴权这一层同样挡得住
@@ -1225,6 +1225,100 @@ describe("BUG-261105-2 第二步：authorizeSession 看得见这次带的审批�
     const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
     expect(result.payload.isError).toBe(true)
     expect(events.filter((e) => e.type === "core.user_message")).toHaveLength(2)
+  })
+
+  it("钩子拿到的是冻结的副本：数组与每一条都冻结，空数组同样冻结", async () => {
+    const seen: (readonly unknown[])[] = []
+    const { handler } = setup(
+      SCRIPT,
+      [deployTool],
+      { secret: "k" },
+      {
+        ...approverOnly,
+        authorizeSession: (input) => {
+          seen.push(input.decisions)
+          return approverOnly.authorizeSession?.(input) ?? false
+        },
+      },
+    )
+    const paused = await pauseAsOwner(handler)
+    await (
+      await handler(
+        asUser("approver", {
+          sessionId: "s1",
+          resume: paused.state,
+          decisions: [{ toolCallId: "c1", approved: true, by: "approver" }],
+        }),
+      )
+    ).text()
+    const [empty, carried] = seen
+    expect(Object.isFrozen(empty)).toBe(true)
+    expect(Object.isFrozen(carried)).toBe(true)
+    expect(Object.isFrozen(carried?.[0])).toBe(true)
+  })
+
+  it("同一调用带两条结论 → 400、一条不写（循环按后写覆盖，宿主按第一条判会被骗过）", async () => {
+    const { handler, log } = setup(SCRIPT, [deployTool], { secret: "k" }, approverOnly)
+    const paused = await pauseAsOwner(handler)
+    const before = (await logged(log, "s1")).length
+    const res = await handler(
+      asUser("owner", {
+        sessionId: "s1",
+        resume: paused.state,
+        decisions: [
+          { toolCallId: "c1", approved: false, by: "owner" },
+          { toolCallId: "c1", sessionId: "s1", approved: true, by: "owner" },
+        ],
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await logged(log, "s1")).toHaveLength(before)
+  })
+
+  it("客户端工具在等审批时不许直接回填结果（409 approval_pending）；审批人批准后客户端回填照常", async () => {
+    const pick = defineTool<Record<string, never>>({
+      name: "pick_file",
+      description: "让用户选文件（要审批）",
+      inputSchema: { type: "object" },
+      side: "client",
+      needsApproval: true,
+    })
+    const { handler, log } = setup(
+      [{ drafts: [callTool("c1", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [pick],
+      { secret: "k" },
+      approverOnly,
+    )
+    const paused = await pauseAsOwner(handler)
+    expect(paused.reason).toBe("approval")
+    const fill = (who: string) =>
+      asUser(who, {
+        sessionId: "s1",
+        input: {
+          type: "core.tool_result",
+          payload: { toolCallId: "c1", content: [{ type: "text", text: "a.txt" }] },
+        },
+      })
+    const early = await handler(fill("owner"))
+    expect(early.status).toBe(409)
+    expect(await early.json()).toMatchObject({ error: "approval_pending" })
+    expect((await logged(log, "s1")).some((e) => e.type === "core.tool_result")).toBe(false)
+
+    const approved = resultOf(
+      parseFrames(
+        await (
+          await handler(
+            asUser("approver", {
+              sessionId: "s1",
+              resume: paused.state,
+              decisions: [{ toolCallId: "c1", approved: true, by: "approver" }],
+            }),
+          )
+        ).text(),
+      ),
+    )
+    expect(approved?.status).toBe("paused")
+    expect(resultOf(parseFrames(await (await handler(fill("owner"))).text()))?.status).toBe("done")
   })
 })
 

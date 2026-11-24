@@ -48,12 +48,14 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 - **Who may approve is your call.** The handler checks that a decision points at a pending call, not who sent it; `by` is whatever the client wrote. When the approver is not the session's owner, refuse approvals from anyone else in `authorizeSession`, and keep allowing refusals — a client that sends a new message instead of approving rejects the call in the same request:
 
   ```ts
-  authorizeSession: async ({ sessionId, principal, decisions }) =>
-    (await canTouch(principal, sessionId)) &&
+  authorizeSession: async ({ sessionId, principal, isNew, decisions }) =>
+    (isNew || (await canTouch(principal, sessionId))) &&
     (!decisions.some((d) => d.approved) || isApprover(principal)),
   ```
 
-- **Resume is validated before anything is written.** Signature (when `secret` is set) and the digest of pending tool calls must match the log, and the model and the definitions of the tools behind the pending calls must be unchanged (states from before 0.10 still compare the whole configuration hash); drift answers `409 config_mismatch` unless the host passes `allowConfigDrift`. Always send `resume` with `decisions`: a request with `decisions` but no `resume` is currently accepted and only checked against the pending calls, without the signature or drift checks (to be tightened).
+  `decisions` includes entries addressed to sub-agent sessions (with `sessionId`), so a check over the whole array covers them too. It is a frozen copy: changing it does not change the run. A request may carry only one decision per call (`400` otherwise). A client-side tool that also needs approval cannot have its result filled in while it waits for approval (`409 approval_pending`): the decision has to come through `decisions` first.
+
+- **Resume is validated before anything is written.** Signature (when `secret` is set) and the digest of pending tool calls must match the log, and the model and the definitions of the tools behind the pending calls must be unchanged (states from before 0.10 still compare the whole configuration hash); drift answers `409 config_mismatch` unless the host passes `allowConfigDrift`. Always send `resume` with `decisions`: a request with `decisions` but no `resume` is currently accepted and its decisions for this session are only checked against the pending calls, without the signature or drift checks; decisions for sub-agent sessions are passed through (to be tightened).
 - **Session ids** must be non-empty printable ASCII without spaces (`400` otherwise).
 - Failures after the stream has opened arrive as a `200` with an `error` frame, and the run slot is released so the session does not stay `409` forever.
 - **Approval decisions are checked against the right session.** A decision without `sessionId` (or with this session's id) must point at one of this session's pending calls, else `409 unknown_tool_call`; a decision carrying a sub-agent's `childSessionId` is passed through untouched and checked by the sub-agent's own run.

@@ -15,6 +15,7 @@
  */
 import {
   type ApprovalDecisionInput,
+  awaitingOf,
   type ContentPart,
   checkImageRefs,
   computeConfigHash,
@@ -166,6 +167,15 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
         error:
           "every decisions entry must carry toolCallId / approved / by (sessionId is optional and addresses a subagent session; it follows the same character rules as the request's sessionId)",
       }
+    // 同一调用两条结论时循环按后写覆盖；宿主在 authorizeSession 里若按第一条判就会被骗过——入口只许一条，口径唯一
+    const seen = new Set<string>()
+    for (const d of b.decisions as readonly ApprovalDecisionInput[]) {
+      const scope = d.sessionId === undefined || d.sessionId === b.sessionId ? "" : d.sessionId
+      const key = `${scope}\u0000${d.toolCallId}`
+      if (seen.has(key))
+        return { ok: false, error: `decisions has more than one entry for call ${d.toolCallId}` }
+      seen.add(key)
+    }
   }
   if (b.resume !== undefined && (typeof b.resume !== "object" || b.resume === null)) {
     return { ok: false, error: "resume must be an object" }
@@ -289,6 +299,7 @@ type InputCheck =
  */
 function checkInput(
   raw: AgentRequestBody["input"],
+  timeline: readonly Event[],
   pending: readonly ToolCallEvent[],
   tools: readonly Tool[],
 ): InputCheck {
@@ -317,6 +328,16 @@ function checkInput(
         status: 400,
         error: "bad_request",
         message: `only client-side tool results can be filled in; ${call.payload.name} runs on the server`,
+      }
+    }
+    // 客户端工具也要审批时，先有结论才轮到客户端执行；在等审批时直接回填结果会绕过审批（结论只能经 decisions 交，
+    // authorizeSession 才看得见）。"在等审批"的判定与循环暂停时同一口径：core awaitingOf
+    if (awaitingOf({ timeline, pending: [call], tools, interruptions: [] })[0]?.kind === "approval") {
+      return {
+        ok: false,
+        status: 409,
+        error: "approval_pending",
+        message: `the call ${call.payload.toolCallId} is waiting for approval; send a decision before filling in its result`,
       }
     }
     const content = rebuildContentParts(payload.content)
@@ -732,7 +753,11 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       request,
       method: "POST",
       isNew: body.sessionId === undefined,
-      decisions: body.decisions ?? NO_DECISIONS,
+      // 冻结的副本：钩子改它不影响 run 与日志里的审计字段（与 NO_DECISIONS 同理）
+      decisions:
+        body.decisions === undefined
+          ? NO_DECISIONS
+          : Object.freeze(body.decisions.map((d) => Object.freeze({ ...d }))),
     })
     if (denied !== undefined) return denied
 
@@ -802,7 +827,7 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
             )
           }
         }
-        const checked = checkInput(body.input, pending, contributions.tools)
+        const checked = checkInput(body.input, timeline, pending, contributions.tools)
         if (!checked.ok) return json(checked.status, { error: checked.error, message: checked.message })
         input = checked.input
       } catch (err) {
