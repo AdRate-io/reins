@@ -1,6 +1,7 @@
 /**
  * TanStack AI 路径的有损矩阵：每种事件在 `toModelMessages` 里可能的落点（P7：有损必须声明，测试断言实际落点必在其中）。
- * 与 lowering-pi 的 LossMatrix 同形（事件 type → 可能落点列表）。
+ * 与 lowering-pi 的 LossMatrix 同形（事件 type → 可能落点列表）。宿主扩展事件按通配键 `"ext.*"` 查
+ * （与 lowering-pi `declaredLandings` 同一约定）：表里没有具体的 `ext.xxx` 键。
  */
 import type { LossKind } from "@reinsjs/core"
 
@@ -59,6 +60,12 @@ export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>
   "core.memory_op": [OPS],
   "core.handoff": [OPS],
   "core.tool_started": [OPS],
+  "core.tools_bound": [OPS],
   "core.run_ended": [OPS],
   "core.error": [OPS],
+  "ext.*": [
+    dropped(
+      "host extension events have no general landing; translate the ones the model must see into core events in the projection layer",
+    ),
+  ],
 }

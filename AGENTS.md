@@ -238,7 +238,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 用户消息后移 vs 说明后移 | 用户消息后移记 `lossy(user)`（改变了对话顺序）；脑子说明后移仍算 `exact`（只换位置） |
 | runLoop vs TanStack 适配器遇 `defer` | runLoop 只挡需要审批的那个调用；TanStack 在 `beforeTools` 边界暂停，整轮工具全停（引擎形状决定，不绕） |
 | asTool 子代理暂停：默认循环 vs TanStack | 默认循环 `subagentPause` 冒泡成父 paused；TanStack 路径降级为 isError（子会话保留可续跑） |
-| `ctx.batch`：默认循环 vs TanStack | 默认循环逐个判、beforeTool 看得见同批前面的结果；TanStack 整批先判，同批结果不可见、`held` 恒空、补跑批没有 onTurnEnd——`haltOnFailure` 只拦得住补跑预置的失败，`stopAfter` 兑现不了"审批后收尾"；与审批同批的 handoff 照样兑现（下一轮从日志重建，用例锁住） |
+| `ctx.batch`：默认循环 vs TanStack | 默认循环逐个判、beforeTool 看得见同批前面的结果；TanStack 整批先判，同批结果不可见、`held` 恒空、补跑批没有 onTurnEnd——`haltOnFailure` 只拦得住补跑预置的失败，`stopAfter` 兑现不了"审批后收尾"；与审批同批的 handoff 照样兑现（下一轮从日志重建，用例锁住）。TanStack 内部也不齐：UIMessage `approval-responded` 通道补记批准后在执行前重跑管线，此时看得见同批已落的结果（`haltOnFailure` 会因同批失败拦下已批准的调用），resume 通道在边界整批先判、看不到 |
 | Responses reasoning：pi 版 vs fetch 版 | pi 版只在请求 effort 时带 `include: ["reasoning.encrypted_content"]`；fetch 版推理模型永远带（gpt-5 缺省开推理，不带就产出无法回放的项） |
 | `deferredTools` 能力位：Anthropic 官方 vs DeepSeek 的 Anthropic 端口 | 只对 `provider: "anthropic"` 缺省开；DeepSeek 兼容端口实测忽略 `defer_loading`；Chat / Responses / pi 版把 `deferLoading` 的工具直接不发 |
 | DeepSeek `reasoning_content`：`deepseek()` vs `openaiChat()` | 前者缺省开方言、每条历史 assistant 字段必在；后者不带 |
@@ -246,6 +246,9 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 进程内 `input`（`runLoop` / `agent.run()`）vs HTTP `AgentRequestBody.input` | 进程内收草稿数组（宿主背景可带 system 信任）；HTTP 数组只收重建过的内容片段，草稿只收重建过的两种——网络边界不能写 system 信任的说明 |
 | 工具入参二次编码：fetch / pi 降级层 vs TanStack 适配器 | 前者读侧多解一层并标 `meta.argumentsUnwrapped`；后者不解——它的历史按 `JSON.stringify(args)` 送回，模型看到的就是自己写的二次编码，与执行一致，没有"说法不一"，代价只是多一轮往返（要补走 `transformArgs`，OPT-261102-2） |
 | 用户停止：runLoop vs TanStack 适配器 | runLoop 在所有暂停出口把 pending 收尾成"没执行"等结果；TanStack 引擎自己处理中止，适配器在它的边界上做不到对等，停止后 pending 照旧留着 |
+| 审批答复的可信度：server vs TanStack 适配器 | server 的 `decisions` 须连同验签的 `resume` 交、过 `authorizeSession`；TanStack 通用中断的续跑不签名、key 与 `by` 都是客户端自报，适配器只能按同一个 `assertDecisionsAwaitApproval` 收窄到正在等审批的调用（其余告警丢弃）——要审批人身份可信，宿主在调 `chat()` 前自己核 `resume` |
+| run 内工具表：runLoop vs TanStack 适配器 | runLoop 的工具表 run 内不变；TanStack 跟着引擎原生 lazy 工具的发现补进新工具、撤下发现工具（只增不删，其余删除可能是排在后面的宿主中间件按轮过滤），不另记 tools_bound——不跟就把刚发现的工具盖掉、调用撞 Unknown tool |
+| 审批结论的 `parentId`：runLoop vs TanStack 适配器 | 两边都先 `run_resumed`（带第一条结论的 by）再写结论；runLoop 的宿主结论不带 parentId（结论来自 `decisions` 入参、不查调用事件），TanStack 的结论都挂在对应 tool_call 下（它本来就要查 pending 定收不收），多一项信息、不影响判定 |
 | 续跑校验：runLoop / server vs TanStack 适配器 | 前两者调同一个 `validateResume`（D4 收窄）；TanStack 路径本来就不做续跑校验，只为 `tools_bound` 算 configHash，写的 `run_paused` 也不带 `state` |
 | `pullInput`：runLoop / `agent.run()` vs HTTP handler、asTool 子 run、停止收尾 run、TanStack 适配器 | 只有进程内 run 拿宿主回调拉；`AgentDefinition` 排除它，否则 HTTP run 与子专家会拿父宿主的回调拉父的队列。HTTP handler 开 `midRunInput` 时普通 POST run 从该 run 的信箱拉（共用 `runs` 的 handler 都能往里投），asTool 子 run 与停止收尾 run 仍不拉 |
 | run 结束时未拉走的中途消息：进程内宿主 vs HTTP handler（`midRunInput`） | 进程内宿主须再查一次自己的队列（消息在它手里）；handler 随 run 直接丢弃信箱，靠客户端按时间线判未送达后重发——不在 result 帧带未投递列表，送达判据只有时间线一条 |
@@ -274,6 +277,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | Socket 暂停意见里的 `code` / `reason` 不合规 | 改正（丢码、按 host）后照常暂停，记一条模型不可见的 `core.error(input)` | 标注写错不能把受控暂停变成 error、丢掉续跑凭据；记在时间线上，不是静默 |
 | `pullInput` 回调抛错 | 记一条模型不可见的 `core.error(host)`，当这次没有、run 照跑 | 后果只是晚一个空档送达，消息仍在宿主队列；返回值不合规不在此列（fail-closed） |
 | 图片引用的 blob 取不到（`not_found` / 没配 BlobStore） | 引用原样交给降级层，落 `[image unavailable]` 占位、记 lossy，run 照跑 | 被清理的一张旧图不该让整个会话卡死；其它存储错误不在此列（走模型调用失败与重试判定） |
+| TanStack 路径客户端工具的 Socket block，引擎取消集合被前面的中间件换成副本（或升级后不再共享引用） | 前端照常执行，结果照实入日志，追加一条模型不可见的 `core.error(tanstack-ai)` | 客户端工具的执行者是客户端，本库只能借引擎的取消集合拦；拦不住时如实记录比改写结果诚实（宪法二）。要硬拦用静态 `needsApproval` 或在前端拦 |
 | lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限；Haiku 5.5、gpt-5.4 / 5.5 存低档价，长提示是下限） | 价目只用于报告，不影响请求正确性 |
 
 ### 循环与时间线（core）
@@ -291,7 +295,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **Socket 暂停的 `code` 只是标注：库不按它分支、不进续跑状态，写错也不改变结局** — 意见里不合规的地方由 `resolveSocketPause` 改正（码丢掉、`reason` 不在闭集按 host），改正处记一条非终结 `core.error(input)` 再照常暂停，别改成 `fail()`（非停止中止时 pending 会被带进 error 结局）；`note` 随 budget / host 中断一并落进 `run_paused`（含宿主中止、用户停止那几句），断言该载荷全等的用例要算进去；`PAUSE_CODE_RE` 只许收紧不许放宽（读侧不合规判 unknown）。口径只走 `loop/pause-code.ts`，TanStack 适配器调同一对函数。
 - **一次没说完的模型响应里的 tool_call 一律不执行** — 响应以 error 收尾时随 `run_ended(error)` 落 `MODEL_FAILED_NOT_EXECUTED_TEXT`，被宿主中止（`stopReason: "aborted"` 或流抛错时已中止）时暂停前落 `MODEL_INTERRUPTED_NOT_EXECUTED_TEXT`，用户停止仍走停止文案。降级层被掐时会按半截入参吐出调用，不能当"完整的块"留给补跑；断言"中止后 pending"的用例要换成断言这条结果。
 - **模型给的 toolCallId 撞了会话内已有的（或为空）会被改写成 `reins_<规整过的 newId>`，原值进 `payload.meta.originalToolCallId`** — 审批、started、pending 都按 toolCallId 认领，不改写就认领前一个调用的批准；宿主回填客户端工具结果必须用日志（或 `run_paused.awaiting`）里的 id，不能用自己从流里记下的。pi-ai Responses 的复合 id（`call_x|fc_y`）被改写后不再回放 fc_ 部分，只在撞 id 时发生。
-- **没声明 `risk` 的工具缺省不可重放：execute 前多落一条 `core.tool_started`** — 断言日志长度 / seq 的用例要算进去（纯计算的测试工具标 `risk: "low"`）；TanStack 宿主工具视图不带 risk，每次执行都会写。续跑见到"有 started 无结果"落"结果未知"不执行；任何工具返回 `subagentPause` 后补写 started，asTool 靠它判"父在补跑同一个调用"。
+- **没声明 `risk` 的工具缺省不可重放：execute 前多落一条 `core.tool_started`** — 断言日志长度 / seq 的用例要算进去（纯计算的测试工具标 `risk: "low"`）；TanStack 宿主工具的 risk 只从 `metadata.reins.risk` 读（`ReinsToolMetadata`），没写就每次执行都会写。续跑见到"有 started 无结果"落"结果未知"不执行；任何工具返回 `subagentPause` 后补写 started，asTool 靠它判"父在补跑同一个调用"。
 - **`validateResume` 只有在状态带 `modelDigest` / `pendingToolsDigest` 且调用方传了 `model` 与基础工具表时才走收窄比对** — 漏传就退回 configHash 整体比对（更严，不会放过）；两个摘要在场即进签名材料，旧状态材料不变。工具摘要取基础工具表，别传 beforeModel 补丁改过的本轮工具表。
 - **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠父日志里本调用是否已有 `core.tool_started` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
 - **"结果未知"句末缀调用开始时间，只经 `outcomeUnknownText(tool, at)`、且只在工具已知且不可重放时缀** — 子代理的 `tool_started` 是暂停后补写的、`at` 不是开始时间（踩坑 50），所以"做了一半"与工具已不在表里的不缀；断言与宿主判断用 `startsWith` 或按 started 的 `at` 拼期望值，别 `===` 常量。改这几句文案先复跑 `spikes/stop-and-interrupt` 与 `spikes/outcome-unknown-time`。
@@ -382,6 +386,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 - **导入客户端消息的幂等键是"客户端消息 id，没有就用它在客户端数组里的位置"，还要内容逐字相同才算重发** — 客户端自行裁剪历史让位置漂移时退化成不去重而不是误删。
 - **宿主漏登记 `reinsApprovalInterrupt` 时，运行时 init 查引擎登记表，没登记则需审批的调用降级为拒绝并留 `approval_decision(by: "reins")`** — 判据是引用同一性，装了两份 `@tanstack/ai` 也会判成没登记。
+- **一个调用只一张审批卡；原生审批的结论在 `beforeTools` 边界从 init 读到的 `config.resume` 原件落日志，改参批准（`editedArgs` 与日志入参不同）一律不执行** — reins 工具不透传 `needsApproval`（透传就是两张卡、只答一张引擎拒续跑）；宿主原生工具被 Socket defer 时并到原生卡上。答复要在 Socket 管线之前落，approval ttl 才看得见；UIMessage `approval-responded` 通道不经 resume，靠 `onBeforeToolCall` 补记并重跑管线只认 block。改参批准靠 init 把调用并进引擎的 `cancelledToolCallIds` 拦（客户端工具不经 `onBeforeToolCall`，只能在这拦），日志结论只是记录；`onBeforeToolCall` 再核对引擎执行的调用原文（`toolCall.function.arguments`，按引擎同一规则解析）与日志入参作纵深，所有工具同一口径、不经 schema——schema 输出可能带每次不同的缺省值（randomUUID），拿它比会误拦；原生卡上的调用拒收通用答复，被 Socket rewrite 的一律拦下（卡上是原入参）。改参照执行就是"日志写 A、实际做了 B"，要支持须先在 core 给结论加入参落点（OPT-261125-8）。
+- **客户端工具不经 `onBeforeToolCall`，Socket 的 block 靠 beforeTools 边界往引擎的 `cancelledToolCallIds` 原件里加 id 落实** — 依赖 0.53.0 整个 run 只有一个 Set、每次 onConfig 交的都是它本身（公开类型是 ReadonlySet），升级 `@tanstack/ai` 先跑 R2 / R3 用例；`onToolPhaseComplete` 只对真拦住的（引擎回"已取消"、引擎按原生审批拒、服务端工具）写拦截说明，客户端真执行了的照实记结果再追加模型不可见的 `core.error`，别改回"判了 block 就写拦截说明"（违反宪法二）。
 - **模型看到的历史与 TanStack 手上的 `messages` 是两份，只有日志是真源** — 宿主另装中间件再改 messages 会静默覆盖 compact / spill / pin 的效果。
 
 ### eval

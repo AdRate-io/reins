@@ -56,7 +56,9 @@ export {
   isNativeToolView,
   NATIVE_TOOL,
   type NativeToolView,
+  type ReinsToolMetadata,
   type ToolBridge,
   toTanstackTool,
+  type ViewOfTanstackToolOptions,
   viewOfTanstackTool,
 } from "./tools.js"

@@ -9,12 +9,20 @@ pnpm add @reinsjs/adapter-tanstack-ai @tanstack/ai@0.53.0
 ```ts
 import { reinsApprovalInterrupt, reinsMiddleware } from "@reinsjs/adapter-tanstack-ai"
 import { approval, compact, perception, spill } from "@reinsjs/brain"
-import { chat } from "@tanstack/ai"
+import { chat, toolDefinition } from "@tanstack/ai"
+
+// approval() asks about every tool whose risk it does not know: declare it on read-only host tools
+const lookup = toolDefinition({
+  name: "lookup",
+  description: "Look up an order",
+  inputSchema,
+  metadata: { reins: { risk: "low" } },
+}).server(findOrder)
 
 const stream = chat({
   adapter,
   messages,
-  tools,
+  tools: [lookup, deploy],
   systemPrompts: ["You are…"],
   middleware: [
     reinsMiddleware({
@@ -34,13 +42,18 @@ const stream = chat({
 - **`onConfig(init)`** reads the log (fail-closed on unknown events), merges the brain's static tools and prompt fragment, and imports the client's new user messages. Import is idempotent: a network retry that re-sends the same request does not write the message twice (key = message `id` if present, else its position in the client array, plus exact content).
 - **`onConfig(beforeModel)`** replaces `providerMessages` with the projection of the log — TanStack's own `messages` array only serves the UI.
 - **`onChunk` / `onUsage`** append the model's blocks and a `budget_usage` event.
-- **`onInterruptBoundary(beforeTools)`** runs the socket pipeline for every pending call; a `defer` becomes a `reinsApprovalInterrupt` so the run pauses and the client resumes it with `resume`. `onInterruptResolution` records the answer as `approval_decision`.
+- **`onInterruptBoundary(beforeTools)`** runs the socket pipeline for every pending call; a `defer` becomes a `reinsApprovalInterrupt` so the run pauses and the client resumes it with `resume`. `onInterruptResolution` records an answer as `approval_decision` only when it points at a call of this session that is waiting for approval on a reins card (one answer per call); other answers are dropped with a warning. A `run_resumed` comes first, as in the default loop.
 - **`onAfterToolCall` / `onToolPhaseComplete`** append results, including the ones TanStack handled itself (native `needsApproval`, client-side tools).
 
 ## Boundaries you should know
 
 - **Register the interrupt.** If `reinsApprovalInterrupt` is missing from `chat({ interrupts })`, the type layer complains; at run time the middleware also checks the engine's registry, warns once, and treats every call that would need approval as **denied** (an `approval_decision` with `by: "reins"` is left in the log) instead of letting the engine throw mid-run.
 - **`defer` pauses the whole tool batch**, not just the call that needs approval — that is where TanStack's boundary sits.
+- **Declare `risk` on host tools.** The brain reads a TanStack tool's risk from `metadata.reins` (`ReinsToolMetadata`: `risk`, `replayable`), the same fields a reins `Tool` has. Without it the tool counts as a write tool: `approval()`'s default `byRisk` asks a human before every call (so `approval({ ask: ["deploy"] })` alone also asks about `lookup`), and each call logs a `tool_started` first. A value outside the allowed ones is treated as undeclared and reported through `warn`.
+- **One approval card per call.** Reins tools (brain tools, MCP tools from `@reinsjs/tools-mcp`) are asked only through `reinsApprovalInterrupt`, whatever form their `needsApproval` takes. A host tool with TanStack's static `needsApproval: true` is asked only through TanStack's native approval, even when a socket such as `approval()` also wants to ask; the `approval_request` then carries the socket's policy and summary. Native answers sent with `resume` are logged as `approval_decision` (`by: "tanstack"`) at the start of the resumed run, before any tool runs, server or client. Answers carried by `UIMessage` `approval-responded` parts never reach `resume`: for a server tool the approval is logged just before it runs (and `approval({ ttlMs })` is re-checked then); for a client tool it is logged only when the client's result arrives with the next request, as `approved: true` if that result is not an error and `false` otherwise — a client-side execution error is then indistinguishable from a refusal. If a socket rewrites the arguments of a call that goes to the native card, the call is not executed even when approved (the card shows the arguments the model wrote, so running the rewritten ones would run something nobody approved); for a server tool the human is still asked once, because the engine raises the card before the middleware can step in, while a client tool is cancelled before any card. Do not rewrite calls of tools with a static `needsApproval`.
+- **Approval answers come from the client.** TanStack does not sign generic-interrupt continuations, so the `key` and the `by` of a `reinsApprovalInterrupt` answer are whatever the resuming client sends. The middleware only records answers for calls of this session that are waiting for approval (one answer per call); anything else is dropped with a warning. If who approved matters, check `resume` before calling `chat()`.
+- **Socket blocks reach client tools through the engine's cancel list.** Client tools (no `execute`) never pass through `onBeforeToolCall`, so when a socket blocks one (including an `approval()` deny) the middleware adds the call to the engine's `cancelledToolCallIds` at the `beforeTools` boundary and the client is never asked to run it. This relies on TanStack AI 0.53.0 handing every `onConfig` its own mutable set; a middleware placed before reins that replaces that set with a copy defeats it. In that case the client's real result is logged as it came back, followed by a `core.error` (category `tanstack-ai`, not shown to the model) saying the block was not enforced. If you must stop a client tool regardless, give it a static `needsApproval` so the engine raises its own card, or check in the front end before running it.
+- **Edited arguments are not executed.** If the approver answers TanStack's native approval with `editedArgs` that differ from the call the model made, the call is denied instead (`approval_decision` with `by: "reins"`, whose reason names the edited arguments) and handed to the engine as cancelled, so neither a server tool nor a client tool runs with them: the log keeps the model's call as it was written, so running other arguments would make it lie. The model sees the arguments the approver wanted and can make the call again. As a second line, a server tool is not run when the call text the engine is about to execute (`toolCall.function.arguments`, parsed the way the engine parses it) differs from the logged call — for instance a client resending edited history. The check compares the call text, not the schema's output, so a schema default that differs on every parse (`randomUUID()`, `Date.now()`) does not trip it.
 - **No `system` role.** `system_note` events travel as a framed `user` message and are declared lossy; thinking is replayed only with a same-provider signature. The complete table is `TANSTACK_LOSS_MATRIX`.
 - **Sub-agent pause bubbling (`asTool`) is not available here.** A tool returning `subagentPause` is reported to the model as an error; the child session stays paused and can be resumed by the host.
 - **Content parts:** data-sourced image, video and audio parts translate both ways; TanStack has no duration field, so `durationSec` is not exported and imported clips have none (the estimate falls back to byte size). URL sources, documents and parts whose mime type does not match their kind become a placeholder and are reported in `dropped`. Whether the provider takes video or audio is up to TanStack's provider adapter, not reins.
@@ -49,6 +62,7 @@ const stream = chat({
 ## Two more boundaries
 
 - `capabilities.deferredTools` is always `false` on this path, even if you pass `true`: TanStack's adapter decides how tools reach the provider, so there is no place for `defer_loading` / `tool_reference`, and `BeforeModelPatch.deferredTools` is not read. `lazyTools()` therefore always takes its filtering path here; the cache-preserving native path is `runLoop` + `@reinsjs/lowering-fetch` on Anthropic.
+- TanStack's own lazy tools (`lazy: true`) work: when the engine adds a tool it just discovered, or drops its discovery tool, the next model request follows it. Tools only appear this way — a host tool missing from the engine's list is otherwise kept, since a middleware placed after this one may hide tools turn by turn. The change is not logged as a new `tools_bound`; the next run's snapshot shows it.
 - `approval({ ttlMs })` works here exactly as in the default loop: TanStack re-enters the `beforeTools` boundary after an interrupt is resolved, so the `beforeTool` pipeline runs again and an approval that arrived too late is denied with `approval_decision(by: "approval.expired")` before the tool runs (`middleware.test.ts`, "审批").
 - `ctx.batch` is filled, but the engine checks a whole batch in `beforeTools` before running any of it, so `beforeTool` sees no results from the same batch (only those of a resumed batch logged by an earlier run) and `held` stays empty — a `defer` pauses the whole batch anyway. `haltOnFailure()` therefore never holds back calls of a fresh batch here. A resumed batch also gets no `onTurnEnd`: after the leftover calls run, the engine asks the model straight away, so `stopAfter()` cannot end a run on a wrap-up call that waited behind an approval (`middleware.test.ts`, "TurnContext.batch").
 

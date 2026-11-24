@@ -42,7 +42,8 @@
   },
   "devDependencies": {
     "@reinsjs/brain": "workspace:*",
-    "@tanstack/ai": "0.53.0"
+    "@tanstack/ai": "0.53.0",
+    "zod": "4.6.1"
   },
   "engines": {
     "node": ">=22"

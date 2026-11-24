@@ -266,17 +266,26 @@ describe("toModelMessages", () => {
         { actor: "system" },
       ),
       ev("core.model_text", { text: "single" }),
+      // 投影缺省会滤掉 tools_bound，但宿主的 beforeModel 补丁可以换掉 events；ext.* 缺省投影不滤（全库审查 2026-11-25 #76）
+      ev("core.tools_bound", { toolNames: ["t"], configHash: "h" }, { actor: "system" }),
+      {
+        ...ev("core.budget_usage", { tokens: { input: 1, output: 1 }, toolCalls: 0, wallMs: 1 }),
+        type: "ext.host_ping",
+      },
     ]
     const { landings } = toModelMessages(events, { model: MODEL })
+    expect(landings.map((l) => l.type).sort()).toEqual(events.map((e) => e.type).sort())
     const seen = new Set<string>()
     for (const l of landings) {
-      const declared = TANSTACK_LOSS_MATRIX[l.type]
+      // 与 lowering-pi 的 declaredLandings 同一约定：ext.* 按通配条目查
+      const key = l.type in TANSTACK_LOSS_MATRIX || !l.type.startsWith("ext.") ? l.type : "ext.*"
+      const declared = TANSTACK_LOSS_MATRIX[key]
       expect(declared, l.type).toBeDefined()
       expect(
         declared?.some((d) => d.kind === l.kind && d.landing === l.landing),
         `${l.type} → ${l.kind}/${l.landing}`,
       ).toBe(true)
-      seen.add(`${l.type}|${l.kind}|${l.landing}`)
+      seen.add(`${key}|${l.kind}|${l.landing}`)
     }
     for (const [type, entries] of Object.entries(TANSTACK_LOSS_MATRIX)) {
       if (
@@ -289,6 +298,7 @@ describe("toModelMessages", () => {
           "memory_op",
           "handoff",
           "tool_started",
+          "tools_bound",
           "run_ended",
           "error",
         ].includes(type.slice(5))
