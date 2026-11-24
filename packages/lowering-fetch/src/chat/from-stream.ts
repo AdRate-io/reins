@@ -32,6 +32,8 @@ interface ChatChunk {
     finish_reason?: unknown
   }[]
   usage?: ChatUsage | null
+  /** 中转站 / 兼容端点在流里下发的错误帧：`data: {"error":{"message","type","code"}}` */
+  error?: { message?: unknown; type?: unknown; code?: unknown } | null
 }
 
 interface ChatUsage {
@@ -62,6 +64,8 @@ class ChatAssembly {
   finish: string | undefined
   usage: ChatUsage | undefined
   responseModel: string | undefined
+  /** 流里的 error 帧（与 Anthropic / Responses 线的 error 事件同口径：文案 "<code>: <message>"） */
+  error: { code: string; message: string } | undefined
   /** onDelta 用的块序号：按首次出现顺序分配 */
   private readonly blockIndex = new Map<string, number>()
 
@@ -127,6 +131,15 @@ function callSlotOf(tc: { index?: unknown; id?: unknown }, a: ChatAssembly): num
 }
 
 function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
+  if (chunk.error && typeof chunk.error === "object") {
+    const e = chunk.error
+    const code = typeof e.code === "string" || typeof e.code === "number" ? String(e.code) : undefined
+    a.error = {
+      code: code ?? (typeof e.type === "string" && e.type !== "" ? e.type : "error"),
+      message: typeof e.message === "string" ? e.message : "",
+    }
+    return
+  }
   if (typeof chunk.model === "string" && chunk.model !== "") a.responseModel = chunk.model
   if (chunk.usage && typeof chunk.usage === "object") a.usage = chunk.usage
   const choice = chunk.choices?.[0]
@@ -163,6 +176,7 @@ function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
 /**
  * 停止原因，判定顺序固定：先看 finish_reason 是否"没正常说完"，最后才看有没有 tool_call——
  * 截断（length）、过滤、没收尾的流里也可能已有半截 tool_call，先判 toolUse 会把截断藏起来（全库审查 #28）。
+ * - 流里的 error 帧 → error，文案 "<code>: <message>" 带厂商原文（rate_limit 之类 core 按文案判可重试，额度 / 鉴权不重试）；
  * - length → length；content_filter / insufficient_system_resource（DeepSeek 服务端资源不足）/ aborted（服务端中止）
  *   → error 并把原因写进 errorMessage——core 只按文案判是否重试，资源不足那条写明 temporarily unavailable 让它值得再试；
  * - 没有 finish_reason：没等到 [DONE]，或等到了却既无正文也无 tool_call → error "stream ended before finish_reason"（可重试）；
@@ -176,6 +190,11 @@ function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolea
   if (c !== undefined) out.costUsd = c
   if (a.responseModel) out.responseModel = a.responseModel
 
+  if (a.error) {
+    out.stopReason = "error"
+    out.errorMessage = `${a.error.code}: ${a.error.message}`
+    return out
+  }
   switch (a.finish) {
     case "length":
       out.stopReason = "length"
@@ -227,6 +246,7 @@ export async function* consumeChatStream(
         continue
       }
       apply(chunk, a, ctx)
+      if (a.error) break
     }
   } catch (err) {
     yield* a.drafts(input.origin)

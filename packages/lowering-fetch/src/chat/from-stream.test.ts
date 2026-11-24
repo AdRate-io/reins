@@ -188,6 +188,24 @@ describe("consumeChatStream", () => {
     expect(outcome.errorMessage).toBe("stream ended before finish_reason")
   })
 
+  it("流里的 error 帧（中转站常见）：带厂商 code 与 message 收尾，不再报成可重试的'流没收尾'；已拼草稿先交出（全库审查 #72）", async () => {
+    const { drafts, outcome } = await run([
+      chunk({ content: "半截" }),
+      {
+        data: JSON.stringify({
+          error: { message: "quota exceeded", type: "billing", code: "insufficient_quota" },
+        }),
+      },
+      chunk({ content: "不该到这里" }),
+    ])
+    expect(drafts).toEqual([
+      { type: "core.model_text", actor: "model", payload: { text: "半截" }, replay: origin },
+    ])
+    expect(outcome).toMatchObject({ stopReason: "error", errorMessage: "insufficient_quota: quota exceeded" })
+    const bare = (await run([{ data: JSON.stringify({ error: { message: "boom" } }) }])).outcome
+    expect(bare).toMatchObject({ stopReason: "error", errorMessage: "error: boom" })
+  })
+
   it("有 [DONE] 但网关吞了 finish_reason：有正文按 stop 收尾", async () => {
     const { outcome } = await run([chunk({ content: "ok" }), { data: "[DONE]" }])
     expect(outcome.stopReason).toBe("stop")

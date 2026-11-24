@@ -47,6 +47,33 @@ describe("postJson", () => {
     expect(judge(401, "Missing bearer")).toBe(false)
   })
 
+  it("2xx 但正文是 JSON（网关把错误以 200 + JSON 回）：读出原文抛 HttpError，不交给 SSE 解析吞掉；不判瞬断（全库审查 #72）", async () => {
+    const err = (await thrown(() =>
+      postJson({
+        url: "u",
+        headers: {},
+        body: {},
+        signal: new AbortController().signal,
+        fetch: respond(200, '{"error":{"message":"invalid api key"}}', {
+          "content-type": "application/json",
+        }),
+      }),
+    )) as HttpError
+    expect(err).toBeInstanceOf(HttpError)
+    expect(err.status).toBe(200)
+    expect(err.message).toContain("invalid api key")
+    expect(isTransientFailure({ kind: "thrown", error: err })).toBe(false)
+    // 正常的 SSE 与没写 content-type 的响应照旧交给流解析
+    const ok = await postJson({
+      url: "u",
+      headers: {},
+      body: {},
+      signal: new AbortController().signal,
+      fetch: respond(200, "data: {}\n\n", { "content-type": "text/event-stream; charset=utf-8" }),
+    })
+    expect(ok.status).toBe(200)
+  })
+
   it("服务端 x-should-retry 头优先于状态码", () => {
     const err = new HttpError(400, new Headers({ "x-should-retry": "true" }), "odd", "u")
     expect(isTransientFailure({ kind: "thrown", error: err })).toBe(true)

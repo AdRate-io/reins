@@ -121,7 +121,7 @@ Declared in `LOSS_MATRIX["openai-responses"]`, cell for cell comparable with `@r
 
 ## Errors and retries
 
-Non-2xx responses throw `HttpError` with `status`, `headers` and the raw body (`"<status> <body>"`, the same shape the official SDKs use), so `runLoop`'s transient-failure rule applies unchanged: 408 / 409 / 429 / 5xx retry, everything else does not. Network failures propagate from `fetch` untouched.
+Non-2xx responses throw `HttpError` with `status`, `headers` and the raw body (`"<status> <body>"`, the same shape the official SDKs use), so `runLoop`'s transient-failure rule applies unchanged: 408 / 409 / 429 / 5xx retry, everything else does not. A 2xx response whose `content-type` is JSON (a gateway reporting an error with status 200) throws the same way and is not retried. An `error` frame inside a Chat Completions stream ends the turn with `"<code>: <message>"`, as the Anthropic and Responses lines already did. Network failures propagate from `fetch` untouched.
 
 ## Documentation
 

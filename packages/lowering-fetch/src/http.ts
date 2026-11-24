@@ -98,8 +98,13 @@ export interface PostJsonInput {
   fetch?: typeof globalThis.fetch
 }
 
+function isJsonContentType(value: string | null): boolean {
+  const type = value?.split(";")[0]?.trim().toLowerCase()
+  return type === "application/json" || (type?.endsWith("+json") ?? false)
+}
+
 /**
- * POST JSON；非 2xx 读完正文抛 HttpError。网络层失败（DNS、连接被掐、超时）由 fetch 自己抛出，原样上抛——
+ * POST JSON；非 2xx（以及 2xx 但正文明说是 JSON）读完正文抛 HttpError。网络层失败（DNS、连接被掐、超时）由 fetch 自己抛出，原样上抛——
  * 那些错误对象上的 `cause.code` / `name` 正是 core 判瞬断要看的东西，包一层反而会盖掉。
  */
 export async function postJson(input: PostJsonInput): Promise<Response> {
@@ -111,6 +116,13 @@ export async function postJson(input: PostJsonInput): Promise<Response> {
     signal: input.signal,
   })
   if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new HttpError(res.status, res.headers, text, input.url)
+  }
+  // 2xx 却明说是 JSON：网关 / 中转站把错误（鉴权失败、额度用尽）以 200 + JSON 回。交给 SSE 解析只会得到
+  // "流没收尾"、被当瞬断重试且厂商原文丢失（全库审查 #72）。只认明确的 JSON 类型——没写或写错 content-type 的
+  // SSE 照旧放行，别误伤
+  if (isJsonContentType(res.headers.get("content-type"))) {
     const text = await res.text().catch(() => "")
     throw new HttpError(res.status, res.headers, text, input.url)
   }
