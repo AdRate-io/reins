@@ -80,8 +80,11 @@ strictness, add it in `override` or run `approval({ unmatched: "ask" })`.
 ## Connection lifecycle
 
 `mcpTools()` does not connect. The first run that needs the tool table opens the connection; later runs reuse it.
-If the transport closes (server restarted, network dropped), the next call that needs it — a `tools/call` in the
-same run or `tools/list` at the next run start — rebuilds the connection from the transport recipe once. There is
+If the transport closes (server restarted, network dropped), or a stateful Streamable HTTP server answers 404 because
+the session it issued is gone (restart, session expiry), the next call that needs it — a `tools/call` in the
+same run or `tools/list` at the next run start — rebuilds the connection from the transport recipe once. A `tools/list`
+that hits the 404 re-initializes and lists again within the same call (it is read-only); a `tools/call` that hits it is
+reported as an error and is not resent. There is
 no retry policy inside a call: a failed call is reported to the model as an error result, and a failed reconnect at
 run start throws before anything is written to the log (fail-closed). Pass `optional: true` to instead start the
 run without that server's tools and warn once; the model then sees them listed as removed.

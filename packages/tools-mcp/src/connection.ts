@@ -4,8 +4,12 @@
  * 为什么不在这里做重连策略（退避、次数）：库里的连接是给"多次 run 复用"的，一次 `tools/call` 失败就让模型
  * 看到 isError 自己决定要不要再试（宪法一）；跨 run 的"重建一次"只是把"上次断了"这个状态清掉，
  * 不是重试。真要保活、要退避的宿主自己包一层 transport。
+ *
+ * "断了"有两种信号：传输关闭（`onclose`，stdio 子进程退出、内存传输关闭）与 HTTP 会话失效（有状态的 Streamable HTTP
+ * 服务器重启或会话过期后对带旧 `mcp-session-id` 的请求回 404）。SDK 对后者只抛 `SdkHttpError`、不触发 `onclose`、也不自己
+ * 重新 initialize，而 spec 要求客户端此时开新会话——所以这里认出 404 后把连接作废，交给下一次 `ensure()` 重建。
  */
-import { Client, type Transport } from "@modelcontextprotocol/client"
+import { Client, SdkHttpError, type Transport } from "@modelcontextprotocol/client"
 import type { McpCallResult } from "./translate.js"
 import { toToolInfo } from "./translate.js"
 import { type McpToolInfo, McpToolsError, type McpTransport } from "./types.js"
@@ -65,13 +69,33 @@ export class McpConnection {
     await this.ensure()
   }
 
-  /** `tools/list`（SDK 会自动翻完全部分页）。绕过 SDK 的列表缓存：每次 run 起步要的就是服务器此刻的表 */
+  /**
+   * 把这条连接作废（会话已失效）：清掉引用让下一次 `ensure()` 重建，旧 Client 尽力关掉。
+   * 只在引用仍指向它时清：并发的几次调用同时撞 404，后到的不能把先到者刚重建的新连接清掉
+   */
+  private discard(client: Client): void {
+    if (this.client === client) this.client = undefined
+    client.close().catch(() => {
+      // 旧连接关不掉也无所谓：它的会话在服务端已经不存在了
+    })
+  }
+
+  /**
+   * `tools/list`（SDK 会自动翻完全部分页）。绕过 SDK 的列表缓存：每次 run 起步要的就是服务器此刻的表。
+   * 撞会话失效（404）时在同一次调用里重新握手、再 list 一次——只读请求，重放无副作用；再失败就照常抛
+   */
   async listTools(signal?: AbortSignal): Promise<McpToolInfo[]> {
-    const client = await this.ensure()
     let result: { tools: unknown[] }
     try {
-      result = await client.listTools({}, { cacheMode: "bypass", ...(signal ? { signal } : {}) })
+      try {
+        result = await this.listOnce(signal)
+      } catch (err) {
+        if (!isSessionGone(err)) throw err
+        result = await this.listOnce(signal)
+      }
     } catch (err) {
+      // 建连失败已是 McpToolsError（带"Failed to connect"），原样抛
+      if (err instanceof McpToolsError) throw err
       throw new McpToolsError(
         `MCP tools/list failed (${this.transport.label}): ${messageOf(err)}`,
         this.transport.label,
@@ -81,18 +105,36 @@ export class McpConnection {
     return result.tools.map(toToolInfo)
   }
 
-  /** `tools/call`。抛错（未知工具、断连、超时）交给调用方翻成 isError 结果 */
+  private async listOnce(signal: AbortSignal | undefined): Promise<{ tools: unknown[] }> {
+    const client = await this.ensure()
+    try {
+      return await client.listTools({}, { cacheMode: "bypass", ...(signal ? { signal } : {}) })
+    } catch (err) {
+      if (isSessionGone(err)) this.discard(client)
+      throw err
+    }
+  }
+
+  /**
+   * `tools/call`。抛错（未知工具、断连、超时）交给调用方翻成 isError 结果。
+   * 撞会话失效（404）只把连接作废、照常抛，不在这里重建后重发：写操作重放的判断交给模型，下一次调用自然重建
+   */
   async callTool(
     name: string,
     args: unknown,
     opts: { signal?: AbortSignal; timeoutMs: number },
   ): Promise<McpCallResult> {
     const client = await this.ensure()
-    const result = await client.callTool(
-      { name, arguments: (args ?? {}) as Record<string, unknown> },
-      { timeout: opts.timeoutMs, ...(opts.signal ? { signal: opts.signal } : {}) },
-    )
-    return result as McpCallResult
+    try {
+      const result = await client.callTool(
+        { name, arguments: (args ?? {}) as Record<string, unknown> },
+        { timeout: opts.timeoutMs, ...(opts.signal ? { signal: opts.signal } : {}) },
+      )
+      return result as McpCallResult
+    } catch (err) {
+      if (isSessionGone(err)) this.discard(client)
+      throw err
+    }
   }
 
   /**
@@ -112,6 +154,14 @@ export class McpConnection {
     this.client = undefined
     if (client) await client.close()
   }
+}
+
+/**
+ * 服务端说"这个会话不存在了"：Streamable HTTP 对带 `mcp-session-id` 的请求回 404（spec：客户端须开新会话）。
+ * 不看正文：服务器回什么 JSON-RPC 错误码各家不一，状态码是 spec 定的判据
+ */
+function isSessionGone(err: unknown): boolean {
+  return SdkHttpError.isInstance(err) && err.status === 404
 }
 
 function messageOf(err: unknown): string {

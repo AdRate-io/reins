@@ -5,7 +5,11 @@
  * 第二个客户端 initialize 就 400 "Server already initialized"（examples/mcp 第一次真跑踩到的）。
  */
 
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server"
+import {
+  createMcpHandler,
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from "@modelcontextprotocol/server"
 import { type Event, InMemoryEventLog, type RunResult, runLoop } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
@@ -187,5 +191,109 @@ describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
     expect(() =>
       httpTransport({ url: "http://mcp.local/mcp", auth, headers: { "X-Tenant": "a" } }),
     ).not.toThrow()
+  })
+})
+
+/**
+ * 有状态的 Streamable HTTP 服务器：每个会话一对 server + transport，按 mcp-session-id 路由；
+ * 未知会话按 spec 回 404。`restart()` 清空会话表，模拟服务器重启或会话过期
+ */
+function statefulServer() {
+  const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>()
+  const seen: string[] = []
+  const fetchFn: typeof fetch = async (input, init) => {
+    const req = new Request(input, init)
+    const sid = req.headers.get("mcp-session-id")
+    let res: Response
+    if (sid) {
+      const t = sessions.get(sid)
+      res = t
+        ? await t.handleRequest(req)
+        : new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32001, message: "Session not found" },
+              id: null,
+            }),
+            { status: 404, headers: { "content-type": "application/json" } },
+          )
+    } else {
+      const server = new McpServer({ name: "stateful-fixture", version: "0.0.0" })
+      server.registerTool(
+        "echo",
+        { description: "echo", inputSchema: { text: z.string() } },
+        async ({ text }) => ({
+          content: [{ type: "text" as const, text: `echo:${text}` }],
+        }),
+      )
+      const t: WebStandardStreamableHTTPServerTransport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        enableJsonResponse: true,
+        onsessioninitialized: (id) => void sessions.set(id, t),
+      })
+      await server.connect(t)
+      res = await t.handleRequest(req)
+    }
+    seen.push(`${req.method}:${res.status}:${sid ? "sid" : "-"}`)
+    return res
+  }
+  return { sessions, seen, fetch: fetchFn, restart: () => sessions.clear() }
+}
+
+describe("httpTransport：有状态服务器的会话失效（404）", () => {
+  it("tools/list 撞 404：丢掉旧连接、同一次调用里重新握手一次，后续 run 照常", async () => {
+    const srv = statefulServer()
+    const socket = mcpTools({ transport: httpTransport({ url: "http://mcp.local/mcp", fetch: srv.fetch }) })
+    const list = socket.tools as () => Promise<{ name: string }[]>
+    expect((await list()).map((t) => t.name)).toEqual(["echo"])
+    srv.restart()
+    // 修复前：连接引用永不清，之后每次都带旧 sid 撞 404，从不重新 initialize
+    expect((await list()).map((t) => t.name)).toEqual(["echo"])
+    expect((await list()).map((t) => t.name)).toEqual(["echo"])
+    const afterRestart = srv.seen.slice(srv.seen.indexOf("POST:404:sid"))
+    expect(afterRestart.filter((s) => s === "POST:404:sid")).toHaveLength(1)
+    expect(afterRestart).toContain("POST:200:-") // 不带 sid 的新 initialize
+    expect(srv.sessions.size).toBe(1)
+    await socket.close()
+  })
+
+  it("tools/call 撞 404：本次是 isError、不重放，下一次调用按配方重建并成功", async () => {
+    const srv = statefulServer()
+    const socket = mcpTools({ transport: httpTransport({ url: "http://mcp.local/mcp", fetch: srv.fetch }) })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "echo", { text: "one" })] },
+      { drafts: [callTool("c2", "echo", { text: "two" })] },
+      { drafts: [say("ok")] },
+    ])
+    const gen = runLoop({
+      sessionId: "s",
+      log,
+      lowering,
+      model: { provider: "x", id: "y" },
+      sockets: [socket],
+    })
+    // 起步 tools/list 之后、第一次 tools/call 之前让服务器"重启"
+    const events: Event[] = []
+    let restarted = false
+    while (true) {
+      const step = await gen.next()
+      if (step.done) break
+      events.push(step.value)
+      if (!restarted && step.value.type === "core.tool_call") {
+        srv.restart()
+        restarted = true
+      }
+    }
+    const results = events.filter((e) => e.type === "core.tool_result") as unknown as {
+      payload: { isError?: boolean; content: { type: string; text?: string }[] }
+    }[]
+    expect(results).toHaveLength(2)
+    expect(results[0]?.payload.isError).toBe(true)
+    expect(results[1]?.payload.isError ?? false).toBe(false)
+    expect(results[1]?.payload.content).toEqual([{ type: "text", text: "echo:two" }])
+    // 撞 404 的那次调用没有在新会话上重放：重建后只有 c2 一次 tools/call 到了服务器
+    expect(srv.seen.filter((s) => s === "POST:404:sid")).toHaveLength(1)
+    await socket.close()
   })
 })
