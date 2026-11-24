@@ -22,6 +22,7 @@ import {
   parseEventsJsonl,
   type Replacement,
   scrubEvents,
+  scrubForms,
   toEventsJsonl,
   unspillRecording,
 } from "@reinsjs/eval"
@@ -71,7 +72,8 @@ function main(): void {
 
   // 3. 自查：原值一个不剩、每条规则都命中、没有意外泄漏
   const after = JSON.stringify(events)
-  for (const [from] of table) if (after.includes(from)) throw new Error("脱敏后仍残留原值")
+  // 按 scrubForms 的全部写法查：带引号 / 反斜杠的原值在 JSON 文本里不会原样出现，只查原值永远查不出残留
+  for (const [from] of table) if (scrubForms(from).some((f) => after.includes(f))) throw new Error("脱敏后仍残留原值")
   const missed = hits.filter((h) => h === 0).length
   if (missed > 0) throw new Error(`${missed} 条脱敏规则没有命中，表可能写错了`)
   const leaks = (after.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? []).filter((s) => !s.startsWith("reins-"))

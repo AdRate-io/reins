@@ -4,11 +4,14 @@
  * 1. token 不多于基线的 100%（可配比例）
  * 2. 任务完成率不低于基线
  * 3. 关键信息召回不低于基线
- * 4. 压缩前后约束违规率不上升（候选臂自己整理前 vs 整理后）
+ * 4. 压缩前后约束违规率不上升（候选臂自己整理前 vs 整理后，只取整理后还有模型动作的格；按格均值与按动作加权都要过，见 ArmSummary.violations）
+ *
+ * 前提：两臂覆盖完全相同的 fixture × 重复（每格恰好一次），否则直接抛错——四条都是按格均值比，
+ * 缺格（拆进程跑时某个进程崩了）或重复格会让两臂的均值不在同一组题上算，门禁结论没有意义。
  *
  * 只给结论与数字，怎么用（CI 红绿、默认开关）由调用方定。
  */
-import type { ArmSummary, EvalReport } from "./types.js"
+import type { ArmSummary, EvalOutcome, EvalReport } from "./types.js"
 
 export interface GateOptions {
   /** 基线臂名，通常 "threshold" */
@@ -25,7 +28,7 @@ export interface GateCheck {
   reference?: number
   candidate?: number
   pass: boolean
-  /** 无法判定时的说明（如没有预埋事实） */
+  /** 补充说明：无法判定时的理由（如没有预埋事实），或 governance 另一口径的数字 */
   note?: string
 }
 
@@ -41,6 +44,9 @@ export function checkGate(report: EvalReport, opts: GateOptions): GateResult {
   const candidate = report.summary[opts.candidate]
   if (!reference) throw new Error(`the report has no reference arm "${opts.reference}"`)
   if (!candidate) throw new Error(`the report has no candidate arm "${opts.candidate}"`)
+  assertSummaryMatchesCells(report, opts.reference, "reference")
+  assertSummaryMatchesCells(report, opts.candidate, "candidate")
+  assertSameCells(report.outcomes, opts.reference, opts.candidate)
   const ratio = opts.tokenRatioMax ?? 1
 
   const checks: GateCheck[] = []
@@ -78,13 +84,88 @@ export function checkGate(report: EvalReport, opts: GateOptions): GateResult {
     })
   }
 
-  checks.push({
-    name: "governance",
-    rule: "candidate violation rate after compaction <= before",
-    reference: candidate.violations.before,
-    candidate: candidate.violations.after,
-    pass: candidate.violations.after <= candidate.violations.before,
-  })
+  const governanceRule = "candidate violation rate after compaction <= before"
+  if (candidate.violations.compactedRuns === 0) {
+    checks.push({
+      name: "governance",
+      rule: governanceRule,
+      pass: true,
+      note: "no candidate run had model actions after a compaction, counted as a pass",
+    })
+  } else {
+    // 按格均值与按动作加权都不许上升；报出的数字取没过的那个口径（都过时取按格均值），另一口径写进 note
+    const v = candidate.violations
+    const perRunPass = v.after <= v.before
+    const pooledPass = v.pooledAfter <= v.pooledBefore
+    const showPooled = perRunPass && !pooledPass
+    const pct = (x: number) => `${(x * 100).toFixed(1)}%`
+    checks.push({
+      name: "governance",
+      rule: governanceRule,
+      reference: showPooled ? v.pooledBefore : v.before,
+      candidate: showPooled ? v.pooledAfter : v.after,
+      pass: perRunPass && pooledPass,
+      note: showPooled
+        ? `pooled over actions; per-run mean ${pct(v.before)} -> ${pct(v.after)}`
+        : `per-run mean; pooled over actions ${pct(v.pooledBefore)} -> ${pct(v.pooledAfter)}`,
+    })
+  }
 
   return { pass: checks.every((c) => c.pass), checks, reference, candidate }
+}
+
+/** 列名单时最多列几格，其余按"等 N 格"带过 */
+const LIST_MAX = 10
+
+const listCells = (keys: readonly string[]): string =>
+  keys.length <= LIST_MAX
+    ? keys.join(", ")
+    : `${keys.slice(0, LIST_MAX).join(", ")} and ${keys.length - LIST_MAX} more`
+
+/** 某臂的格键（`<fixtureId>#<repeat>`）；同一格出现两次即抛错 */
+function cellKeysOf(outcomes: readonly EvalOutcome[], arm: string, role: string): Set<string> {
+  const keys = new Set<string>()
+  const duplicates: string[] = []
+  for (const o of outcomes) {
+    if (o.arm !== arm) continue
+    const key = `${o.fixtureId}#${o.repeat}`
+    if (keys.has(key)) duplicates.push(key)
+    keys.add(key)
+  }
+  if (duplicates.length > 0)
+    throw new Error(`the ${role} arm "${arm}" has duplicate cells: ${listCells(duplicates)}`)
+  return keys
+}
+
+/**
+ * 四条门禁读的是 summary，格集合核对读的是 outcomes：两者必须描述同一批格。
+ * 调用方把 outcomes 裁空（或只留一部分）、summary 照旧时，格集合核对两边都空会直接放行，这里先拦住
+ */
+function assertSummaryMatchesCells(report: EvalReport, arm: string, role: string): void {
+  const runs = report.summary[arm]?.runs ?? 0
+  const cells = report.outcomes.filter((o) => o.arm === arm).length
+  if (runs !== cells)
+    throw new Error(
+      `the ${role} arm "${arm}" summarizes ${runs} run(s) but the report has ${cells} cell(s) for it; summary and outcomes must describe the same runs`,
+    )
+}
+
+/** 两臂必须覆盖同一组 fixture × 重复：门禁按格均值比，缺格或多格都会让两边不在同一组题上算 */
+function assertSameCells(outcomes: readonly EvalOutcome[], reference: string, candidate: string): void {
+  const ref = cellKeysOf(outcomes, reference, "reference")
+  const cand = cellKeysOf(outcomes, candidate, "candidate")
+  const missingFromCandidate = [...ref].filter((k) => !cand.has(k))
+  const missingFromReference = [...cand].filter((k) => !ref.has(k))
+  if (missingFromCandidate.length === 0 && missingFromReference.length === 0) return
+  const parts = [
+    ...(missingFromCandidate.length > 0
+      ? [`missing from candidate: ${listCells(missingFromCandidate)}`]
+      : []),
+    ...(missingFromReference.length > 0
+      ? [`missing from reference: ${listCells(missingFromReference)}`]
+      : []),
+  ]
+  throw new Error(
+    `the reference and candidate arms must cover the same fixture x repeat cells; ${parts.join("; ")}`,
+  )
 }

@@ -176,15 +176,26 @@ async function runCell(
   let resumes = 0
   let steps = 0
   const maxSteps = opts.maxSteps ?? 200
-  const draft = (): EvalOutcomeDraft => ({
-    ...cell,
-    sessionIds,
-    timelines: [],
-    timeline: [],
-    fresh: [],
-    result,
-    finalText: "",
-  })
+  // 种子历史是别人（上一次真实运行）的账：token、轮数、动作都不算在这一格头上，只算本次新追加的事件
+  const seedLen = fixture.task.seed?.length ?? 0
+  /** 从日志读出此刻的各会话时间线，组成评分器看到的中间态；审批代答（暂停那一刻）与收尾（第 3 步）共用 */
+  const draft = async (): Promise<EvalOutcomeDraft> => {
+    const timelines: Event[][] = []
+    for (const id of sessionIds)
+      timelines.push(await readTimeline(env.stores.log, id, { registry: env.registry }))
+    const timeline = timelines.flat()
+    const fresh =
+      seedLen > 0 ? [...(timelines[0] ?? []).slice(seedLen), ...timelines.slice(1).flat()] : timeline
+    return {
+      ...cell,
+      sessionIds: [...sessionIds],
+      timelines,
+      timeline,
+      fresh,
+      result,
+      finalText: finalTextOf(fresh),
+    }
+  }
   while (steps++ < maxSteps) {
     opts.signal?.throwIfAborted()
     if (result.status === "handoff") {
@@ -197,9 +208,10 @@ async function runCell(
     if (result.reason === "approval") {
       const decisions: ApprovalDecisionInput[] = []
       let blocked = false
+      const atPause = fixture.approve ? await draft() : undefined
       for (const i of result.interruptions) {
         if (i.kind === "approval") {
-          const approved = fixture.approve ? fixture.approve(i, draft()) : true
+          const approved = fixture.approve && atPause ? fixture.approve(i, atPause) : true
           decisions.push({ toolCallId: i.toolCallId, approved, by: "eval" })
         } else blocked = true // 客户端工具等：eval 里没人能回填
       }
@@ -223,23 +235,8 @@ async function runCell(
   const wallMs = now() - wallStart
 
   // 3. 收时间线、算完成度
-  const timelines: Event[][] = []
-  for (const id of sessionIds)
-    timelines.push(await readTimeline(env.stores.log, id, { registry: env.registry }))
-  const timeline = timelines.flat()
-  // 种子历史是别人（上一次真实运行）的账：token、轮数、动作都不算在这一格头上，只算本次新追加的事件
-  const seedLen = fixture.task.seed?.length ?? 0
-  const fresh =
-    seedLen > 0 ? [...(timelines[0] ?? []).slice(seedLen), ...timelines.slice(1).flat()] : timeline
-  const outcomeDraft: EvalOutcomeDraft = {
-    ...cell,
-    sessionIds,
-    timelines,
-    timeline,
-    fresh,
-    result,
-    finalText: finalTextOf(fresh),
-  }
+  const outcomeDraft = await draft()
+  const { timelines, fresh } = outcomeDraft
   const completed = clamp01(await fixture.completion(outcomeDraft))
 
   // 4. 探针问答
@@ -372,10 +369,15 @@ async function grade(
   return { score: gradeExpect(expect, answer), gradedBy: "expect" }
 }
 
-/** 确定性判分：字符串不分大小写包含、正则、或函数（0~1 / 布尔） */
+/**
+ * 确定性判分：字符串不分大小写包含、正则、或函数（0~1 / 布尔）。
+ * 正则去掉 g / y 另建一份再匹配：同一个 RegExp 对象跨臂、跨重复、跨 --rescore 复用，
+ * 带这两个标志时 test 会推进 lastIndex，同一个答案就会交替判 1 和 0
+ */
 export function gradeExpect(expect: NonNullable<PlantedFact["expect"]>, answer: string): number {
   if (typeof expect === "string") return answer.toLowerCase().includes(expect.toLowerCase()) ? 1 : 0
-  if (expect instanceof RegExp) return expect.test(answer) ? 1 : 0
+  if (expect instanceof RegExp)
+    return new RegExp(expect.source, expect.flags.replace(/[gy]/g, "")).test(answer) ? 1 : 0
   return clamp01(expect(answer))
 }
 
@@ -413,6 +415,15 @@ export function summarize(outcomes: readonly EvalOutcome[]): Record<string, ArmS
       total: mean(ms.map((m) => m.tokens.total)),
     }
     const recalls = ms.map((m) => m.recall).filter((r): r is number => r !== undefined)
+    // 治理衰减只在整理后真有动作的格上比：没整理的格 after 窗恒空，掺进来会把整理后违规率拉向 0。
+    // 两窗用同一批格，给两种口径：按格均值（每格一票）与按动作加权（Σ违规 / Σ动作）。
+    // 门禁要求两种都过：任一口径都可能被另一种的分布掩盖（动作少的格抬高按格均值的整理前、动作多的格主导加权）
+    const compacted = ms.filter((m) => m.violations.after.actions > 0)
+    const pooled = (w: "before" | "after") => {
+      const actions = compacted.reduce((a, m) => a + m.violations[w].actions, 0)
+      const violations = compacted.reduce((a, m) => a + m.violations[w].violations, 0)
+      return actions === 0 ? 0 : violations / actions
+    }
     const cacheHitRate = cacheHitRateOf(tokens)
     summary[arm] = {
       arm,
@@ -423,8 +434,11 @@ export function summarize(outcomes: readonly EvalOutcome[]): Record<string, ArmS
       ...(cacheHitRate !== undefined ? { cacheHitRate } : {}),
       ...(recalls.length > 0 ? { recall: mean(recalls) } : {}),
       violations: {
-        before: mean(ms.map((m) => m.violations.before.rate)),
-        after: mean(ms.map((m) => m.violations.after.rate)),
+        before: mean(compacted.map((m) => m.violations.before.rate)),
+        after: mean(compacted.map((m) => m.violations.after.rate)),
+        pooledBefore: pooled("before"),
+        pooledAfter: pooled("after"),
+        compactedRuns: compacted.length,
       },
       compactions: {
         model: mean(ms.map((m) => m.compactions.model)),

@@ -74,6 +74,22 @@ mkdirSync(here("./data/").pathname, { recursive: true })
 const store = sqliteStores(openSqlite(here("./data/mcp-demo.db").pathname))
 
 /**
+ * 签名暂停状态（续跑凭据）的密钥。没设 REINS_SECRET 就每个进程随机一把并告警一次，不用写死的开发值
+ * （照抄进宿主时，写死的值等于人人都能伪造续跑状态）。随机密钥下暂停状态只在本进程有效：
+ * 本示例在同一进程里审批续跑；换进程只能对同一会话发新消息，不能续跑旧的暂停。
+ */
+function signingSecret(): string {
+  const configured = process.env.REINS_SECRET
+  if (configured) return configured
+  console.warn(
+    "REINS_SECRET is not set: using a random per-process secret. Paused runs cannot be resumed after a restart or on another instance; set REINS_SECRET to resume across processes.",
+  )
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("")
+}
+/** 模块级取一次：buildAgent 可能被调多次，告警只告一次、各次共用同一把 */
+const secret = signingSecret()
+
+/**
  * MCP Socket 按"服务器配置的 JSON"缓存：配置没变就复用同一条连接（省掉每次请求的 MCP 握手），
  * 配置变了（改了 url / prefix / headers）才换新的并把旧的关掉。配置里删掉的服务器也在这里被关掉。
  */
@@ -126,6 +142,6 @@ export function buildAgent(): Agent {
       // approval 放末尾：判定的是 rewrite 之后真正要执行的入参。缺省 byRisk：readOnly 放行、其余先问人
       approval(),
     ],
-    secret: process.env.REINS_SECRET ?? "dev-only-secret",
+    secret,
   })
 }

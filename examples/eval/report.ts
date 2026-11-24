@@ -107,10 +107,17 @@ const report: EvalReport = {
 }
 const reference = flag("--reference", "threshold")
 const candidate = flag("--candidate", "brain")
-const gate =
-  report.summary[reference] && report.summary[candidate]
-    ? checkGate(report, { reference, candidate, tokenRatioMax: Number(flag("--token-ratio", "1")) })
-    : undefined
+// 两臂覆盖的格不一致（某个进程崩了没落盘、补跑漏了）时 checkGate 抛错：报告照出，门禁不判，原因写进报告与 stderr
+let gateError: string | undefined
+let gate: ReturnType<typeof checkGate> | undefined
+if (report.summary[reference] && report.summary[candidate]) {
+  try {
+    gate = checkGate(report, { reference, candidate, tokenRatioMax: Number(flag("--token-ratio", "1")) })
+  } catch (err) {
+    gateError = err instanceof Error ? err.message : String(err)
+    console.error(`门禁未判定：${gateError}`)
+  }
+}
 
 const byFixture = new Map<string, EvalOutcome[]>()
 for (const o of outcomes) byFixture.set(o.fixtureId, [...(byFixture.get(o.fixtureId) ?? []), o])
@@ -119,7 +126,7 @@ const perFixture = [...byFixture.entries()]
     const s = summarize(list)
     const rows = Object.values(s).map(
       (a) =>
-        `| ${a.arm} | ${a.runs} | ${(a.finishedRate * 100).toFixed(0)}% | ${(a.completion * 100).toFixed(0)}% | ${a.recall === undefined ? "—" : `${(a.recall * 100).toFixed(0)}%`} | ${Math.round(a.tokens.total).toLocaleString("en-US")} | ${a.cacheHitRate === undefined ? "—" : `${(a.cacheHitRate * 100).toFixed(0)}%`} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${a.compactions.model.toFixed(1)}/${a.compactions.forced.toFixed(1)}/${a.compactions.threshold.toFixed(1)} | ${(a.violations.before * 100).toFixed(1)}% → ${(a.violations.after * 100).toFixed(1)}% | ${(a.wallMs / 1000).toFixed(0)}s |`,
+        `| ${a.arm} | ${a.runs} | ${(a.finishedRate * 100).toFixed(0)}% | ${(a.completion * 100).toFixed(0)}% | ${a.recall === undefined ? "—" : `${(a.recall * 100).toFixed(0)}%`} | ${Math.round(a.tokens.total).toLocaleString("en-US")} | ${a.cacheHitRate === undefined ? "—" : `${(a.cacheHitRate * 100).toFixed(0)}%`} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${a.compactions.model.toFixed(1)}/${a.compactions.forced.toFixed(1)}/${a.compactions.threshold.toFixed(1)} | ${a.violations.compactedRuns === 0 ? "—" : `${(a.violations.before * 100).toFixed(1)}% → ${(a.violations.after * 100).toFixed(1)}%（${a.violations.compactedRuns} 格）`} | ${(a.wallMs / 1000).toFixed(0)}s |`,
     )
     return `### ${fid}\n\n| 臂 | 格 | 跑完 | 完成度 | 召回 | token | cache | 轮 | 工具 | 重复 | 整理(模型/请求/阈值) | 违规 前→后 | 墙钟 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n${rows.join("\n")}`
   })
@@ -127,12 +134,12 @@ const perFixture = [...byFixture.entries()]
 
 const md = `# eval 对照报告 —— ${model.provider}/${model.id}（窗口 ${contextWindow ?? "缺省"}）
 
-${renderReport(report, gate ? { gate, detail: true } : { detail: true })}
+${gateError ? `> 门禁未判定：${gateError}\n\n` : ""}${renderReport(report, gate ? { gate, detail: true } : { detail: true })}
 
 ## 按 fixture
 
 ${perFixture}
 `
 writeFileSync(`${dir}/report.md`, md)
-writeFileSync(`${dir}/report.json`, JSON.stringify({ model, contextWindow, summary: report.summary, gate, outcomes }, null, 2))
+writeFileSync(`${dir}/report.json`, JSON.stringify({ model, contextWindow, summary: report.summary, gate, gateError, outcomes }, null, 2))
 console.log(md)

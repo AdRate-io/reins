@@ -21,7 +21,7 @@ Design documents live in `docs/` and are written in Chinese; every package has a
 
 ```bash
 pnpm install && pnpm build && pnpm check:dist
-ANTHROPIC_API_KEY=… node examples/minimal/server.ts   # then open http://localhost:8787
+ANTHROPIC_API_KEY=… node examples/minimal/server.ts   # then open http://127.0.0.1:8787
 ```
 
 `examples/minimal/agent.ts` is the whole five-minute experience: one model, two tools (one needs approval), an in-memory store, and a Web-standard handler you can drop into any route.
@@ -86,7 +86,8 @@ const legal   = createAgent({ model, store, sockets: [memory({ namespace: () => 
 
 If roles must not even share a table (separate retention, separate backups, a per-role
 `DROP TABLE`), move the split one layer down and give each role its own table in the same
-database. Events and blobs stay shared and are isolated by `session_id`:
+database. Events and blobs stay shared: events are isolated by `session_id`, and a blob is readable
+where the timeline references it:
 
 ```ts
 const financeStore = await pgStores(pool, { memoryTable: "finance_memory" })

@@ -59,7 +59,20 @@ export async function closeStore(): Promise<void> {
   await pglite.close()
 }
 
-const secret = process.env.REINS_SECRET ?? "dev-only-secret"
+/**
+ * 签名暂停状态（续跑凭据）的密钥。没设 REINS_SECRET 就每个进程随机一把并告警一次，不用写死的开发值
+ * （照抄进宿主时，写死的值等于人人都能伪造续跑状态）。随机密钥下暂停状态只在本进程有效：
+ * 本示例在同一进程里审批续跑；换进程只能对同一会话发新消息，不能续跑旧的暂停。
+ */
+function signingSecret(): string {
+  const configured = process.env.REINS_SECRET
+  if (configured) return configured
+  console.warn(
+    "REINS_SECRET is not set: using a random per-process secret. Paused runs cannot be resumed after a restart or on another instance; set REINS_SECRET to resume across processes.",
+  )
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("")
+}
+const secret = signingSecret()
 /** 每个角色一块记忆，再按 principal 分用户：模型看到的永远是 /memories */
 const roleMemory = (role: string) =>
   memory({ namespace: (ctx: ToolContext) => `/roles/${role}/users/${ctx.principal?.id ?? "anonymous"}` })

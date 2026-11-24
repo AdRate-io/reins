@@ -11,6 +11,10 @@
  * 3. 还没有 → `sequence: true` 时给该工具下一条没用过的录像结果（模型换了写法但意图相近的场景）
  * 4. 都没有 → isError 结果，告诉模型这个入参没有可用的数据
  *
+ * 回放进度（同参轮到第几次、sequence 用过哪些）按 `ctx.sessionId` 各记各的：fixture 的工具对象只建一次、跨臂跨重复复用，
+ * 进度挂在工具对象上就会让先跑的格把后跑的格的世界推进（分页录像拿到下一页、sequence 直接没数据）。
+ * 边界：handoff 接到的新会话也从头回放；探针会话不带宿主工具，不涉及。
+ *
  * 录像里已外溢（`spilled`）的结果，日志里只剩预览与 blob id，全文在原会话的 BlobStore 里；
  * 回放时原样给预览（blob 不在），`stats.spilled` 记数，fixture 作者要么录制时关外溢、要么用 fallback 补全文。
  */
@@ -111,9 +115,16 @@ export function recordedTools(recording: readonly Event[], opts: RecordedToolsOp
   const tools: Tool[] = []
   for (const [name, calls] of byName) {
     const spec = opts.specs?.[name] ?? {}
-    // 同参多次：按调用顺序轮着给（分页翻到同一页两次也拿到同一份）
-    const cursor = new Map<string, number>()
-    const used = new Set<number>()
+    // 同参多次：按调用顺序轮着给（分页翻到同一页两次也拿到同一份）；进度按会话分桶，见文件头
+    const progress = new Map<string, { cursor: Map<string, number>; used: Set<number> }>()
+    const progressOf = (sessionId: string) => {
+      let p = progress.get(sessionId)
+      if (!p) {
+        p = { cursor: new Map(), used: new Set() }
+        progress.set(sessionId, p)
+      }
+      return p
+    }
     const tool: Tool = {
       name,
       description: spec.description ?? `Replays recorded results of "${name}" from a previous real session.`,
@@ -122,6 +133,7 @@ export function recordedTools(recording: readonly Event[], opts: RecordedToolsOp
       ...(spec.needsApproval !== undefined ? { needsApproval: spec.needsApproval } : {}),
       ...(spec.resultPolicy !== undefined ? { resultPolicy: spec.resultPolicy } : {}),
       async execute(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+        const { cursor, used } = progressOf(ctx.sessionId)
         const key = canonicalArgs(input)
         const matches = calls.map((c, i) => (c.key === key ? i : -1)).filter((i) => i >= 0)
         if (matches.length > 0) {

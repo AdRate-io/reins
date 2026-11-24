@@ -9,6 +9,8 @@ async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
 }
 
 const READ_PAGE = 500
+/** seq 列是 integer（int4）：绑定值超出即抛驱动原始错误，读区间先截到它（宿主"读到末尾"常写 MAX_SAFE_INTEGER / Infinity） */
+const INT4_MAX = 2_147_483_647
 
 /**
  * Postgres 事件日志。契约与内存实现一致（技术方案 §5）。
@@ -105,8 +107,9 @@ export class PgEventLog implements EventLog {
   }
 
   async *read(sessionId: string, opts: ReadOptions = {}): AsyncIterable<Event> {
-    let from = Math.max(opts.fromSeq ?? 1, 1)
-    const to = opts.toSeq ?? 2_147_483_647
+    let from = Math.max(Math.ceil(opts.fromSeq ?? 1), 1)
+    const to = Math.min(Math.floor(opts.toSeq ?? INT4_MAX), INT4_MAX)
+    // from 超出 int4 时库里不可能有这样的 seq，不发查询
     while (from <= to) {
       const res = await this.client.query(
         "SELECT data::text AS data FROM reins_events WHERE session_id = $1 AND seq >= $2 AND seq <= $3 ORDER BY seq LIMIT $4",

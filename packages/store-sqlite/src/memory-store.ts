@@ -30,7 +30,8 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   async list(prefix: string): Promise<string[]> {
-    const rows = this.stmts.list.all(prefix.length, prefix) as { path: string }[]
+    // substr() 对 TEXT 按字符（码点）截，JS 的 length 是 UTF-16 码元数，非 BMP 字符差一；按码点数绑
+    const rows = this.stmts.list.all(codePointLength(prefix), prefix) as { path: string }[]
     return rows.map((r) => r.path)
   }
 
@@ -46,4 +47,11 @@ export class SqliteMemoryStore implements MemoryStore {
   async delete(path: string): Promise<void> {
     this.stmts.delete.run(path)
   }
+}
+
+/** 码点数：与 SQLite substr() 的"字符"同一口径 */
+function codePointLength(s: string): number {
+  let n = 0
+  for (const _ of s) n++
+  return n
 }

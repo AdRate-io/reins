@@ -34,12 +34,12 @@ export function renderReport(report: EvalReport, opts: RenderOptions = {}): stri
   lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
   for (const a of arms) {
     lines.push(
-      `| ${a.arm} | ${pct(a.finishedRate)} | ${pct(a.completion)} | ${num(a.tokens.total)} | ${num(billableTokens(a.tokens))} | ${pct(a.cacheHitRate, 1)} | ${pct(a.recall)} | ${pct(a.violations.before, 1)} → ${pct(a.violations.after, 1)} | ${a.compactions.model.toFixed(1)} / ${a.compactions.forced.toFixed(1)} / ${a.compactions.threshold.toFixed(1)} / ${a.compactions.maxConsecutive.toFixed(1)} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${secs(a.wallMs)} |`,
+      `| ${a.arm} | ${pct(a.finishedRate)} | ${pct(a.completion)} | ${num(a.tokens.total)} | ${num(billableTokens(a.tokens))} | ${pct(a.cacheHitRate, 1)} | ${pct(a.recall)} | ${a.violations.compactedRuns === 0 ? "—" : `${pct(a.violations.before, 1)} → ${pct(a.violations.after, 1)} (${a.violations.compactedRuns} run(s))`} | ${a.compactions.model.toFixed(1)} / ${a.compactions.forced.toFixed(1)} / ${a.compactions.threshold.toFixed(1)} / ${a.compactions.maxConsecutive.toFixed(1)} | ${a.turns.toFixed(1)} | ${a.toolCalls.toFixed(1)} | ${a.repeatedToolCalls.toFixed(1)} | ${secs(a.wallMs)} |`,
     )
   }
   lines.push("")
   lines.push(
-    "Averages are taken over fixture x repeat; the three compaction columns are mean counts per run. Total tokens count cache reads at 1x (what the model read each turn); the billable equivalent discounts cache reads to 0.1x (what the bill looks like).",
+    "Averages are taken over fixture x repeat; the violation rates only over runs with model actions after their first compaction (count in parentheses). The three compaction columns are mean counts per run. Total tokens count cache reads at 1x (what the model read each turn); the billable equivalent discounts cache reads to 0.1x (what the bill looks like).",
   )
 
   if (opts.gate) {
