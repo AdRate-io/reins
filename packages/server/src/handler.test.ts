@@ -458,6 +458,42 @@ describe("审批暂停与跨请求恢复", () => {
     expect(typesOf(frames)).toContain("model_text")
   })
 
+  it("Socket 按 principal 贡献客户端工具：同一用户回填 tool_result → 200 续跑到 done，不被当成服务端工具 400", async () => {
+    const pick = defineTool<Record<string, never>>({
+      name: "pick_file",
+      description: "让用户选文件",
+      inputSchema: { type: "object" },
+      side: "client",
+    })
+    const sockets = [
+      {
+        name: "p",
+        tools: (s: { principal?: { id: string } }) => (s.principal?.id === "boss" ? [pick] : []),
+      },
+    ]
+    const { handler, log } = setup(
+      [{ drafts: [callTool("c1", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [],
+      { secret: "k", sockets },
+      { principal: async () => ({ id: "boss" }) },
+    )
+    const { result } = await pauseFirst(handler)
+    expect(result.status).toBe("paused")
+    const res = await handler(
+      postRequest({
+        sessionId: "s1",
+        input: {
+          type: "core.tool_result",
+          payload: { toolCallId: "c1", content: [{ type: "text", text: "a.txt" }] },
+        },
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(resultOf(parseFrames(await res.text()))?.status).toBe("done")
+    const filled = (await logged(log, "s1")).find((e) => e.type === "core.tool_result")
+    expect(filled?.payload).toMatchObject({ toolCallId: "c1", name: "pick_file", isError: false })
+  })
+
   it("D4 续跑校验收窄（与 runLoop 同一个 validateResume）：加了别的工具 → 200 续跑；pending 工具 schema 变了 → 409 config_mismatch 且日志不写", async () => {
     const shared = setup(SCRIPT, [deployTool], { secret: "k" })
     const { result } = await pauseFirst(shared.handler)
