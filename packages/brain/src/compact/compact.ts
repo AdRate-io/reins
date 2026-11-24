@@ -34,6 +34,7 @@ import {
   type TurnContext,
 } from "@reinsjs/core"
 import { percent } from "../perception/tiers.js"
+import { ownsTool, ownToolsGuard } from "../shared/own-tools.js"
 import {
   type CompactPlan,
   type ManifestOptions,
@@ -89,6 +90,10 @@ export interface CompactOptions {
    * 传 false 关闭；传对象调软线与措辞
    */
   force?: false | ForceOptions
+  /**
+   * 告警出口：工具表里已有与本模块工具同名的别家工具（宿主或排在前面的 Socket，如 MCP）时本模块不注册，告警一次。缺省 console.warn
+   */
+  warn?: (message: string) => void
 }
 
 export const COMPACT_SOCKET_NAME = "compact"
@@ -201,12 +206,22 @@ export function compact(opts: CompactOptions = {}): Socket {
     execute: () => PLACEHOLDER,
   }
 
+  const ownTools: Tool[] = withRecall ? [tool, recallTool()] : [tool]
+  // compact / recall 任一被别家同名工具顶掉，整个模块不注册、钩子停手（shared/own-tools.ts）：
+  // 否则到线请求会叫模型调别人的 compact，别人的 compact 成功结果还会被 afterTool 当成整理去折叠历史
+  const registers = ownToolsGuard({
+    module: COMPACT_SOCKET_NAME,
+    factory: "compact",
+    tools: ownTools,
+    warn: opts.warn ?? ((message: string) => console.warn(message)),
+  })
+
   const socket: Socket = {
     name: COMPACT_SOCKET_NAME,
-    tools: withRecall ? [tool, recallTool()] : [tool],
+    tools: (setup) => (registers(setup) ? ownTools : undefined),
 
     beforeModel(ctx: TurnContext) {
-      if (!force) return undefined
+      if (!force || !ownsTool(ctx, tool)) return undefined
       // 本段已请过几次 = 已用掉几级；下一级没到线、或刚整理完模型还没动过，都不请
       const timeline = timelineSoFar(ctx)
       const used = compactRequestsSinceLastCompaction(timeline)
@@ -232,11 +247,13 @@ export function compact(opts: CompactOptions = {}): Socket {
     },
 
     afterModel(ctx, events) {
+      if (!ownsTool(ctx, tool)) return
       recordOf(ctx).hadToolCall = events.some((e) => e.type === "core.tool_call")
     },
 
     afterTool(ctx: TurnContext, call: ToolCallEvent, result: ToolResultDraft) {
-      if (call.payload.name !== COMPACT_TOOL_NAME || result.payload.isError) return undefined
+      if (call.payload.name !== COMPACT_TOOL_NAME || result.payload.isError || !ownsTool(ctx, tool))
+        return undefined
       // 入参已由 validate 校验过；这里重新解析一遍拿到规范形态（循环不把校验后的入参传给 afterTool）
       let plan: CompactPlan
       try {
@@ -293,7 +310,8 @@ export function compact(opts: CompactOptions = {}): Socket {
     let rules = COMPACT_RULES
     if (!force) rules = rules.replace(`${COMPACT_REQUEST_RULE}\n`, "")
     if (!withRecall) rules = rules.replace(COMPACT_RECALL_RULE, COMPACT_NO_RECALL_RULE)
-    socket.systemPrompt = opts.rules ?? rules
+    const prompt = opts.rules ?? rules
+    socket.systemPrompt = (setup) => (registers(setup) ? prompt : undefined)
   }
   return socket
 }

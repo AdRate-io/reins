@@ -34,6 +34,7 @@ import type {
 } from "@reinsjs/core"
 import { isModelOutput, supersededIds } from "@reinsjs/core"
 import { isSnapshotPin } from "../pins/pins.js"
+import { ownsTool, ownToolsGuard } from "../shared/own-tools.js"
 import { HANDOFF_RULES, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME } from "./rules.js"
 
 export interface HandoffOptions {
@@ -41,6 +42,10 @@ export interface HandoffOptions {
   carryPins?: boolean
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
+  /**
+   * 告警出口：工具表里已有别家的 handoff 工具（宿主或排在前面的 Socket，如 MCP）时本模块不注册，告警一次。缺省 console.warn
+   */
+  warn?: (message: string) => void
 }
 
 export const HANDOFF_SOCKET_NAME = "handoff"
@@ -222,12 +227,21 @@ export function handoff(opts: HandoffOptions = {}): Socket {
     execute: () => PLACEHOLDER,
   }
 
+  // handoff 被别家同名工具顶掉时整个不注册、钩子停手（shared/own-tools.ts）：否则别人的 handoff 调用一成功会话就交接了
+  const registers = ownToolsGuard({
+    module: HANDOFF_SOCKET_NAME,
+    factory: "handoff",
+    tools: [tool],
+    warn: opts.warn ?? ((message: string) => console.warn(message)),
+  })
+
   const socket: Socket = {
     name: HANDOFF_SOCKET_NAME,
-    tools: [tool],
+    tools: (setup) => (registers(setup) ? [tool] : undefined),
 
     afterTool(ctx: TurnContext, call: ToolCallEvent, result: ToolResultDraft) {
-      if (call.payload.name !== HANDOFF_TOOL_NAME || result.payload.isError) return undefined
+      if (call.payload.name !== HANDOFF_TOOL_NAME || result.payload.isError || !ownsTool(ctx, tool))
+        return undefined
       if (intents.has(ctx)) {
         return replaceResult(
           result,
@@ -258,6 +272,8 @@ export function handoff(opts: HandoffOptions = {}): Socket {
     },
 
     onTurnEnd(ctx: TurnContext) {
+      // 从日志重建按工具名认 handoff 回执：本 run 绑定的不是自家工具时，那些回执是别人的
+      if (!ownsTool(ctx, tool)) return undefined
       const intent = intents.get(ctx)
       if (intent) return { handoff: intent }
       // 本轮内存里没有：可能是上一次 run 被打断、这次补齐 pending 后的收尾，从日志重建（R2）。
@@ -283,6 +299,9 @@ export function handoff(opts: HandoffOptions = {}): Socket {
     }
     return { intent, pins, triggerMessage }
   }
-  if (opts.rules !== false) socket.systemPrompt = opts.rules ?? HANDOFF_RULES
+  if (opts.rules !== false) {
+    const rules = opts.rules ?? HANDOFF_RULES
+    socket.systemPrompt = (setup) => (registers(setup) ? rules : undefined)
+  }
   return socket
 }

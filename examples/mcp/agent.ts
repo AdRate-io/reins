@@ -116,12 +116,13 @@ export function buildAgent(): Agent {
     tools: [today],
     systemPrompt: SYSTEM,
     sockets: [
-      ...mcp,
       perception(),
       compact(),
       pins(),
       spill({ maxResultTokens: 4000 }),
       budget({ limits: { turns: 30, toolCalls: 60 } }),
+      // MCP 排在自带工具的脑子模块之后：服务器若有同名工具（fetch_blob / memory…），丢掉的是它那件并告警，而不是让模块停摆
+      ...mcp,
       // approval 放末尾：判定的是 rewrite 之后真正要执行的入参。缺省 byRisk：readOnly 放行、其余先问人
       approval(),
     ],

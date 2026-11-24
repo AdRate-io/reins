@@ -16,7 +16,7 @@
  * - halt-on-failure/：同批前一个调用失败或挂起时拦下后面的（OnSet 建议 9）。只读 ctx.batch，opt-in
  * - stop-after/：调成功名单里的工具，本轮结束即以 done 收尾（OnSet 建议 10）。只读 ctx.batch，opt-in
  * - lazy-tools/：工具懒发现（D1）。`lazy: true` 的宿主工具只以菜单进系统提示，tool_find 取回完整 schema 后才进请求工具表；已取回集合从时间线重建
- * - shared/：memory 与 skills 共用的纯函数（根目录限定的路径规范化、带行号的文件视图）；halt-on-failure 与 stop-after 共用的 batchOf
+ * - shared/：memory 与 skills 共用的纯函数（根目录限定的路径规范化、带行号的文件视图）；halt-on-failure 与 stop-after 共用的 batchOf；自带工具的模块共用的撞名判定 own-tools
  *
  * `@reinsjs/brain/node`（单独入口）：文件系统技能载体 fsSkillSource(dir)，brain 唯一出现 node:* 的地方。
  */

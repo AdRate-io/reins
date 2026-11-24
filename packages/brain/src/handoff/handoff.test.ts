@@ -7,8 +7,9 @@ import {
   type LoopConfig,
   type RunResult,
   RunStop,
+  resolveSocketContributions,
   runLoop,
-  type Tool,
+  type Socket,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say, think } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
@@ -18,6 +19,11 @@ import { composeHandoffNote, handoff, parseHandoffArgs, unfinishedHandoffArgs } 
 import { HANDOFF_RULES } from "./rules.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
+
+/** 静态贡献按 setup 解析（撞名判定要看工具表，工具与规则都是函数形态）：只装这一个 Socket 时的结果 */
+async function contributionsOf(socket: Socket) {
+  return resolveSocketContributions({ log: new InMemoryEventLog(), model: MODEL, sockets: [socket] })
+}
 const SESSION = "s1"
 type ToolResult = CoreEventOf<"core.tool_result">
 type Handoff = CoreEventOf<"core.handoff">
@@ -362,11 +368,11 @@ describe("handoff × runLoop", () => {
     expect(old.at(-1)?.type).toBe("core.run_ended")
   })
 
-  it("构造选项：rules 可替换或关闭", () => {
-    expect(handoff().systemPrompt).toBe(HANDOFF_RULES)
-    expect(handoff({ rules: false }).systemPrompt).toBeUndefined()
-    expect(handoff({ rules: "自定义" }).systemPrompt).toBe("自定义")
-    expect((handoff().tools as readonly Tool[]).map((t) => t.name)).toEqual(["handoff"])
+  it("构造选项：rules 可替换或关闭", async () => {
+    expect((await contributionsOf(handoff())).systemPrompt).toBe(HANDOFF_RULES)
+    expect((await contributionsOf(handoff({ rules: false }))).systemPrompt).toBeUndefined()
+    expect((await contributionsOf(handoff({ rules: "自定义" }))).systemPrompt).toBe("自定义")
+    expect((await contributionsOf(handoff())).tools.map((t) => t.name)).toEqual(["handoff"])
   })
 })
 

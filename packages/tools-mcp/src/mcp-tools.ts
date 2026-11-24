@@ -11,7 +11,7 @@
  * - 配了 `route` 时：`tools/list` 仍走 `transport`（目录连接），每次 `tools/call` 先问宿主要凭据键、按键从连接池取连接
  *   （route-pool.ts）。路由不进工具表、不进 configHash。
  */
-import { defineTool, REINS_VERSION, type Tool } from "@reinsjs/core"
+import { defineTool, REINS_VERSION, type SocketSetup, type Tool } from "@reinsjs/core"
 import { McpConnection } from "./connection.js"
 import { kindOf, type PoolEntry, RoutePool } from "./route-pool.js"
 import { modelToolName, modelToolNames, riskOf, toContentParts } from "./translate.js"
@@ -116,7 +116,8 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
   return {
     name: `mcp:${transport.label}`,
     transport,
-    tools: async () => {
+    // setup 缺省只为直接调用（单测拿工具表）；循环解析时总会传
+    tools: async (setup?: SocketSetup) => {
       let infos: McpToolInfo[]
       try {
         infos = await conn.listTools()
@@ -137,7 +138,16 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
         const tool = toTool(info, names[i] as string)
         const overridden = options.override?.(tool, info)
         if (overridden === false) continue
-        tools.push(overridden ?? tool)
+        const bound = overridden ?? tool
+        // core 合并工具表时同名先到者赢、后到者静默丢掉：宿主或排在前面的 Socket（如 brain 的 fetch_blob / memory）已占了这个名字，
+        // 本服务器这件模型永远看不到。不在这里列 brain 的名字（那是第二份真源），只看此刻真正绑定的表；告警按名字去重
+        if (setup?.tools.some((t) => t.name === bound.name)) {
+          warnOnce(
+            `bound:${bound.name}`,
+            `MCP tool ${info.name} from ${transport.label} is not available to the model: the tool table already has a tool named ${bound.name} (from the host or a socket registered before this one), and the first one wins. Give mcpTools() a prefix to keep both.`,
+          )
+        }
+        tools.push(bound)
       }
       return tools
     },

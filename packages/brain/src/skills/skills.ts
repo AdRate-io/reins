@@ -29,6 +29,7 @@
  */
 import type { SkillSource, Socket, SocketSetup, Tool } from "@reinsjs/core"
 import { hasMemorySegment, MEMORY_ROOT } from "../memory/paths.js"
+import { ownToolsGuard } from "../shared/own-tools.js"
 import { isCanonicalKeyPrefix, resolveRootedPath } from "../shared/paths.js"
 import { formatFileView } from "../shared/view.js"
 import { DEFAULT_SKILLS_ROOT, SKILL_FILE_NAME, SKILL_NAME_RE } from "./constants.js"
@@ -213,16 +214,9 @@ export function skills(opts: SkillsOptions = {}): Socket {
           )
           return undefined
         }
-        if (setup.tools.some((t) => t.name === SKILL_READ_TOOL_NAME)) {
-          // 同名以先到者为准（resolveSocketContributions 去重规则，与 lazy-tools 同一判据）：本模块的工具会被丢掉，
-          // 菜单却仍会指向"skill_read"——那是宿主或前面某个 Socket（如一台 MCP 服务器）的另一个工具、语义与 trust 都不同。
-          // 宁可整个不注册
-          warnOnce(
-            "host-tool",
-            `[reins/skills] The tool table already has a tool named ${SKILL_READ_TOOL_NAME} (from the host or a socket registered before skills()), so this module's tool and menu are not registered. Rename that tool to enable them.`,
-          )
-          return undefined
-        }
+        // 同名以先到者为准（resolveSocketContributions 去重规则）：本模块的工具会被丢掉，菜单却仍会指向"skill_read"——
+        // 那是宿主或前面某个 Socket（如一台 MCP 服务器）的另一个工具、语义与 trust 都不同。宁可整个不注册（shared/own-tools.ts）
+        if (!registers(setup)) return undefined
         const menu = await loadSkillMenu(source, root)
         for (const r of menu.rejected) {
           warnOnce(
@@ -305,6 +299,14 @@ export function skills(opts: SkillsOptions = {}): Socket {
       return { content: [{ type: "text", text: view.text }] }
     },
   }
+
+  // menuFor 在 run 起步解析时才调用它，那时 tool 已就位
+  const registers = ownToolsGuard({
+    module: SKILLS_SOCKET_NAME,
+    factory: "skills",
+    tools: [tool as Tool],
+    warn,
+  })
 
   const socket: Socket = {
     name: SKILLS_SOCKET_NAME,

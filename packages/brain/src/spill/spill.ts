@@ -31,6 +31,7 @@ import {
   type ToolResultDraft,
   type TurnContext,
 } from "@reinsjs/core"
+import { ownsTool, ownToolsGuard } from "../shared/own-tools.js"
 import {
   clipEndByTokens,
   defaultTextTokens,
@@ -55,7 +56,10 @@ export interface SpillOptions {
   tool?: boolean
   /** 规则提示：缺省内置英文文案；传字符串替换；false 则不碰系统提示 */
   rules?: string | false
-  /** 没有 BlobStore 时的告警出口（每个 spill() 实例只告警一次）。缺省 console.warn */
+  /**
+   * 告警出口（每种情形每个 spill() 实例只告警一次）：没有 BlobStore；或工具表里已有别家的 fetch_blob（宿主或排在前面的 Socket，如 MCP）——
+   * 此时外溢说明会把模型指向别人的工具，本模块整个不注册、不外溢。缺省 console.warn
+   */
   warn?: (message: string) => void
 }
 
@@ -179,10 +183,20 @@ export function spill(opts: SpillOptions = {}): Socket {
     execute: (args, ctx) => readBlobSlice(args, ctx, maxTokens),
   }
 
+  // 带 fetch_blob 时它被别家同名工具顶掉 → 整个不注册、不外溢（shared/own-tools.ts）：外溢说明叫模型用 fetch_blob 取回，
+  // 取到的会是别人的工具；与缺 BlobStore 同样退成"原样进上下文"，不截断。tool: false 时宿主自备读法，不判
+  const registers = ownToolsGuard({
+    module: SPILL_SOCKET_NAME,
+    factory: "spill",
+    tools: [fetchBlob as Tool],
+    warn,
+  })
+
   const socket: Socket = {
     name: SPILL_SOCKET_NAME,
 
     async afterTool(ctx: TurnContext, call: ToolCallEvent, result: ToolResultDraft) {
+      if (withTool && !ownsTool(ctx, fetchBlob as Tool)) return undefined
       const name = call.payload.name
       if (name === FETCH_BLOB_TOOL_NAME) return undefined // 它的输出已按上限裁过，再外溢就自己咬自己
       const policy = limitFor(ctx.tools.find((t) => t.name === name))
@@ -229,8 +243,11 @@ export function spill(opts: SpillOptions = {}): Socket {
       }
     },
   }
-  if (withTool) socket.tools = [fetchBlob as Tool]
-  if (withTool && opts.rules !== false) socket.systemPrompt = opts.rules ?? SPILL_RULES
+  if (withTool) socket.tools = (setup) => (registers(setup) ? [fetchBlob as Tool] : undefined)
+  if (withTool && opts.rules !== false) {
+    const rules = opts.rules ?? SPILL_RULES
+    socket.systemPrompt = (setup) => (registers(setup) ? rules : undefined)
+  }
   return socket
 }
 
