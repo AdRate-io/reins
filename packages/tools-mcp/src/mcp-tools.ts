@@ -116,7 +116,7 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
   return {
     name: `mcp:${transport.label}`,
     transport,
-    // setup 缺省只为直接调用（单测拿工具表）；循环解析时总会传
+    // setup 缺省或不带 tools 只为直接调用（单测、spikes/edge-runtime-check 拿工具表）；循环解析时总会传全
     tools: async (setup?: SocketSetup) => {
       let infos: McpToolInfo[]
       try {
@@ -141,7 +141,7 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
         const bound = overridden ?? tool
         // core 合并工具表时同名先到者赢、后到者静默丢掉：宿主或排在前面的 Socket（如 brain 的 fetch_blob / memory）已占了这个名字，
         // 本服务器这件模型永远看不到。不在这里列 brain 的名字（那是第二份真源），只看此刻真正绑定的表；告警按名字去重
-        if (setup?.tools.some((t) => t.name === bound.name)) {
+        if (setup?.tools?.some((t) => t.name === bound.name)) {
           warnOnce(
             `bound:${bound.name}`,
             `MCP tool ${info.name} from ${transport.label} is not available to the model: the tool table already has a tool named ${bound.name} (from the host or a socket registered before this one), and the first one wins. Give mcpTools() a prefix to keep both.`,

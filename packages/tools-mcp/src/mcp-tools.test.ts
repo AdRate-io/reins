@@ -223,6 +223,18 @@ describe("mcpTools：与此前已绑定的工具撞名（全库审查 #51）", (
     expect(warnings[0]).toContain("prefix")
     await socket.close()
   })
+
+  it("setup 不带 tools（直接调用的旧写法，如 spikes/edge-runtime-check）：照常返回工具表，不抛错", async () => {
+    const fx = fixtureServer()
+    const socket = mcpTools({ transport: fx.transport })
+    const tools = await (socket.tools as unknown as (s: unknown) => Promise<{ name: string }[]>)({
+      log: new InMemoryEventLog(),
+      model: MODEL,
+      hostTools: [],
+    })
+    expect(tools.map((t) => t.name)).toContain("echo")
+    await socket.close()
+  })
 })
 
 describe("mcpTools：tools/call 的结果与失败", () => {
