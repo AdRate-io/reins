@@ -89,6 +89,7 @@ import {
   type ChatMiddlewareConfig,
   type ChatMiddlewareContext,
   DISCOVERY_TOOL_NAME,
+  isStandardSchema,
   type StreamChunk,
   type SystemPrompt,
   type TokenUsage as TanstackUsage,
@@ -234,6 +235,13 @@ interface RunState {
    * beforeTools 边界记成 approval_decision 后清空。原生答复走引擎自己的通道、不经 onInterruptResolution（#5）
    */
   nativeResolutions: Map<string, NativeResolution>
+  /**
+   * 改参批准被拒的调用（toolCallId → 审批人想要的入参）：原生答复带 `editedArgs` 且与日志里的入参逐值不同。init 算出，
+   * 经 `resumeToolState.cancelledToolCallIds` 交给引擎（引擎先查取消再查审批，服务端与客户端工具都落"已取消"、不执行）
+   */
+  editRefused: Map<string, unknown>
+  /** 判过 verdict 的调用 toolCallId → 日志里的入参：onBeforeToolCall 核对引擎将要执行的那份（纵深防御） */
+  callArgs: Map<string, unknown>
   /** 本 run 已写过 run_resumed（通用中断与原生审批的答复共用一条） */
   resumed: boolean
   /**
@@ -488,10 +496,18 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       lastTools: [],
       approvalInterruptRegistered: approvalInterruptRegistered(ctx),
       nativeResolutions: nativeResolutionsOf(config),
+      editRefused: new Map(),
+      callArgs: new Map(),
       resumed: false,
       ended: false,
     }
     states.set(ctx, s)
+    // 改参批准：只看原生卡上、仍在 pending 的调用；与日志入参逐值相同的不算改
+    for (const call of pendingToolCalls(timeline)) {
+      const r = s.nativeResolutions.get(call.payload.toolCallId)
+      if (r?.editedArgs === undefined || !onNativeCard(s, call.payload.name)) continue
+      if (!sameArgs(r.editedArgs, call.payload.args)) s.editRefused.set(call.payload.toolCallId, r.editedArgs)
+    }
     // ToolContext.spend（§10.1 ④）：工具代跑的子代理用量计入本 run 的预算，budget 模块按总账拦
     s.bridge.toolContextBase.spend = (usage) => {
       s.tokensSpent += usage.input + usage.output
@@ -697,12 +713,51 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     }
   }
 
-  /** 本 run 第一次写答复时补一条 run_resumed（通用中断与原生审批共用） */
-  const markResumed = async (ctx: ChatMiddlewareContext, s: RunState) => {
+  /**
+   * 本 run 第一次写答复时先落一条 run_resumed（通用中断与原生审批共用），**排在结论之前**、带第一条结论的 `by`，
+   * 与 runLoop 同序同形（run-loop.ts 续跑段）。调用方在 flush 结论草稿之前调
+   */
+  const markResumed = async (ctx: ChatMiddlewareContext, s: RunState, by: string | undefined) => {
     if (s.resumed) return
     s.resumed = true
-    await append(ctx, s, [{ type: "core.run_resumed", actor: "host", payload: {} }])
+    await append(ctx, s, [
+      { type: "core.run_resumed", actor: "host", payload: by !== undefined ? { by } : {} },
+    ])
   }
+  /**
+   * 对一个调用按当前时间线重跑 beforeTool 管线，只看有没有 Socket 要拦（block）；rewrite 按顺序传给后面的 Socket，
+   * defer 略过（调用已批准）。Socket 经 emit 留的痕（如 approval 的过期拒绝结论）随即落日志。返回拦截说明或 undefined
+   */
+  const rerunForBlock = async (
+    ctx: ChatMiddlewareContext,
+    s: RunState,
+    toolCallId: string,
+    tool: Tool | undefined,
+  ): Promise<string | undefined> => {
+    const timeline = await timelineOf()
+    const call = pendingToolCalls(timeline).find((c) => c.payload.toolCallId === toolCallId)
+    if (!call || !s.turn) return undefined
+    const tctx = s.turn.ctx
+    tctx.timeline = timeline
+    let seen: ToolCallEvent = call
+    let refused: string | undefined
+    for (const sock of sockets) {
+      const d = await sock.beforeTool?.(tctx, seen, tool)
+      if (d === undefined || d === "proceed") continue
+      if ("rewrite" in d) {
+        seen = { ...seen, payload: { ...seen.payload, args: d.rewrite } }
+        continue
+      }
+      if ("block" in d) {
+        refused = d.block
+        break
+      }
+    }
+    await flush(ctx, s)
+    return refused
+  }
+  /** 宿主工具自带静态 needsApproval: true：它的审批只走 TanStack 原生卡，reins 卡从不为它发 */
+  const onNativeCard = (s: RunState, name: string): boolean => s.hostTools.get(name)?.needsApproval === true
 
   /**
    * 原生审批的答复记成 approval_decision（全库审查 2026-11-25 #5）。在 beforeTools 边界、Socket 管线之前落：
@@ -712,7 +767,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
    * 审批人改了入参（`editedArgs` 与日志里的 tool_call 入参不同）时不执行：本库的时间线没有"改参批准"的落点，
    * tool_call 是模型的原话、只追加不改，照改过的入参执行就是"日志写 staging、实际改了 prod"（宪法二）。
    * 批准照记，再由 reins 补一条拒绝结论说明原因；拒绝结论在后，beforeTools 按最后一条结论拦下，模型从结果里看到
-   * 审批人想要的入参，可以按它重新发起（会再问一次人）
+   * 审批人想要的入参，可以按它重新发起（会再问一次人）。真正挡住执行的是 init 交给引擎的"已取消"（`s.editRefused`）：
+   * 客户端工具不经 onBeforeToolCall，光靠这里的结论拦不住（第二波返修 B1）
    */
   const recordNativeResolutions = async (
     ctx: ChatMiddlewareContext,
@@ -728,18 +784,21 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         .filter((a) => a.kind === "approval")
         .map((a) => a.toolCallId),
     )
+    const drafts: EventDraft[] = []
     for (const call of pending) {
-      const { toolCallId } = call.payload
+      const { toolCallId, name } = call.payload
       const r = resolutions.get(toolCallId)
-      if (!r || !awaiting.has(toolCallId)) continue
-      s.emitted.push({
+      // 只认原生卡上的调用：`approval_<id>` 只能答原生卡，答不了 reins 卡（引擎也会以 unknown-interrupt 拒掉整批）
+      if (!r || !awaiting.has(toolCallId) || !onNativeCard(s, name)) continue
+      drafts.push({
         type: "core.approval_decision",
         actor: "host",
         parentId: call.id,
         payload: { toolCallId, approved: r.approved, by: TANSTACK_DECIDER },
       })
-      if (r.approved && r.editedArgs !== undefined && !sameArgs(r.editedArgs, call.payload.args)) {
-        s.emitted.push({
+      const edited = s.editRefused.get(toolCallId)
+      if (edited !== undefined) {
+        drafts.push({
           type: "core.approval_decision",
           actor: "system",
           parentId: call.id,
@@ -747,14 +806,14 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
             toolCallId,
             approved: false,
             by: "reins",
-            reason: `the approver edited the arguments to ${JSON.stringify(r.editedArgs)}; edited arguments cannot be recorded in the timeline, so the call was not executed. Make the call again with the arguments you intend to use`,
+            reason: `the approver edited the arguments to ${JSON.stringify(edited)}; edited arguments cannot be recorded in the timeline, so the call was not executed. Make the call again with the arguments you intend to use`,
           },
         })
       }
     }
-    const written = await flush(ctx, s)
-    if (written.length === 0) return false
-    await markResumed(ctx, s)
+    if (drafts.length === 0) return false
+    await markResumed(ctx, s, TANSTACK_DECIDER)
+    await append(ctx, s, drafts)
     return true
   }
 
@@ -786,6 +845,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     for (const call of pending) {
       const { toolCallId, name } = call.payload
       s.callEventIds.set(toolCallId, call.id)
+      s.callArgs.set(toolCallId, call.payload.args)
       const tool = tctx.tools.find((t) => t.name === name)
       // 中断不重放（与 runLoop 同一判据）：工具不在表里按不可重放处理
       if (started.has(toolCallId) && (tool === undefined || !isReplayable(tool))) {
@@ -1004,12 +1064,13 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
           payload: { toolCallId: r.toolCallId, approved: !isError, by: TANSTACK_DECIDER },
         })
       }
-      const content = fromTanstackToolResult(r.result)
-      await settle(
-        ctx,
-        s,
-        resultDraft(call, r.toolCallId, r.toolName, { content, isError }, toolNamed(s, r.toolName)),
-      )
+      // 本中间件判了拦截的（如改参批准经"已取消"拦下）：落拦截说明，不落引擎的"Tool execution cancelled"
+      const verdict = s.verdicts.get(r.toolCallId)
+      const result: ToolResult =
+        verdict?.kind === "block"
+          ? errorResult(`Tool call blocked: ${verdict.text}`)
+          : { content: fromTanstackToolResult(r.result), isError }
+      await settle(ctx, s, resultDraft(call, r.toolCallId, r.toolName, result, toolNamed(s, r.toolName)))
       answered.add(r.toolCallId)
     }
     // 原生审批请求：入日志，与 reins 审批同一事件形状
@@ -1072,7 +1133,20 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (ctx.phase === "init") {
         const s = await initRun(ctx, config)
         s.lastTools = tanstackToolsOf(s, s.baseTools)
-        return { tools: s.lastTools, systemPrompts: s.systemPrompts }
+        if (s.editRefused.size === 0) return { tools: s.lastTools, systemPrompts: s.systemPrompts }
+        // 改参批准的调用交给引擎当"已取消"：引擎在 init 之后才应用答复，取消先于审批判定，改过的入参到不了执行
+        // （服务端工具不调 onBeforeToolCall 之外，客户端工具连 onBeforeToolCall 都不经过，只能在这里拦，B1）
+        return {
+          tools: s.lastTools,
+          systemPrompts: s.systemPrompts,
+          resumeToolState: {
+            ...config.resumeToolState,
+            cancelledToolCallIds: new Set([
+              ...(config.resumeToolState?.cancelledToolCallIds ?? []),
+              ...s.editRefused.keys(),
+            ]),
+          },
+        }
       }
       const s = states.get(ctx)
       if (!s) return undefined
@@ -1139,8 +1213,12 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       // 只收指向本会话**正在等审批**的调用的答复（有 approval_request、还没有结论、同一调用只收一条），与 runLoop / server
       // 同一个 assertDecisionsAwaitApproval；其余不入日志、告警。否则不对应任何请求的结论会进日志，还能替模型将来才发出的
       // 调用预先批准、绕过审批
+      // 原生卡上的调用（宿主工具自带静态 needsApproval: true）从不发 reins 卡，它的通用答复一律是伪造的：收下就会替它写
+      // 批准，原生答复的改参核对随之被跳过（第二波返修 B1）
       const timeline = await timelineOf()
+      const pending = pendingToolCalls(timeline)
       const accepted: ApprovalDecisionInput[] = []
+      const drafts: EventDraft[] = []
       for (const r of resolutions.for(reinsApprovalInterrupt)) {
         const approved = r.status === "resolved" && r.response.approved === true
         const by = r.status === "resolved" && r.response.by ? r.response.by : TANSTACK_DECIDER
@@ -1158,11 +1236,25 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
           warn(`ignored an approval answer from the client: ${err.message}`)
           continue
         }
+        const call = pending.find((c) => c.payload.toolCallId === decision.toolCallId)
+        if (call && onNativeCard(s, call.payload.name)) {
+          warn(
+            `ignored an approval answer from the client: call ${decision.toolCallId} is approved through TanStack's native approval, never through reinsApprovalInterrupt`,
+          )
+          continue
+        }
         accepted.push(decision)
-        s.emitted.push({ type: "core.approval_decision", actor: "host", payload: decision })
+        drafts.push({
+          type: "core.approval_decision",
+          actor: "host",
+          ...(call ? { parentId: call.id } : {}),
+          payload: decision,
+        })
       }
-      const events = await flush(ctx, s)
-      if (events.length > 0) await markResumed(ctx, s)
+      if (drafts.length > 0) {
+        await markResumed(ctx, s, accepted[0]?.by)
+        await append(ctx, s, drafts)
+      }
       return { toolResume: "continue" }
     },
 
@@ -1172,6 +1264,23 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (!s || !v) return undefined
       if (v.kind === "block") return { type: "skip", result: { error: `Tool call blocked: ${v.text}` } }
       if (v.kind === "unknown") return { type: "skip", result: { error: v.text } }
+      // 纵深防御（第二波返修 B1）：引擎将要执行的入参必须就是日志里的那份。引擎按客户端带来的历史取入参、原生审批的
+      // editedArgs 直接替换入参，任何一处与日志不同，执行的就不是时间线上记的调用。比的是"引擎对日志入参会得到的输入"：
+      // 引擎把非对象入参当 {}；Standard Schema 的工具会被引擎按 schema 变换入参（缺省值、强制类型），比不了，只靠 init 的拦截
+      const block = (text: string) => {
+        s.verdicts.set(hookCtx.toolCallId, { kind: "block", text })
+        return { type: "skip" as const, result: { error: `Tool call blocked: ${text}` } }
+      }
+      if (s.callArgs.has(hookCtx.toolCallId)) {
+        const logged = s.callArgs.get(hookCtx.toolCallId)
+        const schema = s.hostTools.get(hookCtx.toolName)?.inputSchema
+        const comparable = schema === undefined || !isStandardSchema(schema)
+        const expected = typeof logged === "object" && logged !== null ? logged : {}
+        if (comparable && !sameArgs(hookCtx.args, expected))
+          return block(
+            `the arguments about to run (${JSON.stringify(hookCtx.args)}) differ from the call in the timeline, so it was not executed. Make the call again if you still need it`,
+          )
+      }
       // 引擎逐个 await 本钩子后立刻执行该工具，所以这里就是"execute 之前"：不可重放的先记开始动手（与 runLoop 同一判据；
       // TanStack 宿主工具的 risk 只从 metadata.reins 读，没声明的按缺省口径算写工具）
       const tool = toolNamed(s, hookCtx.toolName)
@@ -1187,6 +1296,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         }).some((a) => a.kind === "approval" && a.toolCallId === hookCtx.toolCallId)
         if (awaiting) {
           const parentId = s.callEventIds.get(hookCtx.toolCallId)
+          await markResumed(ctx, s, TANSTACK_DECIDER)
           await append(ctx, s, [
             {
               type: "core.approval_decision",
@@ -1195,7 +1305,10 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
               payload: { toolCallId: hookCtx.toolCallId, approved: true, by: TANSTACK_DECIDER },
             },
           ])
-          await markResumed(ctx, s)
+          // 批准到这时才入日志，beforeTools 边界的 Socket 管线早已判完：按批准后的时间线重跑一遍，只认 block——
+          // approval({ ttlMs }) 的过期拒绝等按"批准事件"判的规则在这条通道上同样生效（第二波返修 S1）
+          const refused = await rerunForBlock(ctx, s, hookCtx.toolCallId, tool)
+          if (refused !== undefined) return block(refused)
         }
       }
       if (v.kind !== "await" && (tool === undefined || !isReplayable(tool))) {
