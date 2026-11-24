@@ -454,7 +454,14 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     const timeline = await readTimeline(log, sessionId, { registry })
     let problem: string | undefined
     try {
-      problem = await checkImageRefs(parts, { sessionId, blobs: agent.blobs, timeline, cache: new Map() })
+      // 只读元信息（存储有 stat 时不下载字节）；最终裁决在循环里按 get 做，与发给厂商的字节同一次读取
+      problem = await checkImageRefs(parts, {
+        sessionId,
+        blobs: agent.blobs,
+        timeline,
+        cache: new Map(),
+        metaOnly: true,
+      })
     } catch (err) {
       warn(
         `[reins/server] Checking image references failed (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
@@ -723,6 +730,8 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     })
     if (denied !== undefined) return denied
 
+    /** 投递分支已校验过同一批图片引用（落回普通路径时不再读第二遍） */
+    let imageRefsChecked = false
     // ---- 进行中投递（midRunInput）：只带用户消息、不带 resume / decisions 的续聊才可能入箱 ----
     // 鉴权、JSON 解析、草稿重建都在这之前做完；deliver 内部从 runs.get 到入箱全同步。内容不合规先 400（与普通路径同一顺序）
     if (
@@ -738,6 +747,7 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       // 图片引用先校验再入箱：入了箱就回 202，不合规只能让正在跑的 run 以 error 结束
       const rejected = await rejectImageRefs(sessionId, draft)
       if (rejected !== undefined) return rejected
+      imageRefsChecked = true
       const delivered = deliver(sessionId, deliveryId, draft, principal)
       if (delivered !== undefined) return delivered
     }
@@ -802,9 +812,12 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       input = draft
     }
 
-    // 图片引用在占 run 名额之前校验：不合规 400、一条不写（投递分支落回这里时同一批引用再校验一次，结果相同）
-    const rejected = await rejectImageRefs(sessionId, input)
-    if (rejected !== undefined) return rejected
+    // 图片引用在占 run 名额之前校验：不合规 400、一条不写。投递分支落回这里时同一批引用已校验过、不再读一遍：
+    // 片段都出自 body.input；日志只 append（"已引用过"只增不减）、blob 写后不改，结论不会变；循环那道照做
+    if (!imageRefsChecked) {
+      const rejected = await rejectImageRefs(sessionId, input)
+      if (rejected !== undefined) return rejected
+    }
 
     let run: ActiveRun
     try {

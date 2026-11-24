@@ -50,6 +50,28 @@ export function blobStoreConformance(t: TestHarness, factory: () => BlobStore | 
       assertEqual(Array.from(again.bytes), [9, 9], "an outside mutation must not affect the store")
     })
 
+    t.it(
+      "stat (if implemented) equals get().meta field by field; an unknown id throws not_found",
+      async () => {
+        const store = await factory()
+        if (!store.stat) return
+        // 按方法调用（SQLite / PG 实现靠 this），与循环里的调用方式一致
+        const stat = (id: string) => (store.stat as NonNullable<BlobStore["stat"]>).call(store, id)
+        const { id } = await store.put(new Uint8Array([1, 2, 3]), { mime: "image/png", sessionId: "s1" })
+        const meta = await stat(id)
+        const viaGet = (await store.get(id)).meta
+        assertEqual(meta.mime, viaGet.mime, "mime")
+        assertEqual(meta.sessionId, viaGet.sessionId, "sessionId")
+        assertEqual(meta.size, viaGet.size, "size")
+        assertEqual(meta.createdAt, viaGet.createdAt, "createdAt")
+        await assertThrowsCode(
+          () => stat("no-such-id"),
+          "not_found",
+          "missing blob (must throw, not return null)",
+        )
+      },
+    )
+
     t.it("slice (if implemented) returns [start, end) and clamps out-of-range bounds", async () => {
       const store = await factory()
       if (!store.slice) return

@@ -122,6 +122,8 @@ A user message (or a client-tool result) may carry `{ type: "image", mime, blobI
 - not this session's blob (and not already shown as an image in this session's timeline), no such blob, a `mime` that differs from the blob's, or no `BlobStore` → `400` with `Blob <id> not found in this session` — the same sentence for all of them, nothing written;
 - the `BlobStore` throws while checking → `503 storage_unavailable` (try again), nothing written.
 
+This pre-check only needs ownership and `mime`, so it calls `BlobStore.stat(id)` when your store has one (the in-memory, SQLite and Postgres stores do) and falls back to `get` otherwise. The run then reads each new image's bytes once. If your `stat` reads a separate index, write it together with the object: when the two disagree, the loop's check (which uses `get`) wins and the request ends in a `200` with an `error` frame instead of a `400`.
+
 The handler does not serve blob bytes. To show the pictures in your UI, add your own route, run your session check first (the same one as `authorizeSession`), and decide with `blobUsableBy` — comparing `meta.sessionId` alone would hide a parent's pictures in a forked session. `registry` is your event registry (`createCoreRegistry()`):
 
 ```ts

@@ -60,6 +60,14 @@ export interface BlobStore {
   get(id: string): Promise<{ bytes: Uint8Array; meta: BlobMeta }>
   /** 可选：分段取回 [start, end)，供模型分页读大结果；越界部分截断 */
   slice?(id: string, range: { start: number; end: number }): Promise<Uint8Array>
+  /**
+   * 可选：只取元信息、不读字节（对象存储上省一次整份下载）。合同：
+   * - 不存在必须抛 `StoreError("not_found")`，与 `get` 同一语义——**不能返回 null**（返回非对象会被当 not_found 处理，但请照合同写）
+   * - 返回值必须与 `get(id).meta` 逐字段一致（宿主若读独立登记表，登记表须与对象同批写入）
+   *
+   * 目前只有 server 的 HTTP 预校验用它；循环内写进日志前的最终裁决仍按 `get`，与发给厂商的字节出自同一次读取
+   */
+  stat?(id: string): Promise<BlobMeta>
 }
 
 /**

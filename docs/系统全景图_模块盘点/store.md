@@ -29,7 +29,7 @@
 | `packages/store-sqlite/src/driver.ts` | 驱动最小形状 `SqliteDatabase = { exec, prepare }`、`transaction()` 同步事务、`isUniqueViolation()` |
 | `packages/store-sqlite/src/schema.ts` | `sqliteSchemaSql({ memoryTable })` 三张建表语句（`SQLITE_SCHEMA_SQL` 是缺省表名版）+ 幂等 `migrateSqlite(db, opts)`；`assertTableName` 表名白名单、`DEFAULT_MEMORY_TABLE` |
 | `packages/store-sqlite/src/event-log.ts` | `SqliteEventLog`：预编译 5 条语句，append / read / tail / fork |
-| `packages/store-sqlite/src/blob-store.ts` | `SqliteBlobStore`：BLOB 列存字节，`slice` 用 `substr` 库内切 |
+| `packages/store-sqlite/src/blob-store.ts` | `SqliteBlobStore`：BLOB 列存字节，`slice` 用 `substr` 库内切，`stat` 用不取 bytes 列的预编译语句 |
 | `packages/store-sqlite/src/memory-store.ts` | `SqliteMemoryStore(db, { table?, now? })`：path→content KV，前缀查询用 `substr`，表名构造期过白名单 |
 | `packages/store-sqlite/src/stores.ts` | `sqliteStores(db, { migrate?, memoryTable?, now? })` 组装 `Stores`，缺省建表，`memoryTable` 同时透传给建表与 MemoryStore |
 | `packages/store-sqlite/src/node.ts` | `/node` 子路径：`openSqlite(path, opts)` 用 `node:sqlite` 开库，文件库缺省 WAL + busy_timeout |
@@ -38,7 +38,7 @@
 | `packages/store-pg/src/postgres-js.ts` | `postgresJsClient(sql)`：结构类型 `PostgresJsSql`（只用 `unsafe` 与 `options.transform`），`unsafe` 结果补成 `{ rows }`、参数复制一份；构造期拒绝 `transform.column/value/row.from` 任一设了的实例（`invalid_argument`） |
 | `packages/store-pg/src/schema.ts` | `pgSchemaStatements({ memoryTable })` 逐条 DDL（`PG_SCHEMA_STATEMENTS` / `PG_SCHEMA_SQL` 是缺省表名版）+ 幂等 `migratePg(client, opts)`；`assertTableName`、`DEFAULT_MEMORY_TABLE` |
 | `packages/store-pg/src/event-log.ts` | `PgEventLog`：append / fork 各是一条语句（事件绑 `text[]`、SQL 内 `::json`），read 分页、tail 倒排（取 `data::text`，`sql.ts` 的 `eventOf` 自己解析，字符串标量旧行再解一层） |
-| `packages/store-pg/src/blob-store.ts` | `PgBlobStore`：`bytea` 列，`slice` 用 `substring(... FROM ... FOR ...)` |
+| `packages/store-pg/src/blob-store.ts` | `PgBlobStore`：`bytea` 列，`slice` 用 `substring(... FROM ... FOR ...)`，`stat` 的 SELECT 不取 bytes 列 |
 | `packages/store-pg/src/memory-store.ts` | `PgMemoryStore(client, { table?, now? })`：`left()` 前缀匹配，`ORDER BY path COLLATE "C"`，表名构造期过白名单 |
 | `packages/store-pg/src/run-lease.ts` | D4 `PgRunLease(client)`：`reins_runs` 上三条单语句（acquire = `INSERT … ON CONFLICT DO UPDATE … WHERE 已过期 OR owner 相同 RETURNING`、renew = 条件 UPDATE、release = 按 owner DELETE），过期比的是 `(extract(epoch from now()) * 1000)::bigint` 库时钟；acquire 的抢占条件 `NOT (…)` 与 renew 的"持有中"条件都取自 `heldSql` |
 | `packages/store-pg/src/run-states.ts` | 会话运行状态（2026-11-15）：`pgRunStates(client, ids)` 一条 SQL——`unnest($1::text[])` ⋈ `reins_runs`（`heldSql("r")`）⋈ LATERAL 按主键倒序取最后一条 `type = ANY($2)` 的事件（`$2` 绑 core `RUN_MARKER_TYPES`），解码走 `eventOf`、分类走 core `runStatusOf`（paused 带暂停原因码 `code`，2026-11-23，本包不改代码）；入参最多 `PG_RUN_STATES_MAX` = 500 个非空字符串，空数组回空 Map、重复合并、不存在的会话为 idle。PG 16.13 实测：单会话 20 万条非标记事件约 15 ms，500 会话一批 46～85 ms，不加索引 |
@@ -74,7 +74,7 @@
 - SQLite 在一个事务里做完检查与复制，复制是纯 SQL 的 `INSERT ... SELECT ... json_set(data, '$.sessionId', ?) ... WHERE session_id = ? AND seq <= ?`——数据不出库。
 - Postgres 没法这么干：`json` 列没有 `jsonb_set`，而换成 `jsonb` 会重排键序（见下）。所以 `fork` 先 `read()` 出来、在 JS 里 `{...e, sessionId}`、再用与 append 同款的 `INSERT … SELECT unnest(...) WHERE NOT EXISTS (SELECT 1 FROM reins_events WHERE session_id = $1)` 整批插回——这个 WHERE 让"检查目标为空"和"写入"落在同一条语句里，检查与插入之间有人抢写也不会交错（插 0 行 → `target_not_empty`）。
 
-**blob put / get / slice。** `put` 用 core 的 `uuidv7()` 生成 id，字符串按 UTF-8 `TextEncoder` 编码，记下 `size = byteLength` 与 `now()`。`get` 缺失抛 `not_found`，返回 `new Uint8Array(row.bytes)`（复制一份，不把驱动缓冲区交出去）。`slice(id, {start, end})` 把区间钳到非负后**在库内切**，不读整个 blob：SQLite `substr(bytes, ?, ?)`、Postgres `substring(bytes FROM $2 FOR $3)`，两者起点都从 1 起所以传 `start + 1`，长度不足自然截断。
+**blob put / get / stat / slice。** `put` 用 core 的 `uuidv7()` 生成 id，字符串按 UTF-8 `TextEncoder` 编码，记下 `size = byteLength` 与 `now()`。`get` 缺失抛 `not_found`，返回 `new Uint8Array(row.bytes)`（复制一份，不把驱动缓冲区交出去）。`slice(id, {start, end})` 把区间钳到非负后**在库内切**，不读整个 blob：SQLite `substr(bytes, ?, ?)`、Postgres `substring(bytes FROM $2 FOR $3)`，两者起点都从 1 起所以传 `start + 1`，长度不足自然截断。`stat` 只 SELECT 元信息四列、与 `get` 共用同一个 `metaOf` 行转换（口径不分叉），缺失同样抛 `not_found`；目前只有 server 的 HTTP 预校验调它。
 
 **memory list 前缀查询。** 两边都**不用 `LIKE`**，免得给 `%` 和 `_` 转义：SQLite `WHERE substr(path, 1, ?) = ?`（参数是 `prefix.length` 与 `prefix`），Postgres `WHERE left(path, $2) = $1`。排序上 SQLite 默认就是字节序，Postgres 显式 `ORDER BY path COLLATE "C"`，两边与内存实现的字典序一致。`write` 是 upsert（`ON CONFLICT(path) DO UPDATE`），`delete` 天然幂等。
 

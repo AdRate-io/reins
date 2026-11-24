@@ -21,6 +21,8 @@ export class SqliteBlobStore implements BlobStore {
         "INSERT INTO reins_blobs (id, session_id, mime, size, created_at, bytes) VALUES (?, ?, ?, ?, ?, ?)",
       ),
       get: db.prepare("SELECT session_id, mime, size, created_at, bytes FROM reins_blobs WHERE id = ?"),
+      // stat 不取 bytes 列：只读元信息
+      stat: db.prepare("SELECT session_id, mime, size, created_at FROM reins_blobs WHERE id = ?"),
       // substr 对 BLOB 按字节计，起点从 1 起
       slice: db.prepare("SELECT substr(bytes, ?, ?) AS part FROM reins_blobs WHERE id = ?"),
     }
@@ -37,6 +39,13 @@ export class SqliteBlobStore implements BlobStore {
     const row = this.stmts.get.get(id) as (MetaRow & { bytes: Uint8Array }) | undefined
     if (!row) throw new StoreError("not_found", `blob not found: ${id}`, { id })
     return { bytes: new Uint8Array(row.bytes), meta: metaOf(row) }
+  }
+
+  /** 只读元信息，与 get 共用 metaOf，口径不会分叉 */
+  async stat(id: string): Promise<BlobMeta> {
+    const row = this.stmts.stat.get(id) as MetaRow | undefined
+    if (!row) throw new StoreError("not_found", `blob not found: ${id}`, { id })
+    return metaOf(row)
   }
 
   async slice(id: string, range: { start: number; end: number }): Promise<Uint8Array> {

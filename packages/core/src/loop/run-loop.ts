@@ -37,7 +37,15 @@ import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
-import { checkImageRefs, hydrateImageRefs, type ImageRefCache, isImageRef } from "./media-refs.js"
+import {
+  type CheckImageRefsContext,
+  checkImageRefs,
+  hydrateImageRefs,
+  type ImageRefCache,
+  isImageRef,
+  judgeImageRef,
+  prefetchImageRefs,
+} from "./media-refs.js"
 import { MAX_TURNS_PAUSE_CODE, pauseDetailOf, resolveSocketPause } from "./pause-code.js"
 import { type ModelCallFailure, resolveRetry } from "./retry.js"
 import { awaitingOf } from "./run-status.js"
@@ -277,16 +285,15 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   /** run 级图片缓存（blobId → base64）：写入校验与换回共用，同一 blob 一个 run 只读一次 */
   const imageCache: ImageRefCache = new Map()
   // 起步 input 里的图片引用（媒体引用方案）：归属 / mime 不过抛 RangeError、一条不写，与片段形状校验同口径；
-  // 存储自己抛错（非 not_found）原样抛出——不知道合不合规就不写
-  for (const d of input) {
-    const problem = await checkImageRefs(draftParts(d), {
-      sessionId,
-      blobs: cfg.blobs,
-      timeline: startTimeline,
-      cache: imageCache,
-    })
-    if (problem !== undefined) throw new RangeError(problem)
-  }
+  // 存储自己抛错（非 not_found）原样抛出——不知道合不合规就不写。全部草稿的片段按原顺序合成一批：
+  // 一波并发读完再按顺序判，报的第一个问题与逐条草稿串行判相同
+  const startProblem = await checkImageRefs(input.flatMap(draftParts), {
+    sessionId,
+    blobs: cfg.blobs,
+    timeline: startTimeline,
+    cache: imageCache,
+  })
+  if (startProblem !== undefined) throw new RangeError(startProblem)
   let turns = 0
   let tokensSpent = 0
   let toolCallsTotal = 0
@@ -543,10 +550,10 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
           pulled = []
           problem = describeThrown(err)
         }
-        for (const d of pulled) {
-          if (problem !== undefined || storageFailure !== undefined) break
+        // 拉到的全部草稿合成一批校验（与起步 input 同口径）
+        if (problem === undefined) {
           try {
-            problem = await checkImageRefs(draftParts(d), {
+            problem = await checkImageRefs(pulled.flatMap(draftParts), {
               sessionId,
               blobs: cfg.blobs,
               timeline,
@@ -1247,12 +1254,15 @@ async function* executeToolCalls(
 /**
  * 工具结果里的图片引用逐段校验：合规的原样留；不合规的那段换成统一的 "not found" 那句文本；校验时存储自己抛错的换成
  * "Could not read blob <id>: storage error"（不说 not found，免得模型以为图没了），原因另给一条模型不可见的 core.error 草稿。
- * 没有要换的段时返回同一个 content 数组
+ * 没有要换的段时返回同一个 content 数组。
+ * 整条结果的引用先一次并发预读，再逐段只用落定表判——同一张图出现两次且读取瞬断时只读一次、两段都回 storage error
  */
 async function checkToolResultRefs(
   parts: ContentPart[],
-  ctx: Parameters<typeof checkImageRefs>[1],
+  ctx: CheckImageRefsContext,
 ): Promise<{ content: ContentPart[]; storageFailures: EventDraft[] }> {
+  if (!parts.some(isImageRef)) return { content: parts, storageFailures: [] }
+  const reads = await prefetchImageRefs(parts, ctx)
   const storageFailures: EventDraft[] = []
   let changed = false
   const content: ContentPart[] = []
@@ -1263,7 +1273,7 @@ async function checkToolResultRefs(
     }
     let text: string | undefined
     try {
-      text = await checkImageRefs([p], ctx)
+      text = judgeImageRef(p, ctx, reads)
     } catch (err) {
       text = `Could not read blob ${p.blobId}: storage error`
       storageFailures.push({

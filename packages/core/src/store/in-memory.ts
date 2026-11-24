@@ -104,6 +104,12 @@ export class InMemoryBlobStore implements BlobStore {
     return { bytes: hit.bytes.slice(), meta: { ...hit.meta } }
   }
 
+  async stat(id: string): Promise<BlobMeta> {
+    const hit = this.blobs.get(id)
+    if (!hit) throw new StoreError("not_found", `blob not found: ${id}`, { id })
+    return { ...hit.meta }
+  }
+
   async slice(id: string, range: { start: number; end: number }): Promise<Uint8Array> {
     const { bytes } = await this.get(id)
     return bytes.slice(Math.max(0, range.start), Math.min(bytes.byteLength, range.end))

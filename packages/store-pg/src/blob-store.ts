@@ -35,6 +35,17 @@ export class PgBlobStore implements BlobStore {
     return { bytes: new Uint8Array(row.bytes), meta: metaOf(row) }
   }
 
+  /** 只读元信息（SELECT 不取 bytes 列），与 get 共用 metaOf，口径不会分叉 */
+  async stat(id: string): Promise<BlobMeta> {
+    const res = await this.client.query(
+      "SELECT session_id, mime, size, created_at FROM reins_blobs WHERE id = $1",
+      [id],
+    )
+    const row = res.rows[0] as MetaRow | undefined
+    if (!row) throw new StoreError("not_found", `blob not found: ${id}`, { id })
+    return metaOf(row)
+  }
+
   async slice(id: string, range: { start: number; end: number }): Promise<Uint8Array> {
     const start = Math.max(0, Math.floor(range.start))
     const length = Math.max(0, Math.floor(range.end) - start)

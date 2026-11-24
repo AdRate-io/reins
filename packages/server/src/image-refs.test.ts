@@ -31,11 +31,12 @@ function setup(
   blobs: BlobStore | undefined,
   script: ScriptedTurn[] = [{ drafts: [say("好")] }],
   tools: Tool[] = [],
+  midRunInput = true,
 ) {
   const log = new InMemoryEventLog()
   const lowering = new ScriptedLowering(script)
   const agent: AgentDefinition = { log, lowering, model: MODEL, tools, ...(blobs ? { blobs } : {}) }
-  const handler = createAgentHandler(agent, { heartbeatMs: 0, midRunInput: true, warn: () => {} })
+  const handler = createAgentHandler(agent, { heartbeatMs: 0, midRunInput, warn: () => {} })
   return { log, lowering, handler }
 }
 
@@ -166,5 +167,98 @@ describe("预校验：越权当不存在，400、一条不写", () => {
     expect(res.status).toBe(503)
     expect(await res.json()).toMatchObject({ error: "storage_unavailable" })
     expect(await logged(log, "s1")).toHaveLength(0)
+  })
+})
+
+describe("预校验只读元信息（AdRate 建议 18）", () => {
+  /** 计数存储：可选 stat、可让不存在时返回 null、可让 stat 报的 mime 与 get 不一致 */
+  function countingBlobs(opts: { stat?: boolean; nullForMissing?: boolean; statMime?: string } = {}) {
+    const inner = new InMemoryBlobStore()
+    const counts = { get: 0, stat: 0 }
+    const store: BlobStore = {
+      put: (bytes, meta) => inner.put(bytes, meta),
+      get: async (id) => {
+        counts.get++
+        try {
+          return await inner.get(id)
+        } catch (err) {
+          if (opts.nullForMissing) return null as unknown as { bytes: Uint8Array; meta: BlobMeta }
+          throw err
+        }
+      },
+      ...(opts.stat
+        ? {
+            stat: async (id: string): Promise<BlobMeta> => {
+              counts.stat++
+              try {
+                const meta = (await inner.get(id)).meta
+                return opts.statMime === undefined ? meta : { ...meta, mime: opts.statMime }
+              } catch (err) {
+                if (opts.nullForMissing) return null as unknown as BlobMeta
+                throw err
+              }
+            },
+          }
+        : {}),
+    }
+    return { store, counts }
+  }
+
+  it("HTTP 发 N 张新图：有 stat 时 handler stat N 次、循环 get N 次；无 stat 时 get 2N 次", async () => {
+    const N = 3
+    for (const withStat of [true, false]) {
+      const { store, counts } = countingBlobs({ stat: withStat })
+      const ids: string[] = []
+      for (let i = 0; i < N; i++) ids.push((await store.put(PNG, { mime: "image/png", sessionId: "s1" })).id)
+      const { handler } = setup(store)
+      const res = await handler(postRequest({ sessionId: "s1", input: ids.map((id) => ref(id)) }))
+      expect(res.status).toBe(200)
+      expect(resultOf(parseFrames(await res.text()))?.status).toBe("done")
+      expect(counts, `withStat=${withStat}`).toEqual(withStat ? { get: N, stat: N } : { get: 2 * N, stat: 0 })
+    }
+  })
+
+  it("没开 midRunInput（只走普通路径的预校验）：不合规 400、一条不写；合规时 stat N 次", async () => {
+    const { store, counts } = countingBlobs({ stat: true })
+    const other = await store.put(PNG, { mime: "image/png", sessionId: "other" })
+    const mine = await store.put(PNG, { mime: "image/png", sessionId: "s1" })
+    const { handler, log } = setup(store, undefined, [], false)
+    for (const sessionId of ["s1", undefined]) {
+      const res = await handler(postRequest({ ...(sessionId ? { sessionId } : {}), input: [ref(other.id)] }))
+      expect(res.status, String(sessionId)).toBe(400)
+      expect(await res.json()).toEqual({ error: "bad_request", message: imageRefNotFound(other.id) })
+    }
+    expect(await logged(log, "s1")).toHaveLength(0)
+    counts.stat = 0
+    counts.get = 0
+    const ok = await handler(postRequest({ sessionId: "s1", input: [ref(mine.id)] }))
+    expect(resultOf(parseFrames(await ok.text()))?.status).toBe("done")
+    expect(counts).toEqual({ get: 1, stat: 1 })
+  })
+
+  it("get / stat 对不存在的 id 返回 null：400 统一那句（不是 503），与别的会话的 blob 同一应答", async () => {
+    for (const withStat of [true, false]) {
+      const { store } = countingBlobs({ stat: withStat, nullForMissing: true })
+      const other = await store.put(PNG, { mime: "image/png", sessionId: "other" })
+      const { handler, log } = setup(store)
+      for (const id of ["nope", other.id]) {
+        const res = await handler(postRequest({ sessionId: "s1", input: [ref(id)] }))
+        expect(res.status, `withStat=${withStat} ${id}`).toBe(400)
+        expect(await res.json()).toEqual({ error: "bad_request", message: imageRefNotFound(id) })
+      }
+      expect(await logged(log, "s1")).toHaveLength(0)
+    }
+  })
+
+  it("stat 与 get 不一致（stat 报 image/png、get 报 image/jpeg）：预校验放行、循环按 get 拒绝，日志里没有这条引用", async () => {
+    const { store } = countingBlobs({ stat: true, statMime: "image/png" })
+    const { id } = await store.put(PNG, { mime: "image/jpeg", sessionId: "s1" })
+    const { handler, log } = setup(store)
+    const res = await handler(postRequest({ sessionId: "s1", input: [ref(id, "image/png")] }))
+    expect(res.status).toBe(200)
+    const frames = parseFrames(await res.text())
+    const err = frames.find((f) => f.event === "error")
+    expect(JSON.stringify(err?.data)).toContain(imageRefNotFound(id))
+    expect((await logged(log, "s1")).filter((e) => e.type === "core.user_message")).toHaveLength(0)
   })
 })

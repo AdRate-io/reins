@@ -81,7 +81,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `store/index.ts` | 汇总导出 errors / in-memory / read-timeline / types |
-| `store/types.ts` | `EventLog`（append / read / tail / fork）、`BlobStore`、`MemoryStore`、`RunLease`（D4：acquire / renew / release，带过期的独占锁，过期用存储层时钟，同 owner 幂等）、`Stores`（只有 log 必需，`runLease?` 让 `createAgent` 自动装跨进程登记表）、`ReadOptions` 的接口与行为契约注释；BlobStore 合同：id 不复用、字节写后不改、图片 put 原始字节 |
+| `store/types.ts` | `EventLog`（append / read / tail / fork）、`BlobStore`、`MemoryStore`、`RunLease`（D4：acquire / renew / release，带过期的独占锁，过期用存储层时钟，同 owner 幂等）、`Stores`（只有 log 必需，`runLease?` 让 `createAgent` 自动装跨进程登记表）、`ReadOptions` 的接口与行为契约注释；`BlobStore` 合同：id 不复用、字节写后不改、图片 put 原始字节；可选 `stat`（只取元信息，不存在必须抛 not_found、与 `get().meta` 一致） |
 | `store/errors.ts` | `StoreError` 与 7 种 code（seq_conflict / session_mismatch / empty_batch / not_found / target_not_empty / out_of_range / invalid_argument） |
 | `store/in-memory.ts` | 四个接口的进程内实现（`InMemoryRunLease({ now })` 时钟可注入，供 server 单测）+ `memoryStore()` 一次给齐前三个（刻意不带 runLease：进程内的锁跨不了进程）；读写都 `structuredClone`，是一致性套件的参考实现 |
 | `store/read-timeline.ts` | `readEvents`（流式）/ `readTimeline`（整段）：从日志读出的每一条都先过 `registry.read` 升级，是循环、server、回放读日志的唯一正确姿势 |
@@ -133,7 +133,8 @@
 | `loop/deferred-tools.test.ts` | L1 在 core 的用例：`renderToolReference` 写法、`normalizeToolOutput` 认引用段、估算按展开文本算、`BeforeModelPatch.deferredTools` → `ToolSpec.deferLoading` 的接线（不在表的名字忽略、后一个 Socket 整体替换、没给就沿用） |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
 | `loop/fork.ts` | `forkSession(log, { fromSessionId, atSeq, toSessionId? })`：薄封装 `EventLog.fork`，只负责缺省新会话 id |
-| `loop/media-refs.ts` | 图片引用形态（2026-11-24，AdRate 建议 17）：`isImageRef`（形状真源）、`mediaRefsOf`（本会话图片引用集合，与 fetch_blob 的外溢集合分开）、`blobUsableBy`（归属：本会话的 blob 或已图片引用过）、`checkImageRefs`（写入校验，统一 `imageRefNotFound` 一句、先归属后 mime、存储错误原样抛）、`hydrateImageRefs`（换回内联，只有 not_found 留引用）、`bytesToBase64`（分块 btoa） |
+| `loop/media-refs.ts` | 图片引用形态（2026-11-24，AdRate 建议 17）：`isImageRef`（形状真源）、`mediaRefsOf`（本会话图片引用集合，与 fetch_blob 的外溢集合分开）、`blobUsableBy`（归属：本会话的 blob 或已图片引用过）、`checkImageRefs`（写入校验，统一 `imageRefNotFound` 一句、先归属后 mime、存储错误原样抛；`metaOnly` 给 server 预校验，有 `stat` 用 `stat`、不进缓存）、`hydrateImageRefs`（换回内联，只有 not_found 留引用）、`bytesToBase64`（分块 btoa）；内部（`loop/index.ts` 列名导出时不带）：`readBlobs` 并发池（上限 `BLOB_READ_CONCURRENCY` 16、去重、allSettled、返回非对象当 not_found、base64 在池内编）、`prefetchImageRefs` / `judgeImageRef`（校验两步，runLoop 工具结果逐段用） |
+| `loop/media-refs-concurrency.test.ts` | 并发读取（AdRate 建议 18）：带延迟的计数存储测在途峰值与耗时 < 2D、去重、按片段顺序报第一个问题、返回 null 当 not_found、同步抛错不冲出池子、metaOnly、换回错误按视野顺序、合批入口、工具结果预读与瞬断只读一次 |
 | `loop/media-refs.test.ts` | 形状、base64 往返、等价、只换视野内、缓存（多轮 + 重试）、取不到三种、三入口统一文案、工具结果覆盖面、fork、外溢 blob 当不了图片、v2 |
 | 测试 | `run-loop.test.ts` 覆盖三轮端到端 / 日志可回放 / 确定性 / Socket 五钩子与静态贡献 / 审批暂停续跑 / 工具各类失败与客户端工具 / 错误·中止·maxTurns·handoff / 瞬断重试 6 例 / 子代理冒泡 3 例（返回标记即暂停、结论按 sessionId 转发、spend 合算）/ 上线前审查修复 3 例 / R1·R2 / input 草稿数组 15 例（按序一次写入、十二类拒绝不落日志——含未登记 ext.* 与 core 载荷畸形、四种旧形态回归、数组里回填客户端工具结果并续跑）；`batch.test.ts` 覆盖 `ctx.batch`：六种结果路径都登记、beforeTool 只见前面的、审批 / 客户端挂起进 held、补跑批预置上次结果与宿主回填、批中途中止，及 `toolBatchOf` 纯函数（运维事件夹在输出中间不切段、跨批取第一批）；`run-state.test.ts` 覆盖跨进程暂停恢复与 fail-closed 校验（含 D4：加别的工具 / 改提示放行、pending 工具或模型变了拒、旧状态兼容、伪造或剥掉新摘要验签失败；`run_paused.state` 与 `RunResult.state` 逐字相同且从日志取出可续跑、停止收尾 pending 为空、maxTurns 与宿主中止两个出口从日志取出可续跑、`pausedStateOf` 四种 undefined）；`stop.test.ts` 覆盖停止收尾（五个暂停出口 × 停止 / 非停止、等审批与客户端工具也收尾、started 的落结果未知、子代理落做了一半、批中途停止不进 onTurnEnd、连接阶段中止暂停）与不重放（真进程死亡后续跑不执行、只读与 `replayable` 照旧重放、工具不在表、感知 signal 的写工具被掐断、started 不切批）；`pull-input.test.ts` 覆盖 `pullInput`：第 2 轮拉到的落在 tool_result 之后、beforeModel 说明之前且模型可见、空数组回归、补跑轮与触顶不拉、自然收尾不再拉、重复返回照写、拉取期间中止 / 停止不写（含回调因中止 reject、中止时返回值不合规，都按中止暂停）、回调抛错 fail-open（含 String() 会抛的值）、八类不合规以 error 收口一条不写；`retry.test.ts` 覆盖瞬断判定、退避、可中止 sleep；`fork.test.ts` 覆盖轮边界分叉、切在 tool_call/result 之间、越界拒绝；`upcast-on-read.test.ts` 覆盖循环读日志时升级与不认识的 ext.* 拒绝；`tools-bound.test.ts` 覆盖工具表变化说明文案（一侧 ≤ 20 件与旧文案逐字一致、超 20 件只列 20 个且出现过的排前、分档含调用 / tool_reference / 整词且子串不算、入参按值扫与思考 / 整理摘要、来回过期恢复时真调用过的不被凑数名字挤掉、不超 20 或关闭时不扫时间线、`meta.toolsChanged` 完整）；`pause-code.test.ts` 覆盖 Socket 暂停带码（载荷 / 实时中断 / `runStatusOf` 三处同一个码）、不带码、码不合规或 reason 不在闭集时照常暂停并记一条非终结 `core.error`（码不进时间线）、`maxTurns` 的内置码、用户停止盖过 Socket 意见（码不合规时也是停止暂停）、非停止中止落在工具批中途 + 不合规码仍是带 pending 的暂停、带码与不带码签出的状态逐字相同、`isPauseCode` 边界表与读侧守卫 |
 
@@ -152,7 +153,7 @@
 | `testing/index.ts` | `@reinsjs/core/testing` 入口 |
 | `testing/harness.ts` | 只要 `{ describe, it }` 的最小 `TestHarness`，自带 `assert` / `assertEqual` / `assertThrowsCode` / `collect`，不绑任何测试框架 |
 | `testing/event-log.ts` | `eventLogConformance`：16 条契约（seq 连续性与原子性、区间读、tail、会话隔离、副本语义、fork 四例）+ `makeEvents` 造数助手 |
-| `testing/blob-store.ts` | `blobStoreConformance`：字节/字符串往返、meta、id 唯一、not_found、副本语义、可选 slice |
+| `testing/blob-store.ts` | `blobStoreConformance`：字节/字符串往返、meta、id 唯一、not_found、副本语义、可选 stat（与 get().meta 相等、未知 id 抛 not_found）、可选 slice |
 | `testing/memory-store.ts` | `memoryStoreConformance`：缺失返回 null、覆盖写、前缀 list 字典序、delete 幂等、空串与不存在有别 |
 | `testing/run-lease.ts` | `runLeaseConformance`（D4）：空会话可占、别人持有时占不到、同 owner 幂等、renew 三态、release 只删自己、过期后接手 / 原持有者 renew 为 false（ttl 1 ms + 真等 30 ms，因 pg 实现用库时钟，套件不能注入） |
 | `testing/scripted-lowering.ts` | `ScriptedLowering`：按剧本逐轮吐草稿、记录每轮 `toRequest` 输入、可注入异常与 capabilities；`say` / `think` / `callTool` 草稿速写 |
