@@ -42,6 +42,7 @@ import {
   type EventLog,
   type EventSchemaRegistry,
   errorMessageOf,
+  estimateTotal,
   type HandoffIntent,
   isReplayable,
   type LandingRecord,
@@ -58,6 +59,7 @@ import {
   readTimeline,
   resolveSocketContributions,
   resolveSocketPause,
+  roughTokenEstimate,
   type Socket,
   type TokenEstimator,
   type TokenUsage,
@@ -181,7 +183,7 @@ interface TurnState {
     held: string[]
     resumed: boolean
   }
-  /** 本轮投影估算，进 budget_usage.contextEstimate */
+  /** 本轮送出视图的估算（beforeModel 补丁与注入之后），进 budget_usage.contextEstimate */
   estimate: number
   startedAt: number
   /** 本次模型响应里的 tool_call 数 */
@@ -544,6 +546,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     visible = [...visible, ...injected.filter((e) => !DEFAULT_MODEL_INVISIBLE_TYPES.has(e.type))]
     tctx.events = visible
     tctx.tools = tools
+    // 与 runLoop 同口径：contextEstimate 取真正送出的视图，注入的说明 / 快照不被当成固定开销重复计（全库审查 2026-11-25 #20）
+    turn.estimate = estimateTotal(visible, options.projection?.estimate ?? roughTokenEstimate)
     s.turn = turn
     s.assembler.reset()
 

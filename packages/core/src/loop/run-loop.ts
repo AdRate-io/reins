@@ -33,6 +33,7 @@ import { createEvent, type EventDraft } from "../events/create.js"
 import { uuidv7 } from "../events/id.js"
 import { createCoreRegistry, type EventSchemaRegistry } from "../events/registry.js"
 import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../lowering/types.js"
+import { estimateTotal, roughTokenEstimate } from "../projection/estimate.js"
 import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
@@ -753,6 +754,10 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     visible = [...visible, ...injected.filter((e) => !DEFAULT_MODEL_INVISIBLE_TYPES.has(e.type))]
     ctx.events = visible
     ctx.tools = tools
+    // 进 budget_usage.contextEstimate 的估算取真正送出的视图（补丁改过、注入追加后），不是投影那一刻的：
+    // contextOverheadOf 拿"真实 − 它"当固定开销，本轮注入的说明 / 快照若漏算，就被当成开销、下一轮再随时间线估一遍，
+    // 感知、到线请求与阈值兜底一起高估（全库审查 2026-11-25 #20）。ctx.budget.used 仍是投影估算（beforeModel 时的读数）
+    const sentEstimate = estimateTotal(visible, cfg.projection?.estimate ?? roughTokenEstimate)
 
     // ---- 问模型（瞬断有限重试，见 retry.ts）----
     // 每次尝试重新 toRequest + stream；beforeModel 钩子不重跑（视图、工具、说明都是本轮已定的）。
@@ -926,7 +931,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
           tokens: outcome.usage,
           toolCalls: calls.length,
           wallMs: now() - turnStartedAt,
-          contextEstimate: projected.stats.estimatedTokens,
+          contextEstimate: sentEstimate,
         },
       },
     ])

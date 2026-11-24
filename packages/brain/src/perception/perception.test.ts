@@ -6,14 +6,17 @@ import {
   defineTool,
   type Event,
   type EventDraft,
+  estimateTotal,
   InMemoryEventLog,
   type LoopConfig,
   type RunResult,
+  roughTokenEstimate,
   runLoop,
   type TurnContext,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
+import { pins } from "../pins/pins.js"
 import { lastVisiblePerceptionNote, perception } from "./perception.js"
 import { contextOverheadOf, type PerceptionReading, readPerception } from "./reading.js"
 import { renderPerception } from "./render.js"
@@ -481,6 +484,36 @@ describe("perception：用上一请求的真实用量校准上下文使用率（
       (e) => e.type === "core.budget_usage",
     ) as CoreEventOf<"core.budget_usage">[]
     expect(usages.every((u) => typeof u.payload.contextEstimate === "number")).toBe(true)
+  })
+
+  it("段起点注入的大常驻快照不被当成固定开销重复计：下一轮读数贴近真实、不误触兜底（全库审查 2026-11-25 #20）", async () => {
+    const log = new InMemoryEventLog()
+    // 窗口 45000、兜底线 38250；快照约 2 万 token，真实固定开销恒为 1000 → 真实上下文约 21000（≈47%）
+    const lowering = new ScriptedLowering(
+      (input, turn) => {
+        const usage = { input: estimateTotal(input.events, roughTokenEstimate) + 1000, output: 5 }
+        return turn < 2
+          ? { drafts: [callTool(`c${turn}`, "add", { a: 1, b: 2 })], outcome: { usage } }
+          : { drafts: [say("好")], outcome: { usage } }
+      },
+      { capabilities: { contextWindow: 45000 } },
+    )
+    const big = "word ".repeat(16000)
+    await drain(
+      runLoop(
+        config(lowering, log, {
+          tools: [{ ...addTool, risk: "low" }],
+          sockets: [pins({ pins: [{ name: "idx", snapshot: () => big }] }), perception()],
+        }),
+      ),
+    )
+    const logged = await all(log)
+    expect(logged.some((e) => e.type === "core.compaction")).toBe(false)
+    for (const n of notesOf(logged)) {
+      const reading = (n.payload.meta as { reading: PerceptionReading }).reading
+      expect(reading.contextOverhead).toBeLessThanOrEqual(1000)
+      expect(reading.contextUsage.label).not.toBe("≥85%")
+    }
   })
 
   it("感知报 ≥85% 的那一轮，阈值兜底同轮就折（2026-10-30 onset-pause：此前兜底只比估算，报了不折）", async () => {

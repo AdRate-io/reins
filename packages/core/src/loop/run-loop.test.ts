@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest"
 import type { Event } from "../events/base.js"
-import type { CoreEvent, CoreEventOf } from "../events/core.js"
+import { type CoreEvent, type CoreEventOf, contextOverheadOf } from "../events/core.js"
 import { createCoreEvent } from "../events/create.js"
 import { createCoreRegistry } from "../events/registry.js"
 import { LoweringError } from "../lowering/errors.js"
+import { estimateTotal, roughTokenEstimate } from "../projection/estimate.js"
 import { project } from "../projection/project.js"
 import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
@@ -317,6 +318,39 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
       expect(u.payload.contextEstimate).toBeGreaterThan(0)
       expect(typeof u.payload.contextEstimate).toBe("number")
       expect(u.payload.tokens).toEqual(lowering.requests[i] ? u.payload.tokens : undefined)
+    }
+  })
+
+  it("contextEstimate 是本轮真正送出视图的估算：beforeModel 期间注入的说明算进去，下一轮的固定开销不重复计它（全库审查 2026-11-25 #20）", async () => {
+    const log = new InMemoryEventLog()
+    // 真实固定开销恒为 1000：真实上下文 = 送出事件的估算 + 1000
+    const OVERHEAD = 1000
+    const lowering = new ScriptedLowering((input, turn) => {
+      const usage = { input: estimateTotal(input.events, roughTokenEstimate) + OVERHEAD, output: 5 }
+      return turn < 2
+        ? { drafts: [callTool(`c${turn}`, "add", { a: 1, b: 2 })], outcome: { usage } }
+        : { drafts: [say("done")], outcome: { usage } }
+    })
+    const big = "word ".repeat(4000)
+    const overheads: number[] = []
+    const injector: Socket = {
+      beforeModel: (ctx) => {
+        overheads.push(contextOverheadOf(ctx.timeline))
+        // 首轮注入一大段说明（如段起点的常驻快照）
+        if (ctx.session.turn === 1)
+          ctx.emit({ type: "core.system_note", actor: "system", payload: { text: big } })
+        return undefined
+      },
+    }
+    await drain(runLoop(baseConfig(lowering, log, { input: "算", sockets: [injector] })))
+    // 每轮校准出的开销都应是真实的 1000：首轮没有可对照的请求为 0
+    expect(overheads).toEqual([0, OVERHEAD, OVERHEAD])
+    const usages = (await all(log)).filter(
+      (e): e is CoreEventOf<"core.budget_usage"> => e.type === "core.budget_usage",
+    )
+    for (const [i, u] of usages.entries()) {
+      const sent = lowering.requests[i]?.events ?? []
+      expect(u.payload.contextEstimate).toBe(estimateTotal(sent, roughTokenEstimate))
     }
   })
 

@@ -28,6 +28,7 @@ import {
   InMemoryMemoryStore,
   lastRunMarker,
   OUTCOME_UNKNOWN_TEXT,
+  roughTokenEstimate,
   runStatusOf,
   type Socket,
   type ToolBatch,
@@ -171,6 +172,24 @@ function fixture(
 const user = (text: string): ModelMessage => ({ role: "user", content: text })
 
 describe("reinsMiddleware：基本流程", () => {
+  it("budget_usage.contextEstimate 含 beforeModel 期间注入的说明，与 runLoop 同口径（全库审查 2026-11-25 #20）", async () => {
+    const big = "word ".repeat(4000)
+    const injector: Socket = {
+      beforeModel: (ctx) => {
+        if (ctx.session.turn === 1)
+          ctx.emit({ type: "core.system_note", actor: "system", payload: { text: big } })
+        return undefined
+      },
+    }
+    const f = fixture([{ blocks: [say("好")] }], [injector])
+    await f.run({ messages: [user("hi")] })
+    const logged = await all(f.log)
+    const usage = logged.find((e): e is CoreEventOf<"core.budget_usage"> => e.type === "core.budget_usage")
+    const note = logged.find((e) => e.type === "core.system_note")
+    if (!usage || !note) throw new Error("budget_usage or injected note missing")
+    expect(usage.payload.contextEstimate).toBeGreaterThan(roughTokenEstimate(note))
+  })
+
   it("用户消息进日志 → 模型调工具 → TanStack 执行 → 结果进日志 → 回答；模型每轮看到的是日志投影", async () => {
     const f = fixture([
       { blocks: [think("先算", "SIG"), callTool("c1", "add", { a: 2, b: 3 })] },
