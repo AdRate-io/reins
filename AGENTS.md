@@ -265,6 +265,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | `authorizeSession` 不设 | 不检查会话归属，知道 sessionId 即可读写 | 单租户与本地开发是主流；README Security notes 明示，**多租户必须设** |
 | `allowConfigDrift: true` | 续跑时配置变了照样放行 | 宿主显式声明自担；缺省拒绝 |
 | spill 缺 BlobStore | 外溢关闭、大结果原样进上下文（不是截断），告警一次 | 静默截断会在宿主不知情时丢数据；感知与预算兜底 |
+| 自带工具的脑子模块被同名工具顶掉（宿主或排在前面的 Socket，如 MCP） | 该模块本 run 整个停摆、告警一次：spill 不外溢（大结果原样进上下文）、compact 不请整理也不数连续整理、handoff / memory / skills / lazy-tools 不注册，pins 只剩宿主 pin | 规则与钩子会把模型和调用导向别人的工具（取回、交接、折叠落错地方），比少一道机制更糟；阈值兜底、感知与预算仍在 |
 | MCP `optional: true` | run 起步 `tools/list` 失败 → 空表 + 告警，run 照跑 | 宿主显式声明这台服务器可缺；缺省抛 |
 | skills 单份 SKILL.md 不合规 | 跳过该份、告警一次，其余技能照常进菜单 | 一份坏技能不该拖垮整个菜单 |
 | `trustMarkers: false` | 不给 untrusted 内容包标记 | 宿主自担风险（例如已在别处处理注入） |
