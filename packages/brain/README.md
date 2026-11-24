@@ -66,7 +66,7 @@ If `board_update` fails in `[board_update, chat_send, end_run]`, `chat_send` and
 
 ### Skills from a database
 
-Any `MemoryStore` (in-memory, `@reinsjs/store-sqlite`, `@reinsjs/store-pg`) is also a `SkillSource`: write `/skills/<name>/SKILL.md` (frontmatter with `name` equal to `<name>` and a `description`) and, optionally, `/skills/<name>/<file>` for supporting files, then pass the same store as `source`. The model's `memory` tool only reaches `/memories`, so one table holds writable private notes and read-only shared skills at once; `memory({ namespace })` prefixes apply to memories only, skills are shared by every principal. `skills()` refuses a `root` that overlaps `/memories` — a skill the model could write itself must never be trusted like the system prompt.
+Any `MemoryStore` (in-memory, `@reinsjs/store-sqlite`, `@reinsjs/store-pg`) is also a `SkillSource`: write `/skills/<name>/SKILL.md` (frontmatter with `name` equal to `<name>` and a `description`) and, optionally, `/skills/<name>/<file>` for supporting files, then pass the same store as `source`. The model's `memory` tool only reaches `/memories` (stored as `<namespace>/memories/…`), so one table holds writable private notes and read-only shared skills at once; `memory({ namespace })` prefixes apply to memories only, skills are shared by every principal. A skill the model could write itself must never be trusted like the system prompt, so a `memories` path segment is reserved: `skills()` refuses a `root` containing one, and a skill folder or supporting file whose key contains one is skipped from the menu and reads as nonexistent — whatever your `namespace` returns.
 
 ### Resident context that survives compaction
 
