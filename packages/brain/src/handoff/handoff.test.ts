@@ -488,7 +488,7 @@ describe("handoff × 审批同轮（R2）", () => {
     ]
     expect(unfinishedHandoffArgs(withNewTurn)).toBeUndefined()
     // 回执之后用户又开口了（停止后发新消息、续跑带新话）→ 旧意图作废
-    const withUserMessage = [
+    const withUserMessage: Event[] = [
       ...events,
       {
         ...(events[0] as Event),
