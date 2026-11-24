@@ -1,6 +1,6 @@
 # @reinsjs/ui-agui
 
-Timeline events → [AG-UI](https://docs.ag-ui.com) protocol events. reins does not invent a front-end protocol; this package makes any AG-UI client (CopilotKit and friends) a working UI for a reins agent. Zero runtime dependencies; every emitted event is validated against `@ag-ui/core`'s official schema in the tests.
+Timeline events → [AG-UI](https://docs.ag-ui.com) protocol events. reins does not invent a front-end protocol for what the agent streams back: this package turns the response stream into AG-UI events, so a UI built on AG-UI's event and message model (CopilotKit and friends) can render a reins agent. It translates the **response only** — requests keep `@reinsjs/server`'s body shape, so a stock AG-UI client needs a thin request adapter (see "Requests" below). Zero runtime dependencies; every emitted event is validated against `@ag-ui/core`'s official schema in the tests.
 
 ```bash
 pnpm add @reinsjs/ui-agui
@@ -15,6 +15,19 @@ export const POST = createAgentHandler(agentDefinition, { encode: aguiEncoding()
 ```
 
 The umbrella `@reinsjs/agent` package already uses `aguiEncoding()` as the default for `createAgent(...).handler`.
+
+## Requests
+
+The handler does not read AG-UI's `RunAgentInput` (`threadId`, `messages`, `tools`, `state`, `forwardedProps`, AG-UI `resume`). Unknown fields are ignored, so pointing an unmodified `HttpAgent` at the handler starts a new session on every request with no user input. Map the request yourself, in a custom agent on the client or a small route in front of the handler:
+
+| AG-UI client side | reins request body (`@reinsjs/server`) |
+| --- | --- |
+| `threadId` | `sessionId` — omit it on the first request; the session id comes back as `RUN_STARTED.threadId` and in the `X-Reins-Session` header |
+| the newest user message in `messages` | `input` (a string or content parts); the server keeps the history, so do not resend earlier messages |
+| answering an `interrupt` outcome | `resume`: the `state` from `RUN_FINISHED.result`, plus `decisions: [{ toolCallId, approved, by }]` (add `sessionId: childSessionId` for a `subagent` interrupt) |
+| a frontend (client-side) tool result | `input: { type: "core.tool_result", payload: { toolCallId, content } }` |
+
+See the request body and status codes in the `@reinsjs/server` README; `demo/index.html` is a working client that sends this shape.
 
 ## Mapping
 
@@ -35,7 +48,7 @@ Every event translated from the timeline carries `metadata.reins` with the timel
 
 AG-UI's streaming events carry text only, so the message text keeps a placeholder such as `[image image/png]`. When a user message or a tool result contains an image, video or audio part, its `metadata.reins.parts` (on a user message's `TEXT_MESSAGE_START` / `_END`, on `TOOL_CALL_RESULT`) lists the content in its original order without any bytes: `{ type: "text", text }`, `{ type: "image", mime, blobId }` for an image stored by reference, and `{ type: "image" | "video" | "audio", mime }` for inline media. Render the message from `parts` when it is present and from the text otherwise. `displayPartsOf(content)` is the same function, exported for hosts that write their own encoder.
 
-A `blobId` does not grant access by itself. Serve images from your own route (see "Images by reference" in `@reinsjs/server`) and keep all three checks there: your session check, `blobUsableBy`, and `meta.mime` starting with `image/` — `blobUsableBy` also accepts the session's own spilled tool results, whose ids appear in the same `metadata.reins`. The id now reaches the browser, so a custom `BlobStore` should not use storage paths or signed URLs as ids. Fall back to the placeholder when there is no `blobId` (inline media) or the route answers 404 (a blob removed by your retention policy), and treat the id as opaque: `encodeURIComponent` it in a URL.
+A `blobId` does not grant access by itself. Serve images from your own route (see "Images by reference" in `@reinsjs/server`) and keep all three checks there: your session check, `blobUsableBy`, and a raster-only `meta.mime` allowlist with `nosniff` (an SVG opened from your origin runs its scripts) — `blobUsableBy` also accepts the session's own spilled tool results, whose ids appear in the same `metadata.reins`. The id now reaches the browser, so a custom `BlobStore` should not use storage paths or signed URLs as ids. Fall back to the placeholder when there is no `blobId` (inline media) or the route answers 404 (a blob removed by your retention policy), and treat the id as opaque: `encodeURIComponent` it in a URL.
 
 `mapEvent` / `AGUI_MAPPING` are exported for hosts that want the pure per-event translation without the streaming encoder. `@reinsjs/ui-agui/demo/index.html` is a dependency-free page that talks to `@reinsjs/server` and renders the stream; `examples/minimal` serves it.
 
