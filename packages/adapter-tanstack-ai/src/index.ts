@@ -59,5 +59,6 @@ export {
   type ReinsToolMetadata,
   type ToolBridge,
   toTanstackTool,
+  type ViewOfTanstackToolOptions,
   viewOfTanstackTool,
 } from "./tools.js"

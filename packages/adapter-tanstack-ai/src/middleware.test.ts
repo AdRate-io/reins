@@ -53,6 +53,7 @@ import { reinsApprovalInterrupt } from "./interrupt.js"
 import { framedSystemNote } from "./messages.js"
 import { type ReinsMiddlewareOptions, reinsMiddleware, TANSTACK_APPROVAL_POLICY } from "./middleware.js"
 import { type AdapterScript, callTool, say, scriptedAdapter, think } from "./testing.js"
+import { type NativeToolView, viewOfTanstackTool } from "./tools.js"
 
 const SESSION = "s1"
 const registry = createCoreRegistry()
@@ -2089,5 +2090,21 @@ describe("reinsMiddleware：图片引用不进日志（2026-11-24 独立审查�
       [{ type: "text", text: "[image unavailable]" }],
     ])
     expect(JSON.stringify(await all(f.log))).not.toContain(foreign.id)
+  })
+})
+
+describe("viewOfTanstackTool（全库审查 2026-11-25 第二波返修）", () => {
+  it("N1 当 map 回调用不炸：第二个参数是选项对象，数组下标传进来只是被忽略", () => {
+    const odd = toolDefinition({
+      name: "odd",
+      description: "写错 risk",
+      inputSchema: { type: "object", properties: {} },
+      metadata: { reins: { risk: "lowish" } },
+    }).server(async () => "ok")
+    const viaMap = viewOfTanstackTool as unknown as (t: AnyTool, i: number) => NativeToolView
+    expect(() => [odd].map(viaMap)).not.toThrow()
+    const warns: string[] = []
+    expect(viewOfTanstackTool(odd, { warn: (m) => warns.push(m) }).risk).toBeUndefined()
+    expect(warns).toEqual([expect.stringContaining("odd")])
   })
 })

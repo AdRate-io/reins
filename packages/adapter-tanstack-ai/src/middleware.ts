@@ -453,8 +453,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     const timeline = await timelineOf()
     const hostTools = new Map<string, AnyTool>()
     for (const t of config.tools) hostTools.set(t.name, t)
-    // 不能写 map(viewOfTanstackTool)：第二个参数是告警出口，会把数组下标吃进去
-    const hostViews = config.tools.map((t) => viewOfTanstackTool(t, warnOnce))
+    const hostViews = config.tools.map((t) => viewOfTanstackTool(t, { warn: warnOnce }))
     const setupCfg = {
       log,
       model,
@@ -650,7 +649,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         continue
       }
       s.hostTools.set(t.name, t)
-      added.push(viewOfTanstackTool(t, warnOnce))
+      added.push(viewOfTanstackTool(t, { warn: warnOnce }))
       taken.add(t.name)
     }
     const dropDiscovery =
