@@ -19,6 +19,19 @@ export function runLeaseConformance(t: TestHarness, factory: () => RunLease | Pr
       },
     )
 
+    // 真并发：读改写（先查持有者、再写）的实现会让几个 owner 都拿到 true
+    t.it("concurrent acquires by different owners on a free session: exactly one wins", async () => {
+      const lease = await factory()
+      const owners = ["a", "b", "c", "d", "e", "f", "g", "h"]
+      const won = await Promise.all(owners.map((o) => lease.acquire("s1", o, 60_000)))
+      assertEqual(won.filter(Boolean).length, 1, "exactly one concurrent acquire must win")
+      const winner = owners[won.indexOf(true)] as string
+      assertEqual(await lease.renew("s1", winner, 60_000), true, "the winner holds the lease")
+      for (const o of owners) {
+        if (o !== winner) assertEqual(await lease.renew("s1", o, 60_000), false, `loser ${o} cannot renew`)
+      }
+    })
+
     t.it(
       "a repeated acquire by the same owner is idempotent (it renews) and does not change who holds the lease",
       async () => {

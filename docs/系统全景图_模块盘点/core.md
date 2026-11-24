@@ -152,12 +152,12 @@
 | --- | --- |
 | `testing/index.ts` | `@reinsjs/core/testing` 入口 |
 | `testing/harness.ts` | 只要 `{ describe, it }` 的最小 `TestHarness`，自带 `assert` / `assertEqual` / `assertThrowsCode` / `collect`，不绑任何测试框架 |
-| `testing/event-log.ts` | `eventLogConformance`：19 条契约（seq 连续性与原子性、区间读与读到末尾的大边界、tail、会话隔离、副本语义、可选壳字段 / 非 ASCII 大载荷 / 非当前 schemaVersion / ext.* 原样往返、fork 五例）+ `makeEvents` / `makeRichEvents` 造数助手 |
-| `testing/blob-store.ts` | `blobStoreConformance`：字节/字符串往返、meta、id 唯一、not_found、副本语义、可选 stat（与 get().meta 相等、未知 id 抛 not_found）、可选 slice（含 Infinity / 2^40 等大边界截断） |
+| `testing/event-log.ts` | `eventLogConformance`：20 条契约（seq 连续性与原子性、同 seq 真并发 append 恰好一条落地、区间读与读到末尾的大边界、tail、会话隔离、副本语义、可选壳字段 / 非 ASCII 大载荷 / 非当前 schemaVersion / ext.* 原样往返、fork 五例）+ `makeEvents` / `makeRichEvents` 造数助手 |
+| `testing/blob-store.ts` | `blobStoreConformance`：字节/字符串往返、meta、id 唯一、not_found、副本语义（get 回副本、put 存副本）、可选 stat（与 get().meta 相等、未知 id 抛 not_found）、可选 slice（含 Infinity / 2^40 等大边界截断） |
 | `testing/memory-store.ts` | `memoryStoreConformance`：缺失返回 null、覆盖写、前缀 list 字典序、非 BMP 字符前缀、delete 幂等、空串与不存在有别 |
-| `testing/run-lease.ts` | `runLeaseConformance`（D4）：空会话可占、别人持有时占不到、同 owner 幂等、renew 三态、release 只删自己、过期后接手 / 原持有者 renew 为 false（ttl 1 ms + 真等 30 ms，因 pg 实现用库时钟，套件不能注入） |
+| `testing/run-lease.ts` | `runLeaseConformance`（D4）：空会话可占、八个 owner 真并发 acquire 恰好一个赢、别人持有时占不到、同 owner 幂等、renew 三态、release 只删自己、过期后接手 / 原持有者 renew 为 false（ttl 1 ms + 真等 30 ms，因 pg 实现用库时钟，套件不能注入） |
 | `testing/scripted-lowering.ts` | `ScriptedLowering`：按剧本逐轮吐草稿、记录每轮 `toRequest` 输入、可注入异常与 capabilities；`say` / `think` / `callTool` 草稿速写 |
-| 测试 | `testing/conformance.test.ts`：套件自检——每个坏后端只坏一处（丢可选壳字段等），断言对应用例失败、内存实现全过；其余由 `store/in-memory.test.ts` 与 `loop/*.test.ts` 反向验证 |
+| 测试 | `testing/conformance.test.ts`：套件自检——每个坏后端只坏一处（丢可选壳字段、先查后写的 append 与 acquire、put 存调用方缓冲区引用），断言对应用例失败、内存实现全过；其余由 `store/in-memory.test.ts` 与 `loop/*.test.ts` 反向验证 |
 
 ## 核心流程
 

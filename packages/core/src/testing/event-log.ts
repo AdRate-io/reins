@@ -195,7 +195,26 @@ export function eventLogConformance(t: TestHarness, factory: () => EventLog | Pr
       )
     })
 
-    t.it("a duplicate seq (a concurrent writer) -> seq_conflict", async () => {
+    // 真并发：两个写入者都以为下一个是 seq 1。"先读末尾、再写"而没有 (session, seq) 唯一约束的实现两条都会写进去
+    t.it("concurrent appends of the same seq: exactly one lands, the other gets seq_conflict", async () => {
+      const log = await factory()
+      const [a] = makeEvents("s1", 1)
+      const b = { ...(a as Event), id: "concurrent-b", payload: { content: [{ type: "text", text: "b" }] } }
+      const results = await Promise.allSettled([log.append([a as Event]), log.append([b])])
+      const landed = results.filter((r) => r.status === "fulfilled").length
+      assertEqual(landed, 1, "exactly one concurrent append must land")
+      const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected")
+      assertEqual(
+        (rejected?.reason as { code?: unknown } | undefined)?.code,
+        "seq_conflict",
+        "the loser's error code",
+      )
+      const stored = await collect(log.read("s1"))
+      assertEqual(seqs(stored), [1], "no duplicate seq is left behind")
+      assertEqual(stored, [results[0]?.status === "fulfilled" ? (a as Event) : b], "the winner's event")
+    })
+
+    t.it("a duplicate seq (a writer behind a stale tail) -> seq_conflict", async () => {
       const log = await factory()
       await log.append(makeEvents("s1", 2))
       await assertThrowsCode(

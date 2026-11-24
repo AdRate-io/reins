@@ -50,6 +50,22 @@ export function blobStoreConformance(t: TestHarness, factory: () => BlobStore | 
       assertEqual(Array.from(again.bytes), [9, 9], "an outside mutation must not affect the store")
     })
 
+    // 合同"字节写入后不可改"：存的必须是副本，调用方事后改自己的缓冲区不能改到存储里
+    t.it(
+      "put copies the bytes: mutating the caller's buffer afterwards does not affect the store",
+      async () => {
+        const store = await factory()
+        const source = new Uint8Array([7, 8, 9])
+        const { id } = await store.put(source, { mime: "x", sessionId: "s1" })
+        source[0] = 0
+        assertEqual(
+          Array.from((await store.get(id)).bytes),
+          [7, 8, 9],
+          "stored bytes after mutating the source",
+        )
+      },
+    )
+
     t.it(
       "stat (if implemented) equals get().meta field by field; an unknown id throws not_found",
       async () => {
