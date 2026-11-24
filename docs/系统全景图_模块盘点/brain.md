@@ -192,7 +192,7 @@
 1. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 2. `onTurnEnd`：本轮模型已收尾作答就不拦（循环本来就要停）。
 3. 还要继续时跑 `checkBudget(ctx.budget, limits)`：`contextTokens` 取 `contextTokensOf(lastUsage)`（input + cacheRead + cacheWrite），其余四维直接读 `tokensSpent` / `turns` / `toolCalls` / `wallMs`（循环进 onTurnEnd 前刷新，含本轮工具耗时）；**用量 ≥ 上限**即触顶。
-4. 有触顶维度就返回 `{ pause: { reason: "budget", code, note } }`，code 缺省 `BUDGET_PAUSE_CODE`（`reins.budget`，不编维度——可能多维同时触顶；`code` 选项拿 hits 自己算），note（缺省 `defaultBudgetNote`）列出全部触顶维度与用量/上限，进 `Interruption` 给宿主看。上限按每次 run 计，宿主续跑即再批一份。
+4. 有触顶维度就返回 `{ pause: { reason: "budget", code, note } }`，code 缺省 `BUDGET_PAUSE_CODE`（`reins.budget`，不编维度——可能多维同时触顶；`code` 选项拿 hits 自己算），note（缺省 `defaultBudgetNote`）列出全部触顶维度与用量/上限，进 `Interruption` 给宿主看。四个 run 级维度按每次 run 计，宿主续跑即再批一份；`contextTokens` 是最近一次请求的读数，续跑的新 run 从日志继承、不重置，缺省说明对它改说"续跑不重置，先让上下文变小"（全库审查 2026-11-25 #23）。
 
 ### halt-on-failure
 

@@ -9,7 +9,10 @@
  * `Interruption` 给宿主看；原因码 `code`（缺省 `BUDGET_PAUSE_CODE`）随暂停落库，事后与"连续整理失败""宿主自己的配额"分得开。只在模型本轮还要继续（有工具调用）时拦：模型已经收尾作答的轮，循环本来就要停，
  * 把一个自然结束的 run 改成"暂停"只会让宿主续跑一个没事可做的会话。
  *
- * 上限是**每次 run** 的：宿主续跑（同一 sessionId 再起 runLoop）即视为再批一份预算，`ctx.budget` 从零计。
+ * totalTokens / turns / toolCalls / wallMs 四维的上限是**每次 run** 的：宿主续跑（同一 sessionId 再起 runLoop）即视为再批一份预算，
+ * 这几维从零计。contextTokens 例外：它是最近一次请求的真实上下文大小（续跑的新 run 从日志最后一条 budget_usage 继承），
+ * 续跑不会让它变小，模型不整理 / 不交接就会续跑一次、停一次；缺省说明按此如实告知宿主。
+ * compact 的到线请求只按窗口比例触发、不看这里的上限，上限低于软线时请模型整理靠 perception 的余量档位提醒。
  * 会话级 / 用户级配额由宿主聚合 `budget_usage` 事件自己做（§9.8：库不做配额）；要"整个会话不超过 X"就把 X 减去
  * 已用量再传进来。模型在触顶前收到的提醒来自 perception 模块（同一份 limits 传给它，它按最紧一维报余量档位）。
  *
@@ -20,7 +23,10 @@ import { contextTokensOf, type Socket, type TurnContext } from "@reinsjs/core"
 
 /** 五维上限；给了哪几维就只查哪几维。与 perception 的 limits 是同一个形状 */
 export interface BudgetLimits {
-  /** 单次请求送进模型的上下文大小（input + cacheRead + cacheWrite），按最近一次请求的真实用量 */
+  /**
+   * 单次请求送进模型的上下文大小（input + cacheRead + cacheWrite），按最近一次请求的真实用量。
+   * 不是 run 级的：续跑不重置（新 run 继承上一请求的读数），要先让上下文变小才解得开
+   */
   contextTokens?: number
   /** 本次 run 累计 token（输入 + 输出，不含缓存读写 —— 与 TurnContext.budget.tokensSpent 同口径） */
   totalTokens?: number
@@ -93,12 +99,27 @@ export function checkBudget(budget: TurnContext["budget"], limits: BudgetLimits)
   return hits
 }
 
+/**
+ * 缺省暂停说明。按维度分两种口径如实说（全库审查 2026-11-25 #23）：
+ * - 四个 run 级维度（totalTokens / turns / toolCalls / wallMs）续跑即从零计，说"续跑拿到一份新预算"；
+ * - contextTokens 是最近一次请求的真实上下文大小，续跑的新 run 从日志继承这个读数，不会因续跑变小——
+ *   只承诺新预算就会让宿主续跑一次、停一次。改说"续跑不重置，要先让上下文变小（模型整理或交接）"
+ */
 export function defaultBudgetNote(hits: readonly BudgetHit[]): string {
   const parts = hits.map((h) => `${h.dimension} ${h.used}/${h.limit}`)
-  return (
-    `Run budget reached: ${parts.join(", ")}. ` +
-    "Paused for the host to decide whether to grant more; resuming the session starts a fresh run budget."
-  )
+  const context = hits.some((h) => h.dimension === "contextTokens")
+  const perRun = hits.some((h) => h.dimension !== "contextTokens")
+  let note = `Run budget reached: ${parts.join(", ")}. Paused for the host to decide whether to grant more`
+  if (perRun)
+    note += context
+      ? "; resuming the session starts a fresh run budget for the per-run limits."
+      : "; resuming the session starts a fresh run budget."
+  else note += "."
+  if (context)
+    note +=
+      " contextTokens is the size of the latest model request, not a per-run total, so resuming does not reset it:" +
+      " the run pauses again after its next turn unless the context shrinks first (the model compacts, or the session hands off)."
+  return note
 }
 
 export function budget(opts: BudgetOptions): Socket {

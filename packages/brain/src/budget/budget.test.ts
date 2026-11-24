@@ -152,9 +152,39 @@ describe("budget：纯函数", () => {
     expect(note).toContain("totalTokens 213000/200000, toolCalls 51/50")
     expect(note).toContain("fresh run budget")
   })
+
+  it("contextTokens 是请求级读数、续跑不重置：缺省说明不对它承诺新预算，而是说要先让上下文变小（全库审查 2026-11-25 #23）", () => {
+    const only = defaultBudgetNote([{ dimension: "contextTokens", used: 120_000, limit: 100_000 }])
+    expect(only).toContain("contextTokens 120000/100000")
+    expect(only).not.toContain("fresh run budget")
+    expect(only).toContain("resuming does not reset it")
+    const mixed = defaultBudgetNote([
+      { dimension: "contextTokens", used: 120_000, limit: 100_000 },
+      { dimension: "turns", used: 5, limit: 5 },
+    ])
+    expect(mixed).toContain("fresh run budget for the per-run limits")
+    expect(mixed).toContain("resuming does not reset it")
+  })
 })
 
 describe("budget × runLoop", () => {
+  it("contextTokens 触顶后续跑：新 run 继承上一请求的上下文读数，模型不整理就再停一次——说明如实告知（全库审查 2026-11-25 #23）", async () => {
+    const log = new InMemoryEventLog()
+    const big = { input: 1200, output: 5 }
+    const sockets = [budget({ limits: { contextTokens: 1000 } })]
+    const first = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 1, b: 1 })], outcome: { usage: big } },
+    ])
+    const r1 = await drain(runLoop(config(first, log, { sockets })))
+    expect(pausedBudget(r1.result)).toContain("resuming does not reset it")
+    const second = new ScriptedLowering([
+      { drafts: [callTool("c2", "add", { a: 1, b: 1 })], outcome: { usage: big } },
+    ])
+    const { input: _ignored, ...rest } = config(second, log, { sockets })
+    const r2 = await drain(runLoop(rest))
+    expect(pausedBudget(r2.result)).toContain("contextTokens 1200/1000")
+  })
+
   it("totalTokens 触顶且模型还要继续 → paused(budget)，note 说明维度；本轮工具结果已入日志", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering(THREE_TURNS)
