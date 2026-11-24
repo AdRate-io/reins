@@ -107,10 +107,17 @@ const report: EvalReport = {
 }
 const reference = flag("--reference", "threshold")
 const candidate = flag("--candidate", "brain")
-const gate =
-  report.summary[reference] && report.summary[candidate]
-    ? checkGate(report, { reference, candidate, tokenRatioMax: Number(flag("--token-ratio", "1")) })
-    : undefined
+// 两臂覆盖的格不一致（某个进程崩了没落盘、补跑漏了）时 checkGate 抛错：报告照出，门禁不判，原因写进报告与 stderr
+let gateError: string | undefined
+let gate: ReturnType<typeof checkGate> | undefined
+if (report.summary[reference] && report.summary[candidate]) {
+  try {
+    gate = checkGate(report, { reference, candidate, tokenRatioMax: Number(flag("--token-ratio", "1")) })
+  } catch (err) {
+    gateError = err instanceof Error ? err.message : String(err)
+    console.error(`门禁未判定：${gateError}`)
+  }
+}
 
 const byFixture = new Map<string, EvalOutcome[]>()
 for (const o of outcomes) byFixture.set(o.fixtureId, [...(byFixture.get(o.fixtureId) ?? []), o])
@@ -127,12 +134,12 @@ const perFixture = [...byFixture.entries()]
 
 const md = `# eval 对照报告 —— ${model.provider}/${model.id}（窗口 ${contextWindow ?? "缺省"}）
 
-${renderReport(report, gate ? { gate, detail: true } : { detail: true })}
+${gateError ? `> 门禁未判定：${gateError}\n\n` : ""}${renderReport(report, gate ? { gate, detail: true } : { detail: true })}
 
 ## 按 fixture
 
 ${perFixture}
 `
 writeFileSync(`${dir}/report.md`, md)
-writeFileSync(`${dir}/report.json`, JSON.stringify({ model, contextWindow, summary: report.summary, gate, outcomes }, null, 2))
+writeFileSync(`${dir}/report.json`, JSON.stringify({ model, contextWindow, summary: report.summary, gate, gateError, outcomes }, null, 2))
 console.log(md)

@@ -205,6 +205,33 @@ describe("checkGate：四条规则", () => {
     expect(c.candidate).toBeUndefined()
   })
 
+  it("两臂覆盖的 fixture × 重复不一致时抛错：候选缺了最贵的格不能让 token 均值看起来更低", () => {
+    expect(() =>
+      gate([
+        { arm: "threshold", fixtureId: "cheap", total: 1000 },
+        { arm: "threshold", fixtureId: "expensive", total: 100_000 },
+        { arm: "brain", fixtureId: "cheap", total: 2000 },
+      ]),
+    ).toThrow(/must cover the same fixture x repeat cells; missing from candidate: expensive#1/)
+    expect(() =>
+      gate([
+        { arm: "threshold", repeat: 1 },
+        { arm: "brain", repeat: 1 },
+        { arm: "brain", repeat: 2 },
+      ]),
+    ).toThrow(/missing from reference: f#2/)
+  })
+
+  it("同一臂同一格出现两次也抛错（按格均值会让重复的格多算一份）", () => {
+    expect(() =>
+      gate([
+        { arm: "threshold", repeat: 1 },
+        { arm: "brain", repeat: 1 },
+        { arm: "brain", repeat: 1 },
+      ]),
+    ).toThrow(/candidate arm "brain" has duplicate cells: f#1/)
+  })
+
   it("缺基线臂或候选臂直接抛错", () => {
     const report = reportOf([{ arm: "threshold" }, { arm: "brain" }])
     expect(() => checkGate(report, { reference: "none", candidate: "brain" })).toThrow(

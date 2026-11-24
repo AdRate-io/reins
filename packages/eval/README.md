@@ -46,6 +46,7 @@ Zero `node:*`: file I/O and the CLI live in the caller (`examples/eval` in the r
 - `withContextWindow` changes only what the mechanisms are told; the real window is untouched. It measures *how the mechanism behaves in a narrow window*, not *what overflow does*.
 - The probe question keeps brain tools (an arm with `compact` can `recall`, one with `spill` can `fetch_blob`) and drops host tools — so the recall cell is intentionally not the same exam for a baseline arm.
 - The governance rule compares the candidate against itself before and after its first compaction, and only over the runs that still had model actions after it (`ArmSummary.violations.compactedRuns`); runs that never compacted would otherwise dilute the after-rate towards zero. Two of the four gate rules can pass on "no information" — recall without planted facts, governance without such runs — and both say so in a `note`.
+- `checkGate` throws unless the reference and candidate arms cover exactly the same fixture × repeat cells, each once. Every rule compares per-run means, so a cell missing from one arm (a crashed process when arms run separately) would compare the arms on different exams.
 - Behavioural defects only show on real models. Scripted lowerings prove mechanics, not that a model will use them.
 
 ## Documentation

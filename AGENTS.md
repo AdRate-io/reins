@@ -387,6 +387,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 ### eval
 
 - **`maxResumes` 缺省 0，预算暂停即判"没跑完"** — fixture 不给这个值，真模型会莫名一堆 paused 格。
+- **`checkGate` 要求两臂覆盖完全相同的 fixture × 重复、每格一次，否则抛错** — 四条都是按格均值比；拆进程跑时某臂缺格，`report.ts` 照出报告但写"门禁未判定"，补跑齐了再判。
 - **`withContextWindow` 只改 `capabilities`，真实窗口不变** — 测的是"机制在窄窗口怎么动"，不是"溢出会怎样"。
 - **探针里脑子工具保留、宿主工具清空** — 装 compact / spill 的臂能 `recall` / `fetch_blob`，基线臂不能，召回这一格两臂不是同一张卷子，有意为之。
 - **门禁第四条 governance 是候选自己前后比，只取整理后还有模型动作的格**（没整理的格 after 窗恒空，掺进来会稀释成 0）；"双方都无预埋事实"与"候选没有一格整理后有动作"都视为通过并带 note——四条里两条可能在无信息时亮绿。
