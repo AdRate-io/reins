@@ -199,6 +199,38 @@ describe("budget × runLoop", () => {
     expect(wall.requests).toBe(1)
   })
 
+  it("wallMs 算上本轮工具执行的耗时：慢工具让本轮 onTurnEnd 就触顶，不多放一轮（全库审查 2026-11-25 #24）", async () => {
+    let t = 1_800_000_000_000
+    const slow = defineTool<Record<string, never>>({
+      name: "slow",
+      description: "跑两分钟",
+      risk: "low",
+      inputSchema: { type: "object" },
+      execute: () => {
+        t += 120_000
+        return "ok"
+      },
+    })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "slow", {})] },
+      { drafts: [callTool("c2", "slow", {})] },
+      { drafts: [say("好")] },
+    ])
+    const { result } = await drain(
+      runLoop(
+        config(lowering, log, {
+          tools: [slow],
+          now: () => ++t,
+          sockets: [budget({ limits: { wallMs: 60_000 } })],
+        }),
+      ),
+    )
+    expect(lowering.requests).toHaveLength(1)
+    const used = Number(/wallMs (\d+)\/60000/.exec(pausedBudget(result) ?? "")?.[1])
+    expect(used).toBeGreaterThanOrEqual(120_000)
+  })
+
   it("contextTokens 按最近一次请求的真实上下文（input + 缓存读写）", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([

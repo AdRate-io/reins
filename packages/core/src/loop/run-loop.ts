@@ -964,6 +964,9 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     fallback: TurnDecision,
     flush: () => Promise<Event[]>,
   ): AsyncGenerator<Event, RunResult | undefined> {
+    // 工具批跑完才到这里：墙钟刷新到此刻，onTurnEnd（budget 的 wallMs 上限）看得见本轮工具耗时，
+    // 否则慢工具要到下一轮模型调用后才计入、上限多放一整轮（全库审查 2026-11-25 #24）
+    ctx.budget.wallMs = now() - startedAt
     let decision: TurnDecision = fallback
     for (const s of sockets) {
       const d = await s.onTurnEnd?.(ctx)

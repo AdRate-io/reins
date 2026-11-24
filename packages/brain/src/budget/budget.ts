@@ -4,7 +4,7 @@
  * 循环自己只有一条粗兜底（轮数 `maxTurns`），每轮记一条 `budget_usage`。本模块把宿主关心的五维上限做成边界：
  * contextTokens（单次请求送进模型的上下文大小）、totalTokens（本次 run 累计输入 + 输出）、turns、toolCalls、wallMs。
  *
- * 做法：`onTurnEnd` 里对照 `ctx.budget`（循环在模型调用后已更新 tokensSpent / wallMs / lastUsage），任一维 **用量 ≥ 上限**
+ * 做法：`onTurnEnd` 里对照 `ctx.budget`（循环在模型调用后已更新 tokensSpent / lastUsage，进 onTurnEnd 前刷新 wallMs、含本轮工具耗时），任一维 **用量 ≥ 上限**
  * 即返回 `{ pause: { reason: "budget", code, note } }`，循环 append `run_paused(reason=budget)` 并以 paused 返回，note 进
  * `Interruption` 给宿主看；原因码 `code`（缺省 `BUDGET_PAUSE_CODE`）随暂停落库，事后与"连续整理失败""宿主自己的配额"分得开。只在模型本轮还要继续（有工具调用）时拦：模型已经收尾作答的轮，循环本来就要停，
  * 把一个自然结束的 run 改成"暂停"只会让宿主续跑一个没事可做的会话。
