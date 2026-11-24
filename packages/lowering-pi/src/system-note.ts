@@ -3,7 +3,11 @@
  *
  * pi-ai 的 Message 没有 system 角色，所以：
  * - 模型支持中途 system 时：先当 user 消息放进 Context，文本前加内部标记；在 pi-ai 的 onPayload 钩子里
- *   把带标记的消息改写成线协议的 system 消息并归位。标记只在本文件生产与消费，不会送到线上。
+ *   把带标记的消息改写成线协议的 system 消息并归位，标记随之剥掉。
+ *   ⚠️ 标记必须是调用方伪造不了的：onPayload 只看得到请求体，分不出一条 user 消息是我们生成的说明还是用户原话，
+ *   而用户文本经 HTTP 原样进日志。所以 PiAiLowering 每个请求用 `newSystemNoteMark()` 取一枚带随机数的标记、
+ *   随 payload 带到 stream（全库审查 2026-11-25 #3：固定标记曾让以它开头的用户话被抬成 system / developer）。
+ *   静态的 `SYSTEM_NOTE_MARK` 只是独立调用这些函数时的缺省值，此时由调用方保证用户文本不以它开头。
  * - 不支持时：以 <system_note> 标签包住、仍走 user 角色，有损矩阵记为 lossy(user-role)。
  *
  * Anthropic 摆放规则（官方，违反即 400）：不能是首条；必须紧跟 user 轮（含 tool_result 的 user）；
@@ -14,8 +18,16 @@ import type { SystemNotePayload } from "@reinsjs/core"
 
 export const SYSTEM_NOTE_MARK = "[[reins:system_note]]"
 
-export function markSystemNote(text: string): string {
-  return `${SYSTEM_NOTE_MARK}${text}`
+/** 一枚一次性标记：静态前缀 + 128 位随机数（Web 标准 crypto，核心零 Node）。每个请求取一枚，用户无从预知 */
+export function newSystemNoteMark(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+  return `${SYSTEM_NOTE_MARK.slice(0, -2)}:${hex}]]`
+}
+
+export function markSystemNote(text: string, mark: string = SYSTEM_NOTE_MARK): string {
+  return `${mark}${text}`
 }
 
 /** 不支持中途 system 的模型：用标签框住，让模型知道这不是用户说的 */
@@ -36,7 +48,7 @@ interface MarkedNote {
 }
 
 /** 取出带标记的正文；不是标记消息返回 null */
-function markedNote(m: WireMessage, textType: string): MarkedNote | null {
+function markedNote(m: WireMessage, textType: string, mark: string): MarkedNote | null {
   if (m.role !== "user") return null
   let text: string | null = null
   let cacheControl: unknown
@@ -48,18 +60,50 @@ function markedNote(m: WireMessage, textType: string): MarkedNote | null {
       cacheControl = only.cache_control
     }
   }
-  if (text === null || !text.startsWith(SYSTEM_NOTE_MARK)) return null
+  if (text === null || !text.startsWith(mark)) return null
   return {
-    text: text.slice(SYSTEM_NOTE_MARK.length),
+    text: text.slice(mark.length),
     ...(cacheControl !== undefined ? { cacheControl } : {}),
   }
 }
 
+interface SlotMessage {
+  role: string
+  content?: unknown
+}
+
+/** user 轮：线上的 user（含 tool_result），以及 pi-ai Context 里会被翻成 user 的 toolResult */
+const isUserTurn = (m: SlotMessage | undefined): boolean => m?.role === "user" || m?.role === "toolResult"
+
 /**
- * Anthropic Messages 请求体改写：标记消息 → {role:"system", content:[text]}，并按摆放规则归位。
- * 归位算法：每条 system 放到"它之后的第一条 assistant"之前（此时前一条必是 user）；后面没有 assistant 就放到
- * 消息列表末尾（紧跟最后一条 user 收尾）。pi-ai 在部分模型上会在末尾追加 content 为空的 effort 专用 system 消息，
- * 我们的 system 与它相邻成组，符合规则。
+ * Anthropic 中途 system 的归位（真源：发出前的改写与 eventsToContext 的落点预判共用这一个纯函数）。
+ * `body` 是不含说明本身的消息列表，`afterIndex` 是说明在原序列里前面有几条非说明消息；返回它在 body 里的插入下标。
+ * 规则：放到"它之后的第一条 assistant"之前；后面没有 assistant 就放到末尾（跳过 pi-ai 为部分模型追加的
+ * content 为空的 effort 专用 system，与它相邻成组）；落在首位时挪到第一条 user 之后。
+ * 注意落点前一条**不一定**是 user（上个 run 以纯文本收尾、新 run 只带说明；说明夹在两段 assistant 之间），
+ * 是否合法另由 `midSystemSlotFollowsUser` 判（全库审查 2026-11-25 #32）。
+ */
+export function midSystemSlotOf(body: readonly SlotMessage[], afterIndex: number): number {
+  let at = body.findIndex((m, idx) => idx >= afterIndex && m.role === "assistant")
+  if (at === -1) {
+    at = body.length
+    while (at > 0 && body[at - 1]?.role === "system" && isEmptyContent(body[at - 1]?.content)) at--
+  }
+  if (at === 0) {
+    const firstUser = body.findIndex(isUserTurn)
+    at = firstUser === -1 ? body.length : firstUser + 1
+  }
+  return at
+}
+
+/** 落点合法：前一条是 user 轮（厂商规则：中途 system 须紧跟 user，违反即 400） */
+export function midSystemSlotFollowsUser(body: readonly SlotMessage[], at: number): boolean {
+  return isUserTurn(body[at - 1])
+}
+
+/**
+ * Anthropic Messages 请求体改写：标记消息 → {role:"system", content:[text]}，按 `midSystemSlotOf` 归位。
+ * 落点前一条不是 user 的说明不会带着标记来到这里：eventsToContext 用同一个函数预判，提前退成带标签的 user。
  *
  * 缓存断点（B1，prompt cache 约束 4）：pi-ai 把 cache_control 打在"最后一条 user 消息"上；感知等 system_note
  * 追加在时间线末尾时，那条最后的 user 正是我们的标记消息，改写成 system 后断点会跟着消失，而官方规则是
@@ -72,7 +116,12 @@ function markedNote(m: WireMessage, textType: string): MarkedNote | null {
  */
 export type MidSystemCacheBreakpoint = "automatic" | "previous-user" | "drop"
 
-export interface RewriteAnthropicOptions {
+export interface RewriteOptions {
+  /** 本请求生成说明时用的标记（`markSystemNote` 的第二参）；缺省静态 `SYSTEM_NOTE_MARK` */
+  mark?: string
+}
+
+export interface RewriteAnthropicOptions extends RewriteOptions {
   cacheBreakpoint?: MidSystemCacheBreakpoint
 }
 
@@ -81,6 +130,7 @@ const MAX_ANTHROPIC_BREAKPOINTS = 4
 
 export function rewriteAnthropicPayload(payload: unknown, opts: RewriteAnthropicOptions = {}): unknown {
   const breakpoint = opts.cacheBreakpoint ?? "automatic"
+  const mark = opts.mark ?? SYSTEM_NOTE_MARK
   const p = payload as {
     messages?: WireMessage[]
     system?: unknown
@@ -91,31 +141,17 @@ export function rewriteAnthropicPayload(payload: unknown, opts: RewriteAnthropic
   const body: WireMessage[] = []
   const pending: (MarkedNote & { afterIndex: number })[] = []
   for (const m of p.messages) {
-    const note = markedNote(m, "text")
+    const note = markedNote(m, "text", mark)
     if (note !== null) pending.push({ ...note, afterIndex: body.length })
     else body.push(m)
   }
   if (pending.length === 0) return undefined
 
   // 每条说明在**原始** body 里的落点（都算完再拼，而不是边算边 splice：边 splice 会让同一落点的多条说明前后颠倒）
-  const placeOf = (note: (typeof pending)[number]): number => {
-    let at = body.findIndex((m, idx) => idx >= note.afterIndex && m.role === "assistant")
-    if (at === -1) {
-      // 收尾：跳过 pi-ai 追加的 effort 专用空 system，保持"紧跟最后一条 user"
-      at = body.length
-      while (at > 0 && body[at - 1]?.role === "system" && isEmptyContent(body[at - 1]?.content)) at--
-    }
-    // 不能是首条：前面没有任何消息时挪到第一条 user 之后
-    if (at === 0) {
-      const firstUser = body.findIndex((m) => m.role === "user")
-      at = firstUser === -1 ? body.length : firstUser + 1
-    }
-    return at
-  }
   // 同一落点的说明按原顺序成组（相邻的多条 system 视为一组，Anthropic 允许）
   const groups = new Map<number, MarkedNote[]>()
   for (const note of pending) {
-    const at = placeOf(note)
+    const at = midSystemSlotOf(body, note.afterIndex)
     const bucket = groups.get(at)
     if (bucket) bucket.push(note)
     else groups.set(at, [note])
@@ -159,7 +195,7 @@ function countBlockBreakpoints(p: { system?: unknown; tools?: unknown; messages:
 
 /**
  * 把缓存断点打到某条 user 消息的最后一个内容块上（Anthropic 允许 text / image / tool_result 块带 cache_control）。
- * 归位规则保证 system 前面必是 user；万一不是，宁可丢断点也不把 cache_control 放到厂商不认的位置上。
+ * eventsToContext 的预判保证 system 前面是 user；万一不是，宁可丢断点也不把 cache_control 放到厂商不认的位置上。
  * 返回新对象，不改动传入的请求体。
  */
 function withCacheControl(m: WireMessage, cacheControl: unknown): WireMessage {
@@ -184,13 +220,18 @@ function isEmptyContent(content: unknown): boolean {
  * OpenAI Responses 请求体改写：标记消息 → {role: developer|system, content:[input_text]}。
  * reasoning 模型用 developer（与 pi-ai 放 systemPrompt 的选择一致），其余用 system。
  */
-export function rewriteOpenAIResponsesPayload(payload: unknown, model: { reasoning: boolean }): unknown {
+export function rewriteOpenAIResponsesPayload(
+  payload: unknown,
+  model: { reasoning: boolean },
+  opts: RewriteOptions = {},
+): unknown {
+  const mark = opts.mark ?? SYSTEM_NOTE_MARK
   const p = payload as { input?: unknown }
   if (!Array.isArray(p.input)) return undefined
   let changed = false
   const role = model.reasoning ? "developer" : "system"
   const input = (p.input as WireMessage[]).map((m) => {
-    const note = markedNote(m, "input_text")
+    const note = markedNote(m, "input_text", mark)
     if (note === null) return m
     changed = true
     return { role, content: [{ type: "input_text", text: note.text }] }

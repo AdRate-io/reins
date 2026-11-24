@@ -319,6 +319,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 ### 降级层（lowering-pi）
 
 - **`LoweredRequest.payload` 里的 system_note 是 user 角色，真发出去的才是 system** — 改写在 pi-ai 的 `onPayload` 里；照 payload 排查线上 400 会查错方向。
+- **说明的内部标记每请求随机一枚（`newSystemNoteMark()`，经 `PiLoweredPayload.systemNoteMark` 带到 `stream`），用户文本伪造不了；Anthropic 中途 system 落不到 user 之后时在 `eventsToContext` 就退回带标签的 user（与 fetch 版同一取向）** — 预判与改写调同一个 `midSystemSlotOf`，预判的 body 必须与线上一致：pi-ai 会整条丢掉纯空白 user，漏排除就判出不存在的前一条 user。独立调用进阶导出不传 `mark` 时退回静态标记，仍可伪造。
 - **给 `anthropic()` / `openai()` 传 `requestOptions` 是整体覆盖不是合并** — OpenAI 丢掉 `reasoningEffort` 后不开 reasoning，thinking 无签名不可回放。
 - **并行工具之间不能夹说明文本，DeepSeek 400** — `awaiting` / `deferred` 那段代码是唯一防线，改 `to-request.ts` 先跑其测试（踩坑 7）。
 - **Anthropic 块级 cache 断点满 4 个时静默放弃补顶层断点** — 为避 400；感知说明殿后的 `automatic` 断点处置只在网关与 DeepSeek 实测，直连官方未测。

@@ -88,8 +88,22 @@ export const MEDIA_PLACEHOLDER_NOTE = "pi-ai has no video / audio content; repla
 /** 未换回的图片引用（2026-11-24 媒体引用方案）：to-request.ts 落点 note 用同一常量 */
 export const IMAGE_UNAVAILABLE_NOTE =
   "an image stored by reference could not be loaded (blob unavailable: it was removed, or no BlobStore is configured), so it is replaced with placeholder text"
-const MEDIA_NOTE_ALL = `${MEDIA_PLACEHOLDER_NOTE}; or ${IMAGE_UNAVAILABLE_NOTE}`
-const MEDIA_WHEN = "the content carries video or audio, or an image reference whose blob is unavailable"
+/** untrusted 内容里提前闭合的 </untrusted 被转义；to-request.ts 落点 note 用同一常量 */
+export const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
+/** 宿主标成 untrusted 的中途 system 说明，正文被转义时的落点（全库审查 2026-11-25 #75） */
+const escapedSystem = (landing: string) =>
+  lossy(
+    landing,
+    `a mid-conversation ${landing} message carrying the text; ${ESCAPED_NOTE}`,
+    "a note the host marked untrusted holds a </untrusted",
+  )
+
+/** 模型不收图（capabilities.images 为 false）：本包自己落占位，不交给 pi-ai 静默替换；to-request.ts 落点 note 用同一常量 */
+export const IMAGE_OMITTED_NOTE =
+  "the model does not accept images (capabilities.images is false); replaced with placeholder text"
+const MEDIA_NOTE_ALL = `${IMAGE_OMITTED_NOTE}; or ${MEDIA_PLACEHOLDER_NOTE}; or ${IMAGE_UNAVAILABLE_NOTE}`
+const MEDIA_WHEN =
+  "the content carries an image the model does not accept, video or audio, or an image reference whose blob is unavailable"
 
 export const LOSS_MATRIX: LossMatrix = {
   "anthropic-messages": {
@@ -112,10 +126,11 @@ export const LOSS_MATRIX: LossMatrix = {
         "a mid-conversation system message carrying the text",
         "the model family supports mid-conversation system (Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8)",
       ),
+      escapedSystem("system"),
       lossy(
         "user-role",
         "wrapped in a <system_note> tag and sent with the user role",
-        "the model family does not support mid-conversation system, or the note is a directive the model must act on (SystemNotePayload.directive)",
+        "the model family does not support mid-conversation system, the note is a directive the model must act on (SystemNotePayload.directive), or no user turn precedes the note's place (e.g. a run starts with only a note after the model's last answer)",
       ),
     ],
     "core.compaction": [
@@ -169,6 +184,8 @@ export const LOSS_MATRIX: LossMatrix = {
     "core.system_note": [
       exact("developer", "reasoning models take the developer role"),
       exact("system", "non-reasoning models take the system role"),
+      escapedSystem("developer"),
+      escapedSystem("system"),
       lossy(
         "user-role",
         "wrapped in a <system_note> tag and sent with the user role",

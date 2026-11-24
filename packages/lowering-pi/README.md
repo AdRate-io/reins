@@ -25,16 +25,18 @@ export const agent = createAgent({ model: claude, store, tools })
 | `apiKey` | required |
 | `baseUrl` | gateway or proxy; both factories accept any endpoint speaking the respective protocol (DeepSeek's Anthropic-compatible endpoint is tested) |
 | `requestOptions` | passed to pi-ai **as a whole, not merged** — if you set it on `openai()`, include `reasoningEffort` yourself or reasoning turns off |
-| `contextWindow`, `maxOutputTokens`, `reasoning`, `images`, `midConversationSystem` | override the capability table (`capabilitiesOf`) for models the table does not know; a `system_note` marked `directive: true` is always sent as a framed `user` message |
+| `contextWindow`, `maxOutputTokens`, `reasoning`, `images`, `midConversationSystem` | only with `baseUrl` (passing them without it throws): they describe the model behind that endpoint, defaulting to a 200k window, 16k output, reasoning and images on, no mid-conversation system. Without `baseUrl` the capabilities come from pi-ai's built-in table, and a model it does not know needs `baseUrl` (or a `ModelDefinition` passed to `new PiAiLowering({ models })`). A `system_note` marked `directive: true` is always sent as a framed `user` message |
 | `trustMarkers` | default on: tool output is wrapped in `<untrusted source="tool:…">` in the request (the log keeps the original) |
 
 ## How events land
 
 - Model roles exist only here. `system_note` events become `system` blocks where the API allows mid-conversation system content, otherwise a framed `user` message (declared lossy).
 - A user message that arrives while tool results are still pending is moved after them on the wire (Anthropic requires `tool_result` right after `tool_use`) and recorded as `lossy(user)`; the log order is untouched.
+- Images sent to a model that takes none (`capabilities.images` is `false`) are replaced with `[image omitted: this model does not accept images]` and declared `lossy`. A `ModelDefinition` passed to `new PiAiLowering({ models })` without `images` counts as not taking images; the `baseUrl` mode of `anthropic()` / `openai()` defaults to `images: true`.
 - Thinking blocks are replayed only with a signature from the same provider and model.
 - Anthropic cache breakpoints: at most four block-level breakpoints are set; when they are exhausted the top-level breakpoint is silently skipped rather than producing a 400.
 - pi-ai 0.85.1 has no `system` role for injected content; the layer rewrites the payload in pi-ai's `onPayload` hook. The `LoweredRequest.payload` you can inspect shows the pre-rewrite shape — remember that when debugging a 400.
+- `PiAiLowering` tags those notes with a fresh random marker per request, so user text can never be promoted to `system`. If you call the advanced exports yourself (`eventsToContext`, `markSystemNote`, `rewritePayload`, `rewriteAnthropicPayload`, `rewriteOpenAIResponsesPayload`), pass the same `newSystemNoteMark()` value to both sides (`systemNoteMark` / `mark`): without it they fall back to the fixed `SYSTEM_NOTE_MARK`, and any user text starting with it would be rewritten into a system message.
 
 ## Runtime footprint
 

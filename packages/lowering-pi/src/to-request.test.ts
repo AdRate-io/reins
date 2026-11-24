@@ -34,7 +34,7 @@ const model = { provider: "anthropic", id: "m", api: "anthropic-messages", reaso
   typeof eventsToContext
 >[0]["model"]
 const caps = (midConversationSystem: boolean) =>
-  ({ midConversationSystem, api: "anthropic-messages" }) as Parameters<
+  ({ midConversationSystem, images: true, api: "anthropic-messages" }) as Parameters<
     typeof eventsToContext
   >[0]["capabilities"]
 

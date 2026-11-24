@@ -25,12 +25,18 @@ import {
   markUntrustedText,
   needsUntrustedMark,
   renderToolReference,
+  type SystemNotePayload,
   type ToolSpec,
   untrustedSourceOf,
 } from "@reinsjs/core"
-import { IMAGE_UNAVAILABLE_NOTE, MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
+import {
+  ESCAPED_NOTE,
+  IMAGE_OMITTED_NOTE,
+  IMAGE_UNAVAILABLE_NOTE,
+  MEDIA_PLACEHOLDER_NOTE,
+} from "./loss-matrix.js"
 import type { PiModel } from "./models.js"
-import { framedSystemNote, markSystemNote } from "./system-note.js"
+import { framedSystemNote, markSystemNote, midSystemSlotFollowsUser, midSystemSlotOf } from "./system-note.js"
 
 /** 模型事件 replay 里记录的来源，产出与回放两头共用 */
 export interface ModelOrigin {
@@ -77,13 +83,23 @@ function mediaPlaceholder(p: Extract<ContentPart, { type: "video" | "audio" }>):
  */
 const IMAGE_UNAVAILABLE = "[image unavailable]"
 
-function toPiContent(parts: readonly ContentPart[]): {
+/**
+ * 模型不收图时的占位（全库审查 2026-11-25 #34）。不交给 pi-ai：它的 downgradeUnsupportedImages 会静默换成
+ * 自己的一句、落点却还是 exact。文案与 lowering-fetch 逐字一致
+ */
+const IMAGE_OMITTED = "[image omitted: this model does not accept images]"
+
+function toPiContent(
+  parts: readonly ContentPart[],
+  capabilities: LoweringCapabilities,
+): {
   content: (TextContent | { type: "image"; data: string; mimeType: string })[]
-  /** 有片段被换成占位时的落点说明（视频 / 音频、未换回的图片引用）；没有为 undefined */
+  /** 有片段被换成占位时的落点说明（模型不收的图片、视频 / 音频、未换回的图片引用）；没有为 undefined */
   mediaNote: string | undefined
 } {
   let mediaDropped = false
   let unavailable = false
+  let imageOmitted = false
   const content = parts.map((p): TextContent | { type: "image"; data: string; mimeType: string } => {
     switch (p.type) {
       case "text":
@@ -96,6 +112,10 @@ function toPiContent(parts: readonly ContentPart[]): {
           unavailable = true
           return { type: "text", text: IMAGE_UNAVAILABLE }
         }
+        if (!capabilities.images) {
+          imageOmitted = true
+          return { type: "text", text: IMAGE_OMITTED }
+        }
         return { type: "image", data: p.data, mimeType: p.mime }
       case "video":
       case "audio":
@@ -107,7 +127,11 @@ function toPiContent(parts: readonly ContentPart[]): {
       }
     }
   })
-  const notes = [mediaDropped ? MEDIA_NOTE : undefined, unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined]
+  const notes = [
+    imageOmitted ? IMAGE_OMITTED_NOTE : undefined,
+    mediaDropped ? MEDIA_NOTE : undefined,
+    unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
+  ]
   const mediaNote = notes.filter(Boolean).join("; ")
   return { content, mediaNote: mediaNote.length > 0 ? mediaNote : undefined }
 }
@@ -135,7 +159,6 @@ const NAMESPACE_NOTE = "the tool namespace is not replayed for another model"
 
 const DEFERRED_NOTE =
   "moved after that batch of tool results (tool results must immediately follow their call)"
-const ESCAPED_NOTE = "an early-closing </untrusted inside untrusted content was escaped"
 
 export interface ToContextInput {
   events: readonly Event[]
@@ -145,6 +168,67 @@ export interface ToContextInput {
   systemPrompt?: string
   /** trust=untrusted 的内容（工具输出、外部内容）以 <untrusted source=…> 包裹（§14）。缺省 true；关掉是宿主自担风险 */
   trustMarkers?: boolean
+  /**
+   * 中途 system 说明的内部标记（发出前由 onPayload 改写时按它认）。PiAiLowering 每个请求传一枚 `newSystemNoteMark()`；
+   * 缺省静态 `SYSTEM_NOTE_MARK`，只供独立调用——此时用户文本以它开头会被当成说明（全库审查 2026-11-25 #3）
+   */
+  systemNoteMark?: string
+}
+
+interface MidSystemNote {
+  msg: Message
+  event: Event
+  kind: SystemNotePayload["kind"]
+  /** 已做过 trust 标注的正文（不含标记） */
+  text: string
+}
+
+const MISPLACED_NOTE =
+  "no user turn precedes the note's place (it would follow the model's answer), and Anthropic rejects a mid-conversation system message there, so it is wrapped in a <system_note> tag and sent with the user role"
+
+/**
+ * pi-ai 0.85.1 `anthropic-messages.js` convertMessages 发出时整条丢掉的 user：字符串 trim 后为空；
+ * 数组里过滤掉空白 text 块后什么都不剩（图片块保留）。只用于中途 system 的落点预判，与上游行为逐条对齐。
+ */
+function droppedOnAnthropicWire(m: Message): boolean {
+  if (m.role !== "user") return false
+  if (typeof m.content === "string") return m.content.trim().length === 0
+  return m.content.every((b) => b.type === "text" && b.text.trim().length === 0)
+}
+
+/**
+ * Anthropic 中途 system 的落点预判（全库审查 2026-11-25 #32）：发出前的改写只能把说明挪到下一条 assistant 之前或末尾，
+ * 落点前一条若是 assistant（上个 run 以纯文本收尾、新 run 只带说明；说明夹在两段 assistant 之间）厂商 400，
+ * 而日志只追加、每轮整段回放，会一直 400。这里用改写同一个归位函数预判，不合法的就地换成带标签的 user、落点改记
+ * lossy(user-role)——与 lowering-fetch 的 Anthropic 线同一取向。按时间线顺序逐条判：退回 user 的说明成为普通
+ * user 消息，后面同一落点的说明就紧跟它、可以照常走 system，与改写时看到的请求体一致。
+ * 预判用的 body 必须与线上一致：pi-ai 0.85.1 的 Anthropic convertMessages 会整条丢掉纯空白的 user（字符串 trim 后为空，
+ * 或数组里没有图片、text 块全是空白），这类消息预判时一并排除（`droppedOnAnthropicWire`），否则"说明前面是 user"
+ * 判为合法、线上前一条却是 assistant（全库审查 2026-11-25 返修 R1；`" "` 经 HTTP 字符串 input 就能进来）。
+ */
+function fallBackMisplacedNotes(
+  messages: Message[],
+  landings: LandingRecord[],
+  notes: readonly MidSystemNote[],
+): void {
+  const marked = new Set<Message>(notes.map((n) => n.msg))
+  // 线上会出现的非说明消息（说明本身以标记开头、不是空白，不会被 pi-ai 丢）
+  const onWire = (m: Message): boolean => !marked.has(m) && !droppedOnAnthropicWire(m)
+  for (const n of notes) {
+    const idx = messages.indexOf(n.msg)
+    if (idx === -1) continue
+    const body = messages.filter(onWire)
+    const afterIndex = messages.slice(0, idx).filter(onWire).length
+    if (midSystemSlotFollowsUser(body, midSystemSlotOf(body, afterIndex))) continue
+    marked.delete(n.msg)
+    messages[idx] = { ...n.msg, content: framedSystemNote(n.kind, n.text) } as Message
+    const rec = landings.find((l) => l.eventId === n.event.id)
+    if (rec) {
+      rec.kind = "lossy"
+      rec.landing = "user-role"
+      rec.note = rec.note ? `${MISPLACED_NOTE}; ${rec.note}` : MISPLACED_NOTE
+    }
+  }
 }
 
 export function eventsToContext(input: ToContextInput): { context: Context; landings: LandingRecord[] } {
@@ -163,6 +247,8 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
    * 所以结果没到齐时，说明、摘要与用户消息先攒着，到齐后再放出（落点备注说明后移）。时间线本身如实保留插话的位置。
    */
   const awaiting = new Set<string>()
+  /** Anthropic 线上要改写成中途 system 的说明（按时间线顺序），收尾时预判归位、落不到 user 之后的退回 user */
+  const midSystemNotes: MidSystemNote[] = []
   const deferred: {
     msg: Message
     event: Event
@@ -241,7 +327,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.user_message": {
         flush()
         const c = content(e, e.payload.content)
-        const pc = toPiContent(c.parts)
+        const pc = toPiContent(c.parts, capabilities)
         const msg: Message = { role: "user", content: pc.content, timestamp: e.at }
         const mediaNote = pc.mediaNote
         // 工具结果还没到齐就来了用户消息：后移到同批结果之后，否则 tool_use 后面紧跟的不是 tool_result，厂商 400。
@@ -349,7 +435,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
       case "core.tool_result": {
         flush()
         const c = content(e, e.payload.content)
-        const pc = toPiContent(c.parts)
+        const pc = toPiContent(c.parts, capabilities)
         messages.push({
           role: "toolResult",
           toolCallId: e.payload.toolCallId,
@@ -378,9 +464,15 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         const t = text(e, e.payload.text)
         // 指令类说明（directive）不走中途 system：有的上游收下却不执行其中的指令（踩坑 42），一律带标签走 user
         if (capabilities.midConversationSystem && e.payload.directive !== true) {
+          const msg: Message = {
+            role: "user",
+            content: markSystemNote(t.text, input.systemNoteMark),
+            timestamp: e.at,
+          }
+          if (isAnthropic) midSystemNotes.push({ msg, event: e, kind: e.payload.kind, text: t.text })
           note(
             e,
-            { role: "user", content: markSystemNote(t.text), timestamp: e.at },
+            msg,
             t.escaped ? "lossy" : "exact",
             isAnthropic ? "system" : model.reasoning ? "developer" : "system",
             t.escaped ? ESCAPED_NOTE : undefined,
@@ -435,6 +527,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
   }
   flush()
   settleAwaiting()
+  if (midSystemNotes.length > 0) fallBackMisplacedNotes(messages, landings, midSystemNotes)
 
   const context: Context = { messages }
   if (input.systemPrompt) context.systemPrompt = input.systemPrompt
