@@ -54,7 +54,7 @@
 | `src/capabilities.ts` | 按模型 id 正则与 requestOptions 推断 `LoweringCapabilities`（`midConversationSystem` / `taskBudget` / `thinkingReplay` …），宿主声明的 `CapabilityOverrides` 覆盖推断结果 |
 | `src/factories.ts` | 一行拿到"模型 + 降级层"的 `anthropic(id, opts)` / `openai(id, opts)`，返回 core 的 `BoundModel`；带 `baseUrl` 即按 `ModelDefinition` 登记走代理/网关 |
 | `src/to-request.ts` | 核心翻译：`eventsToContext` 把事件流分组成三角色消息，同时逐条记 `LandingRecord`；后移队列（`deferred` / `awaiting`）在这里；L1：`tool_reference` 段展开成文本（pi-ai 请求整形改不了，无 `defer_loading` 落点）、`deferLoading` 的工具不发，能力位 `deferredTools` 恒假；视频 / 音频片段 pi-ai 无落点，一律换占位记 lossy（`MEDIA_PLACEHOLDER_NOTE`），能力位 `video` / `audio` 不设；未换回的图片引用落 `[image unavailable]`、记 lossy（2026-11-24） |
-| `src/system-note.ts` | system_note 的第二跳：内部标记常量与包裹函数、Anthropic 请求体改写与归位算法（含缓存断点三种处置）、OpenAI Responses 改写 |
+| `src/system-note.ts` | system_note 的第二跳：内部标记（静态 `SYSTEM_NOTE_MARK` 与每请求随机的 `newSystemNoteMark()`）与包裹函数、Anthropic 归位纯函数 `midSystemSlotOf` / `midSystemSlotFollowsUser`（第一跳的落点预判与第二跳的改写共用）、Anthropic 请求体改写（含缓存断点三种处置）、OpenAI Responses 改写 |
 | `src/from-stream.ts` | 回程：`draftsOf` 把 pi-ai `AssistantMessage` 的内容块变成事件草稿（toolCall 入参交 core `unwrapToolArguments`：pi-ai 对二次编码只解一层），`consumeStream` 消费事件流、分发增量、收尾产出 `LoweringOutcome` |
 | `src/loss-matrix.ts` | `LOSS_MATRIX`（api → 事件 type → 可能落点）与 `declaredLandings` 查询；这是"禁止静默丢弃"的合同文本 |
 | 测试（5 个 `*.test.ts`） | `loss-matrix.test.ts` 逐变体断言实际落点必在矩阵内且矩阵无死条目；`pi-lowering.test.ts` 用假 fetch 走两条协议全链、单测归位规则；`to-request.test.ts` 专测说明后移与用户消息后移；`factories.test.ts` 测两个工厂的缺省与透传；`from-stream.test.ts` 测二次编码入参多解一层 |
@@ -81,10 +81,11 @@
 
 ### 3.3 system_note 的两跳与 Anthropic 归位
 
-1. 第一跳在 `eventsToContext` 的 `core.system_note` 分支：`capabilities.midConversationSystem` 为真且说明不是 `directive`（指令类一律走下一档带标签的 user，OPT-261031-1） → `markSystemNote(text)` 前缀上 `[[reins:system_note]]` 标记、以 **user** 消息进 Context，落点记 `exact`（Anthropic 记 `system`，OpenAI 按 `model.reasoning` 记 `developer` / `system`）；为假 → `framedSystemNote(kind, text)` 用 `<system_note kind="…">` 标签包住、仍走 user，记 `lossy` / `user-role`。
+1. 第一跳在 `eventsToContext` 的 `core.system_note` 分支：`capabilities.midConversationSystem` 为真且说明不是 `directive`（指令类一律走下一档带标签的 user，OPT-261031-1） → `markSystemNote(text, mark)` 前缀上本请求的随机标记（`PiAiLowering.toRequest` 每个请求生成一枚 `newSystemNoteMark()`，经 `PiLoweredPayload.systemNoteMark` 带到 `stream`）、以 **user** 消息进 Context，落点记 `exact`（Anthropic 记 `system`，OpenAI 按 `model.reasoning` 记 `developer` / `system`）；为假 → `framedSystemNote(kind, text)` 用 `<system_note kind="…">` 标签包住、仍走 user，记 `lossy` / `user-role`。
+   Anthropic 线收尾时 `fallBackMisplacedNotes` 用第二跳同一个 `midSystemSlotOf` 预判每条标记说明的落点：落点前一条不是 user 轮（上个 run 以纯文本收尾、新 run 只带说明；说明夹在两段 assistant 之间）就地换成带标签的 user、改记 `lossy` / `user-role`，与 lowering-fetch 同一取向。预判用的 body 排除 pi-ai 发出时会整条丢掉的纯空白 user（`droppedOnAnthropicWire`，复刻 pi-ai 0.85.1 `convertMessages`），否则会判出线上并不存在的前一条 user（全库审查 2026-11-25 #32 与返修 R1）。
 2. 第二跳在 `PiAiLowering.stream` 装的 `onPayload` 钩子 → `rewritePayload(api, …)` 分派。
 3. `rewriteOpenAIResponsesPayload`：Responses 的 `input` 项允许任意位置的 developer / system 消息，所以只做**原地替换**，无归位；角色按 `model.reasoning` 选 `developer` / `system`。没有标记消息时返回 `undefined`（= 请求体不变）。
-4. `rewriteAnthropicPayload` 要满足官方摆放规则（不能是首条、必须紧跟 user 轮、后接 assistant 或收尾、连续 system 视为一组），算法是：先把标记消息全部摘出成 `pending`、其余成 `body`；`placeOf()` 为每条算出它在 **原始 body** 里的落点（"它之后的第一条 assistant"之前；没有 assistant 就落到末尾，并跳过 pi-ai 追加的 content 为空的 effort 专用 system；落点为 0 时挪到第一条 user 之后）；同落点的按原顺序装进 `groups`；最后一次性拼出 `messages`。**先算完再拼、不边算边 splice**，否则同一落点的多条说明会前后颠倒。
+4. `rewriteAnthropicPayload` 要满足官方摆放规则（不能是首条、必须紧跟 user 轮、后接 assistant 或收尾、连续 system 视为一组），算法是：先把标记消息全部摘出成 `pending`、其余成 `body`；`midSystemSlotOf()` 为每条算出它在 **原始 body** 里的落点（"它之后的第一条 assistant"之前；没有 assistant 就落到末尾，并跳过 pi-ai 追加的 content 为空的 effort 专用 system；落点为 0 时挪到第一条 user 之后）；同落点的按原顺序装进 `groups`；最后一次性拼出 `messages`。落点前一条不是 user 的说明不会带着标记到这里——第一跳已用同一函数预判并退回 user。**先算完再拼、不边算边 splice**，否则同一落点的多条说明会前后颠倒。
 5. 缓存断点：pi-ai 把 `cache_control` 打在"最后一条 user 消息"上，而感知说明殿后时那条最后的 user 正是我们的标记消息，改写成 system 后断点会消失 → 整段历史按原价计费。`markedNote` 把断点一起摘出来，按 `midSystemCacheBreakpoint` 处置：`automatic`（缺省，丢块级断点、请求顶层补 `cache_control`，且先用 `countBlockBreakpoints` 数够 4 个就放弃以免 400）、`previous-user`（`withCacheControl` 搬到紧邻的前一条 user 消息末块）、`drop`。
 
 ### 3.4 `stream`：请求 → 事件草稿
@@ -102,9 +103,9 @@
 
 **只从子路径深导入** — 只用 `api/<api>`（流函数）与 `providers/<name>.models`（静态模型表），不用 `compat` 入口（上游注明将删）、不用 `providers/all`（会拉进 Bedrock 与 AWS SDK）（S4）。边界：内置模型表因此只有 anthropic 与 openai 两家，别的一律走 `ModelDefinition` 声明。
 
-**system_note 走"标记 + onPayload 改写"两跳** — pi-ai 的 Message 没有 system 角色，又不想 fork pi-ai，所以先当 user 消息带标记进 Context，在 pi-ai 公开的钩子上改写成线协议的 system 消息（S1，DECISIONS 2026-09-08）。标记只在 `system-note.ts` 生产与消费，不会送到线上。边界：`LoweredRequest.payload` 里看到的仍是 user 角色，只有真发出去的请求体才是 system —— 调试时别拿 payload 当最终请求；上游若加入 system 角色，这套改写逻辑整段删掉即可。
+**system_note 走"标记 + onPayload 改写"两跳** — pi-ai 的 Message 没有 system 角色，又不想 fork pi-ai，所以先当 user 消息带标记进 Context，在 pi-ai 公开的钩子上改写成线协议的 system 消息（S1，DECISIONS 2026-09-08）。标记每个请求随机一枚（`newSystemNoteMark()`），用户无从预知，用户原话以任何前缀开头都不会被抬成 system（全库审查 2026-11-25 #3）；静态 `SYSTEM_NOTE_MARK` 只是独立调用进阶导出不传 `mark` 时的缺省，此时用户文本以它开头仍会被改写。边界：`LoweredRequest.payload` 里看到的仍是 user 角色，只有真发出去的请求体才是 system —— 调试时别拿 payload 当最终请求；上游若加入 system 角色，这套改写逻辑整段删掉即可。
 
-**归位先算后拼** — `placeOf` 对**原始 body** 算完所有落点、分组，再一次性拼出 `messages`（`system-note.ts` 注释）。因为边算边 splice 会让同一落点的多条说明前后颠倒，而同轮多条 system_note 的顺序是有意义的。边界：算法只保证 Anthropic 那四条摆放规则，不保证"说明紧挨着它描述的那条事件"。
+**归位先算后拼** — `midSystemSlotOf` 对**原始 body** 算完所有落点、分组，再一次性拼出 `messages`（`system-note.ts` 注释）。因为边算边 splice 会让同一落点的多条说明前后颠倒，而同轮多条 system_note 的顺序是有意义的。边界：算法只保证 Anthropic 那四条摆放规则，不保证"说明紧挨着它描述的那条事件"；落点前一条不是 user（厂商 400）由第一跳预判退回带标签的 user 兜住，预判与改写调同一个纯函数（真源索引登记）。
 
 **缓存断点缺省 automatic** — 说明殿后时去掉 pi-ai 打在标记消息上的块级 `cache_control`、在请求顶层补一个（Anthropic 自动缓存）；块级断点已满 4 个则放弃补，不能让请求 400（B1，DECISIONS 2026-09-08）。理由是官方规则"最后一个断点之后的内容一律不缓存"，直接丢断点会让整段历史每轮重新计费；实测 `automatic` 与不注入持平，`previous-user` 低 3~6 个点，留在 system 消息上崩到 18.6%。边界：三种处置的实测是在网关与 DeepSeek 上做的，"直连官方 API 缺省是否仍最优"仍是未实测项。
 
