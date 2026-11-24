@@ -21,7 +21,7 @@ Design documents live in `docs/` and are written in Chinese; every package has a
 
 ```bash
 pnpm install && pnpm build && pnpm check:dist
-ANTHROPIC_API_KEY=… node examples/minimal/server.ts   # then open http://localhost:8787
+ANTHROPIC_API_KEY=… node examples/minimal/server.ts   # then open http://127.0.0.1:8787
 ```
 
 `examples/minimal/agent.ts` is the whole five-minute experience: one model, two tools (one needs approval), an in-memory store, and a Web-standard handler you can drop into any route.
