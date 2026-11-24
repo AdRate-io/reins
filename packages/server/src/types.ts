@@ -157,6 +157,16 @@ export interface SessionAuthzInput {
    * 新会话还没有归属，宿主通常一律放行、并在返回前自行把 sessionId 记到自己的归属表里。
    */
   isNew: boolean
+  /**
+   * 这次请求带的审批结论：已过壳校验、按请求体原样给出（含指向子代理会话的条目）；GET / STOP / 没带时是空数组。
+   *
+   * 审批人与会话主人不是同一人时靠它把关——`request` 只能读 header，没有它就分不出这次 POST 是不是在交结论。
+   * 通常只拦批准、不拦拒绝：`decisions.some((d) => d.approved)` 且 principal 不是审批人就返回 false；
+   * 会话主人发新消息代替审批时会带 `approved: false`，拦掉它用户就发不了话。
+   * `by` 是客户端自报的，不可信，判断审批权只看 `principal`。
+   * 注意：只带结论、不带 `resume` 时循环不验签、不查配置漂移，只核对结论指向本会话 pending（BUG-261105-2）。
+   */
+  decisions: readonly ApprovalDecisionInput[]
 }
 
 /** 传给 `HandlerOptions.onEvent` 的上下文：这条事件属于哪条会话、由谁发起的 run、来自哪个请求。 */

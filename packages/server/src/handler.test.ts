@@ -1111,6 +1111,123 @@ describe("R6 会话级鉴权：authorizeSession", () => {
   })
 })
 
+describe("BUG-261105-2 第二步：authorizeSession 看得见这次带的审批结论", () => {
+  const deployTool = defineTool<{ env: string }>({
+    name: "deploy",
+    description: "上线",
+    inputSchema: { type: "object", properties: { env: { type: "string" } } },
+    needsApproval: true,
+    execute: ({ env }) => `已上线 ${env}`,
+  })
+  const SCRIPT: ScriptedTurn[] = [
+    { drafts: [callTool("c1", "deploy", { env: "prod" })] },
+    { drafts: [say("上线完成")] },
+  ]
+  /** 宿主规则：会话主人可以拒绝，只有 approver 能批准（审批人与用户不是同一人的场景） */
+  const approverOnly: HandlerOptions = {
+    principal: (req) => {
+      const who = req.headers.get("x-user")
+      return who === null ? undefined : { id: who }
+    },
+    authorizeSession: ({ decisions, principal }) =>
+      !decisions.some((d) => d.approved) || principal?.id === "approver",
+  }
+
+  /** postRequest 不收 header：按测试约定构造后再设（同 R6 用例） */
+  function asUser(who: string, body: Record<string, unknown>) {
+    const req = postRequest(body)
+    req.headers.set("x-user", who)
+    return req
+  }
+
+  async function pauseAsOwner(handler: ReturnType<typeof setup>["handler"]) {
+    const frames = parseFrames(
+      await (await handler(asUser("owner", { sessionId: "s1", input: "上线" }))).text(),
+    )
+    const result = resultOf(frames)
+    if (result?.status !== "paused") throw new Error(`期望 paused，得到 ${JSON.stringify(result)}`)
+    return result
+  }
+
+  it("按请求原样给出（含指向子会话的条目）；POST 不带、GET、STOP 都是空数组", async () => {
+    const seen: { method: string; decisions: readonly unknown[] }[] = []
+    const { handler } = setup(
+      SCRIPT,
+      [deployTool],
+      { secret: "k" },
+      {
+        authorizeSession: ({ method, decisions }) => {
+          seen.push({ method, decisions })
+          return true
+        },
+      },
+    )
+    const paused = await pauseAsOwner(handler)
+    await (await handler(getRequest({ sessionId: "s1" }))).text()
+    const decisions = [
+      { toolCallId: "c1", approved: true, by: "boss" },
+      { toolCallId: "x9", approved: false, by: "boss", sessionId: "s1:other" },
+    ]
+    const resumed = await handler(asUser("owner", { sessionId: "s1", resume: paused.state, decisions }))
+    expect(resultOf(parseFrames(await resumed.text()))?.status).toBe("done")
+    await (await handler(postRequest({ sessionId: "s1", stop: true }))).json()
+
+    expect(seen).toEqual([
+      { method: "POST", decisions: [] },
+      { method: "GET", decisions: [] },
+      { method: "POST", decisions },
+      { method: "STOP", decisions: [] },
+    ])
+  })
+
+  it("会话主人自己批准 → 404、一条不写（带不带 resume 都一样）；审批人批准 → 续跑到 done", async () => {
+    const { handler, log } = setup(SCRIPT, [deployTool], { secret: "k" }, approverOnly)
+    const paused = await pauseAsOwner(handler)
+    const before = (await logged(log, "s1")).length
+    const approve = [{ toolCallId: "c1", approved: true, by: "approver" }]
+
+    // by 是客户端自报的，写成 approver 也没用：宿主只看 principal
+    const withResume = await handler(
+      postRequest({ sessionId: "s1", resume: paused.state, decisions: approve }),
+    )
+    expect(withResume.status).toBe(404)
+    // 不带 resume 的口子（循环不验签）在鉴权这一层同样挡得住
+    const bare = await handler(asUser("owner", { sessionId: "s1", decisions: approve }))
+    expect(bare.status).toBe(404)
+    expect(await logged(log, "s1")).toHaveLength(before)
+
+    const ok = await handler(
+      asUser("approver", { sessionId: "s1", resume: paused.state, decisions: approve }),
+    )
+    expect(resultOf(parseFrames(await ok.text()))?.status).toBe("done")
+  })
+
+  it("会话主人拒绝（发新消息代替审批）放行：工具不执行，新消息照常进时间线", async () => {
+    const { handler, log } = setup(
+      [...SCRIPT.slice(0, 1), { drafts: [say("好，不上线了，先看 A")] }],
+      [deployTool],
+      { secret: "k" },
+      approverOnly,
+    )
+    const paused = await pauseAsOwner(handler)
+    const res = await handler(
+      asUser("owner", {
+        sessionId: "s1",
+        resume: paused.state,
+        input: "先别上线，看下 A",
+        decisions: [
+          { toolCallId: "c1", approved: false, by: "owner", reason: "The user sent a new message." },
+        ],
+      }),
+    )
+    expect(resultOf(parseFrames(await res.text()))?.status).toBe("done")
+    const events = await logged(log, "s1")
+    const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+    expect(result.payload.isError).toBe(true)
+    expect(events.filter((e) => e.type === "core.user_message")).toHaveLength(2)
+  })
+})
+
 describe("sessionId 字符集：越界值给 400，不让它冒成未捕获异常", () => {
   // 控制字符用 fromCharCode 构造，别把真字节写进源码
   const CR = String.fromCharCode(13)

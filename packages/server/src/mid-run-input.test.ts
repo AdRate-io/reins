@@ -425,13 +425,13 @@ describe("请求校验", () => {
     await res.text()
   })
 
-  it("authorizeSession：method POST、isNew false；拒绝回 404、信箱无变化", async () => {
+  it("authorizeSession：method POST、isNew false、decisions 为空；拒绝回 404、信箱无变化", async () => {
     const w = waitTool()
-    const seen: { method: string; isNew: boolean }[] = []
+    const seen: { method: string; isNew: boolean; decisions: readonly unknown[] }[] = []
     let allow = true
     const { handler, log } = setup(WAIT_THEN_ANSWER, [w.tool], {
-      authorizeSession: ({ method, isNew }) => {
-        seen.push({ method, isNew })
+      authorizeSession: ({ method, isNew, decisions }) => {
+        seen.push({ method, isNew, decisions })
         return allow
       },
     })
@@ -440,7 +440,7 @@ describe("请求校验", () => {
     allow = false
     const res = await handler(postRequest({ sessionId: "s1", input: "只看 A", deliveryId: "d1" }))
     expect(res.status).toBe(404)
-    expect(seen).toEqual([{ method: "POST", isNew: false }])
+    expect(seen).toEqual([{ method: "POST", isNew: false, decisions: [] }])
     allow = true
     w.g.open()
     await starter.rest()

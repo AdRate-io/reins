@@ -14,6 +14,7 @@
  * 登记表缺省只在进程内（`InMemoryRunRegistry`）；多实例部署传 `runs: leasedRunRegistry(store.runLease)`。
  */
 import {
+  type ApprovalDecisionInput,
   type ContentPart,
   checkImageRefs,
   computeConfigHash,
@@ -112,6 +113,9 @@ function isUserMessageInput(
   if (typeof input === "string" || Array.isArray(input)) return true
   return (input as EventDraft).type === "core.user_message"
 }
+
+/** 不带审批结论的请求（GET / STOP / 没带 decisions 的 POST）给 authorizeSession 的空数组；冻结防宿主误改共享实例 */
+const NO_DECISIONS: readonly ApprovalDecisionInput[] = Object.freeze([])
 
 /**
  * 请求体只做壳校验；resume 的形状与签名交给 core 的 validateResume，草稿的类型白名单在 checkInput 与循环。
@@ -689,6 +693,7 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       request,
       method: "GET",
       isNew: false,
+      decisions: NO_DECISIONS,
     })
     if (denied !== undefined) return denied
     const lastSeq = lastSeqOf(request, url)
@@ -727,6 +732,7 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       request,
       method: "POST",
       isNew: body.sessionId === undefined,
+      decisions: body.decisions ?? NO_DECISIONS,
     })
     if (denied !== undefined) return denied
 
@@ -870,7 +876,14 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     principal: Principal | undefined,
     sessionId: string,
   ): Promise<Response> {
-    const denied = await denyBySessionAuthz({ sessionId, principal, request, method: "STOP", isNew: false })
+    const denied = await denyBySessionAuthz({
+      sessionId,
+      principal,
+      request,
+      method: "STOP",
+      isNew: false,
+      decisions: NO_DECISIONS,
+    })
     if (denied !== undefined) return denied
     const stopping: StopResponse = { status: "stopping", sessionId }
     const active = runs.get(sessionId)

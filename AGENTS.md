@@ -191,8 +191,8 @@ docs/                # 维护者文档（中文），见文档索引
 
 ## 鉴权与安全默认值
 
-- **server 两层鉴权**：`principal(request)` 解析谁在问；`authorizeSession({ sessionId, principal, request, method, isNew })` 在解析出 sessionId 之后、读写日志之前决定能碰哪条会话（此时 body 已被 handler 读完，`request` 只能读 header）。**只有字面 `true` 放行，拒绝回 404**（不用 403）。
-- **客户端输入两道类型白名单**：循环层 `inputDrafts` 只收 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`（数组逐条查、任一不合规整批拒）；server 层只收 `user_message` 与客户端工具 pending 的 `tool_result`，数组 input 在 `parseBody` 无条件重建成内容片段——不带 resume / decisions 的请求不经 `checkInput`，放在那里就漏。审批结论只走 `decisions`（状态 HMAC 签名，宿主给 `secret`）。
+- **server 两层鉴权**：`principal(request)` 解析谁在问；`authorizeSession({ sessionId, principal, request, method, isNew, decisions })` 在解析出 sessionId 之后、读写日志之前决定能碰哪条会话（此时 body 已被 handler 读完，`request` 只能读 header）。**只有字面 `true` 放行，拒绝回 404**（不用 403）。
+- **客户端输入两道类型白名单**：循环层 `inputDrafts` 只收 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`（数组逐条查、任一不合规整批拒）；server 层只收 `user_message` 与客户端工具 pending 的 `tool_result`，数组 input 在 `parseBody` 无条件重建成内容片段——不带 resume / decisions 的请求不经 `checkInput`，放在那里就漏。审批结论只走 `decisions`；带 `resume` 时才验签（宿主给 `secret`）、核 pendingDigest 与配置漂移，只带 `decisions` 时只核对指向本会话 pending（BUG-261105-2）——审批人与会话主人不是同一人时，宿主在 `authorizeSession` 里看 `decisions` 把关。
 - **trust**：工具结果缺省 untrusted，降级层包 `<untrusted source="tool:<name>">…</untrusted>`；只有 `Tool.resultTrust: "system"` 的成功结果是 system（`skill_read`、`tool_find`）。
 - **越权资源一律当不存在**：未授权会话 404、未被本会话引用的 blob id "不存在"、技能路径越界"不存在"。
 
