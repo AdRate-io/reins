@@ -597,6 +597,8 @@ describe("reinsMiddleware：脑子模块", () => {
       ["model", "model", { source: "handoff", ref: ho?.id }],
       ["model", "model", { source: "handoff", ref: ho?.id }],
     ])
+    // onEvent 只拿本会话的事件，新会话开场只在日志里（#55，与 runLoop 不 yield 同口径）
+    expect(f.events.every((e) => e.sessionId === SESSION)).toBe(true)
     expect(f.adapter.calls).toHaveLength(1)
   })
 })

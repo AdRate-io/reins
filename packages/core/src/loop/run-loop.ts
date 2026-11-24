@@ -1014,8 +1014,10 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     const openingEvents = opening.map((d, i) =>
       createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
     )
+    // 开场写进新会话但不 yield（#55）：runLoop 只产出本会话的事件，消费方（server 的 SSE / onEvent、AG-UI 线程）
+    // 都按"事件属于 sessionId"处理，混进别的会话会让 SSE id 倒退、前端旧线程多出消息、观测记错会话。
+    // 新会话的开场经 RunResult.toSessionId 从日志读
     await log.append(openingEvents)
-    yield* openingEvents
     // 新会话开场写成之后才在旧会话落终结记号：开场写失败时 run 抛错，旧会话判 interrupted，与"交接没完成"一致
     yield* await append([
       { type: "core.run_ended", actor: "system", payload: { status: "handoff", toSessionId } },

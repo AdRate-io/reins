@@ -841,8 +841,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     const events = opening.map((d, i) =>
       createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
     )
+    // 与 runLoop 同口径：新会话开场只写日志、不交给本 run 的 onEvent（宿主拿它推旧会话的前端会多出别的会话的消息）
     await log.append(events)
-    for (const e of events) options.onEvent?.(e)
     // 新会话开场写成之后立即在旧会话落终结记号（与 runLoop 同序）。不能留给 onFinish：交接后连接被取消时引擎跳过 onFinish、
     // 改调 onAbort，旧会话就会被记成 paused(host)
     await append(ctx, s, [

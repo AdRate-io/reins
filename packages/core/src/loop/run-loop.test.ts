@@ -1424,8 +1424,8 @@ describe("runLoop：错误、中止、上限、交接", () => {
       kind: "host",
       text: "已完成 A、B，剩 C",
     })
-    // 新会话的两条也 yield 给了宿主
-    expect(events.filter((e) => e.sessionId === result.toSessionId)).toHaveLength(2)
+    // runLoop 只 yield 本会话的事件：新会话开场只在日志里，经 toSessionId 读（#55）
+    expect(events.every((e) => e.sessionId === SESSION)).toBe(true)
   })
 
   it("handoff：intent.opening 排在摘要说明之后、触发消息之前，循环只补齐壳字段", async () => {
