@@ -866,7 +866,9 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       } catch (err) {
         if (err instanceof RunStateError) {
           // 本进程正有 run 在写这条会话：预校验读的是一条正在前进的日志（例如另一个窗口已交了同一份结论、工具在跑），
-          // 判出的"不在等审批 / pending 对不上"只是表象，如实回 run_in_progress（与 runs.create 撞名额同一形状）
+          // 判出的"不在等审批 / pending 对不上"只是表象，如实回 run_in_progress（与 runs.create 撞名额同一形状）。
+          // 刻意不分错误码：本进程有 run 在跑时任何 RunStateError（含签名、漂移）都改写成它——这次请求本来就会撞名额，
+          // 等 run 结束再交才拿得到对那时日志的真实判定
           if (runs.get(sessionId) !== undefined) {
             const conflict = new RunConflictError(sessionId)
             return json(
