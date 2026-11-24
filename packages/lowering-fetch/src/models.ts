@@ -178,6 +178,13 @@ const O_SERIES = { reasoning: true, contextWindow: 200_000, maxOutputTokens: 100
  * `openaiChat()` 或在 `models` 里自己声明。Anthropic 列当前一代 + 常用上一代。
  */
 export const BUILTIN_MODELS: readonly FetchModel[] = [
+  // 当前一代（官方价目 2026-11-03 查阅；Fable 5.2 的 5 分钟缓存写价官方公布为 $10，其余按 1.25 倍）
+  anthropicModel("claude-fable-5-2", { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 }),
+  anthropicModel("claude-opus-5-5", { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }),
+  anthropicModel("claude-sonnet-5-5", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }),
+  // Haiku 5.5 按提示长度分档：≤100K 为 $0.10 / $0.50，超过为 $0.50 / $2.50。这里存低档价（缓存读写按 0.1 / 1.25 倍），
+  // 长提示的成本因此是下限（同 gpt-5.4 的加价档处理）
+  anthropicModel("claude-haiku-5-5", { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }),
   anthropicModel("claude-fable-5-1", { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 }),
   anthropicModel("claude-opus-5", { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
   anthropicModel("claude-opus-4-8", { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),

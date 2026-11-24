@@ -132,7 +132,7 @@ describe("工厂", () => {
     expect(() => chatCompletions("x", { provider: "nobody", apiKey: "k" })).toThrow(/baseUrl/)
   })
 
-  it("anthropic()：表内模型带价目；中途 system 按模型族（Opus 5 真、Sonnet 5 / Haiku 假、宿主可覆盖）；taskBudget 只 Opus 5 / Fable 5.1", () => {
+  it("anthropic()：表内模型带价目；中途 system 按模型族（Opus 5 真、Sonnet 5 / Haiku 假、宿主可覆盖）；taskBudget 按官方清单", () => {
     const opus = anthropic("claude-opus-5", { apiKey: "k" })
     expect(opus.model).toEqual({ provider: "anthropic", id: "claude-opus-5" })
     expect(opus.lowering.capabilities(opus.model)).toMatchObject({
@@ -160,6 +160,49 @@ describe("工厂", () => {
     })
     const forced = anthropic("claude-sonnet-5", { apiKey: "k", midConversationSystem: true })
     expect(forced.lowering.capabilities(forced.model).midConversationSystem).toBe(true)
+  })
+
+  it("anthropic()：5.5 一代与 Fable 5.2 在内置表（1M 窗口、128K 输出、官方价目）；中途 system 与 task budget 按官方支持清单（全库审查 #30）", () => {
+    const caps = (id: string) => {
+      const m = anthropic(id, { apiKey: "k" })
+      return m.lowering.capabilities(m.model)
+    }
+    for (const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"])
+      expect(caps(id), id).toMatchObject({
+        contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
+        midConversationSystem: true,
+        taskBudget: true,
+      })
+    expect(definitionOf("anthropic", "claude-opus-5-5", "anthropic-messages", {}).cost).toEqual({
+      input: 4,
+      output: 20,
+      cacheRead: 0.2,
+      cacheWrite: 5,
+    })
+    expect(definitionOf("anthropic", "claude-sonnet-5-5", "anthropic-messages", {}).cost).toEqual({
+      input: 2,
+      output: 10,
+      cacheRead: 0.1,
+      cacheWrite: 2.5,
+    })
+    expect(definitionOf("anthropic", "claude-fable-5-2", "anthropic-messages", {}).cost).toEqual({
+      input: 8,
+      output: 40,
+      cacheRead: 0.2,
+      cacheWrite: 10,
+    })
+    // task budget：Fable 5 / 5.1 / 5.2、Mythos 5.x、Opus 4.8 / 4.7 也支持；Sonnet 5 两项都不支持
+    for (const id of [
+      "claude-fable-5",
+      "claude-fable-5-1",
+      "claude-mythos-5-2",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+    ])
+      expect(caps(id).taskBudget, id).toBe(true)
+    expect(caps("claude-opus-4-7").midConversationSystem).toBe(false)
+    expect(caps("claude-sonnet-5")).toMatchObject({ midConversationSystem: false, taskBudget: false })
   })
 
   it("deferredTools（L1）：Anthropic 官方模型缺省真（Haiku 4.5 也支持）；第三方 Anthropic 协议上游缺省假、宿主可声明；其余线一律假", () => {
