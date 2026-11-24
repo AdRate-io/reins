@@ -15,6 +15,7 @@ import {
   createCoreRegistry,
   type Event,
   hydrateImageRefs,
+  type ImageRefCache,
   lossesOf,
   memoryStore,
   type ReplayedTurn,
@@ -65,7 +66,7 @@ const capabilities = lowering.capabilities(model)
 const { turns, preamble } = replayTurns(timeline, { budget: { contextLimit: capabilities.contextWindow } })
 const toolSpecs = tools.map(toolSpecOf)
 /** 同一张图多轮可见时只读一次 */
-const imageCache = new Map<string, string>()
+const imageCache: ImageRefCache = new Map()
 const landingsOf = async (turn: ReplayedTurn) => {
   // 与 runLoop 同一步：视野内的图片引用先换回内联，降级层才看得到图
   const events = await hydrateImageRefs(turn.visible, { blobs, cache: imageCache })
