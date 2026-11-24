@@ -46,7 +46,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 | `packages/eval/src/types.ts` | 全部数据形状：`EvalTask` / `PlantedFact` / `PlantedConstraint` / `EvalFixture` / `EvalArm` / `Judge` / `TokenTotals` / `EvalMetrics` / `FactResult` / `EvalOutcome(Draft)` / `ArmSummary` / `EvalReport` |
 | `packages/eval/src/jsonl.ts` | 事件 ↔ JSONL 文本；读走注册表 `read` 升级，fail-closed，错误带行号（`JsonlParseError`） |
 | `packages/eval/src/recorded-tools.ts` | `recordedTools(recording, opts)`：把录像里配对的 tool_call → tool_result 变成确定性回放工具；`canonicalArgs` 是键排序稳定 JSON |
-| `packages/eval/src/recording.ts` | 录像 → fixture 素材的纯函数：`unspillRecording`（拼回外溢全文）、`scrubEvents`（JSON 文本层逐字脱敏）、`aliasTable` / `matchStrings` / `jsonValuesAt` / `parseFetchChunk` / `assembleChunks` |
+| `packages/eval/src/recording.ts` | 录像 → fixture 素材的纯函数：`unspillRecording`（拼回外溢全文）、`scrubEvents`（JSON 文本层逐字脱敏，一层与两层转义都换）、`scrubForms`（一个值在事件 JSON 里的全部写法，给自查用）、`aliasTable` / `matchStrings` / `jsonValuesAt` / `parseFetchChunk` / `assembleChunks` |
 | `packages/eval/src/metrics.ts` | 时间线纯函数指标：`sumTokens` / `billableTokens` / `cacheHitRateOf` / `splitModelTurns` / `countCompactions` / `countRepeatedToolCalls` / `measureViolations` / `measureTimeline` / `finalTextOf` / `mean` |
 | `packages/eval/src/arms.ts` | 内置 `noneArm()` / `thresholdArm()`，以及 `withCapabilities` / `withContextWindow` 这层只改能力声明的 Lowering 包装 |
 | `packages/eval/src/runner.ts` | `runEval` 对照运行器与 `summarize`；含审批代答、预算续跑、handoff 跟随、fork 探针、`probeAnswerOf` / `gradeExpect` |
@@ -59,7 +59,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 ### 3.1 素材：从真实录像做出一个"世界"
 
 1. `unspillRecording(recording)` 先把 spill 外溢过的 tool_result 补全：扫出全部 `fetch_blob` 结果，用 `parseFetchChunk` 从 `[blob "id": characters a–b of N …]` 头解析分片，`assembleChunks` 按字符偏移拼接——重叠取先到者，声明区间与正文长度不符、有缺口、没拼到 `total` 一律返回 `undefined`，该 blob 进 `incomplete` 且原结果原样保留。拼齐的把 `spilled` 字段删掉、内容换成全文；`fetch_blob` 的调用/结果对缺省整对删掉（`dropFetchBlob`）。
-2. `scrubEvents(events, replacements)` 脱敏：对每条事件 `JSON.stringify` 后做字符串替换，**长的 `from` 先换**，替换双方都按 `jsonForm`（`JSON.stringify(s).slice(1,-1)`）转成 JSON 字面量里的写法，再 `JSON.parse` 回事件。返回每条规则的命中数 `hits`（不含原文，可进报告）。待换的值由 `matchStrings`（正则找）与 `jsonValuesAt`（按键名找，遇到 `text` 字段是 JSON 就解析后继续遍历）收集，`aliasTable` 去重保序编号。
+2. `scrubEvents(events, replacements)` 脱敏：对每条事件 `JSON.stringify` 后做字符串替换，**长的 `from` 先换**，替换双方都按 `jsonForm`（`JSON.stringify(s).slice(1,-1)`）转成 JSON 字面量里的写法，**一层与两层转义各换一遍**（值可能在 tool_result 文本里的 JSON 字符串中，`jsonValuesAt` 正是从那一层取值的；两层写法更长、先换），再 `JSON.parse` 回事件。自查残留用 `scrubForms(value)` 给的全部写法查——带引号 / 反斜杠的原值不会原样出现在 JSON 文本里，只查原值永远查不出。返回每条规则的命中数 `hits`（不含原文，可进报告）。待换的值由 `matchStrings`（正则找）与 `jsonValuesAt`（按键名找，遇到 `text` 字段是 JSON 就解析后继续遍历）收集，`aliasTable` 去重保序编号。
 3. `recordedTools(recording, opts)` 建回放工具：先按 `toolCallId` 建 tool_result 索引，再顺序扫 tool_call 配对，按工具名分组存 `{ key: canonicalArgs(args), result }`。统计四项：`pairs`（配对成功数）、`byName`、`spilled`（配对上的结果里 `payload.spilled` 非空的条数——回放时只有预览，全文不在，fixture 作者要么录制时关外溢要么用 `fallback` 补）、`unanswered`（有 call 无 result，录制时被拒或暂停未续，不进回放）。
 
 `recordedTools` 的 `execute` 匹配顺序（严格在前，宽松要显式开）：

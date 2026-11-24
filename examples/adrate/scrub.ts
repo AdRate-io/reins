@@ -17,7 +17,7 @@
  */
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
-import { aliasTable, jsonValuesAt, matchStrings, parseEventsJsonl, type Replacement, scrubEvents, toEventsJsonl, unspillRecording } from "@reinsjs/eval"
+import { aliasTable, jsonValuesAt, matchStrings, parseEventsJsonl, type Replacement, scrubEvents, scrubForms, toEventsJsonl, unspillRecording } from "@reinsjs/eval"
 import type { Event } from "@reinsjs/agent"
 
 const here = (p: string) => new URL(p, import.meta.url)
@@ -73,7 +73,8 @@ function main(): void {
     }
     const { events, hits } = scrubEvents(raw, replacements)
     const after = JSON.stringify(events)
-    for (const [from] of replacements) if (after.includes(from)) throw new Error(`${name}：脱敏后仍残留原值`)
+    // 按 scrubForms 的全部写法查：带引号 / 反斜杠的原值在 JSON 文本里不会原样出现，只查原值永远查不出残留
+    for (const [from] of replacements) if (scrubForms(from).some((f) => after.includes(f))) throw new Error(`${name}：脱敏后仍残留原值`)
     for (const id of new Set(after.match(/\b7\d{18}\b/g))) if (!/^7000000000000000\d{3}$/.test(id)) throw new Error(`${name}：残留非别名形态的广告主 id`)
     for (const id of new Set(after.match(/\b18\d{14}\b/g))) if (!/^18000000000\d{5}$/.test(id)) throw new Error(`${name}：残留非别名形态的计划 id`)
     const emails = (after.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? []).filter((s) => !s.startsWith("reins-"))

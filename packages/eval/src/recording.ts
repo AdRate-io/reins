@@ -7,6 +7,8 @@
  *    拼不齐（模型当时没读完）的原样保留并报告，不硬凑。
  * 2. **脱敏（scrub）**：按"原文 → 别名"表对每条事件做逐字替换，长的先换，替换在 JSON 文本层进行，
  *    所以入参、结果、模型正文、思考里出现的同一个值一起变，回放时模型看到的 id 与它要传给工具的 id 仍然一致。
+ *    值可能落在两层 JSON 里（AdRate 这类信封工具把整段响应作为字符串放进 tool_result 的 text），
+ *    所以一层与两层转义的写法都换；自查残留要用 `scrubForms` 给的全部写法，不能只查原值。
  *    每条规则命中几次会报告出来（不含原文），零命中的规则说明表写错了。
  *
  * 本文件是纯函数、零 node:*；读写文件与决定"哪些字段算敏感"由调用方（examples/eval 的 build 脚本）负责。
@@ -154,12 +156,29 @@ export interface ScrubResult {
 const jsonForm = (s: string) => JSON.stringify(s).slice(1, -1)
 
 /**
+ * 一个值在事件 JSON 文本里可能的全部写法：一层转义（直接在 payload 字段里），以及两层转义（在 tool_result 文本里的
+ * JSON 字符串中，jsonValuesAt 就是从那一层取值的）。不含引号、反斜杠、控制字符的值两层写法相同，只返回一种。
+ * scrubEvents 按这些写法替换；调用方自查"原值一个不剩"也要逐个查它们——原值本身带引号时根本不会原样出现在 JSON 文本里。
+ */
+export function scrubForms(value: string): string[] {
+  const once = jsonForm(value)
+  const twice = jsonForm(once)
+  return twice === once ? [once] : [once, twice]
+}
+
+/**
  * 对每条事件的 JSON 文本做逐字替换（长的 from 先换，避免短串把长串拆坏），再解析回事件。
  * 事件的 id / sessionId / seq 等结构字段同样会被替换 —— 调用方若不想动它们，别把那些值放进表里。
  */
 export function scrubEvents(events: readonly Event[], replacements: readonly Replacement[]): ScrubResult {
+  // 每条规则展开成一层与两层两种写法（to 按同一层写法转义）；两层写法更长，排序后先换，不会被一层的拆坏。
+  // 原值不带需转义的字符时分不出层，to 只按一层写——别名本身应当不含引号与反斜杠
   const ordered = replacements
-    .map((r, i) => ({ from: jsonForm(r[0]), to: jsonForm(r[1]), i }))
+    .flatMap((r, i) => {
+      const once = { from: jsonForm(r[0]), to: jsonForm(r[1]), i }
+      const twice = { from: jsonForm(once.from), to: jsonForm(once.to), i }
+      return twice.from === once.from ? [once] : [once, twice]
+    })
     .filter((r) => r.from.length > 0)
     .sort((a, b) => b.from.length - a.from.length)
   const hits = replacements.map(() => 0)
