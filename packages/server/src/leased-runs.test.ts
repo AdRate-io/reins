@@ -248,7 +248,8 @@ describe("D4 leasedRunRegistry：两台实例共用一份租约", () => {
   })
 
   it("上一个 run 的 release 还在路上时同会话再 create：先等它落地再 acquire，迟到的 release 删不掉新 run 的租约", async () => {
-    const inner = new InMemoryRunLease()
+    // 时钟冻结：租约永不按时间过期，心跳续期失败只可能是租约被删——全量跑时事件循环卡顿不会让用例误报
+    const inner = new InMemoryRunLease({ now: () => 0 })
     const release = gate()
     const slow: RunLease = {
       acquire: (s, o, t) => inner.acquire(s, o, t),
