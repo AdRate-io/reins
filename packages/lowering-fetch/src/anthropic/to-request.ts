@@ -437,8 +437,9 @@ export function encodeAnthropicRequest(input: AnthropicEncodeInput): {
 /**
  * 一轮模型输出 → assistant 的内容块。
  * - 正文：Anthropic 接受多个 text 块，逐段原样（空段跳过并声明）；
- * - thinking：signature 在且来源同家（provider + api）→ thinking 块；redacted → redacted_thinking(data)；
- *   无签名或别家 → dropped。同家不同型号（换代、日期后缀、网关改名）照发并备注，能否读由厂商定（读不了它会丢弃、不计费）；
+ * - thinking：signature 在且 provider + api + model 三者一致 → thinking 块；redacted → redacted_thinking(data)；
+ *   无签名、别家、同家不同型号（换代、日期后缀、网关改名）一律 dropped——签名绑定产出它的型号，2026-09-15 实测照发别的
+ *   型号的签名厂商 400（踩坑 37），别"修"成照发；
  * - tool_call：input 必须是对象，不是对象的包成 { value }（lossy wrapped-args）。
  */
 function assistantBlocks(
