@@ -25,10 +25,10 @@ const store = sqliteStores(new Database("./agent.db"))
 | table | keyed by | notes |
 | --- | --- | --- |
 | `reins_events` | `session_id, seq` | append-only; `seq` must be contiguous per session (the store enforces it and throws `seq_conflict`) |
-| `reins_blobs` | `session_id, id` | spilled tool results and other large payloads |
+| `reins_blobs` | `id` | spilled tool results and other large payloads; `session_id` is a plain column recording the session that wrote it (ids are globally unique, and who may read a blob is decided by the timeline, not by this column) |
 | `reins_memory` (configurable) | `path` | the model's memory files; `memoryTable` lets each role or tenant have its own table |
 
-Table names are validated against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL is assembled — identifiers cannot be bound as parameters, so this whitelist is the injection guard. Only the memory table is renamable; events and blobs are isolated by `session_id` on purpose.
+Table names are validated against `^[A-Za-z_][A-Za-z0-9_]{0,62}$` before any SQL is assembled — identifiers cannot be bound as parameters, so this whitelist is the injection guard. Only the memory table is renamable, on purpose: events are isolated by `session_id`, and who may read a blob is decided by the timeline that references it.
 
 `fork(from, atSeq, to)` copies a session prefix verbatim (ids and `seq` preserved) into an empty session in one statement.
 

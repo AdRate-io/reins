@@ -1,6 +1,9 @@
 import { type BlobMeta, type BlobStore, StoreError, uuidv7 } from "@reinsjs/core"
 import type { PgClient } from "./client.js"
 
+/** PG integer（int4）上限 */
+const INT4_MAX = 2_147_483_647
+
 interface MetaRow {
   session_id: string
   mime: string
@@ -47,8 +50,11 @@ export class PgBlobStore implements BlobStore {
   }
 
   async slice(id: string, range: { start: number; end: number }): Promise<Uint8Array> {
-    const start = Math.max(0, Math.floor(range.start))
-    const length = Math.max(0, Math.floor(range.end) - start)
+    // substring 的 FROM / FOR 是 integer（int4），超出即抛驱动原始错误；bytea 本身不过 1GB，先截到 int4 再算长度，
+    // 与合同"越界部分截断"一致（宿主"取到末尾"常写 Infinity）
+    const start = Math.min(Math.max(0, Math.floor(range.start)), INT4_MAX - 1)
+    const end = Math.min(Math.floor(range.end), INT4_MAX - 1)
+    const length = Math.max(0, end - start)
     const res = await this.client.query(
       "SELECT substring(bytes FROM $2 FOR $3) AS part FROM reins_blobs WHERE id = $1",
       [id, start + 1, length],

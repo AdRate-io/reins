@@ -17,6 +17,7 @@ import {
   matchStrings,
   parseFetchChunk,
   scrubEvents,
+  scrubForms,
   unspillRecording,
 } from "./recording.js"
 
@@ -174,6 +175,61 @@ describe("scrubEvents：JSON 文本层逐字替换", () => {
     const { events: out, hits } = scrubEvents([e], [['"A\\B"', "X"]])
     expect(hits).toEqual([1])
     expect((out[0] as CoreEventOf<"core.model_text">).payload.text).toBe("name X here")
+  })
+})
+
+describe("scrubEvents：嵌在工具结果 JSON 文本里的值（两层转义）", () => {
+  it("含引号的名称在信封 JSON 里也被替换；scrubForms 给出自查要找的全部写法", () => {
+    seq = 0
+    const name = 'Shop "A" 旗舰店'
+    const events = [
+      ev({
+        type: "core.tool_result",
+        actor: "tool",
+        payload: {
+          toolCallId: "c1",
+          name: "advertisers",
+          isError: false,
+          content: [{ type: "text", text: JSON.stringify({ data: { advertiserName: name, id: 1 } }) }],
+        },
+      }),
+      ev({ type: "core.model_text", actor: "model", payload: { text: `看 ${name}` } }),
+    ]
+    expect(jsonValuesAt(events, ["advertiserName"])).toEqual([name])
+    const { events: out, hits } = scrubEvents(events, [[name, "name_01"]])
+    expect(hits).toEqual([2])
+    const text = JSON.stringify(out)
+    for (const form of scrubForms(name)) expect(text).not.toContain(form)
+    const result = out[0] as CoreEventOf<"core.tool_result">
+    const inner = result.payload.content[0]
+    expect(inner?.type === "text" && JSON.parse(inner.text)).toEqual({
+      data: { advertiserName: "name_01", id: 1 },
+    })
+    expect((out[1] as CoreEventOf<"core.model_text">).payload.text).toBe("看 name_01")
+    // 不含引号 / 反斜杠的值两层写法相同，只有一种
+    expect(scrubForms("Acme")).toEqual(["Acme"])
+    expect(scrubForms(name)).toEqual([
+      JSON.stringify(name).slice(1, -1),
+      JSON.stringify(JSON.stringify(name).slice(1, -1)).slice(1, -1),
+    ])
+  })
+
+  it("两层转义的 from 与一层的互不吞并：长的先换，嵌套与正文各自换成对应写法", () => {
+    seq = 0
+    const value = "C:\\ads\\x"
+    const e = ev({
+      type: "core.tool_result",
+      actor: "tool",
+      payload: {
+        toolCallId: "c1",
+        name: "t",
+        isError: false,
+        content: [{ type: "text", text: JSON.stringify({ path: value, note: `raw ${value}` }) }],
+      },
+    })
+    const { events: out } = scrubEvents([e], [[value, 'P"1']])
+    const inner = (out[0] as CoreEventOf<"core.tool_result">).payload.content[0]
+    expect(inner?.type === "text" && JSON.parse(inner.text)).toEqual({ path: 'P"1', note: 'raw P"1' })
   })
 })
 

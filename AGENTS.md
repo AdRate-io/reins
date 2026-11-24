@@ -198,7 +198,7 @@ docs/                # 维护者文档（中文），见文档索引
 
 ## 存储原则
 
-- 表 `reins_events` / `reins_blobs` / `reins_memory`，pg 另有 `reins_runs`；只有记忆表名可配，事件表与 blob 表按 `session_id` 隔离、刻意不可配。保留策略见全景图 §6。
+- 表 `reins_events` / `reins_blobs` / `reins_memory`，pg 另有 `reins_runs`；只有记忆表名可配；事件按 `session_id` 隔离，blob 归属由时间线判定，两表名都刻意不可配。保留策略见全景图 §6。
 - 一份 SQL 多个驱动（node:sqlite / bun:sqlite / pg / PGlite），驱动由宿主传入；四份一致性套件在 `@reinsjs/core/testing`，新实现必须共跑。
 
 ## 关键脚本
@@ -387,9 +387,10 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 ### eval
 
 - **`maxResumes` 缺省 0，预算暂停即判"没跑完"** — fixture 不给这个值，真模型会莫名一堆 paused 格。
+- **`checkGate` 要求两臂覆盖完全相同的 fixture × 重复、每格一次，否则抛错** — 四条都是按格均值比；拆进程跑时某臂缺格，`report.ts` 照出报告但写"门禁未判定"，补跑齐了再判。
 - **`withContextWindow` 只改 `capabilities`，真实窗口不变** — 测的是"机制在窄窗口怎么动"，不是"溢出会怎样"。
 - **探针里脑子工具保留、宿主工具清空** — 装 compact / spill 的臂能 `recall` / `fetch_blob`，基线臂不能，召回这一格两臂不是同一张卷子，有意为之。
-- **门禁第四条 governance 是候选自己前后比**，"双方都无预埋事实视为通过"——四条里两条可能在无信息时亮绿。
+- **门禁第四条 governance 是候选自己前后比，只取整理后还有模型动作的格，按格均值与按动作加权都不上升才过**（没整理的格 after 窗恒空，掺进来会稀释成 0；单用一种口径都能被分布掩盖）；"双方都无预埋事实"与"候选没有一格整理后有动作"都视为通过并带 note——四条里两条可能在无信息时亮绿。
 - **examples 引用各包的 `dist/`，改了源码跑真模型前先 `pnpm build`** — 否则跑的是旧代码、白花钱（2026-10-31 OPT-261031-1 误跑一轮）；判据：结果里新字段为 undefined。
 - **fixture 给模型的每个值按工具 schema 核类型；门禁差一两格先看掉分在哪题、两臂是否都掉** — 两臂同题都掉多半是题的问题（踩坑 25）。
 
