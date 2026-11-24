@@ -1035,6 +1035,177 @@ describe("reinsMiddleware：审批", () => {
     )
   })
 
+  describe("原生审批答复入日志（全库审查 2026-11-25 #5）", () => {
+    function setup() {
+      const shared = { log: new InMemoryEventLog() }
+      const received: unknown[] = []
+      const native = toolDefinition({
+        name: "deploy",
+        description: "上线",
+        inputSchema: { type: "object", properties: { env: { type: "string" } } },
+        needsApproval: true,
+      }).server(async (args: unknown) => {
+        received.push(args)
+        return `deployed ${(args as { env: string }).env}`
+      })
+      const history = (): ModelMessage[] => [
+        user("上线"),
+        {
+          role: "assistant",
+          content: null,
+          toolCalls: [
+            { id: "c1", type: "function", function: { name: "deploy", arguments: '{"env":"staging"}' } },
+          ],
+        },
+      ]
+      const pauseThenResume = async (
+        response: unknown,
+        sockets: readonly Socket[] = [],
+        resumeExtra: Partial<ReinsMiddlewareOptions> = {},
+      ) => {
+        const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "staging" })] }], sockets, {}, shared)
+        const { interrupts, runId } = interruptsOf(
+          await f.run({ messages: [user("上线")], tools: [native], runId: "run1" }),
+        )
+        expect(interrupts.map((i) => i.id)).toEqual(["approval_c1"])
+        const f2 = fixture([{ blocks: [say("好了")] }], sockets, resumeExtra, shared)
+        const chunks = await f2.run({
+          messages: history(),
+          tools: [native],
+          parentRunId: runId,
+          resume: [{ interruptId: "approval_c1", status: "resolved", payload: response }],
+        })
+        expect(chunks.some((c) => c.type === "RUN_ERROR")).toBe(false)
+        return { events: await all(shared.log), adapter: f2.adapter }
+      }
+      return { received, pauseThenResume }
+    }
+    const decisionsOf = (events: readonly CoreEvent[]) =>
+      (
+        events.filter((e) => e.type === "core.approval_decision") as CoreEventOf<"core.approval_decision">[]
+      ).map((d) => [d.actor, d.payload])
+
+    it("批准：留 approval_decision(host, by tanstack) 与 run_resumed，再执行", async () => {
+      const { received, pauseThenResume } = setup()
+      const { events } = await pauseThenResume({ approved: true })
+      expect(received).toEqual([{ env: "staging" }])
+      expect(types(events).slice(6)).toEqual([
+        "tools_bound",
+        "approval_decision",
+        "run_resumed",
+        "tool_started",
+        "tool_result",
+        "model_text",
+        "budget_usage",
+        "run_ended",
+      ])
+      expect(decisionsOf(events)).toEqual([["host", { toolCallId: "c1", approved: true, by: "tanstack" }]])
+    })
+
+    it("拒绝：结论同样在续跑开头落下，结果是错误、工具未执行", async () => {
+      const { received, pauseThenResume } = setup()
+      const { events } = await pauseThenResume({ approved: false })
+      expect(received).toEqual([])
+      expect(types(events).slice(6, 9)).toEqual(["tools_bound", "approval_decision", "run_resumed"])
+      expect(decisionsOf(events)).toEqual([["host", { toolCallId: "c1", approved: false, by: "tanstack" }]])
+      const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(true)
+    })
+
+    it("改参批准（editedArgs 与日志里的入参不同）：不执行改过的入参，日志记批准与拒绝两条结论，模型看到改成了什么", async () => {
+      const { received, pauseThenResume } = setup()
+      const { events, adapter } = await pauseThenResume({ approved: true, editedArgs: { env: "prod" } })
+      // 时间线写的是 staging，绝不能实际去改 prod
+      expect(received).toEqual([])
+      expect(decisionsOf(events)).toEqual([
+        ["host", { toolCallId: "c1", approved: true, by: "tanstack" }],
+        [
+          "system",
+          {
+            toolCallId: "c1",
+            approved: false,
+            by: "reins",
+            reason: expect.stringContaining('{"env":"prod"}'),
+          },
+        ],
+      ])
+      const result = events.find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(true)
+      expect((result.payload.content[0] as { text: string }).text).toContain('{"env":"prod"}')
+      expect(adapter.calls[0]?.messages?.[2]).toMatchObject({
+        role: "tool",
+        error: expect.stringContaining("edited"),
+      })
+    })
+
+    it("经 UIMessage 的 approval-responded 部件批准（不走 resume）：执行前同样留批准结论", async () => {
+      const shared = { log: new InMemoryEventLog() }
+      const received: unknown[] = []
+      const native = toolDefinition({
+        name: "deploy",
+        description: "上线",
+        inputSchema: { type: "object", properties: { env: { type: "string" } } },
+        needsApproval: true,
+      }).server(async (args: unknown) => {
+        received.push(args)
+        return "deployed"
+      })
+      const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "staging" })] }], [], {}, shared)
+      await f.run({ messages: [user("上线")], tools: [native] })
+      const f2 = fixture([{ blocks: [say("好了")] }], [], {}, shared)
+      const chunks = await f2.run({
+        messages: [
+          { id: "u1", role: "user", parts: [{ type: "text", content: "上线" }] },
+          {
+            id: "a1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                id: "c1",
+                name: "deploy",
+                arguments: '{"env":"staging"}',
+                state: "approval-responded",
+                approval: { id: "approval_c1", needsApproval: true, approved: true },
+              },
+            ],
+          },
+        ] as unknown as ModelMessage[],
+        tools: [native],
+      })
+      expect(chunks.some((c) => c.type === "RUN_ERROR")).toBe(false)
+      expect(received).toEqual([{ env: "staging" }])
+      const events = await all(shared.log)
+      expect(decisionsOf(events)).toEqual([["host", { toolCallId: "c1", approved: true, by: "tanstack" }]])
+      expect(types(events).indexOf("approval_decision")).toBeLessThan(types(events).indexOf("tool_started"))
+    })
+
+    it("editedArgs 与原入参逐值相同：照常执行", async () => {
+      const { received, pauseThenResume } = setup()
+      const { events } = await pauseThenResume({ approved: true, editedArgs: { env: "staging" } })
+      expect(received).toEqual([{ env: "staging" }])
+      expect(decisionsOf(events)).toEqual([["host", { toolCallId: "c1", approved: true, by: "tanstack" }]])
+    })
+
+    it("approval({ ttlMs }) 对原生那张卡同样生效：过期批准被拦（#4 把 Socket 的 defer 并到原生卡上之后）", async () => {
+      const { received, pauseThenResume } = setup()
+      // 续跑的时钟从一小时后起走：批准事件的 at 减 approval_request 的 at 远超 60 s
+      let t = 1_800_000_000_000 + 3_600_000
+      const { events } = await pauseThenResume(
+        { approved: true },
+        [approval({ ask: ["deploy"], ttlMs: 60_000 })],
+        { now: () => ++t },
+      )
+      expect(received).toEqual([])
+      expect(decisionsOf(events).map(([actor, p]) => [actor, (p as { approved: boolean }).approved])).toEqual(
+        [
+          ["host", true],
+          ["system", false],
+        ],
+      )
+    })
+  })
+
   it("宿主漏登记 reinsApprovalInterrupt：init 告警一次，需审批的调用降级为拒绝且留痕，工具未执行（R7 fail-closed）", async () => {
     const warns: string[] = []
     const f = fixture(

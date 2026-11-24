@@ -28,6 +28,7 @@
  *   写的 run_paused 不带 awaiting / stopped（与 state 同）
  */
 import {
+  awaitingOf,
   type BeforeToolDecision,
   type BlobStore,
   BUILTIN_APPROVAL_POLICY,
@@ -223,11 +224,72 @@ interface RunState {
    */
   approvalInterruptRegistered: boolean
   /**
+   * 本次请求带来的 TanStack 原生审批答复（toolCallId → 结论），init 从 `config.resume` / `resumeToolState` 读出，
+   * beforeTools 边界记成 approval_decision 后清空。原生答复走引擎自己的通道、不经 onInterruptResolution（#5）
+   */
+  nativeResolutions: Map<string, NativeResolution>
+  /** 本 run 已写过 run_resumed（通用中断与原生审批的答复共用一条） */
+  resumed: boolean
+  /**
    * 本 run 已写过终结事件（run_paused / run_ended），在 append 里随落随记。三个终结钩子共用这一个守卫：
    * wait 路径返回后若连接被取消，引擎会在 finally 里再调 onAbort，没有守卫就会在 run_paused(approval) 后面
    * 再追加一条 run_paused(host)，把审批暂停盖掉
    */
   ended: boolean
+}
+
+interface NativeResolution {
+  approved: boolean
+  /** 审批人改过的入参（TanStack 审批答复的 `editedArgs`），没改为 undefined */
+  editedArgs?: unknown
+}
+
+/** 原生审批中断的 id 形如 `approval_<toolCallId>`（0.53.0 `executeToolCalls` / `buildActionableInterrupts`） */
+const NATIVE_APPROVAL_PREFIX = "approval_"
+
+/** 答复（布尔或 `{ approved, editedArgs }` 信封）→ 结论；形状不认得的返回 undefined（引擎随后会以校验失败拒掉整批） */
+function nativeResolutionOf(value: unknown): NativeResolution | undefined {
+  if (typeof value === "boolean") return { approved: value }
+  if (typeof value !== "object" || value === null) return undefined
+  const v = value as { approved?: unknown; editedArgs?: unknown }
+  if (typeof v.approved !== "boolean") return undefined
+  return v.approved && v.editedArgs !== undefined
+    ? { approved: true, editedArgs: v.editedArgs }
+    : { approved: v.approved }
+}
+
+/**
+ * 本次请求带来的原生审批答复。两个来源：客户端的 `resume` 项（引擎在 init 之后才校验并应用，所以这里读原件；
+ * 校验不过的整批在执行任何工具之前就被引擎拒掉、run 记 error）与其它中间件重建的 `resumeToolState.approvals`。
+ * 被取消的项不在此列：引擎落"已取消"错误结果，onToolPhaseComplete 照旧补记结论
+ */
+function nativeResolutionsOf(config: ChatMiddlewareConfig): Map<string, NativeResolution> {
+  const out = new Map<string, NativeResolution>()
+  for (const [key, value] of config.resumeToolState?.approvals ?? []) {
+    const r = nativeResolutionOf(value)
+    if (r) out.set(key.startsWith(NATIVE_APPROVAL_PREFIX) ? key.slice(NATIVE_APPROVAL_PREFIX.length) : key, r)
+  }
+  for (const item of config.resume ?? []) {
+    if (item.status !== "resolved" || !item.interruptId.startsWith(NATIVE_APPROVAL_PREFIX)) continue
+    const r = nativeResolutionOf(item.payload)
+    if (r) out.set(item.interruptId.slice(NATIVE_APPROVAL_PREFIX.length), r)
+  }
+  return out
+}
+
+/** 两份入参是否逐值相同（对象键序不计）：只用于判断审批人是否真的改了入参 */
+function sameArgs(a: unknown, b: unknown): boolean {
+  const canonical = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(canonical)
+    if (typeof v === "object" && v !== null)
+      return Object.fromEntries(
+        Object.keys(v)
+          .sort()
+          .map((k) => [k, canonical((v as Record<string, unknown>)[k])]),
+      )
+    return v
+  }
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b))
 }
 
 function defaultCapabilities(partial: ReinsMiddlewareOptions["capabilities"]): LoweringCapabilities {
@@ -410,6 +472,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       assembler: new BlockAssembler({ provider: model.provider, api: TANSTACK_API, model: model.id }),
       wrapped: new Map(),
       approvalInterruptRegistered: approvalInterruptRegistered(ctx),
+      nativeResolutions: nativeResolutionsOf(config),
+      resumed: false,
       ended: false,
     }
     states.set(ctx, s)
@@ -574,9 +638,71 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
     }
   }
 
+  /** 本 run 第一次写答复时补一条 run_resumed（通用中断与原生审批共用） */
+  const markResumed = async (ctx: ChatMiddlewareContext, s: RunState) => {
+    if (s.resumed) return
+    s.resumed = true
+    await append(ctx, s, [{ type: "core.run_resumed", actor: "host", payload: {} }])
+  }
+
+  /**
+   * 原生审批的答复记成 approval_decision（全库审查 2026-11-25 #5）。在 beforeTools 边界、Socket 管线之前落：
+   * 审批 ttl 等按"批准事件"判的规则要看得见它（#4 起 Socket 的 defer 也可能由原生那张卡答复）。
+   * 只给**正在等审批**的调用记（有 approval_request、还没有结论，与 runLoop 同一口径 `awaitingOf`）。
+   *
+   * 审批人改了入参（`editedArgs` 与日志里的 tool_call 入参不同）时不执行：本库的时间线没有"改参批准"的落点，
+   * tool_call 是模型的原话、只追加不改，照改过的入参执行就是"日志写 staging、实际改了 prod"（宪法二）。
+   * 批准照记，再由 reins 补一条拒绝结论说明原因；拒绝结论在后，beforeTools 按最后一条结论拦下，模型从结果里看到
+   * 审批人想要的入参，可以按它重新发起（会再问一次人）
+   */
+  const recordNativeResolutions = async (
+    ctx: ChatMiddlewareContext,
+    s: RunState,
+    timeline: readonly Event[],
+  ): Promise<boolean> => {
+    if (s.nativeResolutions.size === 0) return false
+    const resolutions = s.nativeResolutions
+    s.nativeResolutions = new Map()
+    const pending = pendingToolCalls(timeline)
+    const awaiting = new Set(
+      awaitingOf({ timeline, pending, tools: [], interruptions: [] })
+        .filter((a) => a.kind === "approval")
+        .map((a) => a.toolCallId),
+    )
+    for (const call of pending) {
+      const { toolCallId } = call.payload
+      const r = resolutions.get(toolCallId)
+      if (!r || !awaiting.has(toolCallId)) continue
+      s.emitted.push({
+        type: "core.approval_decision",
+        actor: "host",
+        parentId: call.id,
+        payload: { toolCallId, approved: r.approved, by: TANSTACK_DECIDER },
+      })
+      if (r.approved && r.editedArgs !== undefined && !sameArgs(r.editedArgs, call.payload.args)) {
+        s.emitted.push({
+          type: "core.approval_decision",
+          actor: "system",
+          parentId: call.id,
+          payload: {
+            toolCallId,
+            approved: false,
+            by: "reins",
+            reason: `the approver edited the arguments to ${JSON.stringify(r.editedArgs)}; edited arguments cannot be recorded in the timeline, so the call was not executed. Make the call again with the arguments you intend to use`,
+          },
+        })
+      }
+    }
+    const written = await flush(ctx, s)
+    if (written.length === 0) return false
+    await markResumed(ctx, s)
+    return true
+  }
+
   // ---- beforeTools 边界：对每个待执行调用跑 beforeTool 管线，结论缓存；defer → 通用中断 ----
   const beforeTools = async (ctx: ChatMiddlewareContext, s: RunState) => {
-    const timeline = await timelineOf()
+    let timeline = await timelineOf()
+    if (await recordNativeResolutions(ctx, s, timeline)) timeline = await timelineOf()
     const pending = pendingToolCalls(timeline)
     if (pending.length === 0) return undefined
     if (!s.turn) {
@@ -960,7 +1086,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         })
       }
       const events = await flush(ctx, s)
-      if (events.length > 0) await append(ctx, s, [{ type: "core.run_resumed", actor: "host", payload: {} }])
+      if (events.length > 0) await markResumed(ctx, s)
       return { toolResume: "continue" }
     },
 
@@ -973,6 +1099,29 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       // 引擎逐个 await 本钩子后立刻执行该工具，所以这里就是"execute 之前"：不可重放的先记开始动手（与 runLoop 同一判据；
       // TanStack 宿主工具的视图不带 risk，按缺省口径一律算写工具）
       const tool = toolNamed(s, hookCtx.toolName)
+      // 原生审批的第二条答复通道：UIMessage 的 approval-responded 部件（引擎构造时读出，不经 resume，init 看不到）。
+      // 引擎只在批准后才对带静态 needsApproval 的工具调本钩子，所以这里见到仍在等审批的调用 = 已批准，执行前补记结论（#5）
+      if (tool && isNativeToolView(tool) && tool.needsApproval === true) {
+        const timeline = await timelineOf()
+        const awaiting = awaitingOf({
+          timeline,
+          pending: pendingToolCalls(timeline),
+          tools: [],
+          interruptions: [],
+        }).some((a) => a.kind === "approval" && a.toolCallId === hookCtx.toolCallId)
+        if (awaiting) {
+          const parentId = s.callEventIds.get(hookCtx.toolCallId)
+          await append(ctx, s, [
+            {
+              type: "core.approval_decision",
+              actor: "host",
+              ...(parentId !== undefined ? { parentId } : {}),
+              payload: { toolCallId: hookCtx.toolCallId, approved: true, by: TANSTACK_DECIDER },
+            },
+          ])
+          await markResumed(ctx, s)
+        }
+      }
       if (v.kind !== "await" && (tool === undefined || !isReplayable(tool))) {
         const parentId = s.callEventIds.get(hookCtx.toolCallId)
         await append(ctx, s, [
