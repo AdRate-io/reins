@@ -35,6 +35,20 @@ export function memoryStoreConformance(
       assertEqual(await store.list("/nope/"), [], "no match")
     })
 
+    // JS 的 length 按 UTF-16 码元数、数据库按字符数：前缀里每个代理对差一，按 length 截取的实现永远匹配不上
+    t.it(
+      "list matches prefixes that contain characters outside the BMP (emoji, CJK extension B)",
+      async () => {
+        const store = await factory()
+        await store.write("/memories/😀notes.md", "")
+        await store.write("/memories/𠀀a.md", "")
+        await store.write("/memories/plain.md", "")
+        assertEqual(await store.list("/memories/😀"), ["/memories/😀notes.md"], "emoji prefix")
+        assertEqual(await store.list("/memories/𠀀a"), ["/memories/𠀀a.md"], "CJK extension B prefix")
+        assertEqual(await store.list("/memories/😀notes.md"), ["/memories/😀notes.md"], "full path as prefix")
+      },
+    )
+
     t.it(
       "after delete, read is null and list no longer shows it; deleting an unknown path does not throw",
       async () => {

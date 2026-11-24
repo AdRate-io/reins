@@ -26,7 +26,8 @@ export class PgMemoryStore implements MemoryStore {
   async list(prefix: string): Promise<string[]> {
     const res = await this.client.query(
       `SELECT path FROM ${this.table} WHERE left(path, $2) = $1 ORDER BY path COLLATE "C"`,
-      [prefix, prefix.length],
+      // left() 按字符（码点）截，JS 的 length 是 UTF-16 码元数，非 BMP 字符差一；按码点数绑
+      [prefix, codePointLength(prefix)],
     )
     return res.rows.map((r) => r.path as string)
   }
@@ -48,4 +49,11 @@ export class PgMemoryStore implements MemoryStore {
   async delete(path: string): Promise<void> {
     await this.client.query(`DELETE FROM ${this.table} WHERE path = $1`, [path])
   }
+}
+
+/** 码点数：与 PG left() / SQLite substr() 的"字符"同一口径 */
+function codePointLength(s: string): number {
+  let n = 0
+  for (const _ of s) n++
+  return n
 }
