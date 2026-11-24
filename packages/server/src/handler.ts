@@ -176,6 +176,14 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
         return { ok: false, error: `decisions has more than one entry for call ${d.toolCallId}` }
       seen.add(key)
     }
+    // 审批结论必须连同上一次暂停签的续跑状态一起交（BUG-261105-2）：不带状态时循环只核对 pending、不验签也不查漂移。
+    // 状态在 result 帧与补发 end 帧都拿得到。只在网络边界收紧——进程内 runLoop 仍收（asTool 子 run 本就只带结论）
+    if ((b.decisions as readonly ApprovalDecisionInput[]).length > 0 && b.resume === undefined)
+      return {
+        ok: false,
+        error:
+          "decisions require resume: send the state from the pause (result frame or replay end frame) with them",
+      }
   }
   if (b.resume !== undefined && (typeof b.resume !== "object" || b.resume === null)) {
     return { ok: false, error: "resume must be an object" }

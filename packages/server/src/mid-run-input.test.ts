@@ -388,7 +388,7 @@ describe("请求校验", () => {
   it("忙碌会话上带 resume / decisions / decisions: [] / tool_result 草稿：与未开时同一应答", async () => {
     const bodies = [
       { sessionId: "s1", input: "x", resume: {} },
-      { sessionId: "s1", decisions: [{ toolCallId: "c1", approved: true, by: "u" }] },
+      { sessionId: "s1", resume: {}, decisions: [{ toolCallId: "c1", approved: true, by: "u" }] },
       { sessionId: "s1", input: "x", decisions: [] },
       {
         sessionId: "s1",

@@ -1191,9 +1191,10 @@ describe("BUG-261105-2 第二步：authorizeSession 看得见这次带的审批�
       asUser("owner", { sessionId: "s1", resume: paused.state, decisions: approve }),
     )
     expect(withResume.status).toBe(404)
-    // 不带 resume 的口子（循环不验签）在鉴权这一层同样挡得住
+    // 不带 resume 的口子（循环不验签）已在入口收紧：请求形状不合规，400
     const bare = await handler(asUser("owner", { sessionId: "s1", decisions: approve }))
-    expect(bare.status).toBe(404)
+    expect(bare.status).toBe(400)
+    expect(await bare.json()).toMatchObject({ message: expect.stringContaining("decisions require resume") })
     expect(await logged(log, "s1")).toHaveLength(before)
 
     const ok = await handler(
