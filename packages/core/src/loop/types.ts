@@ -98,7 +98,7 @@ export interface Tool<TInput = unknown> {
   resultPolicy?: { maxTokens?: number; overflow: "truncate" | "spill" }
   /**
    * 执行前是否要人审批。循环内置兜底：为真且没有任何 Socket 做主时，直接转审批暂停（安全默认值）。
-   * 函数形态抛错按拒绝处理：不执行，落 isError 结果 "Approval check failed: …"
+   * 函数形态抛错按拒绝处理：不执行，落 isError 结果 "Approval check failed: …"，原因另记一条模型不可见的 core.error（category "host"、detail.phase "needsApproval"）
    */
   needsApproval?: boolean | ((input: TInput, ctx: ToolContext) => Promise<boolean> | boolean)
   risk?: "low" | "medium" | "high"

@@ -2095,6 +2095,16 @@ describe("needsApproval 抛错（全库审查 2026-11-25 #14）", () => {
     const text = (result?.payload.content[0] as { text: string } | undefined)?.text ?? ""
     expect(text.startsWith("Approval check failed: ")).toBe(true)
     expect(types(await all(log))).not.toContain("approval_request")
+    // 宿主那份：模型不可见的非终结 core.error，排在结果之前，run 照常 done
+    const errors = (await all(log)).filter((e) => e.type === "core.error") as CoreEventOf<"core.error">[]
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.payload).toMatchObject({
+      category: "host",
+      retryable: false,
+      detail: { phase: "needsApproval", toolCallId: "c1" },
+    })
+    expect(errors[0]?.payload.message.startsWith("needsApproval of pay threw: ")).toBe(true)
+    expect(errors[0]?.seq ?? 0).toBeLessThan(result?.seq ?? 0)
 
     const second = await drain(runLoop(baseConfig(lowering, log, { tools: [pay], input: "继续" })))
     expect(second.result.status).toBe("done")

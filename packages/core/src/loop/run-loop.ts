@@ -1296,6 +1296,17 @@ async function* executeToolCalls(
             ? await tool.needsApproval(args, toolCtx)
             : tool.needsApproval
       } catch (err) {
+        // 宿主那份记录：模型不可见的 core.error（与工具结果图片引用读库失败同一做法，经 emit 排在结果之前落下）
+        ctx.emit({
+          type: "core.error",
+          actor: "system",
+          payload: {
+            category: "host",
+            message: `needsApproval of ${name} threw: ${describeThrown(err)}`,
+            retryable: false,
+            detail: { phase: "needsApproval", toolCallId },
+          },
+        })
         yield* await settle(errorResult(`Approval check failed: ${errorMessageOf(err)}`))
         continue
       }
