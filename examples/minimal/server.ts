@@ -56,6 +56,7 @@ createServer((req, res) => {
   }
   if (req.url?.startsWith("/agent")) return void handleAgent(req, res)
   // 已有合规的访客 cookie 就沿用（刷新页面还能重连自己的会话），没有才发新的
+  // 本机 http 不带 Secure（带了浏览器不会在 http 上回传）；对外走 HTTPS 时必须加 `; Secure`，否则 cookie 会在明文链路上被带出
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   if (visitorIdOf(req.headers.cookie) === undefined) {
     headers["set-cookie"] = `${VISITOR_COOKIE}=${randomBytes(16).toString("hex")}; HttpOnly; SameSite=Strict; Path=/`
