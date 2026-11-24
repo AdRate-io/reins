@@ -76,7 +76,7 @@ options: { sessionId, log, blobs?, memory?, sockets?, principal?,
 5. 依次 `sock.beforeModel(tctx)`，补丁可换 `events` / `tools` / `systemPrompt`；随后 `flush` 把钩子 `emit` 的草稿落日志，并把其中非 `DEFAULT_MODEL_INVISIBLE_TYPES` 的事件追加进本轮可见集——**emit 的说明当轮就能被模型看见**。
 6. `s.assembler.reset()`，`toModelMessages(visible, { model })` 译出 `providerMessages`，非 exact 的落点交 `onLandings`；返回 `{ providerMessages, tools: tanstackToolsOf(s, tools), systemPrompts }`。
 7. **模型输出回流**（`onChunk`，phase 为 `modelStream` / `structuredOutput`）：每个 chunk 喂 `BlockAssembler.push`，拼完整的块（`core.model_text` / `core.model_thinking` / `core.tool_call`）逐块 `append` 入日志，并计进 `turn.modelEvents` / `turn.toolCalls`。
-8. **`onUsage`**：`toReinsUsage` 把 TanStack 口径（`promptTokens` 含缓存）换成 reins 口径（input 不含 cacheRead/cacheWrite），累加 `tokensSpent`、回写 budget，并 append 一条 `core.budget_usage`（带 `contextEstimate` = 本轮投影估算，供感知校准）。
+8. **`onUsage`**：`toReinsUsage` 把 TanStack 口径（`promptTokens` 含缓存）换成 reins 口径（input 不含 cacheRead/cacheWrite），累加 `tokensSpent`、回写 budget，并 append 一条 `core.budget_usage`（带 `contextEstimate` = 本轮送出视图的估算，beforeModel 补丁与注入之后，与 runLoop 同口径，供感知校准）。
 9. **`onInterruptBoundary(afterModel)`**：`assembler.finish()` 收尾未闭合的块 → `sock.afterModel(tctx, turn.modelEvents)` → `flush`。
 10. **`onInterruptBoundary(beforeTools)`** → `beforeTools`：`pendingToolCalls(timeline)` 取本批待执行调用；已有拒绝决定的直接记 `block`；否则按 **runLoop 同一顺序**跑管线——逐个 `sock.beforeTool(tctx, seen, tool)`，`rewrite` 替换入参后继续问后续 Socket，任一 `block` / `defer` 即定，已批准的调用遇到 `defer` 略过。
 11. 工具自带 `needsApproval` 的兜底（仅 reins 工具，宿主工具交 TanStack 原生审批）：**先 `tool.validate(args)` 再判 `needsApproval` 与写摘要**（R1，与 runLoop / approval 模块同序）；校验不过就不问人，留给执行时 `toTanstackTool` 报"入参不合法"。

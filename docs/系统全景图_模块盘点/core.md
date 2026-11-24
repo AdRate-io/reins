@@ -99,7 +99,7 @@
 | `projection/truncate.ts` | 策略 5 预算裁剪兜底：过触发线才裁、一裁到回落线（`cutToRatio` 缺省 `DEFAULT_CUT_TO_RATIO` 0.6）；`splitTurns` 切轮、三条切点硬规则、`defaultThresholdSummary` 机械摘要（并入旧摘要 + 用户原话 + 被裁工具结果清单），新造 `compaction(decidedBy=threshold)` 经 `emitted` 交出 |
 | `projection/estimate.ts` | 零依赖 token 粗估：ASCII 4 字一 token、非 ASCII 一字一 token、图片 1600、视频 100 / 秒与音频 32 / 秒（缺 `durationSec` 按 1 Mbps / 64 kbps 折算、30 秒下限）、每事件 +4 固定开销；`estimateTotal`；`estimateBudgetOf(budget)`（目标 − 开销，兜底判据唯一一份） |
 | `projection/manifest.ts` | E3c 被折叠工具结果清单：`foldedToolResults` 抽取（入参从 lookup 找、外溢记 blob id）、`digestArgs` 键排序截断、`renderFoldedToolResults` 渲染成 `seq N tool(args) — 大小`；`foldedUserMedia` / `renderFoldedUserMedia` 列带媒体的被折叠用户消息（`seq N user message — 2 images (…)`，2026-11-24） |
-| `projection/project.ts` | 策略链执行器 `project()` + `defaultProjectionChain()`（四步）+ `DEFAULT_RESERVE_RATIO = 0.15`；入参校验 seq 严格升序，逐策略累计 stats 与 emitted |
+| `projection/project.ts` | 策略链执行器 `project()` + `defaultProjectionChain()`（四步）+ `DEFAULT_RESERVE_RATIO = 0.15` + `resolveReserveTokens`（窗口有限正数、预留有限非负且小于窗口，不合规抛 RangeError；runLoop 起步写日志前也调）；入参校验 seq 严格升序，逐策略累计 stats 与 emitted |
 | 测试 | `projection.test.ts` 覆盖粗估、四个策略各自的规则、manifest 渲染、supersedes（B3）四种情形、默认链端到端与拒绝条件 |
 
 ### `lowering/` — 降级层接口（T7）与 trust 标注（R9）
@@ -169,7 +169,7 @@
 4. **每轮开头**：若 `signal.aborted` 立即 `pause("host")`（先于读时间线、投影与补齐 pending，不问模型的 run 不触发阈值整理；`pause` 内若中止原因是 `RunStop` 先把 pending 收尾成 isError 结果，所有暂停出口同一处）→ `pendingToolCalls` 非空则先 `executeToolCalls` 补齐、再走一次 `endTurn` 收尾（R2）→ 否则检查 `maxTurns` → `turns++`。
 5. **投影与钩子**：`project(timeline)` 得到 view 与 `emitted`；emitted 先 `log.append` 再问模型（模型可见 ⟺ 已记录）；各 Socket 的 `beforeModel` 顺序合并补丁，其间 `ctx.emit` 的草稿 `flush` 落库并（非运维类型）并进本轮视图。
 6. **问模型（重试循环）**：每次尝试重新 `toRequest` + `stream`，草稿逐块 append 并 yield；失败时按 `retry.isTransient` 与"本次尝试 `attemptOutput === 0`"共同决定是否重试，要重试就先记一条 `core.error(willRetry)` 再退避；不重试则 `fail()` 返回 error 态——但宿主已中止的（连接阶段被掐，fetch 抛的是 `signal.reason`）走 `pause("host")`。
-7. **收尾**：`afterModel` → `executeToolCalls` 处理本轮 tool_call → append `budget_usage`（带 `contextEstimate`）→ 有中断、或工具批中途被用户停止或其它中止（批里还有没落结果的调用），则按 `pauseReasonOf`（审批 > 预算 > 宿主）暂停（跳过 onTurnEnd，补跑路径同理）→ 否则 `endTurn`：第一个给意见的 Socket 决定 continue / stop / pause / handoff（pause 经 `resolveSocketPause` 变成一条中断；意见里有不合规处先记一条非终结 `core.error` 再照常暂停），handoff 时旧会话记 `core.handoff`、新会话写入 `system_note(摘要) + intent.opening + user_message(triggerMessage)` 三段开场，再在旧会话落 `run_ended(handoff)`，最后回调 `onHandoff`；stop 落 `run_ended(done)`。每个出口恰好一条终结事件（2026-11-15），生成器抛错不补写。
+7. **收尾**：`afterModel` → `executeToolCalls` 处理本轮 tool_call → append `budget_usage`（带 `contextEstimate`：本轮真正送出视图的估算，含 beforeModel 期间注入的说明 / 快照）→ 有中断、或工具批中途被用户停止或其它中止（批里还有没落结果的调用），则按 `pauseReasonOf`（审批 > 预算 > 宿主）暂停（跳过 onTurnEnd，补跑路径同理）→ 否则 `endTurn`：第一个给意见的 Socket 决定 continue / stop / pause / handoff（pause 经 `resolveSocketPause` 变成一条中断；意见里有不合规处先记一条非终结 `core.error` 再照常暂停），handoff 时旧会话记 `core.handoff`、新会话写入 `system_note(摘要) + intent.opening + user_message(triggerMessage)` 三段开场，再在旧会话落 `run_ended(handoff)`，最后回调 `onHandoff`；stop 落 `run_ended(done)`。每个出口恰好一条终结事件（2026-11-15），生成器抛错不补写。
 
 ### 二、单次工具调用的处置顺序（`executeToolCalls`）
 

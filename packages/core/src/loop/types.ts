@@ -211,7 +211,7 @@ export interface TurnContext {
     tokensSpent: number
     turns: number
     toolCalls: number
-    /** 距 run 开始的毫秒数；beforeModel 时是本轮开始的读数，模型调用后更新 */
+    /** 距 run 开始的毫秒数；beforeModel 时是本轮开始的读数，模型调用后更新，onTurnEnd 前再刷新一次（含本轮工具耗时） */
     wallMs: number
     /**
      * 最近一次模型请求的真实用量（B8）：beforeModel 时是上一次请求的（含上次 run，从日志最后一条 budget_usage 读），

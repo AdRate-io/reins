@@ -189,7 +189,8 @@ export function contextOverheadOf(timeline: readonly Event[]): number {
 
 /**
  * 用量是事件，宿主可按会话或用户聚合出配额（库不做配额）。
- * `contextEstimate`（B8）：这次请求投影的估算 token（= 当轮 TurnContext.budget.used），与真实用量放在同一条事件里，
+ * `contextEstimate`（B8）：这次请求**真正送出视图**的估算 token（beforeModel 补丁与注入之后；全库审查 2026-11-25 #20 起，
+ * 此前取投影那一刻的 TurnContext.budget.used，注入的大快照会被算成开销、下一轮再估一遍），与真实用量放在同一条事件里，
  * 感知模块用"真实上下文 − 估算"得到系统提示、工具表、thinking 等估算不含的固定开销，校准下一轮的使用率读数。
  * `remaining` 预留给宿主 / 适配器自己追加的聚合用量；循环不填（上限属于 brain budget 模块，循环不知道）。
  */
