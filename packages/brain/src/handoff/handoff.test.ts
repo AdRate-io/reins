@@ -172,8 +172,14 @@ describe("handoff × runLoop", () => {
     expect((fresh[1] as CoreEventOf<"core.user_message">).payload.content).toEqual([
       { type: "text", text: "把库迁移到 pg，必须保留旧表" },
     ])
-    // 新会话的两条也 yield 给了宿主
-    expect(events.filter((e) => e.sessionId === result.toSessionId)).toHaveLength(2)
+    // 摘要是模型写的；缺省触发消息逐字取自用户原话，仍记为用户、provenance 指回原事件（#52）
+    const original = old.find((e) => e.type === "core.user_message") as Event
+    expect(fresh.map((e) => [e.actor, e.trust, e.provenance])).toEqual([
+      ["model", "model", { source: "handoff", ref: ho.id }],
+      ["user", "principal", { source: "handoff", ref: original.id }],
+    ])
+    // runLoop 只 yield 本会话的事件：新会话开场只在日志里，经 toSessionId 读（#55）
+    expect(events.every((e) => e.sessionId === SESSION)).toBe(true)
   })
 
   it("显式 triggerMessage 与 reason 生效；nextSteps 可为空则不排'下一步'段", async () => {
@@ -197,6 +203,14 @@ describe("handoff × runLoop", () => {
     expect(ho.payload.triggerMessage).toBe("Write the final report")
     expect(ho.payload.summary).not.toContain("## Next steps")
     expect(ho.payload.summary).toContain("## Summary\nAll done except the final report.")
+    // 模型自拟的触发消息不是用户说的：新会话里记在模型名下（#52）
+    const last = (await all(log, result.toSessionId)).at(-1) as Event
+    expect([last.type, last.actor, last.trust, last.provenance]).toEqual([
+      "core.user_message",
+      "model",
+      "model",
+      { source: "handoff", ref: ho.id },
+    ])
   })
 
   it("pin 跟着走：可见且未被取代的宿主 pin 与模型 pin 复制到新会话开头（保留 meta 与 actor），被取代的不带；新会话再跑 pins() 不重复注入", async () => {
@@ -221,7 +235,7 @@ describe("handoff × runLoop", () => {
 
     const fresh = await all(log, result.toSessionId)
     expect(fresh.map((e) => [e.seq, e.type, e.actor])).toEqual([
-      [1, "core.system_note", "host"],
+      [1, "core.system_note", "model"],
       [2, "core.system_note", "system"],
       [3, "core.system_note", "model"],
       [4, "core.user_message", "user"],

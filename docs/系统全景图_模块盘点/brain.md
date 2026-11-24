@@ -152,7 +152,7 @@
 ### handoff
 
 1. `afterTool` 见到 `handoff` 调用：同轮第二次调用直接以 isError 回绝；否则 `parseHandoffArgs` 解析。
-2. `intentOf(ctx, args)` 组装意图：`composeHandoffNote` 把摘要与编号的下一步排成一段（既是旧会话 `handoff.summary` 也是新会话 seq 1 的文字）；`carriedPins(ctx)` 把可见且未被 `supersedes` 取代的 pin 复制成 `opening` 草稿；触发消息缺省取 `lastVisibleUserMessage(ctx.events)`。
+2. `intentOf(ctx, args)` 组装意图：`composeHandoffNote` 把摘要与编号的下一步排成一段（既是旧会话 `handoff.summary` 也是新会话 seq 1 的文字）；`carriedPins(ctx)` 把可见且未被 `supersedes` 取代的 pin 复制成 `opening` 草稿；触发消息缺省取 `lastVisibleUserMessage(ctx.events)`（逐字是用户原话，core 落成 user；模型显式给的落在模型名下，见 core `handoffOpeningDrafts`）。
 3. 意图记在 `WeakMap<TurnContext>`，把占位结果换成回执（带了几条下一步、几条 pin、有没有触发消息）。同轮其余工具照常执行。
 4. `onTurnEnd`：内存里有意图就返回 `{ handoff: intent }`；没有则用 `unfinishedHandoffArgs(ctx.timeline)` 从日志重建（上一次 run 在这一轮被打断的情形，R2；不限补跑轮，TanStack 的补跑批不调 onTurnEnd、在下一轮重建），回执之后已有用户消息或重建不出就无意见。core 循环随后 append `core.handoff`、开新会话、调 `onHandoff`。
 

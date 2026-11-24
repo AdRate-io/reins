@@ -44,6 +44,7 @@ import {
   errorMessageOf,
   estimateTotal,
   type HandoffIntent,
+  handoffOpeningDrafts,
   isReplayable,
   type LandingRecord,
   type LoweringCapabilities,
@@ -826,7 +827,7 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
   // ---- 交接：与 runLoop 同一机械（旧会话记 handoff，新会话开头 = 摘要 + 开场 + 触发消息） ----
   const doHandoff = async (ctx: ChatMiddlewareContext, s: RunState, intent: HandoffIntent) => {
     const toSessionId = intent.toSessionId ?? newId(now())
-    await append(ctx, s, [
+    const [handoffEvent] = await append(ctx, s, [
       {
         type: "core.handoff",
         actor: intent.by ?? "model",
@@ -839,21 +840,13 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       },
     ])
     const at = now()
-    const opening: EventDraft[] = [
-      { type: "core.system_note", actor: "host", payload: { kind: "host", text: intent.summary } },
-      ...(intent.opening ?? []),
-    ]
-    if (intent.triggerMessage !== undefined)
-      opening.push({
-        type: "core.user_message",
-        actor: "user",
-        payload: { content: [{ type: "text", text: intent.triggerMessage }] },
-      })
+    // 发起者如实记：与 runLoop 调同一个 handoffOpeningDrafts，触发消息对照旧会话完整时间线判是不是用户原话
+    const opening = handoffOpeningDrafts(intent, handoffEvent as Event, await timelineOf())
     const events = opening.map((d, i) =>
       createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
     )
+    // 与 runLoop 同口径：新会话开场只写日志、不交给本 run 的 onEvent（宿主拿它推旧会话的前端会多出别的会话的消息）
     await log.append(events)
-    for (const e of events) options.onEvent?.(e)
     // 新会话开场写成之后立即在旧会话落终结记号（与 runLoop 同序）。不能留给 onFinish：交接后连接被取消时引擎跳过 onFinish、
     // 改调 onAbort，旧会话就会被记成 paused(host)
     await append(ctx, s, [

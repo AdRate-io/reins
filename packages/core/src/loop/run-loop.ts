@@ -38,6 +38,7 @@ import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project, resolveReserveTokens } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
+import { handoffOpeningDrafts } from "./handoff.js"
 import {
   type CheckImageRefsContext,
   checkImageRefs,
@@ -1003,7 +1004,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // ---- 交接：旧会话记 handoff，新会话开头 = 摘要说明 + 脑子带来的开场事件（如 pin）+ 触发消息 ----
     const intent = decision.handoff
     const toSessionId = intent.toSessionId ?? newId(now())
-    yield* await append([
+    const handoffEvents = await append([
       {
         type: "core.handoff",
         actor: intent.by ?? "model",
@@ -1015,23 +1016,21 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         },
       },
     ])
+    yield* handoffEvents
     const at = now()
-    const opening: EventDraft[] = [
-      { type: "core.system_note", actor: "host", payload: { kind: "host", text: intent.summary } },
-      ...(intent.opening ?? []),
-    ]
-    if (intent.triggerMessage !== undefined) {
-      opening.push({
-        type: "core.user_message",
-        actor: "user",
-        payload: { content: [{ type: "text", text: intent.triggerMessage }] },
-      })
-    }
+    // 发起者如实记（#52）：触发消息要对照旧会话完整时间线判是不是用户的原话
+    const opening = handoffOpeningDrafts(
+      intent,
+      handoffEvents[0] as Event,
+      await readTimeline(log, sessionId, { registry }),
+    )
     const openingEvents = opening.map((d, i) =>
       createEvent(registry, { ...d, sessionId: toSessionId, seq: i + 1, at, id: newId(at) }),
     )
+    // 开场写进新会话但不 yield（#55）：runLoop 只产出本会话的事件，消费方（server 的 SSE / onEvent、AG-UI 线程）
+    // 都按"事件属于 sessionId"处理，混进别的会话会让 SSE id 倒退、前端旧线程多出消息、观测记错会话。
+    // 新会话的开场经 RunResult.toSessionId 从日志读
     await log.append(openingEvents)
-    yield* openingEvents
     // 新会话开场写成之后才在旧会话落终结记号：开场写失败时 run 抛错，旧会话判 interrupted，与"交接没完成"一致
     yield* await append([
       { type: "core.run_ended", actor: "system", payload: { status: "handoff", toSessionId } },

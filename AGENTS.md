@@ -343,7 +343,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - ⚠️ **thinking / 加密推理项 / `fc_` 项 id 的回放判据是 provider + api + model 三者一致** — 判据是签名不是正文：Fable 5.1 缺省 display omitted（正文空、签名在）照发；无签名、别家的、同家别的型号一律 dropped，不降成正文（踩坑 37）。`redacted_thinking` 存 `replay.thinkingSignature` + `redacted: true`。
 - **宿主 `requestOptions` 里的 `system` / `tools` 会被剥掉，`max_tokens` 没给取模型声明的 `maxOutputTokens`，`thinking` 不缺省设置** — Fable 5.1 对 `type:"disabled"` 400、Haiku 4.5 仍要 `budget_tokens`，代次差异由宿主定；`anthropic-beta` 只在 `anthropic.betas` 声明时带。
 - **Responses 线 `store: false` 强制、`previous_response_id` 剥掉；`call_id` 是 toolCallId，`fc_` 项 id 存 `replay.itemId`** — 正文项 id 没有就补 `msg_reins_<n>`（厂商接受）；伪造加密项厂商 400，回放的必须是原件。
-- **Anthropic 线延迟加载（L1）的厂商规矩都在 encoder 里，且 `tool_reference` 块只给 system 信任的结果** — tool_result 内引用不能与文本混放、同条 user 里 tool_result 排最前（踩坑 31）；引用指向本次 tools 里没有的名字 400 且整段历史都校验（未绑定的引用一律展开成文本）；`defer_loading` 工具不能带 `cache_control`；全表延迟 400（encoder 此时不延迟）；untrusted 结果里的引用展开成文本——不可信工具输出不能替模型点亮工具。
+- **Anthropic 线延迟加载（L1）的厂商规矩都在 encoder 里，且 `tool_reference` 块只给 system 信任的结果** — tool_result 内引用不能与文本混放、同条 user 里 tool_result 排最前（踩坑 31）；引用指向本次 tools 里没有的名字 400 且整段历史都校验（未绑定的引用一律展开成文本）；`defer_loading` 工具不能带 `cache_control`；全表延迟 400（encoder 此时不延迟）；untrusted 结果里的引用展开成文本——不可信工具输出不能替模型点亮工具；展开前由 core `markUntrusted` 对引用的名字 / 描述 / schema 做与文本同一道转义。
 
 ### MCP（tools-mcp）
 
