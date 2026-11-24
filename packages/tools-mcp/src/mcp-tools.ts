@@ -14,7 +14,7 @@
 import { defineTool, REINS_VERSION, type Tool } from "@reinsjs/core"
 import { McpConnection } from "./connection.js"
 import { kindOf, type PoolEntry, RoutePool } from "./route-pool.js"
-import { modelToolName, riskOf, toContentParts } from "./translate.js"
+import { modelToolName, modelToolNames, riskOf, toContentParts } from "./translate.js"
 import type { McpToolInfo, McpToolsOptions, McpToolsSocket } from "./types.js"
 
 export const DEFAULT_CALL_TIMEOUT_MS = 60_000
@@ -22,7 +22,8 @@ export const DEFAULT_CALL_TIMEOUT_MS = 60_000
 export const REINS_MCP_CLIENT_INFO = { name: "reins", version: REINS_VERSION }
 
 /**
- * 路由阶段（选凭据、建连握手，还没发出 `tools/call`）run 被中止时给模型的结果。不能让 execute 抛：MCP 工具缺省不可重放，
+ * 发出前阶段（route 选凭据；有无 route 都有的建连握手——新键、evict 后、断线后重建；还没发出 `tools/call`）run 被中止时
+ * 给模型的结果（名字沿用 route 引入时的叫法）。不能让 execute 抛：MCP 工具缺省不可重放，
  * 循环已先写 `tool_started`，中止状态下抛错会被写成"结果未知"，而调用实际没发出——告诉模型的要与事实一致。
  * 前缀与 core 的"没执行"文案同为 `Not executed:`，宿主按前缀判断时口径一致；不复用 `stopTextsOf`：它对非 RunStop 的中止
  * （丢租约等）也说"被用户停止"
@@ -54,14 +55,20 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
     warn(message)
   }
 
-  /** 一个 MCP 工具 → reins Tool。名字给模型看的可能被改写，调用时用原名 */
-  const toTool = (info: McpToolInfo): Tool => {
-    const name = modelToolName(info.name, prefix)
-    if (name !== `${prefix}${info.name}`)
+  /**
+   * 一个 MCP 工具 → reins Tool。`name` 是 `modelToolNames` 排过撞名的模型侧名字（可能被改写），调用时用原名。
+   * 告警按"原名 → 改写名"去重：撞名对象随服务器工具表变化时改写名会变，变了要再说一次
+   */
+  const toTool = (info: McpToolInfo, name: string): Tool => {
+    if (name !== `${prefix}${info.name}`) {
+      const plain = modelToolName(info.name, prefix)
       warnOnce(
-        `name:${info.name}`,
-        `MCP tool name ${info.name} does not meet the model-facing requirements; the name shown to the model is rewritten to ${name}`,
+        `name:${info.name}->${name}`,
+        plain === name
+          ? `MCP tool name ${info.name} does not meet the model-facing requirements; the name shown to the model is rewritten to ${name}`
+          : `MCP tool name ${info.name} is shown to the model as ${name}: ${plain} is already used by another tool on this server`,
       )
+    }
     const risk = riskOf(info.annotations)
     return defineTool<unknown>({
       name,
@@ -72,34 +79,35 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
       ...(risk === "high" ? { needsApproval: true } : {}),
       async execute(args, ctx) {
         const callOptions = { timeoutMs, ...(ctx.signal ? { signal: ctx.signal } : {}) }
-        if (!route || !pool) {
-          const result = await conn.callTool(info.name, args, callOptions)
-          return { content: toContentParts(result), isError: result.isError === true }
-        }
         // 占了池项就必须 release：在途计数挡住 evict 关连接，直到这次调用结束
         let entry: PoolEntry | undefined
         try {
-          // 发出前：问宿主要键、取池项、握手。这一段出任何错都意味着调用没发出
+          let target: McpConnection
+          // 发出前：（route 时）问宿主要键、取池项；握手。这一段出任何错都意味着调用没发出
           try {
-            const key: unknown = await route.keyOf({ name: info.name, args }, ctx)
-            if (typeof key !== "string" || key === "")
-              throw new Error(
-                `MCP route must return a non-empty credential key for tool ${info.name}, got ${kindOf(key)}; the call was not sent`,
-              )
-            if (ctx.signal?.aborted) return notSent()
-            entry = pool.acquire(key)
-            // 新键与 evict 后的第一次调用都要握手：握手期间被中止时请求没发出，SDK 却会在发请求处抛错、被循环写成"结果未知"
-            await entry.conn.ready()
+            if (route && pool) {
+              const key: unknown = await route.keyOf({ name: info.name, args }, ctx)
+              if (typeof key !== "string" || key === "")
+                throw new Error(
+                  `MCP route must return a non-empty credential key for tool ${info.name}, got ${kindOf(key)}; the call was not sent`,
+                )
+              if (ctx.signal?.aborted) return notSent()
+              entry = pool.acquire(key)
+              target = entry.conn
+            } else target = conn
+            // 新键、evict 后、断线后重建的第一次调用都要握手：握手期间被中止时请求没发出，
+            // SDK 却会在发请求处抛错、被循环写成"结果未知"。连接在时 ready() 立即返回
+            await target.ready()
             if (ctx.signal?.aborted) return notSent()
           } catch (err) {
             if (ctx.signal?.aborted) return notSent()
             throw err
           }
           // 发出
-          const result = await entry.conn.callTool(info.name, args, callOptions)
+          const result = await target.callTool(info.name, args, callOptions)
           return { content: toContentParts(result), isError: result.isError === true }
         } finally {
-          if (entry) pool.release(entry)
+          if (entry) pool?.release(entry)
         }
       },
     })
@@ -121,8 +129,12 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
         return []
       }
       const tools: Tool[] = []
-      for (const info of infos) {
-        const tool = toTool(info)
+      const names = modelToolNames(
+        infos.map((i) => i.name),
+        prefix,
+      )
+      for (const [i, info] of infos.entries()) {
+        const tool = toTool(info, names[i] as string)
         const overridden = options.override?.(tool, info)
         if (overridden === false) continue
         tools.push(overridden ?? tool)

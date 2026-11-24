@@ -17,11 +17,11 @@ async function drain(gen: AsyncGenerator<Event, RunResult>): Promise<Event[]> {
 }
 
 describe("stdioTransport", () => {
-  it("子进程服务器：tools/list 与 tools/call 都通；标签是命令行", async () => {
+  it("子进程服务器：tools/list 与 tools/call 都通；标签缺省只是命令、不含参数", async () => {
     const script = fileURLToPath(new URL("../test-fixtures/stdio-server.mjs", import.meta.url))
     const transport = stdioTransport({ command: process.execPath, args: [script], stderr: "inherit" })
     expect(transport.kind).toBe("stdio")
-    expect(transport.label).toBe(`${process.execPath} ${script}`)
+    expect(transport.label).toBe(process.execPath)
 
     const socket = mcpTools({ transport })
     const log = new InMemoryEventLog()
@@ -39,4 +39,27 @@ describe("stdioTransport", () => {
     expect(result?.payload.content).toEqual([{ type: "text", text: "stdio:hi" }])
     await socket.close()
   }, 20_000)
+
+  it("参数里的密钥不进标签与建连报错；宿主可显式给 label", async () => {
+    const transport = stdioTransport({
+      command: "/nonexistent-reins-bin",
+      args: ["--api-key", "sk-SECRET123"],
+      stderr: "ignore",
+    })
+    // 修复前：label 是整条命令行，建连失败的报错（会成为 tool_result 文本写进日志、发给模型）带出 sk-SECRET123
+    expect(transport.label).toBe("/nonexistent-reins-bin")
+    const socket = mcpTools({ transport })
+    const err = await (socket.tools as () => Promise<unknown>)().then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(Error)
+    expect(String((err as Error).message)).toMatch(
+      /Failed to connect to MCP server \(\/nonexistent-reins-bin\)/,
+    )
+    expect(String((err as Error).message)).not.toContain("SECRET")
+    await socket.close()
+    expect(stdioTransport({ command: "npx", args: ["-y", "pkg"], label: "pkg" }).label).toBe("pkg")
+    expect(() => stdioTransport({ command: "npx", label: "" })).toThrow(/label must be a non-empty string/)
+  })
 })

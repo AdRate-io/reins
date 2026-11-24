@@ -48,7 +48,10 @@ export interface McpToolInfo {
  */
 export interface McpTransport {
   readonly kind: "http" | "stdio" | "custom"
-  /** 给 Socket.name、告警与报错用的可读标签（不含密钥） */
+  /**
+   * 给 Socket.name、告警与报错用的可读标签，必须不含密钥：它会随建连 / `tools/list` 报错进 tool_result 文本，
+   * 写进日志、发给模型厂商。内置配方缺省只取 HTTP 的 origin、stdio 的命令；自定义传输自己保证
+   */
   readonly label: string
   /**
    * 建一条新的底层传输。返回值是 MCP SDK 的 Transport，对外按 unknown 处理（SDK 类型不出本包）；

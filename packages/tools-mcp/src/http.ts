@@ -6,6 +6,7 @@
  * `auth.token()` 每个请求前现取，401 时 `onUnauthorized()` 刷新后自动重试一次（都由 MCP SDK 的传输层做）。
  */
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
+import { transportLabel } from "./label.js"
 import type { McpAuth, McpTransport } from "./types.js"
 
 export interface HttpTransportOptions {
@@ -19,6 +20,11 @@ export interface HttpTransportOptions {
   auth?: McpAuth
   /** 自定义 fetch（代理、测试里直连内存服务器） */
   fetch?: typeof fetch
+  /**
+   * 给 Socket.name、告警与报错用的标签。缺省只取 URL 的 origin：不少托管 MCP 服务把密钥放在路径里，
+   * 查询串里也常见 token；宿主确认没有密钥时可给更可读的名字（如 "github"）
+   */
+  label?: string
   /** 其余 RequestInit 字段（headers 之外） */
   requestInit?: Omit<RequestInit, "headers">
 }
@@ -36,8 +42,8 @@ export function httpTransport(options: HttpTransportOptions): McpTransport {
     )
   }
   const url = options.url instanceof URL ? options.url : new URL(options.url)
-  // 标签只留主机与路径：查询串里常见 token，不进日志
-  const label = `${url.origin}${url.pathname}`
+  // 缺省标签只留 origin：路径与查询串里都可能有密钥，标签会进报错、最终进日志与发给模型的结果
+  const label = transportLabel(options.label, url.origin)
   // 包一层而不是直接把 McpAuth 交给 SDK：我们的签名收 MaybePromise，宿主同步返回令牌也行
   const auth = options.auth
   const authProvider = auth

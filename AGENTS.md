@@ -344,11 +344,11 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 
 ### MCP（tools-mcp）
 
-- **连接懒建、跨 run 复用、断了在下一次需要时按配方重建一次，不做退避重试** — 服务器死了那次调用是 isError、run 起步 list 失败缺省抛。
+- **连接懒建、跨 run 复用、断了在下一次需要时按配方重建一次，不做退避重试** — 服务器死了那次调用是 isError、run 起步 list 失败缺省抛。"断了"含有状态 HTTP 服务器回 404（会话失效，SDK 不触发 onclose）：`tools/list` 在同一次调用里重握手，`tools/call` 只作废不重发；作废只清引用，同连接上的在途调用跑完才关旧 Client。
 - **注解只定缺省：readOnly → low、destructive → high + 要审批、其余 medium**（与 spec 的差异见不对称清单）。
 - **`listTools` 必须 `cacheMode: "bypass"`** — client 2.0 缓存列表结果，不绕过拿不到服务器此刻的表。
 - **一个 `WebStandardStreamableHTTPServerTransport` 只服务一个会话** — 自己搭的服务器用 `createMcpHandler(factory)`，业务状态放工厂外（踩坑 19）。
-- **模型侧工具名改写为 `^[A-Za-z0-9_-]{1,64}$`** — MCP 名字可带点号，不改写请求 400；调用按原名。
+- **模型侧工具名改写为 `^[A-Za-z0-9_-]{1,64}$`** — MCP 名字可带点号，不改写请求 400；调用按原名。改写后撞名追加 `_N`（合规原名优先占名、改写的按原名排序），宿主要实际名字看 `override` 收到的 `tool.name`，别用 `modelToolName` 推算。
 - **`route` 连接池跨会话共享、只按键区分，`keyOf` 是唯一授权点；`route` 不进 configHash** — `keyOf` 要在调用前判 principal 能否用该身份；`transportFor` 每键只调一次，不能捕获请求级上下文。`RoutePool.acquire` 必须同步（取项到在途 +1 之间加 await 会让被 evict 的连接在池外被用上）；发出前中止要返回"没发出"结果而不是抛（抛了循环写"结果未知"）。
 
 ### 服务端与总包

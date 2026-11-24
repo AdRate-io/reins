@@ -80,11 +80,16 @@ strictness, add it in `override` or run `approval({ unmatched: "ask" })`.
 ## Connection lifecycle
 
 `mcpTools()` does not connect. The first run that needs the tool table opens the connection; later runs reuse it.
-If the transport closes (server restarted, network dropped), the next call that needs it — a `tools/call` in the
-same run or `tools/list` at the next run start — rebuilds the connection from the transport recipe once. There is
-no retry policy inside a call: a failed call is reported to the model as an error result, and a failed reconnect at
-run start throws before anything is written to the log (fail-closed). Pass `optional: true` to instead start the
-run without that server's tools and warn once; the model then sees them listed as removed.
+If the transport closes (server restarted, network dropped), or a stateful Streamable HTTP server answers 404 because
+the session it issued is gone (restart, session expiry), the next call that needs it — a `tools/call` in the
+same run or `tools/list` at the next run start — rebuilds the connection from the transport recipe once. A `tools/list`
+that hits the 404 re-initializes and lists again within the same call (it is read-only); a `tools/call` that hits it is
+reported as an error and is not resent. Other calls already in flight on the expired connection are left to finish
+before it is closed. If the run is stopped while a `tools/call` is still waiting for that rebuild, the call is never
+sent and the model is told so (`ROUTE_NOT_SENT_TEXT`, the same text routed calls use), not that its outcome is
+unknown. There is no retry policy inside a call: a failed call is reported to the model as an error result, and a
+failed reconnect at run start throws before anything is written to the log (fail-closed). Pass `optional: true` to
+instead start the run without that server's tools and warn once; the model then sees them listed as removed.
 
 Call `close()` when you are done with a socket (process shutdown, or the host replaced the configuration). With
 `route`, `evict(key)` retires one credential's connection; see [Several credentials on one server](#several-credentials-on-one-server).
@@ -355,7 +360,7 @@ rejection. Script: `spikes/mcp-removed-tool-history`.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `transport` | — | `httpTransport({ url, headers?, auth?, fetch?, requestInit? })` or `stdioTransport({ command, args?, env?, cwd?, stderr? })` |
+| `transport` | — | `httpTransport({ url, headers?, auth?, fetch?, requestInit?, label? })` or `stdioTransport({ command, args?, env?, cwd?, stderr?, label? })` |
 | `prefix` | none | Prepended to tool names shown to the model; the server still sees the original name |
 | `callTimeoutMs` | 60 000 | Per `tools/call` timeout; expiry becomes an error result |
 | `optional` | `false` | On `tools/list` failure at run start: throw (default) or contribute no tools and warn once |
@@ -364,8 +369,21 @@ rejection. Script: `spikes/mcp-removed-tool-history`.
 | `clientInfo` | `{ name: "reins", version }` | Sent in the MCP handshake |
 | `warn` | `console.warn` | Where degradations are reported |
 
+A transport's `label` names the socket (`mcp:<label>`) and appears in warnings and in connection errors — which can
+reach the model as an error result and stay in the log. It therefore defaults to the parts that never carry a
+secret: the URL's origin for HTTP (no path, no query) and the bare `command` for stdio (no arguments). Pass `label`
+for a friendlier name, and keep secrets out of it. Several servers on one origin (`https://host/github` and
+`https://host/slack`) would otherwise share a label, so give each its own `label` to tell their sockets and warnings apart.
+
 Tool names that the model APIs reject (`^[A-Za-z0-9_-]{1,64}$`) are rewritten (`files.read` → `files_read`) with a
-one-time warning; the original name is used on the wire.
+one-time warning; the original name is used on the wire. If a rewrite lands on a name another tool of the same
+server already uses (`files.delete` next to `files_delete`, or two long names sharing their first 64 characters), the
+rewritten one gets a `_2`, `_3`… suffix and the warning names the clash — names that need no rewrite keep theirs.
+Suffixes are handed out in order of the original names, so a server listing its tools in a different order does
+not change them. They are not stable across server changes, though: if the server adds a tool whose valid name
+equals a rewritten one, the rewritten tool moves to a suffixed name. When you need the model-facing name (approval
+rules, lazy-tool lists), take it from the `tool.name` that `override(tool, info)` receives, keyed by `info.name`;
+the exported `modelToolName` rewrites a single name and does not know about clashes.
 
 Not supported: sampling, elicitation, resources, prompts, MCP Apps, and driving an OAuth authorization
 prompt (obtain tokens in your application and hand them over through `auth`).

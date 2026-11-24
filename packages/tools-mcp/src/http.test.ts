@@ -5,11 +5,16 @@
  * 第二个客户端 initialize 就 400 "Server already initialized"（examples/mcp 第一次真跑踩到的）。
  */
 
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server"
+import {
+  createMcpHandler,
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from "@modelcontextprotocol/server"
 import { type Event, InMemoryEventLog, type RunResult, runLoop } from "@reinsjs/core"
 import { callTool, ScriptedLowering, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { z } from "zod"
+import { McpConnection } from "./connection.js"
 import { httpTransport } from "./http.js"
 import { mcpTools } from "./mcp-tools.js"
 
@@ -23,7 +28,7 @@ async function drain(gen: AsyncGenerator<Event, RunResult>): Promise<Event[]> {
 }
 
 describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
-  it("list + call 成功；鉴权头随每个请求发出；标签不含查询串；第二个客户端先后初始化也行", async () => {
+  it("list + call 成功；鉴权头随每个请求发出；标签只留 origin；第二个客户端先后初始化也行", async () => {
     let instances = 0
     const handler = createMcpHandler(() => {
       instances++
@@ -51,7 +56,7 @@ describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
       headers: { Authorization: "Bearer t0k" },
       fetch: shim,
     })
-    expect(transport.label).toBe("http://mcp.local/mcp")
+    expect(transport.label).toBe("http://mcp.local")
 
     const socket = mcpTools({ transport })
     const log = new InMemoryEventLog()
@@ -174,6 +179,19 @@ describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
     await handler.close()
   })
 
+  it("标签缺省只留 origin（不少托管服务把密钥放在路径里）；宿主可显式给 label；空 label 构造期拒绝", () => {
+    // 修复前：label 是 origin + pathname，路径里的密钥进 Socket.name、告警与报错，最终进 tool_result 与日志
+    const secret = httpTransport({ url: "https://mcp.example.com/mcp/SECRETPATH/sse?k=q" })
+    expect(secret.label).toBe("https://mcp.example.com")
+    expect(mcpTools({ transport: secret }).name).toBe("mcp:https://mcp.example.com")
+    expect(httpTransport({ url: "https://mcp.example.com/mcp/SECRETPATH", label: "github" }).label).toBe(
+      "github",
+    )
+    expect(() => httpTransport({ url: "https://mcp.example.com/mcp", label: "" })).toThrow(
+      /label must be a non-empty string, got an empty string/,
+    )
+  })
+
   it("auth 与 headers.Authorization 同时给：构造期就拒绝（不静默让一个盖掉另一个）", () => {
     const auth = { token: () => "t" }
     expect(() =>
@@ -187,5 +205,160 @@ describe("httpTransport：Streamable HTTP 走完整协议路径", () => {
     expect(() =>
       httpTransport({ url: "http://mcp.local/mcp", auth, headers: { "X-Tenant": "a" } }),
     ).not.toThrow()
+  })
+})
+
+/**
+ * 有状态的 Streamable HTTP 服务器：每个会话一对 server + transport，按 mcp-session-id 路由；
+ * 未知会话按 spec 回 404。`restart()` 清空会话表，模拟服务器重启或会话过期——已被接收的请求仍在原会话上跑完。
+ * `calls` 记服务器真正执行过的 echo（入参 text）；`slow` 工具等 `release()` 才返回，用来造"在途调用"
+ */
+function statefulServer() {
+  const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>()
+  const seen: string[] = []
+  const calls: string[] = []
+  let releaseSlow: () => void = () => {}
+  let slowEntered: () => void = () => {}
+  const slowStarted = new Promise<void>((resolve) => {
+    slowEntered = resolve
+  })
+  const slowGate = new Promise<void>((resolve) => {
+    releaseSlow = resolve
+  })
+  const fetchFn: typeof fetch = async (input, init) => {
+    const req = new Request(input, init)
+    const sid = req.headers.get("mcp-session-id")
+    let res: Response
+    if (sid) {
+      const t = sessions.get(sid)
+      res = t
+        ? await t.handleRequest(req)
+        : new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32001, message: "Session not found" },
+              id: null,
+            }),
+            { status: 404, headers: { "content-type": "application/json" } },
+          )
+    } else {
+      const server = new McpServer({ name: "stateful-fixture", version: "0.0.0" })
+      server.registerTool(
+        "echo",
+        { description: "echo", inputSchema: { text: z.string() } },
+        async ({ text }) => {
+          calls.push(text)
+          return { content: [{ type: "text" as const, text: `echo:${text}` }] }
+        },
+      )
+      server.registerTool("slow", { description: "slow write", inputSchema: {} }, async () => {
+        slowEntered()
+        await slowGate
+        return { content: [{ type: "text" as const, text: "slow done" }] }
+      })
+      const t: WebStandardStreamableHTTPServerTransport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        enableJsonResponse: true,
+        onsessioninitialized: (id) => void sessions.set(id, t),
+      })
+      await server.connect(t)
+      res = await t.handleRequest(req)
+    }
+    seen.push(`${req.method}:${res.status}:${sid ? "sid" : "-"}`)
+    return res
+  }
+  return {
+    sessions,
+    seen,
+    calls,
+    fetch: fetchFn,
+    restart: () => sessions.clear(),
+    slowStarted,
+    release: () => releaseSlow(),
+  }
+}
+
+describe("httpTransport：有状态服务器的会话失效（404）", () => {
+  it("tools/list 撞 404：丢掉旧连接、同一次调用里重新握手一次，后续 run 照常", async () => {
+    const srv = statefulServer()
+    const socket = mcpTools({ transport: httpTransport({ url: "http://mcp.local/mcp", fetch: srv.fetch }) })
+    const list = socket.tools as unknown as () => Promise<{ name: string }[]>
+    expect((await list()).map((t) => t.name)).toEqual(["echo", "slow"])
+    srv.restart()
+    // 修复前：连接引用永不清，之后每次都带旧 sid 撞 404，从不重新 initialize
+    expect((await list()).map((t) => t.name)).toEqual(["echo", "slow"])
+    expect((await list()).map((t) => t.name)).toEqual(["echo", "slow"])
+    const afterRestart = srv.seen.slice(srv.seen.indexOf("POST:404:sid"))
+    expect(afterRestart.filter((s) => s === "POST:404:sid")).toHaveLength(1)
+    expect(afterRestart).toContain("POST:200:-") // 不带 sid 的新 initialize
+    expect(srv.sessions.size).toBe(1)
+    await socket.close()
+  })
+
+  it("tools/call 撞 404：本次是 isError、不重放，下一次调用按配方重建并成功", async () => {
+    const srv = statefulServer()
+    const socket = mcpTools({ transport: httpTransport({ url: "http://mcp.local/mcp", fetch: srv.fetch }) })
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "echo", { text: "one" })] },
+      { drafts: [callTool("c2", "echo", { text: "two" })] },
+      { drafts: [say("ok")] },
+    ])
+    const gen = runLoop({
+      sessionId: "s",
+      log,
+      lowering,
+      model: { provider: "x", id: "y" },
+      sockets: [socket],
+    })
+    // 起步 tools/list 之后、第一次 tools/call 之前让服务器"重启"
+    const events: Event[] = []
+    let restarted = false
+    while (true) {
+      const step = await gen.next()
+      if (step.done) break
+      events.push(step.value)
+      if (!restarted && step.value.type === "core.tool_call") {
+        srv.restart()
+        restarted = true
+      }
+    }
+    const results = events.filter((e) => e.type === "core.tool_result") as unknown as {
+      payload: { isError?: boolean; content: { type: string; text?: string }[] }
+    }[]
+    expect(results).toHaveLength(2)
+    expect(results[0]?.payload.isError).toBe(true)
+    expect(results[1]?.payload.isError ?? false).toBe(false)
+    expect(results[1]?.payload.content).toEqual([{ type: "text", text: "echo:two" }])
+    // 撞 404 的那次调用（c1）没有在新会话上重放：服务器只执行过 c2 一次。
+    // 不用 POST:404 的次数断言——重放会发生在新会话上（表现为 POST:200），那个计数锁不住它
+    expect(srv.calls).toEqual(["two"])
+    await socket.close()
+  })
+
+  it("一个调用在途时另一个调用撞 404：作废不掐断在途那个，它照常拿到结果；旧连接等它收尾才关", async () => {
+    const srv = statefulServer()
+    const conn = new McpConnection(httpTransport({ url: "http://mcp.local/mcp", fetch: srv.fetch }), {
+      clientInfo: { name: "t", version: "0" },
+    })
+    await conn.listTools()
+    // 在途的长写调用：服务器已接收、正在执行
+    const slow = conn.callTool("slow", {}, { timeoutMs: 5_000 })
+    await srv.slowStarted
+    // 会话过期：另一个调用撞 404
+    srv.restart()
+    await expect(conn.callTool("echo", { text: "x" }, { timeoutMs: 5_000 })).rejects.toThrow(
+      /Session not found/,
+    )
+    expect(conn.connected).toBe(false)
+    srv.release()
+    // 修复前：作废时立即 client.close()，在途的 slow 被以 "Connection closed" 拒掉，循环会写成普通失败
+    await expect(slow).resolves.toMatchObject({ content: [{ type: "text", text: "slow done" }] })
+    // 下一次调用按配方重建
+    await expect(conn.callTool("echo", { text: "y" }, { timeoutMs: 5_000 })).resolves.toMatchObject({
+      content: [{ type: "text", text: "echo:y" }],
+    })
+    expect(srv.calls).toEqual(["y"])
+    await conn.close()
   })
 })

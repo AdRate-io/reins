@@ -13,12 +13,13 @@ import {
   type LoopConfig,
   type RunResult,
   RunStateError,
+  RunStop,
   runLoop,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { z } from "zod"
-import { mcpTools } from "./mcp-tools.js"
+import { mcpTools, ROUTE_NOT_SENT_TEXT } from "./mcp-tools.js"
 import { fixtureServer } from "./test-utils.js"
 import { McpToolsError, type McpTransport } from "./types.js"
 
@@ -145,6 +146,55 @@ describe("mcpTools：run 起步 tools/list → reins Tool", () => {
   })
 })
 
+describe("mcpTools：改写后撞名", () => {
+  it("合规原名优先占名；改写后撞上的追加 _2 后缀、告警说明撞了谁；两件都在表里、各调各的", async () => {
+    const fx = fixtureServer()
+    fx.server.registerTool(
+      "files.delete",
+      { description: "DELETE files", inputSchema: {}, annotations: { destructiveHint: true } },
+      async () => ({ content: [{ type: "text" as const, text: "deleted" }] }),
+    )
+    fx.server.registerTool(
+      "files_delete",
+      { description: "list (safe)", inputSchema: {}, annotations: { readOnlyHint: true } },
+      async () => ({ content: [{ type: "text" as const, text: "safe" }] }),
+    )
+    const long = "x".repeat(70)
+    fx.server.registerTool(`${long}.a`, { description: "long a", inputSchema: {} }, async () => ({
+      content: [{ type: "text" as const, text: "long a" }],
+    }))
+    fx.server.registerTool(`${long}.b`, { description: "long b", inputSchema: {} }, async () => ({
+      content: [{ type: "text" as const, text: "long b" }],
+    }))
+    const warnings: string[] = []
+    const socket = mcpTools({ transport: fx.transport, warn: (m) => warnings.push(m) })
+    const tools = await (
+      socket.tools as unknown as () => Promise<{ name: string; description: string; risk?: string }[]>
+    )()
+    const byDesc = new Map(tools.map((t) => [t.description, t]))
+    // 修复前：files.delete 被改写成 files_delete，与只读的那件撞名，core 静默丢掉后到者
+    expect(byDesc.get("list (safe)")).toMatchObject({ name: "files_delete", risk: "low" })
+    expect(byDesc.get("DELETE files")).toMatchObject({ name: "files_delete_2", risk: "high" })
+    // 截到 64 后撞名：后缀挤占末尾，仍不超 64
+    expect(byDesc.get("long a")?.name).toBe("x".repeat(64))
+    expect(byDesc.get("long b")?.name).toBe(`${"x".repeat(62)}_2`)
+    expect(new Set(tools.map((t) => t.name)).size).toBe(tools.length)
+    const collided = warnings.find((w) => w.includes("files.delete"))
+    expect(collided).toContain("files_delete_2")
+    expect(collided).toContain("already")
+
+    // 两件各调各的：模型侧改写名 → 服务器原名
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "files_delete", {})] },
+      { drafts: [say("done")] },
+    ])
+    await drain(runLoop(cfg(lowering, log, { sockets: [socket] })))
+    expect(results(await all(log)).map(textOf)).toEqual(["safe"])
+    await socket.close()
+  })
+})
+
 describe("mcpTools：tools/call 的结果与失败", () => {
   it("正常结果 → tool_result 文本；服务器 isError 直通；服务器已删掉的工具 → 抛错记成 isError，循环不崩", async () => {
     const fx = fixtureServer()
@@ -253,6 +303,53 @@ describe("mcpTools：tools/call 的结果与失败", () => {
     expect(textOf(r as CoreEventOf<"core.tool_result">)).toBe("echo:hi")
     expect(fx.connects).toBe(2)
     await socket.close()
+  })
+})
+
+describe("mcpTools：断线后重建握手期间被中止", () => {
+  it("握手成功 / 重建失败两种情形：不发 tools/call，模型看到'没发出'而不是'结果未知'（与 route 同口径）", async () => {
+    for (const mode of ["handshake", "reconnect-fails"] as const) {
+      const fx = fixtureServer()
+      let writes = 0
+      fx.server.registerTool("write", { description: "a write", inputSchema: {} }, async () => {
+        writes++
+        return { content: [{ type: "text" as const, text: "written" }] }
+      })
+      const ac = new AbortController()
+      // 第二次 create() 即 run 中途的重建：此刻用户点了停止
+      let creates = 0
+      const transport: McpTransport = {
+        kind: "custom",
+        label: "memory",
+        create: () => {
+          if (++creates === 2) ac.abort(new RunStop())
+          return fx.transport.create()
+        },
+      }
+      const socket = mcpTools({ transport })
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering((_input, turn): ScriptedTurn => {
+        if (turn === 0) {
+          // 起步已 list 过；连接断了（stdio 子进程退出），下一次调用要重建
+          if (mode === "reconnect-fails") fx.down = true
+          void fx.serverTransports[0]?.close()
+          return { drafts: [callTool("c1", "write", {})] }
+        }
+        return { drafts: [say("done")] }
+      })
+      const { events, result } = await drain(
+        runLoop(cfg(lowering, log, { sockets: [socket], signal: ac.signal })),
+      )
+      expect(result.status, mode).toBe("paused")
+      // MCP 工具缺省不可重放（medium）：循环已先写 tool_started
+      expect(events.some((e) => e.type === "core.tool_started")).toBe(true)
+      const [r] = results(await all(log))
+      expect(r?.payload.isError).toBe(true)
+      // 修复前：握手完成后 SDK 见到已中止的 signal 在发送前抛错，循环写成"结果未知（可能已执行）"
+      expect(textOf(r as CoreEventOf<"core.tool_result">), mode).toBe(ROUTE_NOT_SENT_TEXT)
+      expect(writes).toBe(0)
+      await socket.close()
+    }
   })
 })
 
