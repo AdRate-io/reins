@@ -354,6 +354,24 @@ describe("runLoop：带工具的 agent 跑三轮并结束", () => {
     }
   })
 
+  it("模型窗口 / 预留不合规时 run 起步即抛 RangeError，一条日志都不写（全库审查 2026-11-25 #17）", async () => {
+    for (const [contextWindow, reserveTokens] of [
+      [Number.NaN, undefined],
+      [0, undefined],
+      [1000, 2000],
+    ] as const) {
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering(THREE_TURNS, { capabilities: { contextWindow } })
+      const cfg = baseConfig(lowering, log, {
+        input: "算",
+        ...(reserveTokens !== undefined ? { projection: { reserveTokens } } : {}),
+      })
+      await expect(drain(runLoop(cfg))).rejects.toThrow(RangeError)
+      expect(await all(log)).toEqual([])
+      expect(lowering.requests).toHaveLength(0)
+    }
+  })
+
   it("budget_usage 记录每轮用量与工具次数", async () => {
     const log = new InMemoryEventLog()
     await drain(runLoop(baseConfig(new ScriptedLowering(THREE_TURNS), log, { input: "算" })))

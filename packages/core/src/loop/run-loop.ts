@@ -35,7 +35,7 @@ import { createCoreRegistry, type EventSchemaRegistry } from "../events/registry
 import { type LoweringOutcome, type LoweringStreamContext, lossesOf } from "../lowering/types.js"
 import { estimateTotal, roughTokenEstimate } from "../projection/estimate.js"
 import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
-import { project } from "../projection/project.js"
+import { project, resolveReserveTokens } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
 import {
@@ -314,6 +314,11 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     if (!registry.has(d.type)) throw new RangeError(`input draft type ${d.type} is not registered`)
   }
   const capabilities = lowering.capabilities(model)
+  // 窗口与预留在写日志前校验（与 project() 同一函数）：拖到投影才抛，tools_bound / input 已经落了
+  resolveReserveTokens({
+    contextLimit: capabilities.contextWindow,
+    ...(cfg.projection?.reserveTokens !== undefined ? { reserveTokens: cfg.projection.reserveTokens } : {}),
+  })
   const configHash = await computeConfigHash({
     model,
     tools: baseTools,

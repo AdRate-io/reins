@@ -731,6 +731,30 @@ describe("project（默认链端到端）", () => {
     expect(project({ timeline: [], budget: { contextLimit: 100 }, sessionId: SESSION }).events).toEqual([])
   })
 
+  it("窗口 / 预留不合规（NaN、0、负数、预留不小于窗口）在入口拒绝，不产出一条把历史裁光的阈值 compaction（全库审查 2026-11-25 #17）", () => {
+    const bad: { contextLimit: number; reserveTokens?: number }[] = [
+      { contextLimit: Number.NaN },
+      { contextLimit: 0 },
+      { contextLimit: -100 },
+      { contextLimit: Number.POSITIVE_INFINITY },
+      { contextLimit: 1000, reserveTokens: 2000 },
+      { contextLimit: 1000, reserveTokens: 1000 },
+      { contextLimit: 1000, reserveTokens: -1 },
+      { contextLimit: 1000, reserveTokens: Number.NaN },
+    ]
+    for (const budget of bad) expect(() => project({ timeline, budget, now: NOW })).toThrow(RangeError)
+    expect(() => project({ timeline, budget: { contextLimit: Number.NaN }, now: NOW })).toThrow(
+      "budget.contextLimit must be a positive finite number, got NaN",
+    )
+    expect(() =>
+      project({ timeline, budget: { contextLimit: 1000, reserveTokens: 2000 }, now: NOW }),
+    ).toThrow("budget.reserveTokens must be a non-negative finite number below contextLimit (1000), got 2000")
+    // 预留 0 合法：整个窗口都给上下文
+    expect(
+      project({ timeline, budget: { contextLimit: 1_000_000, reserveTokens: 0 }, now: NOW }).emitted,
+    ).toEqual([])
+  })
+
   it("使用自定义 ext 注册表时能新造事件（registry 参数生效）", () => {
     const custom = createCoreRegistry([{ type: "ext.ping", version: 1 }])
     const r = project({

@@ -62,6 +62,31 @@ export interface ProjectOptions {
   newId?: (at: number) => string
 }
 
+/**
+ * 校验窗口与预留并解出缺省预留（全库审查 2026-11-25 #17）。纯函数，不合规抛 RangeError。
+ * contextLimit 须是有限正数；reserveTokens（缺省 contextLimit × DEFAULT_RESERVE_RATIO 取整）须是有限非负数且小于 contextLimit。
+ * 不校验时 NaN / 0 / 预留不小于窗口会让阈值兜底把历史裁到只剩最后一轮，并把这条 compaction 永久写进只追加的日志
+ * （NaN 时 overBudget 还是 false，连告警都没有）。project() 与 runLoop 起步都调这一个函数：runLoop 在写任何日志之前就拒
+ */
+export function resolveReserveTokens(budget: { contextLimit: number; reserveTokens?: number }): number {
+  const { contextLimit } = budget
+  if (typeof contextLimit !== "number" || !Number.isFinite(contextLimit) || contextLimit <= 0) {
+    throw new RangeError(`budget.contextLimit must be a positive finite number, got ${String(contextLimit)}`)
+  }
+  const reserveTokens = budget.reserveTokens ?? Math.floor(contextLimit * DEFAULT_RESERVE_RATIO)
+  if (
+    typeof reserveTokens !== "number" ||
+    !Number.isFinite(reserveTokens) ||
+    reserveTokens < 0 ||
+    reserveTokens >= contextLimit
+  ) {
+    throw new RangeError(
+      `budget.reserveTokens must be a non-negative finite number below contextLimit (${contextLimit}), got ${String(reserveTokens)}`,
+    )
+  }
+  return reserveTokens
+}
+
 let defaultRegistry: EventSchemaRegistry | undefined
 /** 内置注册表只在首次需要时构造一次；project() 本身不持有别的状态 */
 function coreRegistry(): EventSchemaRegistry {
@@ -88,8 +113,7 @@ export function project(opts: ProjectOptions): ProjectionResult {
   const sessionId = opts.sessionId ?? last?.sessionId
   if (sessionId === undefined) throw new RangeError("an empty timeline requires an explicit sessionId")
 
-  const reserveTokens =
-    opts.budget.reserveTokens ?? Math.floor(opts.budget.contextLimit * DEFAULT_RESERVE_RATIO)
+  const reserveTokens = resolveReserveTokens(opts.budget)
   const overheadTokens = opts.budget.overheadTokens ?? contextOverheadOf(timeline)
   if (!Number.isFinite(overheadTokens) || overheadTokens < 0) {
     throw new RangeError(`budget.overheadTokens must be a non-negative finite number, got ${overheadTokens}`)
