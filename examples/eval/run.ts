@@ -183,11 +183,11 @@ function brainArm(world: PatrolWorld): EvalArm {
     name: "brain",
     sockets: [
       perception({ limits }),
+      handoff(), // onTurnEnd 第一个给意见的说了算：handoff 在 compact / budget 之前，否则 compact 停滞暂停会让"已交接"回执撒谎
       compact(),
       pins({ pins: [{ name: "advertiser", text: `本任务只操作测试广告主 ${world.advertiserId}（可随意写，不会投出去）。` }] }),
       spill({ maxResultTokens: 6000, previewLines: 12 }),
       memory(),
-      handoff(),
       budget({ limits: { ...limits, totalTokens: 4_000_000 } }),
       approval({ unmatched: "byRisk" }),
     ],
