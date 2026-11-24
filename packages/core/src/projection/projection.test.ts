@@ -446,7 +446,18 @@ describe("被折叠工具结果清单（manifest）", () => {
       ].join("\n"),
     )
     expect(renderFoldedToolResults(items, { heading: "H", maxItems: 1 })).toBe(
-      ["H", '- seq 4 read({"a":"x","b":1}) — 12k chars', "- …and 2 more (seq 5–6)"].join("\n"),
+      ["H", "- …2 earlier (seq 4–5)", '- seq 6 big({}) — stored as blob "blob-9", read with fetch_blob'].join(
+        "\n",
+      ),
+    )
+    // 全库审查 2026-11-25 #63：超限时留最近的，较旧的折成一行；只省一条时不写成 "seq 4–4"
+    expect(renderFoldedToolResults(items, { heading: "H", maxItems: 2 })).toBe(
+      [
+        "H",
+        "- …1 earlier (seq 4)",
+        "- seq 5 read() — 7 chars, error",
+        '- seq 6 big({}) — stored as blob "blob-9", read with fetch_blob',
+      ].join("\n"),
     )
     expect(digestArgs({ z: [3, { y: 1, x: 2 }], a: null })).toBe('{"a":null,"z":[3,{"x":2,"y":1}]}')
     expect(digestArgs("x".repeat(200), 10)).toBe(`"${"x".repeat(8)}…`)
@@ -508,11 +519,7 @@ describe("被折叠用户消息的媒体清单（2026-11-24）", () => {
       ].join("\n"),
     )
     expect(renderFoldedUserMedia(items, { heading: "H", maxItems: 1 })).toBe(
-      [
-        "H",
-        "- seq 3 user message — 2 images (image/png, image/jpeg), 1 video (video/mp4)",
-        "- …and 2 more (seq 8–9)",
-      ].join("\n"),
+      ["H", "- …2 earlier (seq 3–8)", "- seq 9 user message — 1 image (image/webp)"].join("\n"),
     )
   })
 })

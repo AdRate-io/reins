@@ -222,7 +222,7 @@
 - **被打断的轮在续跑后才收尾（R2）** — 循环抽出 `endTurn`，补齐 pending 之后也调一次（缺省 continue）。为什么：被审批或中止打断的那一轮原本永远等不到 `onTurnEnd`，模块在那一轮记下的决定（如 handoff 意图）会整个丢失；修循环比让每个模块各自补救干净。边界：`ctx.timeline` 仍是轮开始时的快照，模块要按日志重建意图。
 - **`supersedes` 是撤销一条 pin 的唯一表达（B3）** — 被后来某条 `system_note.supersedes` 指到的事件，一旦被覆盖就不再幸存，不论谁的 `pinsKept` 保留过它；取代者在完整时间线里找，自己被折叠了也算。为什么：append-only 日志里没有"删除"，`pinsKept` 记的是当时的契约，后来的取代说明优先。边界：未折叠时取代不隐藏任何东西，历史原样展示。
 - **摘要放在被覆盖区间的位置** — `foldCompactions` 把 compaction 插到区间之后的第一条可见事件前，而不是它自己的 seq 位置，所以投影输出顺序可以与 seq 不一致。为什么：折叠中间段时"摘要出现在原段位置"读起来才顺；视图是给模型看的，日志才按 seq。边界：`budgetTruncate` 因此必须额外守"seq 封闭"，否则新 `coversSeq` 会误伤保留下来的事件。
-- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reinsjs/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，措辞由调用方给（core 不知道取回工具叫什么）。
+- **清单与取回用 `tool_result` 的 seq（E3c，DECISIONS 2026-09-10）** — 折叠 / 裁剪时把被折走的工具结果列成 `seq N tool(args) — 大小`，core 只负责列清单（`manifest.ts`），取回的 `recall` 工具在 `@reinsjs/brain`。为什么：摘要写的是模型的取舍，清单写的是事实上还在的东西，两者分开；seq 短、模型能抄，且 fork 后子会话里照样有效。边界：清单缺省最多 80 条，超出时留最近的（seq 最大的）80 条、较旧的折成标题下一行 `…N earlier (seq a–b)`——几次整理吸收旧摘要后清单只增不减，模型最想取回的是较新那截（2026-11-25 全库审查 #63）；措辞由调用方给（core 不知道取回工具叫什么）。
 - **轮边界按模型输出类型而非 actor（E1，DECISIONS 2026-09-09）** — `replayTurns` 与 `splitTurns` 都按 `model_thinking / model_text / tool_call` 三种类型切轮。为什么：脑子模块在工具执行期间留下的事件 actor 也是 `model`，并行工具时按 actor 切会把它们误当成一个新轮。边界：一条模型输出都没回来的失败轮识别不出请求边界，不计入 turns。
 
 ## 与技术方案的出入（以代码为准）

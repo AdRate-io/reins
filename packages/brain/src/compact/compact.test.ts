@@ -988,7 +988,7 @@ describe("compact 纯函数层", () => {
       { manifest: { maxItems: 1 } },
     )
     expect(capped.ok && capped.payload.summary).toBe(
-      `S\n\n${MANIFEST_HEADING}\n- seq 4 get({"adv":1,"id":2}) — 1.5k chars\n- …and 1 more (seq 5–5)`,
+      `S\n\n${MANIFEST_HEADING}\n- …1 earlier (seq 4)\n- seq 5 get({"id":1}) — 5 chars`,
     )
     const off = planCompaction(events, { summary: "S", keep: ["k"], keepRecentTurns: 0 }, { manifest: false })
     expect(off.ok && off.payload.summary).toBe("S\n\nKey facts carried forward:\n- k")
