@@ -21,8 +21,16 @@ export function nodeListener(handler: AgentHandler, ctx?: HandlerContext): NodeL
     // 连接关闭（客户端断开，或响应正常写完）就 abort；正常写完后再取消已读完的流是空操作
     const gone = new AbortController()
     res.once("close", () => gone.abort())
+    let request: Request
     try {
-      const request = await toRequest(req)
+      request = await toRequest(req)
+    } catch (err) {
+      // 上传 body 途中客户端断开（aborted / ECONNRESET）是客户端的正常行为，不当服务端故障报；连接已关，没有可写的响应
+      if (gone.signal.aborted || req.destroyed) return
+      fail(res, err)
+      return
+    }
+    try {
       let response: Response
       try {
         response = await handler(request, ctx)

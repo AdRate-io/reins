@@ -2,7 +2,7 @@
  * `@reinsjs/server/node` 的 nodeListener：handler 抛错不能让进程崩、请求必须拿到响应。
  * 用真 node:http 服务器（端口 0）跑，覆盖的是宿主照 README `createServer(nodeListener(handler))` 的真实接法。
  */
-import { createServer, type Server } from "node:http"
+import { createServer, request, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { nodeListener } from "./node.js"
@@ -145,5 +145,24 @@ describe("nodeListener：客户端断开", () => {
     ac.abort()
     await new Promise((r) => setTimeout(r, 200))
     expect(cancelled).toBe(true)
+  })
+
+  it("上传请求体途中客户端断开：不调 handler、不报 console.error（客户端的正常行为不当服务端故障）", async () => {
+    let called = false
+    const base = await serve(async () => {
+      called = true
+      return new Response("ok")
+    })
+    await new Promise<void>((resolve) => {
+      // 声明 1000 字节只写 10 字节就掐断连接，服务端 for-await 读 body 时抛 aborted
+      const req = request(`${base}/`, { method: "POST", headers: { "content-length": "1000" } })
+      req.on("error", () => resolve())
+      req.on("close", () => resolve())
+      req.write("0123456789")
+      setTimeout(() => req.destroy(), 50)
+    })
+    await new Promise((r) => setTimeout(r, 100))
+    expect(called).toBe(false)
+    expect(console.error).not.toHaveBeenCalled()
   })
 })
