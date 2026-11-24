@@ -183,11 +183,11 @@ function brainArm(world: PatrolWorld): EvalArm {
     name: "brain",
     sockets: [
       perception({ limits }),
+      handoff(), // onTurnEnd 第一个给意见的说了算：handoff 在 compact / budget 之前，否则 compact 停滞暂停会让"已交接"回执撒谎
       compact(),
       pins({ pins: [{ name: "advertiser", text: `本任务只操作测试广告主 ${world.advertiserId}（可随意写，不会投出去）。` }] }),
       spill({ maxResultTokens: 6000, previewLines: 12 }),
       memory(),
-      handoff(),
       budget({ limits: { ...limits, totalTokens: 4_000_000 } }),
       approval({ unmatched: "byRisk" }),
     ],
@@ -307,7 +307,7 @@ const report = await runEval({
       list.push(e)
       probes.set(key, list)
       if (e.type === "core.model_text") log(`    探针 ${cell.probe}: ${oneLine((e.payload as { text: string }).text, 70)}`)
-      else if (e.type === "core.tool_call" || e.type === "core.run_error" || e.type === "core.run_paused")
+      else if (e.type === "core.tool_call" || e.type === "core.error" || e.type === "core.run_paused")
         log(`    探针 ${cell.probe} ${e.type.replace("core.", "")}: ${oneLine(JSON.stringify(e.payload), 160)}`)
       return
     }
@@ -342,8 +342,8 @@ const report = await runEval({
       case "core.run_paused":
         log(`    ⏸ ${String(p.reason)}`)
         break
-      case "core.run_error":
-        log(`    ❌ ${oneLine(JSON.stringify(p), 200)}`)
+      case "core.error":
+        log(`    ❌ ${String(p.category)}: ${oneLine(String(p.message), 200)}`)
         break
       case "core.handoff":
         log("    ↪ 交接到新会话")

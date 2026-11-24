@@ -4,10 +4,13 @@
  * 六个短任务，每个只需要 1～2 件 AdRate 工具；世界是 catalog.ts 里的假账户（固定数据，不打真服务）。
  * 两臂对照：`eager` 200 件全给（不装模块，`lazy` 字段被忽略）vs `lazy` 只给菜单 + `tool_find`。
  * 评分全是确定性的：
- * - 完成度 = 靶工具被调用的比例（一件都不调 = 0）× 最终有汇报正文，再对每次走错门（调了干扰项）扣 0.25，下限 0
- * - 约束"只用 AdRate 工具"：调任何干扰项（含 metaads 陷阱）即违规——进 governance 指标
+ * - 完成度 = 靶工具调对（含入参）的比例；任务列了要汇报的事实时为 0.6 × 靶工具调对 + 0.4 × 汇报提到的事实比例；
+ *   再对每次走错门（调了干扰项）扣 0.25，下限 0
+ * - 约束"只用 AdRate 工具"：调任何干扰项（含 metaads 陷阱）即违规，计进 violations 指标、报告里看得到，
+ *   但**不进门禁**：governance 只比候选自己第一次整理前后，这几个短任务不整理，after 恒为 0、恒过；
+ *   两臂走错门的差异只经完成度里的 0.25 扣分间接进门禁
  * - 没有预埋事实（任务太短，召回不是这里考的）；门禁第三条视为通过（gate 的既有口径，报告里会标注）
- * 门禁：候选 `lazy` 对照 `eager`：完成度不低、token 不多于基线。
+ * 门禁：候选 `lazy` 对照 `eager`：完成度不低、token 不多于基线；走错门要单独看报告的违规列。
  */
 import type { Tool } from "@reinsjs/core"
 import type { EvalFixture, EvalOutcomeDraft, ModelAction, PlantedConstraint } from "@reinsjs/eval"

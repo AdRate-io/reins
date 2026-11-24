@@ -111,11 +111,11 @@ export const agent = createAgent({
   sockets: [
     skills({ source: adrateSkills() }), // 菜单进系统提示；正文由模型 skill_read 按需翻，以 tool_result 进时间线
     perception({ limits: { toolCalls: 120, wallMs: 40 * 60_000 } }),
+    handoff(), // onTurnEnd 第一个给意见的说了算：handoff 在 compact / budget 之前，否则 compact 停滞暂停会让"已交接"回执撒谎
     compact(),
     pins({ pins: [{ name: "advertiser", text: `本任务只操作测试广告主 ${ADVERTISER_ID}（可随意写，不会投出去）。` }] }),
     spill({ maxResultTokens: 6000, previewLines: 12 }),
     memory(),
-    handoff(),
     budget({ limits: { toolCalls: 120, wallMs: 40 * 60_000, totalTokens: 4_000_000 } }),
     approval({ unmatched: "byRisk" }), // 读放行、写先问人；放最后，判定的是真正要执行的入参
   ],
