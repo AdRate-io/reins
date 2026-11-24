@@ -1024,6 +1024,32 @@ describe("内联图片：mime 白名单与 core 同一函数（BUG-261125-1）",
     expect(await logged(log, "s1")).toHaveLength(0)
   })
 
+  it("客户端工具 pending 时回填带 svg 图片的 core.tool_result：400、日志不变；改用 png 照常续跑", async () => {
+    const pick: Tool = { name: "pick_file", description: "让用户选文件", inputSchema: {}, side: "client" }
+    const { handler, log } = setup(
+      [{ drafts: [callTool("c1", "pick_file", {})] }, { drafts: [say("收到")] }],
+      [pick],
+    )
+    const first = parseFrames(await (await handler(postRequest({ sessionId: "s1", input: "选" }))).text())
+    expect(resultOf(first)?.status).toBe("paused")
+    const before = (await logged(log, "s1")).length
+    const fill = (mime: string) =>
+      postRequest({
+        sessionId: "s1",
+        input: {
+          type: "core.tool_result",
+          payload: { toolCallId: "c1", content: [{ type: "image", mime, data: "PHN2Zz4=" }] },
+        },
+      })
+    const bad = await handler(fill("image/svg+xml"))
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ error: "bad_request" })
+    expect((await logged(log, "s1")).length).toBe(before)
+    const ok = await handler(fill("image/png"))
+    expect(ok.status).toBe(200)
+    expect(resultOf(parseFrames(await ok.text()))?.status).toBe("done")
+  })
+
   it("白名单四种照常放行", async () => {
     const { handler, log } = setup(TWO_TURNS)
     const input = ["image/jpeg", "image/png", "image/gif", "image/webp"].map((mime) => ({
