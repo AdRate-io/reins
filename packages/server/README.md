@@ -43,7 +43,7 @@ Frames: `start`, one frame per event, `delta` (optional streaming increments), `
 ## Security defaults
 
 - **`authorizeSession` is not optional in multi-tenant deployments.** Without it, anyone who knows a `sessionId` can read that timeline and continue that run. Only an explicit `true` allows; `false` or `undefined` answers `404` (not `403`, which would confirm the session exists). `method` is `"GET"`, `"POST"` or `"STOP"` — a hook that allows writes only when `method === "POST"` therefore refuses stop requests until it names `"STOP"` too.
-- **Input is whitelisted twice.** A `POST` body's `input` may be text, content parts, or a draft of type `core.user_message` or `core.tool_result` (the latter only for a pending client-side tool). Anything else — a forged `approval_decision`, a `system_note` claiming system trust, a `compaction` hiding history — is refused here with `400`, and the loop keeps its own, slightly wider, whitelist as a second line (it is not reachable through this handler). An array `input` must be a non-empty list of `text` / `image` parts; every part — and the content of a draft — is rebuilt from its known fields only, so extra fields never reach the loop. Arrays of event drafts (a host briefing plus a task, see `@reinsjs/core`) are for in-process hosts only and are refused here.
+- **Input is whitelisted twice.** A `POST` body's `input` may be text, content parts, or a draft of type `core.user_message` or `core.tool_result` (the latter only for a pending client-side tool). Anything else — a forged `approval_decision`, a `system_note` claiming system trust, a `compaction` hiding history — is refused here with `400`, and the loop keeps its own, slightly wider, whitelist as a second line (it is not reachable through this handler). An array `input` must be a non-empty list of `text` / `image` / `video` / `audio` parts (an image may be inline or a reference, see below); every part — and the content of a draft — is rebuilt from its known fields only, so extra fields never reach the loop. Arrays of event drafts (a host briefing plus a task, see `@reinsjs/core`) are for in-process hosts only and are refused here.
 - **A replay hands back the resume state.** When a replay-only stream ends (`end` frame, no run in progress) and the session's last event is the run's pause, the frame carries that pause's signed `state` — the same object the live `result` frame had — so a page reloaded, reopened or opened on another device can still approve. It is the state from the moment of the pause, never recomputed on read, so a tool changed afterwards still fails the check. The `state` is that of the **latest** pause, whatever its reason: after a resume the frame has none until the run pauses again, and a stop, a budget pause or an abort each end in a pause of their own. So a `state` alone does not mean "ask for approval" — draw an approval card only for the ids in `state.pendingToolCallIds` that have a `core.approval_request` in the replay (after a stop the list is empty). Two clients holding the same state cannot both act on it: while one resume runs the other gets `409 run_in_progress`, afterwards `409 pending_mismatch`. Every `core.run_paused` event carries its state, so an `onEvent` sink or a raw event stream forwarded to a third party carries these signed states too; older ones fail validation, but treat them like any other resume token.
 - **Resume is validated before anything is written.** Signature (when `secret` is set) and the digest of pending tool calls must match the log, and the model and the definitions of the tools behind the pending calls must be unchanged (states from before 0.10 still compare the whole configuration hash); drift answers `409 config_mismatch` unless the host passes `allowConfigDrift`.
 - **Session ids** must be non-empty printable ASCII without spaces (`400` otherwise).
@@ -114,6 +114,37 @@ const delivered = (events: readonly Event[], deliveryId: string) =>
       e.provenance.ref === deliveryId,
   )
 ```
+
+## Images by reference
+
+A user message (or a client-tool result) may carry `{ type: "image", mime, blobId }` instead of inline `data`: `put` the raw bytes into the agent's `BlobStore` under the session's id first, then send the reference. The handler checks every reference **before** it queues a message during a run or starts a run, with the same function the loop uses (`checkImageRefs` from `@reinsjs/core`):
+
+- not this session's blob (and not already shown as an image in this session's timeline), no such blob, a `mime` that differs from the blob's, or no `BlobStore` → `400` with `Blob <id> not found in this session` — the same sentence for all of them, nothing written;
+- the `BlobStore` throws while checking → `503 storage_unavailable` (try again), nothing written.
+
+The handler does not serve blob bytes. To show the pictures in your UI, add your own route, run your session check first (the same one as `authorizeSession`), and decide with `blobUsableBy` — comparing `meta.sessionId` alone would hide a parent's pictures in a forked session. `registry` is your event registry (`createCoreRegistry()`):
+
+```ts
+/** GET /images?sessionId=…&id=… — call it only after your own session check (the same one as `authorizeSession`). */
+async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id: string): Promise<Response> {
+  const notFound = () => new Response("not found", { status: 404 })
+  let blob: { bytes: Uint8Array; meta: BlobMeta }
+  try {
+    blob = await blobs.get(id)
+  } catch (err) {
+    if (err instanceof StoreError && err.code === "not_found") return notFound()
+    throw err
+  }
+  const timeline = await readTimeline(log, sessionId, { registry })
+  if (!blobUsableBy(sessionId, blob.meta, id, timeline)) return notFound()
+  if (!blob.meta.mime.startsWith("image/")) return notFound()
+  return new Response(blob.bytes.slice(), {
+    headers: { "content-type": blob.meta.mime, "cache-control": "private, max-age=31536000, immutable" },
+  })
+}
+```
+
+Blob ids are never reused and bytes never change after `put`, so the response can be cached for good.
 
 ## Multiple instances
 

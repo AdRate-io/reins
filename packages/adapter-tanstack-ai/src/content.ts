@@ -7,13 +7,32 @@
  * `durationSec`、导入没有时长，估算走字节折算）；对不上的（文档、URL 源、mime 前缀与类型不符）以占位文本代替并在返回值里
  * 声明丢了什么（P7：有损必声明）。
  */
-import { isContentPart, type ContentPart as ReinsPart, renderToolReference } from "@reinsjs/core"
+import { isContentPart, isImageRef, type ContentPart as ReinsPart, renderToolReference } from "@reinsjs/core"
 import type { ContentPart as TanstackPart } from "@tanstack/ai"
 
 export interface ImportedContent {
   parts: ReinsPart[]
   /** 无法翻译、只留下占位的片段说明 */
   dropped: string[]
+}
+
+/**
+ * 图片引用形态在 TanStack 路径上的占位（2026-11-24 媒体引用方案）：这条路径不做换回（引擎自己持有 messages、没有落点记录的
+ * 换回时机），引用片段一律落这句占位。工具结果经 `toTanstackContent` 转出再转回，引用会以这句文本永久进日志——刻意不对称，
+ * 要图的宿主走 runLoop
+ */
+export const IMAGE_REF_PLACEHOLDER = "[image unavailable]"
+
+/** 有图片引用被换成占位时的落点说明 */
+export const IMAGE_REF_NOTE =
+  "an image stored by reference is not loaded on the TanStack path, so it is replaced with placeholder text"
+
+/**
+ * 把片段里的图片引用换成占位文本（TanStack 路径落日志前用）：这条路径不校验引用归属，所以绝不把引用写进日志——
+ * 写进去的 blobId 会被 core `mediaRefsOf` 当成"本会话已引用"，越过之后所有入口的归属校验
+ */
+export function withoutImageRefs(parts: readonly ReinsPart[]): ReinsPart[] {
+  return parts.map((p) => (isImageRef(p) ? { type: "text", text: IMAGE_REF_PLACEHOLDER } : p))
 }
 
 /** reins → TanStack：给 TanStack 工具结果与消息用 */
@@ -28,6 +47,7 @@ export function toTanstackParts(parts: readonly ReinsPart[]): TanstackPart[] {
       case "image":
       case "video":
       case "audio":
+        if (isImageRef(p)) return { type: "text", content: IMAGE_REF_PLACEHOLDER }
         // durationSec 只用于 reins 的估算，模型看不到；TanStack 没有对应字段，不带
         return { type: p.type, source: { type: "data", value: p.data, mimeType: p.mime } }
       default: {

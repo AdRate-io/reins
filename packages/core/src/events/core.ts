@@ -5,7 +5,7 @@
  * 版本约定（旧稿 §8，第一版即执行）：
  * - 只追加可选字段 → 不升版本
  * - 改字段语义、删字段、改必填 → 升版本，并在注册表登记 upcast 函数
- * 当前全部为 v1，见 ./registry.ts 的 CORE_SCHEMAS。
+ * 当前 core.user_message / core.tool_result 是 v2（图片引用形态，恒等升级），其余 v1，见 ./registry.ts 的 CORE_SCHEMAS。
  */
 import type { PauseReason, SerializedRunState } from "../loop/types.js"
 import type { ContentPart, Event } from "./base.js"

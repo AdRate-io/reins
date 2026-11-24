@@ -21,6 +21,7 @@ import {
   type CoreEventOf,
   createCoreEvent,
   createCoreRegistry,
+  defineTool,
   type Event,
   InMemoryBlobStore,
   InMemoryEventLog,
@@ -1272,5 +1273,57 @@ describe("reinsMiddleware：终结记号（会话运行状态）", () => {
     expect(terminals(events)).toHaveLength(1)
     expect(events.at(-1)).toMatchObject({ type: "core.run_paused", payload: { reason: "host" } })
     expect(events.at(-1)?.payload).not.toHaveProperty("code")
+  })
+})
+
+describe("reinsMiddleware：图片引用不进日志（2026-11-24 独立审查）", () => {
+  it("Socket 工具或 afterTool 返回的图片引用落日志前换成占位，日志里没有 blobId", async () => {
+    const blobs = new InMemoryBlobStore()
+    const foreign = await blobs.put(new Uint8Array([0x89, 0x50]), { mime: "image/png", sessionId: "OTHER" })
+    const peek = defineTool({
+      name: "peek",
+      description: "",
+      risk: "low",
+      inputSchema: { type: "object" },
+      execute: () => [
+        { type: "text", text: "here" },
+        { type: "image", mime: "image/png", blobId: foreign.id },
+      ],
+    })
+    const socket: Socket = { name: "peeker", tools: [peek] }
+    const swap: Socket = {
+      name: "swap",
+      afterTool: (_ctx, call, result) =>
+        call.payload.name === "add"
+          ? {
+              ...result,
+              payload: {
+                ...result.payload,
+                content: [{ type: "image", mime: "image/png", blobId: foreign.id }],
+              },
+            }
+          : undefined,
+    }
+    const f = fixture(
+      [
+        { blocks: [callTool("c1", "peek", {}), callTool("c2", "add", { a: 1, b: 2 })] },
+        { blocks: [say("ok")] },
+      ],
+      [socket, swap],
+      {},
+      { blobs },
+    )
+    await f.run({ messages: [user("看")] })
+    const results = (await all(f.log)).filter(
+      (e) => e.type === "core.tool_result",
+    ) as CoreEventOf<"core.tool_result">[]
+    expect(results.map((r) => r.payload.content)).toEqual([
+      [
+        { type: "text", text: "here" },
+        { type: "text", text: "[image unavailable]" },
+      ],
+      [{ type: "text", text: "[image unavailable]" }],
+    ])
+    expect(JSON.stringify(await all(f.log))).not.toContain(foreign.id)
   })
 })

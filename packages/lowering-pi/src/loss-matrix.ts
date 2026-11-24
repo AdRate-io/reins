@@ -84,11 +84,15 @@ const USER_DEFERRED = lossy(
 
 /** pi-ai 没有视频 / 音频内容：换占位（2026-11-05 视频音频方案）；to-request.ts 落点 note 用同一常量 */
 export const MEDIA_PLACEHOLDER_NOTE = "pi-ai has no video / audio content; replaced with placeholder text"
-const MEDIA_WHEN = "the content carries video or audio"
+/** 未换回的图片引用（2026-11-24 媒体引用方案）：to-request.ts 落点 note 用同一常量 */
+export const IMAGE_UNAVAILABLE_NOTE =
+  "an image stored by reference could not be loaded (blob unavailable: it was removed, or no BlobStore is configured), so it is replaced with placeholder text"
+const MEDIA_NOTE_ALL = `${MEDIA_PLACEHOLDER_NOTE}; or ${IMAGE_UNAVAILABLE_NOTE}`
+const MEDIA_WHEN = "the content carries video or audio, or an image reference whose blob is unavailable"
 
 export const LOSS_MATRIX: LossMatrix = {
   "anthropic-messages": {
-    "core.user_message": [exact("user"), USER_DEFERRED, lossy("user", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN)],
+    "core.user_message": [exact("user"), USER_DEFERRED, lossy("user", MEDIA_NOTE_ALL, MEDIA_WHEN)],
     "core.model_text": [exact("assistant-text")],
     "core.model_thinking": [
       exact("thinking-block", "replayed verbatim with its signature"),
@@ -98,7 +102,7 @@ export const LOSS_MATRIX: LossMatrix = {
     "core.tool_call": [exact("tool_use"), TOOL_CALL_ARGS],
     "core.tool_result": [
       exact("tool_result", "in the user message right after the matching tool_use"),
-      lossy("tool_result", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN),
+      lossy("tool_result", MEDIA_NOTE_ALL, MEDIA_WHEN),
     ],
     "core.system_note": [
       exact(
@@ -127,7 +131,7 @@ export const LOSS_MATRIX: LossMatrix = {
     ],
   },
   "openai-responses": {
-    "core.user_message": [exact("user"), USER_DEFERRED, lossy("user", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN)],
+    "core.user_message": [exact("user"), USER_DEFERRED, lossy("user", MEDIA_NOTE_ALL, MEDIA_WHEN)],
     "core.model_text": [exact("assistant-message")],
     "core.model_thinking": [
       exact("reasoning-item", "the encrypted_content is replayed verbatim"),
@@ -137,7 +141,7 @@ export const LOSS_MATRIX: LossMatrix = {
     "core.tool_call": [exact("function_call"), TOOL_CALL_ARGS],
     "core.tool_result": [
       exact("function_call_output"),
-      lossy("function_call_output", MEDIA_PLACEHOLDER_NOTE, MEDIA_WHEN),
+      lossy("function_call_output", MEDIA_NOTE_ALL, MEDIA_WHEN),
     ],
     "core.system_note": [
       exact("developer", "reasoning models take the developer role"),

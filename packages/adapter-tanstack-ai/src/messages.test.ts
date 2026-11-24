@@ -234,6 +234,18 @@ describe("toModelMessages", () => {
         { toolCallId: "c1", name: "t", content: [{ type: "text", text: "no" }], isError: true },
         { actor: "tool" },
       ),
+      // 图片引用形态（媒体引用方案）：TanStack 路径不换回，落占位、记 lossy
+      ev("core.tool_call", { toolCallId: "c2", name: "t", args: {} }),
+      ev(
+        "core.tool_result",
+        {
+          toolCallId: "c2",
+          name: "t",
+          content: [{ type: "image", mime: "image/png", blobId: "b1" }],
+          isError: false,
+        },
+        { actor: "tool" },
+      ),
       ev("core.system_note", { kind: "pin", text: "p" }, { actor: "system" }),
       ev(
         "core.compaction",

@@ -4,13 +4,17 @@
  * DeepSeek 报 400 "Each tool_result block must have a corresponding tool_use block in the previous message"。
  */
 import {
+  type ContentPart,
   type CoreEventPayloads,
   type CoreEventType,
   createCoreEvent,
   createCoreRegistry,
   type Event,
+  hydrateImageRefs,
+  InMemoryBlobStore,
 } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
+import { IMAGE_UNAVAILABLE_NOTE } from "./loss-matrix.js"
 import { eventsToContext } from "./to-request.js"
 
 const registry = createCoreRegistry()
@@ -289,5 +293,52 @@ describe("run 输入批 [宿主背景说明, 用户任务]（输入多条草稿�
       const bg = landings.find((l) => l.type === "core.system_note")
       expect(bg?.kind).toBe(mid ? "exact" : "lossy")
     }
+  })
+})
+
+describe("图片引用形态（2026-11-24 媒体引用方案）", () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0xff, 0x00, 0x80])
+  const PNG_B64 = btoa(String.fromCharCode(...PNG))
+  const withImage = (image: ContentPart) => [
+    ev("core.user_message", "user", { content: [{ type: "text", text: "看" }, image] }),
+  ]
+
+  it("等价：引用经 hydrateImageRefs 换回后，与内联写法译出的 context 逐字相同", async () => {
+    const blobs = new InMemoryBlobStore()
+    const { id } = await blobs.put(PNG, { mime: "image/png", sessionId: "s" })
+    seq = 0
+    const inline = withImage({ type: "image", mime: "image/png", data: PNG_B64 })
+    seq = 0
+    const byRef = await hydrateImageRefs(withImage({ type: "image", mime: "image/png", blobId: id }), {
+      blobs,
+      cache: new Map(),
+    })
+    const a = eventsToContext({ events: inline, model, capabilities: caps(true) })
+    const b = eventsToContext({ events: byRef, model, capabilities: caps(true) })
+    expect(JSON.stringify(b.context)).toBe(JSON.stringify(a.context))
+    expect(b.landings).toEqual(a.landings)
+  })
+
+  it("没换回的引用（blob 不在了）：落 [image unavailable] 占位、记 lossy", () => {
+    seq = 0
+    const events = [
+      ...withImage({ type: "image", mime: "image/png", blobId: "gone" }),
+      ev("core.tool_call", "model", { toolCallId: "c1", name: "t", args: {} }),
+      ev("core.tool_result", "tool", {
+        toolCallId: "c1",
+        name: "t",
+        content: [{ type: "image", mime: "image/png", blobId: "gone" }],
+        isError: false,
+      }),
+    ]
+    const { context, landings } = eventsToContext({ events, model, capabilities: caps(true) })
+    expect(context.messages[0]?.content).toEqual([
+      { type: "text", text: "看" },
+      { type: "text", text: "[image unavailable]" },
+    ])
+    expect(JSON.stringify(context.messages[2])).toContain("[image unavailable]")
+    expect(landings[0]).toMatchObject({ kind: "lossy", landing: "user", note: IMAGE_UNAVAILABLE_NOTE })
+    expect(landings[2]?.kind).toBe("lossy")
+    expect(landings[2]?.note).toContain(IMAGE_UNAVAILABLE_NOTE)
   })
 })

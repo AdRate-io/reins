@@ -57,7 +57,8 @@
 | `src/capabilities.ts` | `FetchModel` → `LoweringCapabilities`：Chat 线 `midConversationSystem` 缺省 true、`thinkingReplay` 只在 DeepSeek 方言下为真；Anthropic 线 `midConversationSystem` 按模型族正则（Fable 5.x / Mythos 5.x / Opus 5 / Opus 4.8）或宿主声明、`thinkingReplay = reasoning`、`taskBudget` Opus 5 / Fable 5.1、`deferredTools` 缺省 `provider === "anthropic"`（L1；其余两线恒假）；Responses 线 `midConversationSystem` 缺省 true、`thinkingReplay = reasoning && encryptedReasoning !== false` |
 | `src/factories.ts` | `deepseek()` / `openaiChat()` / `chatCompletions()` / `anthropic()` / `anthropicMessages()` / `openai()` / `openaiResponses()` → `BoundModel`；`definitionOf(provider, id, api, opts)` 按协议精确取内置定义打底、选项覆盖（方言对象按键合并），表外模型从保守缺省起（`openai()` 对表外新型号按推理 / 收图起）；`ModelOptions` / `ProviderModelOptions`（旧名 `ChatModelOptions` / `ChatCompletionsOptions` 保留为别名） |
 | `src/ir.ts` | 共用遍历器 `eventsToIr`：assistant 分组、`awaiting` / `deferred` 后移、`markUntrusted` 标注、来源判定 `foreignOrigin`；`orderLandings` 把落点排回输入顺序 |
-| `src/media.ts` | 媒体（image / video / audio）三线共用：`acceptsMedia`（能力位判定，视频音频缺省不收）、`mediaOmitted`（占位文案，图片文案与旧版逐字节一致）、`omittedNote` / `mediaNouns`（落点 note）、`RELAY_DIALECT_NOTE`（视频音频走图片槽是中转站方言）；注释写明绝不用 `input_audio` |
+| `src/media.ts` | 媒体（image / video / audio）三线共用：`acceptsMedia`（能力位判定，视频音频缺省不收）、`mediaOmitted`（占位文案，图片文案与旧版逐字节一致）、`omittedNote` / `mediaNouns`（落点 note）、`RELAY_DIALECT_NOTE`（视频音频走图片槽是中转站方言）；注释写明绝不用 `input_audio`；`IMAGE_UNAVAILABLE` / `IMAGE_UNAVAILABLE_NOTE`：未换回的图片引用（blob 不在了）在模型收图时落的占位与落点 note（2026-11-24） |
+| `src/media-refs.test.ts` | 图片引用：真 runLoop × 三条线 × 能力位开关，引用与内联发出的请求体逐字节相等；未换回的引用落占位、记 lossy，不收图时仍是"不收图"那句 |
 | `src/notes.ts` | `framedSystemNote` / `framedSummary`：说明与摘要落成 user 文本时的框（文案与 pi 版一致） |
 | `src/http.ts` | `postJson`（非 2xx 抛 `HttpError`，格式与两家 SDK 同款让 core 的瞬断判据直接可用）、`requestSignals`（宿主 signal 与 `AbortSignal.timeout` 合成，`timedOut()` 区分谁中止的） |
 | `src/sse.ts` | `parseSse`：WHATWG SSE 字段子集，兼容 CRLF / 裸 CR / 块切半行 / 末尾无空行 |

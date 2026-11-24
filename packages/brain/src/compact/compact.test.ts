@@ -6,6 +6,7 @@ import {
   defaultProjectionChain,
   defineTool,
   type Event,
+  InMemoryBlobStore,
   InMemoryEventLog,
   type LoopConfig,
   type RunResult,
@@ -756,6 +757,42 @@ describe("compact × recall：被折叠用户消息里的媒体有路可回（20
           (e as ToolResult).payload.content.some((p) => p.type === "image"),
       ),
     ).toBe(true)
+  })
+
+  it("图片引用形态（媒体引用方案）：recall 取回的结果里是引用不是字节，下一轮视图换回成内联", async () => {
+    const log = new InMemoryEventLog()
+    const blobs = new InMemoryBlobStore()
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff])
+    const { id } = await blobs.put(bytes, { mime: "image/png", sessionId: SESSION })
+    const image = { type: "image" as const, mime: "image/png", blobId: id }
+    const clock = deterministic()
+    await drain(
+      runLoop(
+        config(new ScriptedLowering([{ drafts: [say("I see the error.")] }]), log, {
+          blobs,
+          input: [{ type: "text", text: "Here is the screenshot" }, image],
+          ...clock,
+        }),
+      ),
+    )
+    const imageSeq = (await all(log)).find((e) => e.type === "core.user_message")?.seq as number
+    const lowering = new ScriptedLowering([
+      { drafts: [doCompact("c1", { summary: "User shared a screenshot of an error.", keep: [] })] },
+      { drafts: [callTool("r1", "recall", { seq: imageSeq })] },
+      { drafts: [say("Same error as before.")] },
+    ])
+    await drain(runLoop(config(lowering, log, { blobs, input: "Look at it again", ...clock })))
+    const r1 = resultOf(await all(log), "r1")
+    expect(r1.payload.isError).toBe(false)
+    expect(r1.payload.content.at(-1)).toEqual(image)
+    const recalled = (lowering.requests[2]?.events ?? []).find(
+      (e) => e.type === "core.tool_result" && (e as ToolResult).payload.toolCallId === "r1",
+    ) as ToolResult | undefined
+    expect(recalled?.payload.content.at(-1)).toEqual({
+      type: "image",
+      mime: "image/png",
+      data: btoa(String.fromCharCode(...bytes)),
+    })
   })
 
   it("没有媒体的折叠摘要逐字不变；纯文本用户消息也能按 seq 取回", async () => {

@@ -18,6 +18,7 @@
 import {
   type ContentPart,
   type Event,
+  isImageRef,
   type LandingRecord,
   type LoweringCapabilities,
   renderToolReference,
@@ -32,7 +33,15 @@ import {
   type ModelOrigin,
   orderLandings,
 } from "../ir.js"
-import { acceptsMedia, type MediaKind, mediaOmitted, omittedNote, RELAY_DIALECT_NOTE } from "../media.js"
+import {
+  acceptsMedia,
+  IMAGE_UNAVAILABLE,
+  IMAGE_UNAVAILABLE_NOTE,
+  type MediaKind,
+  mediaOmitted,
+  omittedNote,
+  RELAY_DIALECT_NOTE,
+} from "../media.js"
 import type { FetchModel } from "../models.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
 
@@ -109,9 +118,10 @@ function land(
 function contentOf(
   parts: readonly ContentPart[],
   capabilities: LoweringCapabilities,
-): { content: ResponsesInputContent[]; omitted: Set<MediaKind>; relayed: boolean } {
+): { content: ResponsesInputContent[]; omitted: Set<MediaKind>; relayed: boolean; unavailable: boolean } {
   const omitted = new Set<MediaKind>()
   let relayed = false
+  let unavailable = false
   const content: ResponsesInputContent[] = []
   for (const p of parts) {
     switch (p.type) {
@@ -125,6 +135,11 @@ function contentOf(
       case "video":
       case "audio":
         if (acceptsMedia(p.type, capabilities)) {
+          if (isImageRef(p)) {
+            unavailable = true
+            content.push({ type: "input_text", text: IMAGE_UNAVAILABLE })
+            break
+          }
           if (p.type !== "image") relayed = true
           content.push({ type: "input_image", image_url: `data:${p.mime};base64,${p.data}`, detail: "auto" })
         } else {
@@ -138,7 +153,7 @@ function contentOf(
       }
     }
   }
-  return { content, omitted, relayed }
+  return { content, omitted, relayed, unavailable }
 }
 
 /** tool_call 入参回到线上是 JSON 字符串；读侧解析失败时存的是原始字符串，写侧原样送回 */
@@ -206,7 +221,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
           break
         }
         items.push({ role: "user", content: c.content })
-        const lossy = item.deferred || item.escaped || c.omitted.size > 0
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable
         land(
           landings,
           item.event,
@@ -217,6 +232,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
           omittedNote(c.omitted),
+          c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
@@ -237,7 +253,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             ]
           : prefixed
         items.push({ type: "function_call_output", call_id: item.toolCallId, output })
-        const lossy = item.escaped || item.isError || c.omitted.size > 0
+        const lossy = item.escaped || item.isError || c.omitted.size > 0 || c.unavailable
         land(
           landings,
           item.event,
@@ -247,6 +263,7 @@ export function encodeResponsesRequest(input: ResponsesEncodeInput): {
             ? "the Responses function_call_output has no error flag, so isError is expressed with a [tool error] prefix"
             : undefined,
           omittedNote(c.omitted),
+          c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
         )

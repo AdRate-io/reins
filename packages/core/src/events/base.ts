@@ -68,11 +68,31 @@ export interface TextPart {
   text: string
 }
 
-export interface ImagePart {
+/**
+ * 图片片段：内联与引用两种形态的判别联合（2026-11-24 媒体引用方案，AdRate 建议 17）。
+ * 读 `.data` 的消费点编译期就必须先排除引用形态（`isImageRef`），引用不会被当成内联悄悄发出去
+ */
+export type ImagePart = ImageInlinePart | ImageRefPart
+
+/** 内联图片：字节随事件进日志（改动前唯一的形态） */
+export interface ImageInlinePart {
   type: "image"
   mime: string
   /** base64 编码的图片字节 */
   data: string
+}
+
+/**
+ * 引用图片：字节在 BlobStore，日志只存 id。写入前校验归属（本会话的 blob，或本会话时间线已引用过的），
+ * 循环在调降级层之前只把**本轮视野内的**引用换回内联（`hydrateImageRefs`），降级层看到的与内联写法逐字节相同；
+ * 取不到（blob 被清理）时降级层落 `[image unavailable]` 占位并记 lossy。
+ * 形状规则（`isImageRef`）：mime 以 "image/" 开头且与 blob 的 mime 相同，blobId 非空、≤ 128 字符，不带 `data`
+ */
+export interface ImageRefPart {
+  type: "image"
+  mime: string
+  /** BlobStore id；字节须以原始字节 `put`（不是 base64 串） */
+  blobId: string
 }
 
 /**

@@ -28,8 +28,8 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     ),
     lossy(
       "user",
-      "moved after that batch of tool results (the order changes), untrusted content escaped, or images / video / audio replaced with placeholder text because the model takes none of that kind",
-      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, images / video / audio replaced with placeholder text because the model takes none of that kind, or an image reference whose blob is unavailable replaced with placeholder text",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take / it carries an image reference whose blob is unavailable",
     ),
     dropped(
       "none",
@@ -75,7 +75,7 @@ export const ANTHROPIC_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec
     ),
     lossy(
       "tool_result",
-      "untrusted content is escaped, or images / video / audio are replaced with placeholder text because the model takes none of that kind, or the referenced tool is absent from this request's tool table and its definition is expanded into text",
+      "untrusted content is escaped, or images / video / audio are replaced with placeholder text because the model takes none of that kind (or an image reference's blob is unavailable), or the referenced tool is absent from this request's tool table and its definition is expanded into text",
     ),
     exact(
       "tool-reference",

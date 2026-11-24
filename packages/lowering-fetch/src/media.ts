@@ -72,6 +72,16 @@ export function omittedNote(kinds: ReadonlySet<MediaKind>): string | undefined {
   return names ? `the model takes no ${names}, so they are replaced with placeholder text` : undefined
 }
 
+/**
+ * 未换回的图片引用（2026-11-24 媒体引用方案）：循环在调降级层前把视野内的引用换回内联，只有 blob 不存在（被清理）
+ * 或宿主没配 BlobStore 时片段仍是引用形态到这里。模型收图时落这句占位、记 lossy；不收图时照旧落"不收图"那句（与内联同形）
+ */
+export const IMAGE_UNAVAILABLE = "[image unavailable]"
+
+/** 有图片引用没换回时的落点说明 */
+export const IMAGE_UNAVAILABLE_NOTE =
+  "an image stored by reference could not be loaded (blob unavailable: it was removed, or no BlobStore is configured), so it is replaced with placeholder text"
+
 /** 有视频 / 音频真的进了图片槽时附的方言说明（落点仍算 exact：内容完整送达） */
 export const RELAY_DIALECT_NOTE =
   "relay dialect: video / audio travel in the image slot; official endpoints reject this, so declare video / audio only for endpoints that take it"

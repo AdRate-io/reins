@@ -15,11 +15,13 @@
  */
 import {
   type ContentPart,
+  checkImageRefs,
   computeConfigHash,
   createCoreRegistry,
   type Event,
   type EventDraft,
   type EventLog,
+  isImageRef,
   type LoopConfig,
   type Principal,
   pausedStateOf,
@@ -193,6 +195,8 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
 /**
  * 网络来的内容片段按白名单重建：非空、只收 text / image / video / audio，每个片段只留该类型的字段（壳字段由服务端定）。
  * 多余字段（如 actor）因此不可能进到循环、改变它对 input 的判别；不合规返回 undefined。
+ * 图片两种形态（2026-11-24 媒体引用方案）：内联（mime + data）或引用（mime + blobId，形状直接调 core 的真源 `isImageRef`：
+ * mime 以 "image/" 开头、blobId 非空且 ≤ 128 字符），`data` 与 `blobId` 并存即拒；引用的归属在 `rejectImageRefs` 另判。
  * video / audio 的形状规则与 core `isContentPart` 同口径（mime 以 "video/" / "audio/" 开头、durationSec 缺省或有限正数）；
  * server 不依赖 core 内部判定，两份实现靠跨包用例锁住（同一组坏形状两边都拒）。tool_reference 不收（网络边界不能替模型点亮工具）
  */
@@ -206,10 +210,15 @@ function rebuildContentParts(x: unknown): ContentPart[] | undefined {
       text?: unknown
       mime?: unknown
       data?: unknown
+      blobId?: unknown
       durationSec?: unknown
     }
     if (part.type === "text" && typeof part.text === "string") out.push({ type: "text", text: part.text })
-    else if (part.type === "image" && typeof part.mime === "string" && typeof part.data === "string")
+    else if (part.type === "image" && part.blobId !== undefined) {
+      const ref = { type: "image" as const, mime: part.mime, blobId: part.blobId }
+      if (part.data !== undefined || !isImageRef(ref)) return undefined
+      out.push(ref)
+    } else if (part.type === "image" && typeof part.mime === "string" && typeof part.data === "string")
       out.push({ type: "image", mime: part.mime, data: part.data })
     else if (
       (part.type === "video" || part.type === "audio") &&
@@ -253,6 +262,14 @@ function userMessageDraft(
 }
 
 const BAD_USER_MESSAGE = "content of user_message must be a non-empty array of content parts"
+
+/** 将要写进日志的 input 里的内容片段（用户消息或客户端工具结果的 content）；字符串与没有内容的为空 */
+function inputParts(input: LoopConfig["input"]): readonly ContentPart[] {
+  if (input === undefined || typeof input === "string") return []
+  if (Array.isArray(input)) return input as ContentPart[]
+  const content = ((input as EventDraft).payload as { content?: unknown } | null)?.content
+  return Array.isArray(content) ? (content as ContentPart[]) : []
+}
 
 type InputCheck =
   | { ok: true; input: LoopConfig["input"] }
@@ -419,6 +436,35 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     mailboxes.set(run, box)
     run.onFinish(() => box.close())
     return box
+  }
+
+  /**
+   * 图片引用的 HTTP 预校验（媒体引用方案）：与循环同一个 `checkImageRefs`，在 `deliver` 与 `runs.create` 之前做——
+   * 不做的话片段数组形 input 只能拿到 200 + error 帧，进行中投递会先回 202、再让正在跑的 run 以 error 结束。
+   * 不合规回 400（文案与循环四入口逐字相同，越权当不存在）；存储自己抛错回 503（不知道合不合规，不是客户端的错）。
+   * 没有图片引用时不读日志、不碰存储；循环内的校验保留为第二道。返回 undefined 即放行
+   */
+  async function rejectImageRefs(
+    sessionId: string,
+    input: LoopConfig["input"],
+  ): Promise<Response | undefined> {
+    const parts = inputParts(input)
+    if (!parts.some(isImageRef)) return undefined
+    // 读日志的失败（含注册表拒读）照其它路径原样抛；只有校验时 BlobStore 抛的才算存储故障回 503
+    const timeline = await readTimeline(log, sessionId, { registry })
+    let problem: string | undefined
+    try {
+      problem = await checkImageRefs(parts, { sessionId, blobs: agent.blobs, timeline, cache: new Map() })
+    } catch (err) {
+      warn(
+        `[reins/server] Checking image references failed (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return json(503, {
+        error: "storage_unavailable",
+        message: "could not read a referenced blob; try again later",
+      })
+    }
+    return problem === undefined ? undefined : json(400, { error: "bad_request", message: problem })
   }
 
   /**
@@ -689,6 +735,9 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       const deliveryId = body.deliveryId ?? uuidv7()
       const draft = userMessageDraft(body.input, deliveryId)
       if (!draft) return json(400, { error: "bad_request", message: BAD_USER_MESSAGE })
+      // 图片引用先校验再入箱：入了箱就回 202，不合规只能让正在跑的 run 以 error 结束
+      const rejected = await rejectImageRefs(sessionId, draft)
+      if (rejected !== undefined) return rejected
       const delivered = deliver(sessionId, deliveryId, draft, principal)
       if (delivered !== undefined) return delivered
     }
@@ -752,6 +801,10 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
       if (!draft) return json(400, { error: "bad_request", message: BAD_USER_MESSAGE })
       input = draft
     }
+
+    // 图片引用在占 run 名额之前校验：不合规 400、一条不写（投递分支落回这里时同一批引用再校验一次，结果相同）
+    const rejected = await rejectImageRefs(sessionId, input)
+    if (rejected !== undefined) return rejected
 
     let run: ActiveRun
     try {

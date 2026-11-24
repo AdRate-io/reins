@@ -75,6 +75,8 @@ function variants(api: string, model: { provider: string; id: string }): Variant
   }
   const user = (text = "hi") => mk("core.user_message", { content: [{ type: "text", text }] })
   const image = { type: "image", mime: "image/png", data: "AA" }
+  /** 未换回的图片引用（blob 不在了，媒体引用方案）：降级层落占位、记 lossy */
+  const imageRef = { type: "image", mime: "image/png", blobId: "gone" }
   const video = { type: "video", mime: "video/mp4", data: "AA", durationSec: 72 }
   const audio = { type: "audio", mime: "audio/mpeg", data: "AA" }
   const call = (id: string) =>
@@ -86,6 +88,14 @@ function variants(api: string, model: { provider: string; id: string }): Variant
     {
       label: "user_message 带图片",
       events: [mk("core.user_message", { content: [{ type: "text", text: "看" }, image] })],
+    },
+    {
+      label: "user_message 带未换回的图片引用",
+      events: [mk("core.user_message", { content: [{ type: "text", text: "看" }, imageRef] })],
+    },
+    {
+      label: "tool_result 带未换回的图片引用",
+      events: [user(), call("c1"), result("c1", [{ type: "text", text: "see" }, imageRef])],
     },
     {
       label: "user_message 带视频 / 音频",

@@ -292,6 +292,29 @@ describe("spill × runLoop：结果外溢", () => {
       for (const id of ["f1", "f2", "f3"]) expect(resultOf(logged, id).payload.isError).toBe(true)
     })
 
+    it("只被图片引用过的 blob 读不到：图片引用集合与外溢引用集合刻意分开（媒体引用方案）", async () => {
+      const blobs = new InMemoryBlobStore()
+      const shot = await blobs.put(new Uint8Array([0x89, 0x50]), { mime: "image/png", sessionId: SESSION })
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("f1", "fetch_blob", { id: shot.id })] },
+        { drafts: [say("x")] },
+      ])
+      await drain(
+        runLoop(
+          config(lowering, log, {
+            blobs,
+            input: [
+              { type: "text", text: "看图" },
+              { type: "image", mime: "image/png", blobId: shot.id },
+            ],
+          }),
+        ),
+      )
+      // 是"不存在"那句（授权没过），不是"不是文本"那句（授权过了、卡在 mime）
+      expect(textOf(resultOf(await all(log), "f1"))).toBe(`No blob with id "${shot.id}" in this session.`)
+    })
+
     it("被本会话 tool_result.spilled 引用的 blob 可读，哪怕它属于别的会话（fork 场景）", async () => {
       // 造一个属于父会话 s0 的 blob，内容够大；直接把它写进本会话日志的一条 tool_result.spilled（模拟 fork 复制过来的结果）
       const blobs = new InMemoryBlobStore()

@@ -407,6 +407,11 @@ export interface PullInputContext {
 export interface LoopConfig {
   sessionId: string
   log: EventLog
+  /**
+   * 大对象存储：外溢（spill）的工具结果，以及图片引用形态 `{ type: "image", mime, blobId }` 的字节。
+   * 图片引用写入前按它校验归属（起步 input、pullInput、工具结果三入口），调降级层前按它把视野内的引用换回内联；
+   * 没配时任何图片引用都写不进来（"not found"），日志里已有的引用落 `[image unavailable]` 占位
+   */
   blobs?: BlobStore
   memory?: MemoryStore
   lowering: Lowering

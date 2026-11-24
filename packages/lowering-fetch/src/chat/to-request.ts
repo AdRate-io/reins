@@ -15,6 +15,7 @@
 import {
   type ContentPart,
   type Event,
+  isImageRef,
   type LandingRecord,
   type LoweringCapabilities,
   markUntrusted,
@@ -31,6 +32,8 @@ import {
 } from "../ir.js"
 import {
   acceptsMedia,
+  IMAGE_UNAVAILABLE,
+  IMAGE_UNAVAILABLE_NOTE,
   type MediaKind,
   type MediaPart,
   mediaNouns,
@@ -108,6 +111,8 @@ function land(
 interface MediaOutcome {
   omitted: Set<MediaKind>
   relayed: boolean
+  /** 有图片引用没换回（blob 不在了），落了 `[image unavailable]` 占位 */
+  unavailable: boolean
 }
 
 /** 用户内容：只有一段文本就用字符串（最兼容），否则用 content parts；模型收的媒体一律走 image_url data URI（视频 / 音频是方言） */
@@ -117,6 +122,7 @@ function userContent(
 ): { content: string | ChatContentPart[] } & MediaOutcome {
   const omitted = new Set<MediaKind>()
   let relayed = false
+  let unavailable = false
   const out: ChatContentPart[] = parts.map((p): ChatContentPart => {
     switch (p.type) {
       case "text":
@@ -130,6 +136,10 @@ function userContent(
           omitted.add(p.type)
           return { type: "text", text: mediaOmitted(p) }
         }
+        if (isImageRef(p)) {
+          unavailable = true
+          return { type: "text", text: IMAGE_UNAVAILABLE }
+        }
         if (p.type !== "image") relayed = true
         return { type: "image_url", image_url: { url: `data:${p.mime};base64,${p.data}` } }
       default: {
@@ -138,8 +148,9 @@ function userContent(
       }
     }
   })
-  if (out.length === 1 && out[0]?.type === "text") return { content: out[0].text, omitted, relayed }
-  return { content: out, omitted, relayed }
+  if (out.length === 1 && out[0]?.type === "text")
+    return { content: out[0].text, omitted, relayed, unavailable }
+  return { content: out, omitted, relayed, unavailable }
 }
 
 /**
@@ -157,11 +168,13 @@ function toolContent(
   unsupported: Set<MediaKind>
   textOnly: Set<MediaKind>
   relayed: boolean
+  unavailable: boolean
 } {
   const unsupported = new Set<MediaKind>()
   const textOnly = new Set<MediaKind>()
   const media: MediaPart[] = []
   let relayed = false
+  let unavailable = false
   const text = parts
     .map((p) => {
       switch (p.type) {
@@ -173,6 +186,11 @@ function toolContent(
         case "video":
         case "audio": {
           const accepted = acceptsMedia(p.type, capabilities)
+          // 没换回的图片引用：不上浮（没有字节），原位落占位
+          if (accepted && isImageRef(p)) {
+            unavailable = true
+            return IMAGE_UNAVAILABLE
+          }
           if (accepted && lift) {
             media.push(p)
             if (p.type !== "image") relayed = true
@@ -192,7 +210,7 @@ function toolContent(
       }
     })
     .join("\n")
-  return { text, media, unsupported, textOnly, relayed }
+  return { text, media, unsupported, textOnly, relayed, unavailable }
 }
 
 /** tool 消息只收文本、媒体换成占位的 note；只有图片时与改动前逐字一致 */
@@ -265,7 +283,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
       case "user": {
         const c = userContent(item.parts, capabilities)
         messages.push({ role: "user", content: c.content })
-        const lossy = item.deferred || item.escaped || c.omitted.size > 0
+        const lossy = item.deferred || item.escaped || c.omitted.size > 0 || c.unavailable
         land(
           landings,
           item.event,
@@ -276,6 +294,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
             : undefined,
           item.escaped ? ESCAPED_NOTE : undefined,
           omittedNote(c.omitted),
+          c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
           c.relayed ? RELAY_DIALECT_NOTE : undefined,
         )
         break
@@ -296,7 +315,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
         })
         const mediaLifted = c.media.length > 0
         if (mediaLifted) lifted.push(...liftedAttachment(item, c.media))
-        const dropped = c.unsupported.size > 0 || c.textOnly.size > 0
+        const dropped = c.unsupported.size > 0 || c.textOnly.size > 0 || c.unavailable
         const lossy = item.escaped || item.isError || dropped || mediaLifted
         land(
           landings,
@@ -309,6 +328,7 @@ export function encodeChatRequest(input: ChatEncodeInput): {
             : undefined,
           toolOmittedNote(c.textOnly),
           omittedNote(c.unsupported),
+          c.unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined,
           mediaLifted
             ? c.media.every((m) => m.type === "image")
               ? "a tool message takes text only, so its images move into a user message after this batch of tool messages, labelled as tool output"

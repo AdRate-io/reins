@@ -30,12 +30,23 @@ describe("EventSchemaRegistry.read — 正常路径", () => {
     expect(e.payload.name).toBe("read_file")
   })
 
-  it("全部 core.* 都已登记且为 v1", () => {
+  it("全部 core.* 都已登记；user_message / tool_result 为 v2（图片引用形态），其余 v1", () => {
     expect(CORE_SCHEMAS).toHaveLength(18)
+    const v2 = new Set(["core.user_message", "core.tool_result"])
     for (const s of CORE_SCHEMAS) {
       expect(registry.has(s.type)).toBe(true)
-      expect(registry.currentVersion(s.type)).toBe(1)
+      expect(registry.currentVersion(s.type)).toBe(v2.has(s.type) ? 2 : 1)
     }
+  })
+
+  it("v1 的 user_message / tool_result 恒等升到 v2；老注册表（只认 v1）读 v2 拒读", () => {
+    const payload = { content: [{ type: "text", text: "hi" }] }
+    const v1 = { ...rawToolCall({ type: "core.user_message", schemaVersion: 1, payload }), actor: "user" }
+    const read = registry.read(v1)
+    expect(read.schemaVersion).toBe(2)
+    expect(read.payload).toEqual(payload)
+    const old = new EventSchemaRegistry([{ type: "core.user_message", version: 1 }])
+    expect(() => old.read({ ...v1, schemaVersion: 2 })).toThrow(/future_version/)
   })
 })
 
@@ -193,7 +204,7 @@ describe("createEvent / createCoreEvent", () => {
       at: 1_700_000_000_000,
     })
     expect(e.trust).toBe("untrusted")
-    expect(e.schemaVersion).toBe(1)
+    expect(e.schemaVersion).toBe(2)
     expect(e.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
     expect("parentId" in e).toBe(false)
     expect(registry.read(e)).toEqual(e)

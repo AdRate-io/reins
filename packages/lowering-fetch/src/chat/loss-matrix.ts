@@ -77,8 +77,8 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
     ),
     lossy(
       "user",
-      "moved after that batch of tool results (the order changes), untrusted content escaped, or images / video / audio replaced with placeholder text because the model takes none of that kind",
-      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take",
+      "moved after that batch of tool results (the order changes), untrusted content escaped, images / video / audio replaced with placeholder text because the model takes none of that kind, or an image reference whose blob is unavailable replaced with placeholder text",
+      "the user speaks up before all tool results are in / the content holds a </untrusted / it carries images / video / audio the model does not take / it carries an image reference whose blob is unavailable",
     ),
   ],
   "core.model_text": [
@@ -113,13 +113,13 @@ export const CHAT_LOSS_MATRIX: Readonly<Record<string, readonly LandingSpec[]>> 
     ),
     lossy(
       "tool+lifted-images",
-      `a tool message takes text only, so it keeps a pointer where each image (or video / audio) was and they move into a user message right after the whole batch of tool messages (the order and the role change); that message labels them as tool output, with the tool name, call id and index, and keeps the result's untrusted marking; kinds the model does not take are replaced with placeholder text; ${RELAY_DIALECT_NOTE}`,
+      `a tool message takes text only, so it keeps a pointer where each image (or video / audio) was and they move into a user message right after the whole batch of tool messages (the order and the role change); that message labels them as tool output, with the tool name, call id and index, and keeps the result's untrusted marking; kinds the model does not take, and image references whose blob is unavailable, are replaced with placeholder text; ${RELAY_DIALECT_NOTE}`,
       "the result carries images / video / audio of a kind the model takes (chat.liftToolImages is on by default)",
     ),
     lossy(
       "tool-text-only",
-      "a tool message takes text only, so images / video / audio are replaced with placeholder text",
-      "the result carries images / video / audio and the model takes none of those kinds, or chat.liftToolImages is false",
+      "a tool message takes text only, so images / video / audio are replaced with placeholder text (an image reference whose blob is unavailable has no bytes to lift either)",
+      "the result carries images / video / audio and the model takes none of those kinds, or chat.liftToolImages is false, or it carries an image reference whose blob is unavailable",
     ),
   ],
   "core.system_note": [

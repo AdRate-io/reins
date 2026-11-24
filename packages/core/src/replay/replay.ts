@@ -17,6 +17,9 @@
  *   脑子模块新造的事件（system_note、compaction）都在日志里，不受影响。
  * - 请求发出但一条模型输出都没回来（降级层异常、provider 报错）的那一轮没有模型事件，识别不出请求边界，
  *   只在时间线上留一条 core.error；这类失败轮不计入 turns。
+ * - 图片引用形态（2026-11-24）：`visible` 里的图片是引用、字节在 BlobStore。模型当时看到的是"日志 + 不可变 blob"，
+ *   要把某轮交给降级层重算请求（`toRequest`），调用方先用**录制时同一个 BlobStore** 过一遍 `hydrateImageRefs`，
+ *   与 runLoop 同一步；blob 已被清理的图落 unavailable 占位，与当时不同（examples/minimal/replay.ts 是写法样例）。
  */
 import type { Event } from "../events/base.js"
 import type { BudgetUsagePayload, CoreEventOf } from "../events/core.js"

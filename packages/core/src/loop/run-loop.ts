@@ -37,6 +37,7 @@ import { DEFAULT_MODEL_INVISIBLE_TYPES } from "../projection/filter.js"
 import { project } from "../projection/project.js"
 import { readTimeline } from "../store/read-timeline.js"
 import { toolBatchOf } from "./batch.js"
+import { checkImageRefs, hydrateImageRefs, type ImageRefCache, isImageRef } from "./media-refs.js"
 import { MAX_TURNS_PAUSE_CODE, pauseDetailOf, resolveSocketPause } from "./pause-code.js"
 import { type ModelCallFailure, resolveRetry } from "./retry.js"
 import { awaitingOf } from "./run-status.js"
@@ -239,6 +240,12 @@ function isInputArray(
   return Array.isArray(input)
 }
 
+/** 输入草稿里可能带图片引用的内容片段：user_message / tool_result 的 content（形状已由 checkInputDraft 校验），其余为空 */
+function draftParts(draft: EventDraft): readonly ContentPart[] {
+  if (draft.type !== "core.user_message" && draft.type !== "core.tool_result") return []
+  return (draft.payload as { content: ContentPart[] }).content
+}
+
 export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult> {
   const { sessionId, log, lowering, model } = cfg
   const registry = cfg.registry ?? createCoreRegistry()
@@ -265,7 +272,21 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
 
   const startedAt = now()
   // 起步先把整条日志过一遍注册表：有读不出来的事件（未登记的 ext.*、未来版本）就在写任何东西之前拒绝（P9 fail-closed）
-  let lastSeq = (await readTimeline(log, sessionId, { registry })).at(-1)?.seq ?? 0
+  const startTimeline = await readTimeline(log, sessionId, { registry })
+  let lastSeq = startTimeline.at(-1)?.seq ?? 0
+  /** run 级图片缓存（blobId → base64）：写入校验与换回共用，同一 blob 一个 run 只读一次 */
+  const imageCache: ImageRefCache = new Map()
+  // 起步 input 里的图片引用（媒体引用方案）：归属 / mime 不过抛 RangeError、一条不写，与片段形状校验同口径；
+  // 存储自己抛错（非 not_found）原样抛出——不知道合不合规就不写
+  for (const d of input) {
+    const problem = await checkImageRefs(draftParts(d), {
+      sessionId,
+      blobs: cfg.blobs,
+      timeline: startTimeline,
+      cache: imageCache,
+    })
+    if (problem !== undefined) throw new RangeError(problem)
+  }
   let turns = 0
   let tokensSpent = 0
   let toolCallsTotal = 0
@@ -496,38 +517,66 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       // 拉取期间被中止：不论回调返回什么、抛了什么（宿主常把同一个 signal 传给读库，回调因此 reject），一条都不写，
       // 回顶部按"本轮开始前中止"暂停——宿主没见到写入事件就不认领，消息仍在队列
       if (cfg.signal?.aborted) continue
-      if (thrown !== undefined) {
-        // 回调抛错多半是宿主读库之类的瞬时失败：只记一条（模型不可见），当这次没有、run 照跑；消息还在宿主队列里
-        const errors = await append([
+      /** 回调抛错、或校验拉到的图片引用时存储抛错：多半是宿主读库之类的瞬时失败，只记一条（模型不可见），当这次没有、run 照跑 */
+      const hostFailure = async (message: string): Promise<Event[]> =>
+        append([
           {
             type: "core.error",
             actor: "system",
-            payload: {
-              category: "host",
-              message: `pullInput threw: ${describeThrown(thrown.value)}`,
-              retryable: true,
-              detail: { phase: "pullInput" },
-            },
+            payload: { category: "host", message, retryable: true, detail: { phase: "pullInput" } },
           },
         ])
+      if (thrown !== undefined) {
+        // 消息还在宿主队列里
+        const errors = await hostFailure(`pullInput threw: ${describeThrown(thrown.value)}`)
         yield* errors
         timeline = [...timeline, ...errors]
       } else {
         let pulled: EventDraft[]
+        /** 不合规的话（形状、类型、图片引用归属）；undefined 即合规 */
+        let problem: string | undefined
+        /** 校验图片引用时存储自己抛的错 */
+        let storageFailure: { value: unknown } | undefined
         try {
           pulled = checkPulledDrafts(raw, registry)
         } catch (err) {
-          // 返回值形状不对是确定性的宿主代码错误：fail-closed，以 error 收口（中途已有半个 run 的日志，回放看得见断在哪）
+          pulled = []
+          problem = describeThrown(err)
+        }
+        for (const d of pulled) {
+          if (problem !== undefined || storageFailure !== undefined) break
+          try {
+            problem = await checkImageRefs(draftParts(d), {
+              sessionId,
+              blobs: cfg.blobs,
+              timeline,
+              cache: imageCache,
+            })
+          } catch (err) {
+            storageFailure = { value: err }
+          }
+        }
+        // 校验期间被中止：与拉取期间中止同一处置，一条不写
+        if (cfg.signal?.aborted) continue
+        if (problem !== undefined) {
+          // 返回值不合规是确定性的宿主代码错误（或失效的图片引用）：fail-closed，以 error 收口（中途已有半个 run 的日志，回放看得见断在哪）
           const { events, result } = await fail({
             category: "input",
-            message: describeThrown(err),
+            message: problem,
             retryable: false,
             detail: { phase: "pullInput" },
           })
           yield* events
           return result
         }
-        if (pulled.length > 0) {
+        if (storageFailure !== undefined) {
+          // 与回调抛错同一口径：这一批当没拉到，宿主没见到写入事件就不认领，下一空档再拉
+          const errors = await hostFailure(
+            `reading a blob referenced by pulled input failed: ${describeThrown(storageFailure.value)}`,
+          )
+          yield* errors
+          timeline = [...timeline, ...errors]
+        } else if (pulled.length > 0) {
           const written = await append(pulled)
           yield* written
           // 整体重绑：本轮后面的投影、ctx.timeline、executeToolCalls 的拼接都要看到拉进来的事件
@@ -609,6 +658,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         forwardedDecisions,
         spend: spendInto(ctx),
         batch,
+        imageCache,
       })
       toolCallsTotal += settled.executed
       // 用户停止时不进 onTurnEnd：余下的调用还 pending，Socket 判出 handoff / done 就会把它们带进一个不是 paused 的结局
@@ -662,12 +712,18 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     // 只有本次尝试一块模型输出都没落日志时才重试：落了半截再重说，日志里就有两份半截。
     let outcome: LoweringOutcome | undefined
     const modelEvents: Event[] = []
+    /**
+     * 本轮视图里的图片引用换回内联（媒体引用方案）：只给 toRequest，不回写 ctx.events（Socket 与估算仍看引用）。
+     * 成功一次后瞬断重试复用同一份；存储故障（非 not_found）在 try 里抛出，走模型调用失败与重试判定
+     */
+    let hydrated: Event[] | undefined
     for (let attempt = 1; ; attempt++) {
       let failure: ModelCallFailure | undefined
       let attemptOutput = 0
       try {
+        hydrated ??= await hydrateImageRefs(visible, { blobs: cfg.blobs, cache: imageCache })
         const request = lowering.toRequest({
-          events: visible,
+          events: hydrated,
           tools: tools.map((t) => deferredToolSpecOf(t, deferredTools.has(t.name))),
           model,
           ...(systemPrompt !== undefined ? { systemPrompt } : {}),
@@ -794,6 +850,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         forwardedDecisions,
         spend: spendInto(ctx),
         batch,
+        imageCache,
       })
       toolCallsTotal += settled.executed
       ctx.budget.toolCalls = toolCallsTotal
@@ -925,6 +982,8 @@ interface ExecuteDeps {
   spend: (usage: TokenUsage) => void
   /** 本轮的 ctx.batch 本体：结果落日志后登记 results，挂起时登记 held */
   batch: MutableToolBatch
+  /** run 级图片缓存：工具结果里的图片引用校验通过后字节放进去，下一轮换回直接用 */
+  imageCache: ImageRefCache
 }
 
 /** ctx.batch 的可变本体（对外类型只读） */
@@ -976,7 +1035,7 @@ async function* executeToolCalls(
   timeline: readonly Event[],
   deps: ExecuteDeps,
 ): AsyncGenerator<Event, ExecuteSummary> {
-  const { cfg, sockets, flush, forwardedDecisions, spend, batch } = deps
+  const { cfg, sockets, flush, forwardedDecisions, spend, batch, imageCache } = deps
   /** 落日志后把 tool_result 登记进 ctx.batch.results（审批请求等其它事件不登记）；不改 flush 语义 */
   const append = async (drafts: readonly EventDraft[]): Promise<Event[]> => {
     const events = await deps.append(drafts)
@@ -1165,9 +1224,64 @@ async function* executeToolCalls(
       const replaced = await s.afterTool?.(ctx, call, result)
       if (replaced) result = replaced
     }
+    // 图片引用校验放在最后一个能改结果的地方之后（媒体引用方案）：toModelOutput 输出、afterTool 换掉的结果、isError 结果都覆盖到。
+    // 只换掉不合规的那几段、其余照留：写工具已经动过手，整条换成"not found"会让模型以为没做成再做一遍；
+    // recall 取回的旧消息里图已被清理时，文字也不该跟着丢（2026-11-24 独立审查）
+    const refs = await checkToolResultRefs(result.payload.content, {
+      sessionId: ctx.session.id,
+      blobs: ctx.blobs,
+      timeline,
+      cache: imageCache,
+    })
+    if (refs.content !== result.payload.content)
+      result = { ...result, payload: { ...result.payload, content: refs.content } }
+    // 存储故障的原因记一条模型不可见的 core.error（经 settle 的 flush 排在结果之前），模型只看到"读不出来"
+    for (const failure of refs.storageFailures) ctx.emit(failure)
     yield* await settle(result)
     // 宿主中止：本条结果已落，余下的调用不再执行、留作 pending；循环下一轮开头据 signal 直接 paused(host)
     if (cfg.signal?.aborted) break
   }
   return summary
+}
+
+/**
+ * 工具结果里的图片引用逐段校验：合规的原样留；不合规的那段换成统一的 "not found" 那句文本；校验时存储自己抛错的换成
+ * "Could not read blob <id>: storage error"（不说 not found，免得模型以为图没了），原因另给一条模型不可见的 core.error 草稿。
+ * 没有要换的段时返回同一个 content 数组
+ */
+async function checkToolResultRefs(
+  parts: ContentPart[],
+  ctx: Parameters<typeof checkImageRefs>[1],
+): Promise<{ content: ContentPart[]; storageFailures: EventDraft[] }> {
+  const storageFailures: EventDraft[] = []
+  let changed = false
+  const content: ContentPart[] = []
+  for (const p of parts) {
+    if (!isImageRef(p)) {
+      content.push(p)
+      continue
+    }
+    let text: string | undefined
+    try {
+      text = await checkImageRefs([p], ctx)
+    } catch (err) {
+      text = `Could not read blob ${p.blobId}: storage error`
+      storageFailures.push({
+        type: "core.error",
+        actor: "system",
+        payload: {
+          category: "host",
+          message: `reading blob ${p.blobId} referenced by a tool result failed: ${describeThrown(err)}`,
+          retryable: true,
+          detail: { phase: "toolResult" },
+        },
+      })
+    }
+    if (text === undefined) content.push(p)
+    else {
+      changed = true
+      content.push({ type: "text", text })
+    }
+  }
+  return { content: changed ? content : parts, storageFailures }
 }

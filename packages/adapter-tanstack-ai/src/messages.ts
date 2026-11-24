@@ -18,6 +18,7 @@ import {
   type CoreEvent,
   type Event,
   type EventDraft,
+  isImageRef,
   type LandingRecord,
   type ModelRef,
   markUntrusted,
@@ -28,7 +29,7 @@ import {
   untrustedSourceOf,
 } from "@reinsjs/core"
 import type { ModelMessage, ToolCall as TanstackToolCall } from "@tanstack/ai"
-import { fromTanstackContent, partAsText, toTanstackContent } from "./content.js"
+import { fromTanstackContent, IMAGE_REF_NOTE, partAsText, toTanstackContent } from "./content.js"
 
 export interface ToModelMessagesOptions {
   /** 当前请求的模型；thinking 签名只对同一来源回放 */
@@ -158,20 +159,26 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
         flush()
         const c = content(e, e.payload.content)
         const msg: ModelMessage = { role: "user", content: toTanstackContent(c.parts) }
+        const refNote = c.parts.some(isImageRef) ? IMAGE_REF_NOTE : undefined
         // 工具结果还没到齐就来了用户消息（续跑带新输入、进程死亡后再发）：后移到同批结果之后，与 lowering-pi 同一规则
         if (awaiting.size > 0) {
           deferred.push({
             msg,
             event: e,
             landing: "user",
-            note: c.escaped
-              ? `the user message sits between a tool call and its results; ${ESCAPED_NOTE}`
-              : "the user message sits between a tool call and its results",
+            note: [
+              "the user message sits between a tool call and its results",
+              c.escaped ? ESCAPED_NOTE : undefined,
+              refNote,
+            ]
+              .filter(Boolean)
+              .join("; "),
           })
           break
         }
         messages.push(msg)
-        if (c.escaped) land(e, "lossy", "user", ESCAPED_NOTE)
+        if (c.escaped || refNote)
+          land(e, "lossy", "user", [c.escaped ? ESCAPED_NOTE : undefined, refNote].filter(Boolean).join("; "))
         else land(e, "exact", "user")
         break
       }
@@ -216,6 +223,7 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
       case "core.tool_result": {
         flush()
         const c = content(e, e.payload.content)
+        const refNote = c.parts.some(isImageRef) ? IMAGE_REF_NOTE : undefined
         const msg: ModelMessage = {
           role: "tool",
           toolCallId: e.payload.toolCallId,
@@ -228,11 +236,16 @@ export function toModelMessages(events: readonly Event[], opts: ToModelMessagesO
             e,
             "lossy",
             "tool-error-field",
-            c.escaped
-              ? `isError lands only in ModelMessage.error; whether the model is told is up to the adapter; ${ESCAPED_NOTE}`
-              : "isError lands only in ModelMessage.error; whether the model is told is up to the adapter",
+            [
+              "isError lands only in ModelMessage.error; whether the model is told is up to the adapter",
+              c.escaped ? ESCAPED_NOTE : undefined,
+              refNote,
+            ]
+              .filter(Boolean)
+              .join("; "),
           )
-        } else if (c.escaped) land(e, "lossy", "tool", ESCAPED_NOTE)
+        } else if (c.escaped || refNote)
+          land(e, "lossy", "tool", [c.escaped ? ESCAPED_NOTE : undefined, refNote].filter(Boolean).join("; "))
         else land(e, "exact", "tool")
         messages.push(msg)
         awaiting.delete(e.payload.toolCallId)

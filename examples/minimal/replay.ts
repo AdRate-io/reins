@@ -6,13 +6,15 @@
  * 三步：
  * 1. 逐行 registry.read —— 读时升级 schema，未登记的类型或未来版本直接拒绝（fail-closed）
  * 2. 整批 append 进一个全新的内存 EventLog —— 由存储层校验 seq 连续、同会话，证明这份日志是自洽的
- * 3. replayTurns —— 对每一轮重算投影（纯函数），再经降级层 toRequest 得到当时的有损落点
+ * 3. replayTurns —— 对每一轮重算投影（纯函数），图片引用经 hydrateImageRefs 换回，再经降级层 toRequest 得到当时的有损落点
+ *    （图片引用的字节在 BlobStore，"按日志回放"要带上录制时同一个 BlobStore；取不到的图落 unavailable 占位、记 lossy）
  * 终端打一份时间线；给 --html 就再生成一个零依赖的静态页面。
  */
 import { readFile, writeFile } from "node:fs/promises"
 import {
   createCoreRegistry,
   type Event,
+  hydrateImageRefs,
   lossesOf,
   memoryStore,
   type ReplayedTurn,
@@ -58,13 +60,17 @@ const timeline: Event[] = []
 for await (const e of log.read(sessionId)) timeline.push(e)
 
 // ---- 3. 逐轮重算 ----
-const { model, lowering, tools = [], systemPrompt } = agent.definition
+const { model, lowering, tools = [], systemPrompt, blobs } = agent.definition
 const capabilities = lowering.capabilities(model)
 const { turns, preamble } = replayTurns(timeline, { budget: { contextLimit: capabilities.contextWindow } })
 const toolSpecs = tools.map(toolSpecOf)
-const landingsOf = (turn: ReplayedTurn) => {
+/** 同一张图多轮可见时只读一次 */
+const imageCache = new Map<string, string>()
+const landingsOf = async (turn: ReplayedTurn) => {
+  // 与 runLoop 同一步：视野内的图片引用先换回内联，降级层才看得到图
+  const events = await hydrateImageRefs(turn.visible, { blobs, cache: imageCache })
   const req = lowering.toRequest({
-    events: turn.visible,
+    events,
     tools: toolSpecs,
     model,
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
@@ -140,7 +146,7 @@ const oneLine = (s: string, max = 90) => {
 const row = (e: Event) =>
   `${String(e.seq).padStart(4)}  ${rel(e.at).padStart(9)}  ${e.actor.padEnd(6)} ${e.type.replace("core.", "").padEnd(17)} ${oneLine(preview(e))}`
 
-const turnLandings = turns.map(landingsOf)
+const turnLandings = await Promise.all(turns.map(landingsOf))
 console.log(`会话 ${sessionId} · 模型 ${model.provider}/${model.id}`)
 console.log(
   `${timeline.length} 条事件 · ${turns.length} 轮模型调用 · ${count("core.tool_call")} 次工具 · ${count("core.approval_request")} 次审批 · 用时 ${((tLast - t0) / 1000).toFixed(1)}s · 输入 ${usage.input + usage.cacheRead} token（其中缓存命中 ${usage.cacheRead}）· 输出 ${usage.output}`,
@@ -148,7 +154,7 @@ console.log(
 console.log()
 for (const e of preamble) console.log(row(e))
 turns.forEach((t, i) => {
-  const l = turnLandings[i] as ReturnType<typeof landingsOf>
+  const l = turnLandings[i] as Awaited<ReturnType<typeof landingsOf>>
   const seqs = t.visible.map((e) => e.seq)
   const lossText = l.lossy + l.dropped > 0 ? ` · 有损 ${l.lossy} / 丢弃 ${l.dropped}` : " · 全部 exact"
   console.log(

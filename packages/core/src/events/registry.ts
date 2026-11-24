@@ -177,7 +177,23 @@ function assertBase(raw: unknown): EventBase {
   return r as unknown as EventBase
 }
 
-/** 全部内置事件当前都是 v1。升版本时在此加 upcasters，并在 core.ts 改载荷类型。 */
+/** 恒等升级：载荷形状不变、只是新版本可能带旧代码不认识的写法 */
+const identity: Upcaster = (payload) => payload
+
+/**
+ * 当前版本不是 v1 的内置事件。升版本时在此加 upcasters，并在 core.ts 改载荷类型。
+ *
+ * - core.user_message / core.tool_result v2（2026-11-24 媒体引用方案）：内容片段多了图片引用形态
+ *   `{ type: "image", mime, blobId }`。v1 → v2 恒等；**一律**按 v2 写、不按载荷选版本——
+ *   注册表读时把 schemaVersion 改写成当前版本，按载荷选会让同一事件实时下发是 v1、补发读回是 v2。
+ *   代价：写过 v2 的会话不能交给 ≤ core 0.15 的实例读（future_version 拒读，fail-closed），全实例须同时升级
+ */
+const UPGRADED: Readonly<Record<string, EventSchema>> = {
+  "core.user_message": { type: "core.user_message", version: 2, upcasters: { 1: identity } },
+  "core.tool_result": { type: "core.tool_result", version: 2, upcasters: { 1: identity } },
+}
+
+/** 内置事件的 schema 表：缺省 v1，升过版本的见 UPGRADED */
 export const CORE_SCHEMAS: readonly EventSchema[] = (
   [
     "core.user_message",
@@ -199,7 +215,7 @@ export const CORE_SCHEMAS: readonly EventSchema[] = (
     "core.run_ended",
     "core.error",
   ] satisfies CoreEventType[]
-).map((type) => ({ type, version: 1 }))
+).map((type) => UPGRADED[type] ?? { type, version: 1 })
 
 /** 预装了全部 core.* 的注册表。宿主要加 ext.* 时 new 一个并传入 [...CORE_SCHEMAS, ...自己的]。 */
 export function createCoreRegistry(extra: Iterable<EventSchema> = []): EventSchemaRegistry {

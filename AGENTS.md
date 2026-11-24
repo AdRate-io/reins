@@ -182,7 +182,7 @@ docs/                # 维护者文档（中文），见文档索引
 
 ## 工程硬约束（违反即返工）
 
-- **EventLog 只 append**。压缩、外溢、交接一律以追加事件表达；模型可见的一切都在日志里。
+- **EventLog 只 append**。压缩、外溢、交接一律以追加事件表达；模型可见的一切都在"日志 + 不可变 blob"里（图片引用的字节在 BlobStore，id 不复用、写后不改）。
 - **run 状态可序列化**；暂停是 `runLoop` 的显式返回值，不是阻塞的回调。
 - **`runLoop` 是导出的普通异步生成器**，几百行，无私有状态，用户可整个复制。
 - **每个事件 type 带 `schemaVersion`**，读时 upcast，查不到升级函数即拒绝。
@@ -253,6 +253,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 会话运行状态：runLoop vs TanStack 适配器 | runLoop 的 `tools_bound` 带 `marksEnd`、`run_paused` 带 `awaiting` / `stopped`；TanStack 都不带（InterruptReplaySignal 等出口不调终结钩子，承诺不了收尾），只剩 tools_bound 时判 unknown 而不是 interrupted；`note` 也只有 Socket 暂停那条带，TanStack 自己写的审批 / 客户端工具 / 中止暂停不带 |
 | "在跑"：经 handler + 租约的 run vs `agent.run()` / asTool 子 run / TanStack | 只有前者占租约、`pgRunStates` 判得出 running；后者只有结局，在跑时显示为 interrupted 或 unknown |
 | 配了 `route` 的 MCP：`tools/list` vs `tools/call` | `tools/list` 与 `optional` 只看目录凭据（`transport`）；`tools/call` 走 `keyOf` 选的凭据，选不出即不发出、不回退目录连接 |
+| 图片引用：runLoop vs TanStack 适配器 | runLoop 写入前校验归属、`toRequest` 前把视野内的引用换回内联；TanStack 不校验也不换回，引用落 `[image unavailable]` 记 lossy，工具结果落日志前引用一律换成占位文本（不校验的路径绝不能写出引用，否则会被 `mediaRefsOf` 当成"本会话已引用"放行） |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表
@@ -269,6 +270,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 流开后的 SSE `error` 帧原样带出厂商响应体 | 不截断、不脱敏 | `HttpError` 文案与 SDK 同款是刻意的（瞬断判据靠其中状态码）；面向公网时由宿主 `encode` 或网关截断 |
 | Socket 暂停意见里的 `code` / `reason` 不合规 | 改正（丢码、按 host）后照常暂停，记一条模型不可见的 `core.error(input)` | 标注写错不能把受控暂停变成 error、丢掉续跑凭据；记在时间线上，不是静默 |
 | `pullInput` 回调抛错 | 记一条模型不可见的 `core.error(host)`，当这次没有、run 照跑 | 后果只是晚一个空档送达，消息仍在宿主队列；返回值不合规不在此列（fail-closed） |
+| 图片引用的 blob 取不到（`not_found` / 没配 BlobStore） | 引用原样交给降级层，落 `[image unavailable]` 占位、记 lossy，run 照跑 | 被清理的一张旧图不该让整个会话卡死；其它存储错误不在此列（走模型调用失败与重试判定） |
 | lowering-fetch 内置价目表过期 | 照常使用，`costUsd` 按表计（DeepSeek 存峰值价，是上限） | 价目只用于报告，不影响请求正确性 |
 
 ### 循环与时间线（core）

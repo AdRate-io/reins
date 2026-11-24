@@ -87,7 +87,7 @@ import type {
 } from "@tanstack/ai"
 import { GenericInterruptDefinitionRegistryCapability } from "@tanstack/ai/adapter-internals"
 import { BlockAssembler } from "./assembler.js"
-import { fromTanstackToolResult } from "./content.js"
+import { fromTanstackToolResult, withoutImageRefs } from "./content.js"
 import {
   REINS_APPROVAL_INTERRUPT_ID,
   type ReinsApprovalInterrupt,
@@ -758,6 +758,9 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         if (replaced) draft = replaced
       }
     }
+    // 这条路径不做图片引用的归属校验，也不换回：落日志前一律换成占位文本（2026-11-24 独立审查）。
+    // 否则 reins 工具或 afterTool 返回的别的会话的 blobId 会原样进日志，之后被 mediaRefsOf 当成"本会话引用过"放行
+    draft = { ...draft, payload: { ...draft.payload, content: withoutImageRefs(draft.payload.content) } }
     await settle(ctx, s, draft)
   }
 

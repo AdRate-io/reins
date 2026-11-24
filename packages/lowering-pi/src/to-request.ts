@@ -18,6 +18,7 @@ import {
   type ContentPart,
   type CoreEvent,
   type Event,
+  isImageRef,
   type LandingRecord,
   type LoweringCapabilities,
   markUntrusted,
@@ -27,7 +28,7 @@ import {
   type ToolSpec,
   untrustedSourceOf,
 } from "@reinsjs/core"
-import { MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
+import { IMAGE_UNAVAILABLE_NOTE, MEDIA_PLACEHOLDER_NOTE } from "./loss-matrix.js"
 import type { PiModel } from "./models.js"
 import { framedSystemNote, markSystemNote } from "./system-note.js"
 
@@ -70,11 +71,19 @@ function mediaPlaceholder(p: Extract<ContentPart, { type: "video" | "audio" }>):
   return `[${p.type} omitted: this model does not accept ${p.type} (${p.mime}${sec})]`
 }
 
+/**
+ * 未换回的图片引用的占位（2026-11-24 媒体引用方案）：循环在调降级层前已把视野内的引用换回内联，
+ * 只有 blob 不在了（被清理、没配 BlobStore）才以引用形态到这里。与 fetch 版同一句
+ */
+const IMAGE_UNAVAILABLE = "[image unavailable]"
+
 function toPiContent(parts: readonly ContentPart[]): {
   content: (TextContent | { type: "image"; data: string; mimeType: string })[]
-  mediaDropped: boolean
+  /** 有片段被换成占位时的落点说明（视频 / 音频、未换回的图片引用）；没有为 undefined */
+  mediaNote: string | undefined
 } {
   let mediaDropped = false
+  let unavailable = false
   const content = parts.map((p): TextContent | { type: "image"; data: string; mimeType: string } => {
     switch (p.type) {
       case "text":
@@ -83,6 +92,10 @@ function toPiContent(parts: readonly ContentPart[]): {
       case "tool_reference":
         return { type: "text", text: renderToolReference(p) }
       case "image":
+        if (isImageRef(p)) {
+          unavailable = true
+          return { type: "text", text: IMAGE_UNAVAILABLE }
+        }
         return { type: "image", data: p.data, mimeType: p.mime }
       case "video":
       case "audio":
@@ -94,7 +107,9 @@ function toPiContent(parts: readonly ContentPart[]): {
       }
     }
   })
-  return { content, mediaDropped }
+  const notes = [mediaDropped ? MEDIA_NOTE : undefined, unavailable ? IMAGE_UNAVAILABLE_NOTE : undefined]
+  const mediaNote = notes.filter(Boolean).join("; ")
+  return { content, mediaNote: mediaNote.length > 0 ? mediaNote : undefined }
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -232,7 +247,7 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
         const c = content(e, e.payload.content)
         const pc = toPiContent(c.parts)
         const msg: Message = { role: "user", content: pc.content, timestamp: e.at }
-        const mediaNote = pc.mediaDropped ? MEDIA_NOTE : undefined
+        const mediaNote = pc.mediaNote
         // 工具结果还没到齐就来了用户消息：后移到同批结果之后，否则 tool_use 后面紧跟的不是 tool_result，厂商 400。
         // 顺序变了所以记 lossy；日志里它仍在原位
         if (awaiting.size > 0) {
@@ -331,14 +346,12 @@ export function eventsToContext(input: ToContextInput): { context: Context; land
           timestamp: e.at,
         })
         const landing = isAnthropic ? "tool_result" : "function_call_output"
-        if (c.escaped || pc.mediaDropped)
+        if (c.escaped || pc.mediaNote)
           land(
             e,
             "lossy",
             landing,
-            [c.escaped ? ESCAPED_NOTE : undefined, pc.mediaDropped ? MEDIA_NOTE : undefined]
-              .filter(Boolean)
-              .join("; "),
+            [c.escaped ? ESCAPED_NOTE : undefined, pc.mediaNote].filter(Boolean).join("; "),
           )
         else land(e, "exact", landing)
         awaiting.delete(e.payload.toolCallId)

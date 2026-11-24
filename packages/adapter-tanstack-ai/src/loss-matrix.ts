@@ -21,7 +21,7 @@ export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>
     exact("user"),
     lossy(
       "user",
-      "a user message sitting between a tool_call and its tool_result is moved after that batch of results (tool results must immediately follow their call)",
+      "a user message sitting between a tool_call and its tool_result is moved after that batch of results (tool results must immediately follow their call), untrusted content is escaped, or an image stored by reference is replaced with placeholder text (the TanStack path does not load blobs)",
     ),
   ],
   "core.model_text": [
@@ -35,6 +35,10 @@ export const TANSTACK_LOSS_MATRIX: Readonly<Record<string, readonly LossEntry[]>
   "core.tool_call": [exact("tool-call")],
   "core.tool_result": [
     exact("tool"),
+    lossy(
+      "tool",
+      "untrusted content is escaped, or an image stored by reference is replaced with placeholder text (the TanStack path does not load blobs)",
+    ),
     lossy(
       "tool-error-field",
       "isError lands only in ModelMessage.error; whether the model is told is up to the adapter",

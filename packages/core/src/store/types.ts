@@ -46,7 +46,14 @@ export interface BlobMeta {
   createdAt: number
 }
 
-/** 大对象：外溢的工具结果、附件、代码执行产物。字符串按 UTF-8 编码存储。 */
+/**
+ * 大对象：外溢的工具结果、图片引用的字节、附件、代码执行产物。字符串按 UTF-8 编码存储。
+ *
+ * 合同（图片引用形态依赖，2026-11-24）：
+ * - **id 不复用、字节写入后不可改**：日志里的引用永远指向写入时那份字节，"按日志回放"才成立
+ * - 图片要 `put` **原始字节**，不要传 base64 串——换回时会把它再编一次 base64，发给厂商的就是乱码
+ * - `put` 不检查会话是否已有事件：新会话可以先 put 再发第一条带引用的消息
+ */
 export interface BlobStore {
   put(bytes: Uint8Array | string, meta: { mime: string; sessionId: string }): Promise<{ id: string }>
   /** 不存在抛 StoreError("not_found") */

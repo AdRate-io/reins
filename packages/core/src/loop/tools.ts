@@ -3,6 +3,7 @@
  */
 import type { ContentPart, Trust } from "../events/base.js"
 import type { ToolSpec } from "../lowering/types.js"
+import { isImageRef } from "./media-refs.js"
 import type { Tool, ToolResult } from "./types.js"
 
 /**
@@ -49,7 +50,8 @@ function isDuration(x: unknown): boolean {
 /**
  * 内容片段的形状校验，全包唯一一份（真源索引）：工具返回值归一（本文件）与 runLoop 输入草稿 / 片段数组（run-loop.ts）都调它。
  * 坏片段一旦进日志，之后每次读到它都会崩（会话报废），所以在写之前拦。
- * 规则：text 有 `text`；image 有 `mime` 与 `data`（mime 不校验，历史行为）；video / audio 的 mime 以 "video/" / "audio/" 开头、
+ * 规则：text 有 `text`；image 是内联（`mime` 与 `data`，mime 不校验，历史行为）或引用（`isImageRef`：mime 以 "image/" 开头、
+ * blobId 非空且 ≤ 128 字符），`data` 与 `blobId` 恰好一个；video / audio 的 mime 以 "video/" / "audio/" 开头、
  * `durationSec` 缺省或为有限正数；tool_reference 有名字、描述与对象形 inputSchema。
  * 宿主经 HTTP 送来的用户消息另有白名单（server `rebuildContentParts`，两份实现靠跨包用例锁同口径），不含引用段
  */
@@ -60,6 +62,8 @@ export function isContentPart(x: unknown): x is ContentPart {
     case "text":
       return typeof p.text === "string"
     case "image":
+      // 引用形态 fail-closed：mime 不要求 image/ 的话，同会话的外溢文本 blob 能被当图片引用，每轮发给厂商 400、会话卡死
+      if (p.blobId !== undefined) return isImageRef(p)
       return typeof p.mime === "string" && typeof p.data === "string"
     case "video":
     case "audio":
