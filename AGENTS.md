@@ -238,7 +238,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | 用户消息后移 vs 说明后移 | 用户消息后移记 `lossy(user)`（改变了对话顺序）；脑子说明后移仍算 `exact`（只换位置） |
 | runLoop vs TanStack 适配器遇 `defer` | runLoop 只挡需要审批的那个调用；TanStack 在 `beforeTools` 边界暂停，整轮工具全停（引擎形状决定，不绕） |
 | asTool 子代理暂停：默认循环 vs TanStack | 默认循环 `subagentPause` 冒泡成父 paused；TanStack 路径降级为 isError（子会话保留可续跑） |
-| `ctx.batch`：默认循环 vs TanStack | 默认循环逐个判、beforeTool 看得见同批前面的结果；TanStack 整批先判，同批结果不可见、`held` 恒空、补跑批没有 onTurnEnd——`haltOnFailure` 只拦得住补跑预置的失败，`stopAfter` 兑现不了"审批后收尾"；与审批同批的 handoff 照样兑现（下一轮从日志重建，用例锁住） |
+| `ctx.batch`：默认循环 vs TanStack | 默认循环逐个判、beforeTool 看得见同批前面的结果；TanStack 整批先判，同批结果不可见、`held` 恒空、补跑批没有 onTurnEnd——`haltOnFailure` 只拦得住补跑预置的失败，`stopAfter` 兑现不了"审批后收尾"；与审批同批的 handoff 照样兑现（下一轮从日志重建，用例锁住）。TanStack 内部也不齐：UIMessage `approval-responded` 通道补记批准后在执行前重跑管线，此时看得见同批已落的结果（`haltOnFailure` 会因同批失败拦下已批准的调用），resume 通道在边界整批先判、看不到 |
 | Responses reasoning：pi 版 vs fetch 版 | pi 版只在请求 effort 时带 `include: ["reasoning.encrypted_content"]`；fetch 版推理模型永远带（gpt-5 缺省开推理，不带就产出无法回放的项） |
 | `deferredTools` 能力位：Anthropic 官方 vs DeepSeek 的 Anthropic 端口 | 只对 `provider: "anthropic"` 缺省开；DeepSeek 兼容端口实测忽略 `defer_loading`；Chat / Responses / pi 版把 `deferLoading` 的工具直接不发 |
 | DeepSeek `reasoning_content`：`deepseek()` vs `openaiChat()` | 前者缺省开方言、每条历史 assistant 字段必在；后者不带 |
