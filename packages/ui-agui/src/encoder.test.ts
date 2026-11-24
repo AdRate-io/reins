@@ -391,10 +391,18 @@ describe("流式增量与完整事件接成同一条消息", () => {
       item(ev("core.tool_call", { toolCallId: "c1", name: "add", args: {} }, 2)),
       item(ev("core.tool_call", { toolCallId: "c2", name: "add", args: {} }, 3)),
       item(
-        ev("core.tool_result", { toolCallId: "c1", name: "add", content: [{ type: "text", text: "ok" }] }, 4),
+        ev(
+          "core.tool_result",
+          { toolCallId: "c1", name: "add", content: [{ type: "text", text: "ok" }], isError: false },
+          4,
+        ),
       ),
       item(
-        ev("core.tool_result", { toolCallId: "c2", name: "add", content: [{ type: "text", text: "ok" }] }, 5),
+        ev(
+          "core.tool_result",
+          { toolCallId: "c2", name: "add", content: [{ type: "text", text: "ok" }], isError: false },
+          5,
+        ),
       ),
       delta("thinking", 0, "hmm"),
       item(ev("core.model_thinking", { text: "hmm" }, 6)),
@@ -415,7 +423,7 @@ describe("流式增量与完整事件接成同一条消息", () => {
       item(
         ev(
           "core.tool_result",
-          { toolCallId: "c1", name: "deploy", content: [{ type: "text", text: "ok" }] },
+          { toolCallId: "c1", name: "deploy", content: [{ type: "text", text: "ok" }], isError: false },
           4,
         ),
       ),
