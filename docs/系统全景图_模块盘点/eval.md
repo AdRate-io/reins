@@ -52,7 +52,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 | `packages/eval/src/runner.ts` | `runEval` 对照运行器与 `summarize`；含审批代答、预算续跑、handoff 跟随、fork 探针、`probeAnswerOf` / `gradeExpect` |
 | `packages/eval/src/gate.ts` | `checkGate`：PRD §7 门槛 2 / P8 的四条硬规则，只给结论与数字 |
 | `packages/eval/src/report.ts` | `renderReport`：臂均值表 + 可选门禁表 + 可选每格明细，输出 Markdown |
-| `packages/eval/src/*.test.ts` | 五个测试文件（jsonl / metrics / recorded-tools / recording / runner），describe 覆盖：JSONL 读写、指标纯函数、录像回放、外溢拼回、脱敏与待脱敏值收集、`runEval` 对照运行器 |
+| `packages/eval/src/*.test.ts` | 六个测试文件（gate / jsonl / metrics / recorded-tools / recording / runner），describe 覆盖：门禁四条规则的通过与失败路径、JSONL 读写、指标纯函数、录像回放、外溢拼回、脱敏与待脱敏值收集、`runEval` 对照运行器 |
 
 ## 3 核心流程
 
