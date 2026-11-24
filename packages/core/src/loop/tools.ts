@@ -105,14 +105,41 @@ export function isContentPart(x: unknown): x is ContentPart {
   }
 }
 
-function isToolResult(x: unknown): x is ToolResult {
+/**
+ * 工具结果里只有 mime 不在白名单、其余形状都对的图片片段（内联 `data` 或引用 `blobId` 是字符串）换成的说明（模型可见）。
+ * 例：图表类 MCP 返回 svg。整条结果 JSON 化会把 base64 原样当文本塞进上下文，这里只换掉那一段，其余片段照旧
+ */
+export function unsupportedImageText(mime: string): string {
+  return `[image omitted: ${mime} is not a supported image type; supported types are ${[...SUPPORTED_IMAGE_MIMES].join(", ")}]`
+}
+
+/** 形状对、只是 mime 不在白名单的图片片段（mime 是字符串，`data` 或 `blobId` 恰好一个是字符串） */
+function isUnsupportedImagePart(x: unknown): x is { type: "image"; mime: string } {
   if (typeof x !== "object" || x === null) return false
-  const r = x as { content?: unknown; isError?: unknown }
+  const p = x as { type?: unknown; mime?: unknown; data?: unknown; blobId?: unknown }
   return (
-    Array.isArray(r.content) &&
-    r.content.every(isContentPart) &&
-    (r.isError === undefined || typeof r.isError === "boolean")
+    p.type === "image" &&
+    typeof p.mime === "string" &&
+    !isSupportedImageMime(p.mime) &&
+    (typeof p.data === "string") !== (typeof p.blobId === "string")
   )
+}
+
+/**
+ * 片段数组里白名单外的图片逐段换成说明；还有别的坏片段就返回 undefined（交给 JSON 化兜底）。
+ * 一段都没换时原数组原样返回（引用不变，便于调用方判断）
+ */
+function withUnsupportedImagesReplaced(parts: readonly unknown[]): ContentPart[] | undefined {
+  let replaced = false
+  const out: ContentPart[] = []
+  for (const p of parts) {
+    if (isContentPart(p)) out.push(p)
+    else if (isUnsupportedImagePart(p)) {
+      replaced = true
+      out.push({ type: "text", text: unsupportedImageText(p.mime) })
+    } else return undefined
+  }
+  return replaced ? out : (parts as ContentPart[])
 }
 
 /**
@@ -120,14 +147,24 @@ function isToolResult(x: unknown): x is ToolResult {
  * - string → 一段文本
  * - ContentPart[] → 原样
  * - { content, isError? } → 原样（唯一能表达"这是错误"的形态）
+ * - 上两种里只有白名单外的图片（svg 等）不合规 → 只把那几段换成说明（`unsupportedImageText`），其余照旧
  * - undefined / null → 空文本（工具没话说也得给模型一个结果块）
  * - 其余 → JSON 文本
  */
 export function normalizeToolOutput(output: unknown): ToolResult {
   if (typeof output === "string") return { content: [{ type: "text", text: output }] }
   if (output === undefined || output === null) return { content: [{ type: "text", text: "" }] }
-  if (Array.isArray(output) && output.every(isContentPart)) return { content: output }
-  if (isToolResult(output)) return output
+  if (Array.isArray(output)) {
+    const content = withUnsupportedImagesReplaced(output)
+    if (content) return { content }
+  } else if (typeof output === "object") {
+    const r = output as { content?: unknown; isError?: unknown }
+    if (Array.isArray(r.content) && (r.isError === undefined || typeof r.isError === "boolean")) {
+      const content = withUnsupportedImagesReplaced(r.content)
+      if (content)
+        return content === r.content ? (output as ToolResult) : { ...(output as ToolResult), content }
+    }
+  }
   const json = JSON.stringify(output)
   return { content: [{ type: "text", text: typeof json === "string" ? json : String(output) }] }
 }
