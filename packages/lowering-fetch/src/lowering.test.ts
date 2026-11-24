@@ -175,6 +175,47 @@ describe("FetchLowering", () => {
     expect((err as HttpError).message).toContain("Wholesale Rate limited")
   })
 
+  it("timeoutMs 管到响应头与流的最长空档，不限流的总时长：持续出帧的长流照常收尾，停了超过 timeoutMs 才判超时（全库审查 #27）", async () => {
+    /** 按间隔逐帧吐 SSE 的假 fetch；fetch 的 signal 中止时让响应体报错（真 fetch 的行为） */
+    const dripFetch = (frames: string[], gapMs: number, stallAfter?: number) =>
+      (async (_: unknown, init?: RequestInit) => {
+        const signal = init?.signal ?? undefined
+        const body = new ReadableStream<Uint8Array>({
+          async start(c) {
+            signal?.addEventListener("abort", () => c.error(signal.reason), { once: true })
+            const enc = new TextEncoder()
+            for (let i = 0; i < frames.length; i++) {
+              if (stallAfter !== undefined && i === stallAfter) return
+              await new Promise((r) => setTimeout(r, gapMs))
+              if (signal?.aborted) return
+              c.enqueue(enc.encode(frames[i]))
+            }
+            c.close()
+          },
+        })
+        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })
+      }) as typeof globalThis.fetch
+    const frames = [
+      ...["a", "b", "c", "d", "e", "f", "g", "h"].map(
+        (t) => `data: ${JSON.stringify(delta({ content: t }))}\n\n`,
+      ),
+      `data: ${JSON.stringify(delta({}, "stop"))}\n\n`,
+      "data: [DONE]\n\n",
+    ]
+    // 10 帧 × 25ms ≈ 250ms，远超 timeoutMs=80，但每个空档都在 80 之内
+    const long = new FetchLowering({ apiKey: () => "k", fetch: dripFetch(frames, 25), timeoutMs: 80 })
+    const ok = await collect(long.stream(long.toRequest({ events: [user("hi")], model: MODEL })))
+    expect(ok.outcome).toMatchObject({ stopReason: "stop" })
+    expect(ok.drafts).toEqual([expect.objectContaining({ payload: { text: "abcdefgh" } })])
+
+    // 吐两帧后停住：空档超过 timeoutMs 判超时 error，已拼出的半截正文交出
+    const stall = new FetchLowering({ apiKey: () => "k", fetch: dripFetch(frames, 10, 2), timeoutMs: 80 })
+    const cut = await collect(stall.stream(stall.toRequest({ events: [user("hi")], model: MODEL })))
+    expect(cut.drafts).toEqual([expect.objectContaining({ payload: { text: "ab" } })])
+    expect(cut.outcome).toMatchObject({ stopReason: "error" })
+    expect((cut.outcome as { errorMessage: string }).errorMessage).toContain("timed out")
+  })
+
   it("2xx 但没有响应体：不抛，以 stopReason=error 收场并说明", async () => {
     const { fetch } = fakeFetch([new Response(null, { status: 200 })])
     const lowering = new FetchLowering({ apiKey: () => "k", fetch })

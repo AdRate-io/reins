@@ -295,7 +295,7 @@ describe("consumeAnthropicStream", () => {
     )
     expect(timed.outcome).toMatchObject({
       stopReason: "error",
-      errorMessage: expect.stringContaining("timed out after 7ms"),
+      errorMessage: expect.stringContaining("timed out: no data for 7ms"),
     })
 
     const other = await collect(consumeAnthropicStream({ messages: broken(), origin }))

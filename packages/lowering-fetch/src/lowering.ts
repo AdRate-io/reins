@@ -20,7 +20,7 @@ import { encodeAnthropicRequest } from "./anthropic/to-request.js"
 import { capabilitiesOf } from "./capabilities.js"
 import { consumeChatStream } from "./chat/from-stream.js"
 import { encodeChatRequest } from "./chat/to-request.js"
-import { DEFAULT_TIMEOUT_MS, postJson, requestSignals } from "./http.js"
+import { DEFAULT_TIMEOUT_MS, postJson, requestSignals, touchEach } from "./http.js"
 import { eventsToIr } from "./ir.js"
 import { endpointOf, type FetchApi, type FetchModel, resolveModel } from "./models.js"
 import { consumeResponsesStream } from "./responses/from-stream.js"
@@ -44,7 +44,11 @@ export interface FetchLoweringOptions {
    * parallel_tool_calls …），键名以厂商文档为准。按模型返回，便于分族配置。messages / tools / model / stream 不可覆盖。
    */
   requestOptions?: (model: ModelRef) => Record<string, unknown>
-  /** 整条请求（含读完流）的时限，缺省 600 000 ms；到点判 error（可重试），宿主 signal 中止判 aborted */
+  /**
+   * 本地时限，缺省 600 000 ms：管"发出请求到收到响应头"与"流里任意两帧之间的空档"，不限整条流的总时长
+   * （与两家 SDK 一样不掐正在出字的长流）。到点判 error：还没有任何输出时 core 按瞬断重试，流中途已有输出则不重试；
+   * 宿主 signal 中止判 aborted。总时长要封顶由宿主自己的 signal 决定
+   */
   timeoutMs?: number
   /**
    * trust 标注（技术方案 §14）：trust=untrusted 的事件翻译时包上 `<untrusted source="tool:<name>">…</untrusted>`，
@@ -116,15 +120,24 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
   ): AsyncGenerator<CoreEventDraft, LoweringOutcome> {
     const model = resolveModel(req.model, this.extraModels)
     const headers = this.headersFor(model)
+    // 时限只管"到响应头"与"流里两帧之间的空档"，不限流的总时长（见 DEFAULT_TIMEOUT_MS）
     const signals = requestSignals(ctx.signal, this.timeoutMs)
-    const res = await postJson({
-      url: endpointOf(model),
-      headers,
-      body: req.payload.body,
-      signal: signals.signal,
-      ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
-    })
+    let res: Response
+    try {
+      res = await postJson({
+        url: endpointOf(model),
+        headers,
+        body: req.payload.body,
+        signal: signals.signal,
+        ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
+      })
+    } catch (err) {
+      signals.dispose()
+      throw err
+    }
+    signals.touch()
     if (!res.body) {
+      signals.dispose()
       return {
         stopReason: "error",
         usage: { input: 0, output: 0 },
@@ -132,7 +145,7 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       }
     }
     const streamInput = {
-      messages: parseSse(res.body),
+      messages: touchEach(parseSse(res.body), signals),
       origin: { provider: model.provider, api: model.api, model: model.id },
       ...(model.cost ? { cost: model.cost } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),

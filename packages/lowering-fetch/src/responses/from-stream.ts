@@ -411,7 +411,7 @@ export async function* consumeResponsesStream(
       return {
         ...base,
         stopReason: "error",
-        errorMessage: `request timed out after ${input.timeoutMs ?? "?"}ms (stream ended before response.completed)`,
+        errorMessage: `request timed out: no data for ${input.timeoutMs ?? "?"}ms (stream ended before response.completed)`,
       }
     return { ...base, stopReason: "error", errorMessage: errorText(err) }
   }

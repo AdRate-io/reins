@@ -350,7 +350,7 @@ export async function* consumeAnthropicStream(
       return {
         ...base,
         stopReason: "error",
-        errorMessage: `request timed out after ${input.timeoutMs ?? "?"}ms (stream ended before message_stop)`,
+        errorMessage: `request timed out: no data for ${input.timeoutMs ?? "?"}ms (stream ended before message_stop)`,
       }
     return { ...base, stopReason: "error", errorMessage: errorText(err) }
   }

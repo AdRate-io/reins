@@ -81,6 +81,19 @@ describe("requestSignals", () => {
     expect(isTransientFailure({ kind: "thrown", error: s.signal.reason })).toBe(true)
   })
 
+  it("touch 重新计空档：持续 touch 的总时长超过时限也不中止；dispose 后不再中止（全库审查 #27）", async () => {
+    const s = requestSignals(undefined, 40)
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 15))
+      s.touch()
+    }
+    expect(s.signal.aborted).toBe(false)
+    s.dispose()
+    await new Promise((r) => setTimeout(r, 60))
+    expect(s.signal.aborted).toBe(false)
+    expect(s.timedOut()).toBe(false)
+  })
+
   it("宿主中止优先：两者都发生时 timedOut 为假；AbortError 不重试", async () => {
     const host = new AbortController()
     const s = requestSignals(host.signal, 5)

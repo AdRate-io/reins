@@ -376,7 +376,9 @@ describe("consumeResponsesStream", () => {
     expect(aborted.outcome).toMatchObject({ stopReason: "aborted", errorMessage: "aborted by host" })
     const timedOut = await collect(make(undefined, true))
     expect(timedOut.outcome).toMatchObject({ stopReason: "error" })
-    expect((timedOut.outcome as { errorMessage: string }).errorMessage).toContain("timed out after 1234ms")
+    expect((timedOut.outcome as { errorMessage: string }).errorMessage).toContain(
+      "timed out: no data for 1234ms",
+    )
     const other = await collect(make())
     expect(other.outcome).toMatchObject({ stopReason: "error", errorMessage: "socket hang up" })
   })

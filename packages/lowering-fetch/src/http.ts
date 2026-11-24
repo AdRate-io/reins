@@ -21,7 +21,12 @@ export class HttpError extends Error {
   }
 }
 
-/** 一次请求的时限（整条响应，含流式读完），与两家 SDK 缺省一致 */
+/**
+ * 本地时限的缺省值。口径（全库审查 #27）：从发出请求到收到响应头，以及流里任意两帧之间的空档，都不得超过它；
+ * **不限整条流的总时长**。两家官方 SDK 的 600s 也只管到响应头（fetch resolve 后即 clearTimeout），
+ * 长思考 / 长工具入参的流可以合法地跑十几分钟，按总时长掐会把正在出字的流切断、且因已有输出而不重试。
+ * 空档时限是本包比 SDK 多的一道：流停住不出帧时不会永远挂着（Anthropic 流有 ping，正常流不会空这么久）。
+ */
 export const DEFAULT_TIMEOUT_MS = 600_000
 
 export interface RequestSignals {
@@ -29,16 +34,60 @@ export interface RequestSignals {
   signal: AbortSignal
   /** 中止后判定是哪一方：宿主中止（ctx.signal）还是本地超时 */
   timedOut: () => boolean
+  /** 收到一帧（或响应头）时调：空档计时从此刻重新开始 */
+  touch: () => void
+  /** 请求结束（读完、出错或调用方提前停止）时调：清掉计时器 */
+  dispose: () => void
 }
 
 /**
- * 把宿主的 signal 与本地超时合成一个信号。超时到点后 `timedOut()` 为真；宿主中止优先（两者都发生时算宿主中止，
- * 因为宿主中止是有意为之、不该被当成瞬断重试）。
+ * 把宿主的 signal 与本地"空档"时限合成一个信号：创建即开始计时，每次 `touch()` 重新计；到点后以
+ * TimeoutError（DOMException，与 AbortSignal.timeout 同款，core 判可重试）中止，`timedOut()` 为真。
+ * 宿主中止优先（两者都发生时算宿主中止，因为宿主中止是有意为之、不该被当成瞬断重试）。
  */
 export function requestSignals(hostSignal: AbortSignal | undefined, timeoutMs: number): RequestSignals {
-  const timeout = AbortSignal.timeout(timeoutMs)
-  const signal = hostSignal ? AbortSignal.any([hostSignal, timeout]) : timeout
-  return { signal, timedOut: () => timeout.aborted && !hostSignal?.aborted }
+  const local = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const arm = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(
+      () =>
+        local.abort(
+          new DOMException(`request timed out: no response data for ${timeoutMs}ms`, "TimeoutError"),
+        ),
+      timeoutMs,
+    )
+    // Node 下不让这个计时器单独撑住进程（AbortSignal.timeout 也是如此）；其它运行时没有 unref，跳过
+    ;(timer as { unref?: () => void }).unref?.()
+  }
+  const dispose = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = undefined
+  }
+  arm()
+  const signal = hostSignal ? AbortSignal.any([hostSignal, local.signal]) : local.signal
+  return {
+    signal,
+    timedOut: () => local.signal.aborted && !hostSignal?.aborted,
+    touch: () => {
+      if (!local.signal.aborted && timer !== undefined) arm()
+    },
+    dispose,
+  }
+}
+
+/**
+ * 包住 SSE 消息流：每到一帧 `touch()` 一次，流结束（含出错、调用方提前 return）时 `dispose()`。
+ */
+export async function* touchEach<T>(source: AsyncIterable<T>, signals: RequestSignals): AsyncGenerator<T> {
+  try {
+    for await (const item of source) {
+      signals.touch()
+      yield item
+    }
+  } finally {
+    signals.dispose()
+  }
 }
 
 export interface PostJsonInput {

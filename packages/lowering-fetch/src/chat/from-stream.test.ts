@@ -257,7 +257,7 @@ describe("consumeChatStream", () => {
 
     const t = await consume(iter(msgs, { throwAfter: 1 }), { timedOut: () => true, timeoutMs: 5 })
     expect(t.outcome.stopReason).toBe("error")
-    expect(t.outcome.errorMessage).toContain("timed out after 5ms")
+    expect(t.outcome.errorMessage).toContain("timed out: no data for 5ms")
     expect(t.drafts).toEqual([
       { type: "core.model_text", actor: "model", payload: { text: "半" }, replay: origin },
     ])

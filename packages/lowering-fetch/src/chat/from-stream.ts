@@ -214,7 +214,7 @@ export async function* consumeChatStream(
       return {
         ...base,
         stopReason: "error",
-        errorMessage: `request timed out after ${input.timeoutMs ?? "?"}ms (stream ended before finish_reason)`,
+        errorMessage: `request timed out: no data for ${input.timeoutMs ?? "?"}ms (stream ended before finish_reason)`,
       }
     return { ...base, stopReason: "error", errorMessage: errorText(err) }
   }
