@@ -83,6 +83,18 @@ export function blobStoreConformance(t: TestHarness, factory: () => BlobStore | 
         [],
         "a start beyond the end gives nothing",
       )
+      // 宿主"取到末尾"常写 Infinity / 很大的数：后端参数类型更窄（如 int4）时须自行截断，不能抛驱动原始错误
+      assertEqual(
+        Array.from(await store.slice(id, { start: 2, end: Number.POSITIVE_INFINITY })),
+        [2, 3, 4],
+        "end Infinity",
+      )
+      assertEqual(Array.from(await store.slice(id, { start: 0, end: 2 ** 40 })), [0, 1, 2, 3, 4], "end 2^40")
+      assertEqual(
+        Array.from(await store.slice(id, { start: Number.MAX_SAFE_INTEGER, end: Number.POSITIVE_INFINITY })),
+        [],
+        "start MAX_SAFE_INTEGER",
+      )
     })
   })
 }

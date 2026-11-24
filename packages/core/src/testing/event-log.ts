@@ -64,6 +64,27 @@ export function eventLogConformance(t: TestHarness, factory: () => EventLog | Pr
       )
     })
 
+    // 宿主"读到末尾"常写 MAX_SAFE_INTEGER / Infinity：后端列类型更窄（如 int4）时须自行截到上限，不能抛驱动原始错误
+    t.it("read accepts open-ended bounds beyond any column type (MAX_SAFE_INTEGER, Infinity)", async () => {
+      const log = await factory()
+      await log.append(makeEvents("s1", 3))
+      assertEqual(
+        seqs(await collect(log.read("s1", { toSeq: Number.MAX_SAFE_INTEGER }))),
+        [1, 2, 3],
+        "toSeq MAX_SAFE_INTEGER",
+      )
+      assertEqual(
+        seqs(await collect(log.read("s1", { fromSeq: 2, toSeq: Number.POSITIVE_INFINITY }))),
+        [2, 3],
+        "toSeq Infinity",
+      )
+      assertEqual(
+        seqs(await collect(log.read("s1", { fromSeq: Number.MAX_SAFE_INTEGER }))),
+        [],
+        "fromSeq MAX_SAFE_INTEGER",
+      )
+    })
+
     t.it(
       "tail returns the last n events in ascending order; an n above the total returns everything; n=0 returns nothing",
       async () => {
