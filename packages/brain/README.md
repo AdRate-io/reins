@@ -55,6 +55,7 @@ const agent = createAgent({
 
 `haltOnFailure` and `stopAfter` read `ctx.batch` — the calls of the current batch, the results logged so far, the calls left waiting, and whether this is a resumed batch — and work together:
 
+<!-- recipe: packages/brain/src/act-then-announce.recipe.test.ts -->
 ```ts
 const sockets = [
   haltOnFailure({ applies: (_call, tool) => tool?.risk !== "low" }), // first: a held-back call never reaches the others
@@ -76,6 +77,7 @@ Any `MemoryStore` (in-memory, `@reinsjs/store-sqlite`, `@reinsjs/store-pg`) is a
 
 Compaction folds the conversation, not the system prompt or the tool list, so the model keeps who it is and what it can do. What it loses is context you attached to the conversation — an index of its memory, the item it is working on. Declare that as a resident snapshot instead:
 
+<!-- recipe: packages/brain/src/resident-context.recipe.test.ts -->
 ```ts
 /** One line per memory file: the index, not the content. The model opens a file with its `memory` tool. */
 function memoryIndex(store: MemoryStore) {

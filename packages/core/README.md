@@ -49,6 +49,7 @@ Pausing is a return value, not a blocking callback. `state` is small (ids and ha
 
 `input` takes a string, content parts, one event draft, or an array of drafts appended in order in one write. Use the array when a run brings both something to do and something to know, so the model can tell a colleague's request from the host's briefing:
 
+<!-- recipe: packages/core/src/input-batch.recipe.test.ts -->
 ```ts
 /** Host briefing as a system note, then the actual request. One user message per batch. */
 function briefedInput(background: string, request: string): EventDraft[] {
@@ -67,6 +68,7 @@ Every draft goes through the same checks — type whitelist (`core.user_message`
 
 A run can take minutes. Messages that reach your host meanwhile (a teammate changed direction, someone signed off a plan) can be handed to the model before its next call instead of waiting for the run to end. Pass `pullInput`: the loop calls it before every model call — not on a turn that only finishes leftover tool calls, and not once `maxTurns` is reached — and appends whatever drafts it returns, ahead of that turn's socket notes. Your queue stays the source of truth: offer what is waiting, and claim a delivery only when its event comes back out of the loop.
 
+<!-- recipe: packages/core/src/pull-input.recipe.test.ts -->
 ```ts
 /** A host mailbox: offer everything unclaimed at each gap; claim when the loop has written it. */
 function mailbox() {

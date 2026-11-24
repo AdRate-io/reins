@@ -101,6 +101,7 @@ A message is queued only when all of these hold: the body has `sessionId` and a 
 - Mid-run messages make runs longer: `maxTurns` and budgets are reached sooner, nothing resets them.
 - The mailbox lives in this process only: a crash loses undelivered messages (the client sees them missing and resends). Limit request body size at your gateway; the mailbox caps the count, not the size. `authorizeSession` sees `method: "POST"` for a queued message — a host that counts `POST`s as runs counts these too — and `onEvent` keeps reporting the starting request's `principal` / `request`.
 
+<!-- recipe: packages/server/src/mid-run-input.recipe.test.ts -->
 ```ts
 /** Send one message; the caller keeps the deliveryId (and reuses it when retrying). */
 async function send(endpoint: string, sessionId: string, deliveryId: string, text: string, lastSeq: number) {
@@ -136,6 +137,7 @@ This pre-check only needs ownership and `mime`, so it calls `BlobStore.stat(id)`
 
 The handler does not serve blob bytes. To show the pictures in your UI, add your own route, run your session check first (the same one as `authorizeSession`), and decide with `blobUsableBy` — comparing `meta.sessionId` alone would hide a parent's pictures in a forked session. `registry` is your event registry (`createCoreRegistry()`):
 
+<!-- recipe: packages/server/src/serve-image.recipe.test.ts -->
 ```ts
 /** Raster formats only: an SVG opened from your origin runs its scripts there, with the viewer's credentials. */
 const SERVABLE_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])

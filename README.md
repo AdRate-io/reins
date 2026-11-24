@@ -118,6 +118,7 @@ that is what gets logged. Put this socket **first** in `sockets`, so `spill()`, 
 `pins()` only ever see the cleaned text — `spill()` in particular copies oversized results into
 the `BlobStore` from this same draft:
 
+<!-- recipe: packages/brain/src/redaction.recipe.test.ts#tool -->
 ```ts
 import type { ContentPart, Socket } from "@reinsjs/core"
 
@@ -147,6 +148,7 @@ the host fills in over `POST`, and events emitted by brain modules do not pass t
 Only writes are intercepted; `read`, `tail` and `fork` pass straight through, and the store never
 holds the original:
 
+<!-- recipe: packages/brain/src/redaction.recipe.test.ts#log -->
 ```ts
 import type { CoreEvent, Event, EventLog } from "@reinsjs/core"
 

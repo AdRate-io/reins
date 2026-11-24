@@ -32,9 +32,12 @@ import { mcpTools } from "./mcp-tools.js"
 import { fixtureServer } from "./test-utils.js"
 import type { McpToolsOptions } from "./types.js"
 
+// 上游把业务错误当成功结果（text 里是 {"code": <非 0>, ...}）：withBusinessErrors 保留原文、补一句说明并标 isError；
+// readOnlyLazy 让只读工具进菜单按需取回，写与未标注的一律不给模型
+
 // ---- 配方本体（与 tools-mcp README 逐字一致，改一处要同步另一处）----
 
-/** 上游把业务错误当成功结果：text 里是 `{"code": <非 0>, "message": ...}`。返回一句可读的错误说明，不是业务错误则 undefined */
+/** TikTok puts business errors in a successful result: text = {"code": <non-zero>, "message": ...} */
 const businessErrorOf = (result: ToolResult): string | undefined => {
   if (result.isError) return undefined
   for (const part of result.content) {
@@ -44,13 +47,13 @@ const businessErrorOf = (result: ToolResult): string | undefined => {
       if (typeof body.code === "number" && body.code !== 0)
         return `Upstream error ${body.code}: ${String(body.message ?? "")}`
     } catch {
-      // 不是 JSON 就不是业务错误信封
+      // not JSON, not an error envelope
     }
   }
   return undefined
 }
 
-/** 包一层 execute：业务错误照原文给模型，但标 isError，让重试 / 审批策略 / 宿主观测都看得见 */
+/** Keep the original text for the model, but mark it as an error so retries, policies and observers see it */
 const withBusinessErrors = (tool: Tool): Tool => ({
   ...tool,
   async execute(input, ctx) {
@@ -60,9 +63,11 @@ const withBusinessErrors = (tool: Tool): Tool => ({
   },
 })
 
-/** 只读的进菜单按需取回；其余（写、未标注）一律不给模型——写操作走宿主自己的工具 */
+/** reads: on the menu, loaded on demand; everything else: not a tool the model has */
 const readOnlyLazy: McpToolsOptions["override"] = (tool, info) =>
   info.annotations?.readOnlyHint === true ? withBusinessErrors({ ...tool, lazy: true }) : false
+
+// ---- 配方本体结束 ----
 
 // ---- 用例 ----
 

@@ -33,6 +33,8 @@ const sockets = [
   approval({ ask: ["deploy"], allow: ["board_update", "chat_send", "end_run"] }), // last, as always
 ]
 
+// ---- 配方本体结束 ----
+
 // ---- 用例 ----
 
 const SESSION = "s1"

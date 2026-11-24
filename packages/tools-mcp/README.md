@@ -156,6 +156,7 @@ separate OAuth token, each seeing the same tool catalog but a different set of a
 decide *what to do to which account*; which identity carries the call is an authorization rule, and it belongs to
 the host. Pass `route`:
 
+<!-- recipe: packages/tools-mcp/src/multi-credential.recipe.test.ts -->
 ```ts
 import { httpTransport, type McpRoute, type McpTransport, mcpTools } from "@reinsjs/tools-mcp"
 
@@ -252,30 +253,35 @@ are unaffected. **But it silently defeats approval policies written against tool
 changing a budget and deleting an asset group are all called `tool_execute`; what actually happens is in the
 arguments.
 
+<!-- recipe: packages/brain/src/gateway-tool.recipe.test.ts -->
 ```ts
+import { approval, type PolicyRule } from "@reinsjs/brain"
+
 // WRONG — this never matches. Every operation is named tool_execute.
 approval({ deny: ["*_delete"], allow: ["*"] })
 
 // RIGHT — decide on the operation name inside the arguments.
+/** The operation a gateway call actually runs is in this argument */
 const operationOf = (args: unknown): string =>
   typeof args === "object" && args !== null && "tool_name" in args
     ? String((args as { tool_name?: unknown }).tool_name ?? "")
     : ""
 
-approval({
-  ask: [{
-    id: "gateway.writes",
-    match: (call) =>
-      call.name === "tool_execute" && /_(create|update|delete|upload)$/.test(operationOf(call.args)),
-    summary: (call) => `TikTok ${operationOf(call.args)}`,   // the approver sees the real operation
-  }],
-  allow: [
-    { id: "gateway.reads", match: (call) =>
-        call.name === "tool_execute" && /_(get|list|search)$/.test(operationOf(call.args)) },
-    "tool_list",
-    "tool_get",
-  ],
-})
+/** Writes ask a human. The test is the operation name in the arguments, not the tool name. */
+const gatewayWrites: PolicyRule = {
+  id: "gateway.writes",
+  match: (call) =>
+    call.name === "tool_execute" && /_(create|update|delete|upload)$/.test(operationOf(call.args)),
+  summary: (call) => `TikTok ${operationOf(call.args)}`, // the approver sees the real operation
+}
+
+/** Reads pass without asking, decided the same way */
+const gatewayReads: PolicyRule = {
+  id: "gateway.reads",
+  match: (call) => call.name === "tool_execute" && /_(get|list|search)$/.test(operationOf(call.args)),
+}
+
+approval({ ask: [gatewayWrites], allow: [gatewayReads, "tool_list", "tool_get"] })
 ```
 
 The executable version of this recipe is `packages/brain/src/gateway-tool.recipe.test.ts`, including the negative
@@ -303,9 +309,11 @@ out of the model's reach entirely (they go through your own tools, with your own
 and stop sending two hundred tool definitions on every request. Both are one `override` plus
 `@reinsjs/brain`'s `lazyTools()`:
 
+<!-- recipe: packages/tools-mcp/src/readonly-lazy.recipe.test.ts -->
 ```ts
 import { lazyTools } from "@reinsjs/brain"
 import { normalizeToolOutput, type Tool, type ToolResult } from "@reinsjs/core"
+import { type McpToolsOptions, mcpTools } from "@reinsjs/tools-mcp"
 
 /** TikTok puts business errors in a successful result: text = {"code": <non-zero>, "message": ...} */
 const businessErrorOf = (result: ToolResult): string | undefined => {
@@ -334,7 +342,7 @@ const withBusinessErrors = (tool: Tool): Tool => ({
 })
 
 /** reads: on the menu, loaded on demand; everything else: not a tool the model has */
-const readOnlyLazy = (tool: Tool, info: McpToolInfo) =>
+const readOnlyLazy: McpToolsOptions["override"] = (tool, info) =>
   info.annotations?.readOnlyHint === true ? withBusinessErrors({ ...tool, lazy: true }) : false
 
 const tiktok = mcpTools({ transport, override: readOnlyLazy })

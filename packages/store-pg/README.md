@@ -38,6 +38,7 @@ Writing your own wrapper for another driver: bind parameters as given and return
 
 `pgRunStates(client, sessionIds)` tells you, for up to 500 sessions in one SQL statement, whether each one is running, waiting on someone, failed or finished — without a status table of your own. It combines two facts that reins already keeps: the run lease in `reins_runs`, and the last run marker in the session's timeline (every run starts with `core.tools_bound` — unless it was aborted before it started — and ends with exactly one `core.run_paused` or `core.run_ended`). The classification itself is `runStatusOf` from `@reinsjs/core`, so a single-process host can use it directly with `runs.get(id) !== undefined` and `lastRunMarker(timeline)`.
 
+<!-- recipe: packages/store-pg/src/run-states.recipe.test.ts -->
 ```ts
 /** One badge per session in a list. `lastReadAt` is your own "user opened it" timestamp. */
 function badgeOf(status: RunStatus, lastReadAt: number): string {
