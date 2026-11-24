@@ -246,6 +246,24 @@ describe("toolBatchOf", () => {
     expect(located.results.map((r) => r.payload.toolCallId)).toEqual(["b1"])
   })
 
+  // 全库审查 2026-11-25 第二波返修：ext.* 与运维事件同属"缺省对模型不可见"（isModelInvisibleByDefault），
+  // 降级层 IR 也不让它打断 assistant 分组——夹在同一次输出中间同样不切段
+  it("宿主 ext.* 夹在同一次输出中间不切段", () => {
+    const ext: Event = {
+      id: "e5",
+      sessionId: SESSION,
+      seq: 5,
+      at: 5,
+      type: "ext.audit",
+      schemaVersion: 1,
+      actor: "host",
+      trust: "system",
+      payload: {},
+    }
+    const timeline = [user(1), call(4, "b1"), ext, call(6, "b2")]
+    expect(ids(toolBatchOf(timeline, pendingToolCalls(timeline)))).toEqual(["b1", "b2"])
+  })
+
   it("pending 为空返回空批；pending 跨多批只取第一批", () => {
     expect(toolBatchOf([user(1)], [])).toEqual({ calls: [], results: [] })
     const timeline = [user(1), call(2, "a1"), user(3), call(4, "b1")]

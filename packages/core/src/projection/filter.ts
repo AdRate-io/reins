@@ -53,7 +53,9 @@ export interface VisibilityFilterOptions {
   invisibleTypes?: Iterable<string>
   /**
    * 缺省 false：ext.* 一律剔除。设 true 时留在视图里，交给排在后面的宿主策略翻成 core 事件——
-   * 原样留到降级层仍是 dropped，且会计入估算
+   * 原样留到降级层仍是 dropped，且会计入估算。runLoop / createAgent 上没有直达选项：用
+   * `defaultProjectionChain({ filter: { keepExtEvents: true } })` 自建链、把翻译策略插在第一个（过滤）之后，经 `projection.strategies` 传入。
+   * beforeModel 期间注入的 ext.* 不受它影响（注入过滤按 isModelInvisibleByDefault），下一轮起经投影进视图
    */
   keepExtEvents?: boolean
   /** 额外判定，返回 false 即不可见。宿主放 principal 可见性等规则 */
