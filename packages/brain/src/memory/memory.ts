@@ -16,6 +16,7 @@
  * 工具与规则都不出现，并告警一次 —— 而不是注册一个一用就报错的工具，那会让模型每轮都撞墙。
  */
 import type { Socket, SocketSetup, Tool, ToolContext } from "@reinsjs/core"
+import { isCanonicalKeyPrefix } from "../shared/paths.js"
 import {
   bindMemoryFs,
   executeMemoryCommand,
@@ -25,7 +26,6 @@ import {
   type MemoryLimits,
   parseMemoryCommand,
 } from "./commands.js"
-import { isCanonicalKeyPrefix } from "../shared/paths.js"
 import { hasMemorySegment, MEMORY_ROOT, resolveMemoryPath } from "./paths.js"
 import { MEMORY_RULES, MEMORY_TOOL_DESCRIPTION, MEMORY_TOOL_NAME } from "./rules.js"
 
