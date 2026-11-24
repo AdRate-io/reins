@@ -19,7 +19,9 @@ afterEach(async () => {
   vi.restoreAllMocks()
   const s = server
   server = undefined
-  if (s) await new Promise<void>((r) => s.close(() => r()))
+  if (!s) return
+  s.closeAllConnections()
+  await new Promise<void>((r) => s.close(() => r()))
 })
 
 /** 起一个包着 handler 的真服务器，返回基址 */
@@ -87,5 +89,61 @@ describe("nodeListener：handler 抛错", () => {
     const res = await fetch(`${base}/`, { signal: AbortSignal.timeout(2000) })
     expect(res.status).toBe(200)
     await expect(res.text()).rejects.toThrow()
+  })
+})
+
+describe("nodeListener：客户端断开", () => {
+  it('handler 还没返回时客户端就断开：拿到响应流后立即取消（onDisconnect: "abort" 靠它中止 run）', async () => {
+    let cancelled = false
+    let ticks = 0
+    const handler: AgentHandler = async () => {
+      // 模拟鉴权 / 读日志 / 抢租约较慢，客户端在这期间关页
+      await new Promise((r) => setTimeout(r, 300))
+      let timer: ReturnType<typeof setInterval> | undefined
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          timer = setInterval(() => {
+            ticks++
+            c.enqueue(new TextEncoder().encode(": ping\n\n"))
+          }, 20)
+        },
+        cancel() {
+          cancelled = true
+          clearInterval(timer)
+        },
+      })
+      return new Response(body, { headers: { "content-type": "text/event-stream" } })
+    }
+    const base = await serve(handler)
+    const ac = new AbortController()
+    setTimeout(() => ac.abort(), 100)
+    await fetch(`${base}/`, { signal: ac.signal }).catch(() => {})
+    await new Promise((r) => setTimeout(r, 500))
+    expect(cancelled).toBe(true)
+    // 断开之后不该再往死连接上写心跳
+    expect(ticks).toBeLessThanOrEqual(1)
+  })
+
+  it("流进行中客户端断开：响应流被取消", async () => {
+    let cancelled = false
+    const handler: AgentHandler = async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("data: 1\n\n"))
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      )
+    const base = await serve(handler)
+    const ac = new AbortController()
+    const res = await fetch(`${base}/`, { signal: ac.signal })
+    await res.body?.getReader().read()
+    ac.abort()
+    await new Promise((r) => setTimeout(r, 200))
+    expect(cancelled).toBe(true)
   })
 })
