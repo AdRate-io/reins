@@ -213,12 +213,13 @@ export function skills(opts: SkillsOptions = {}): Socket {
           )
           return undefined
         }
-        if (setup.hostTools.some((t) => t.name === SKILL_READ_TOOL_NAME)) {
-          // 同名以宿主为准（resolveSocketContributions 去重规则）：本模块的工具会被丢掉，菜单却仍会指向"skill_read"——
-          // 那是宿主的另一个工具、语义与 trust 都不同。宁可整个不注册
+        if (setup.tools.some((t) => t.name === SKILL_READ_TOOL_NAME)) {
+          // 同名以先到者为准（resolveSocketContributions 去重规则，与 lazy-tools 同一判据）：本模块的工具会被丢掉，
+          // 菜单却仍会指向"skill_read"——那是宿主或前面某个 Socket（如一台 MCP 服务器）的另一个工具、语义与 trust 都不同。
+          // 宁可整个不注册
           warnOnce(
             "host-tool",
-            `[reins/skills] The host tool table already has a tool named ${SKILL_READ_TOOL_NAME}, so this module's tool and menu are not registered. Rename the host tool to enable them.`,
+            `[reins/skills] The tool table already has a tool named ${SKILL_READ_TOOL_NAME} (from the host or a socket registered before skills()), so this module's tool and menu are not registered. Rename that tool to enable them.`,
           )
           return undefined
         }

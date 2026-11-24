@@ -358,7 +358,28 @@ describe("skills(): 静态贡献", () => {
     const r = await resolveSocketContributions(setupWith(socket, { tools: [hostSkillRead] }))
     expect(r.tools).toEqual([hostSkillRead])
     expect(r.systemPrompt).toBeUndefined()
-    expect(warnings).toEqual([expect.stringContaining("already has a tool named")])
+    expect(warnings).toEqual([expect.stringContaining("already has a tool named skill_read (from the host")])
+  })
+
+  it("排在前面的 Socket 已贡献同名 skill_read（如某台 MCP 服务器）：同样整个不注册，告警一次", async () => {
+    const warnings: string[] = []
+    const other: Tool = {
+      name: SKILL_READ_TOOL_NAME,
+      description: "别家的",
+      inputSchema: {},
+      execute: () => "x",
+    }
+    const r = await resolveSocketContributions({
+      log: new InMemoryEventLog(),
+      model: MODEL,
+      sockets: [
+        { name: "mcp", tools: [other] },
+        skills({ source: sampleSource(), warn: (m) => warnings.push(m) }),
+      ],
+    })
+    expect(r.tools).toEqual([other])
+    expect(r.systemPrompt).toBeUndefined()
+    expect(warnings).toEqual([expect.stringContaining("a socket registered before skills()")])
   })
 
   it("inlineSkills 的键必须是合法技能名，文件路径不含 . / ..：不合规直接抛错而不是静默丢失", () => {
