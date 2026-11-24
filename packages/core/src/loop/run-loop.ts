@@ -665,10 +665,11 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         imageCache,
       })
       toolCallsTotal += settled.executed
-      // 用户停止时不进 onTurnEnd：余下的调用还 pending，Socket 判出 handoff / done 就会把它们带进一个不是 paused 的结局
-      if (settled.interruptions.length > 0 || isStopped(cfg.signal)) {
-        const reason = pauseReasonOf(settled.interruptions)
-        const { events, result } = await pause(reason, settled.interruptions)
+      // 用户停止、或其它中止（断线、丢租约）落在批中途时不进 onTurnEnd：余下的调用还 pending，
+      // Socket 判出 handoff / done 就会把它们带进一个不是 paused 的结局
+      if (settled.interruptions.length > 0 || isStopped(cfg.signal) || abortedMidBatch(cfg.signal, batch)) {
+        const interruptions = withBatchAbortNote(settled.interruptions)
+        const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
         yield* events
         return result
       }
@@ -897,8 +898,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       },
     ])
 
-    // 用户停止在工具批中途：余下调用还 pending，同样不进 onTurnEnd（见续跑处）
-    if (interruptions.length > 0 || (calls.length > 0 && isStopped(cfg.signal))) {
+    // 用户停止或其它中止在工具批中途：余下调用还 pending，同样不进 onTurnEnd（见续跑处）
+    if (
+      interruptions.length > 0 ||
+      (calls.length > 0 && isStopped(cfg.signal)) ||
+      abortedMidBatch(cfg.signal, batch)
+    ) {
+      interruptions = withBatchAbortNote(interruptions)
       const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
       yield* events
       return result
@@ -987,6 +993,24 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     await cfg.onHandoff?.(sessionId, toSessionId)
     return { status: "handoff", sessionId, lastSeq, toSessionId }
   }
+}
+
+/**
+ * 中止（任何原因）落在工具批中途：signal 已中止且本批还有调用没落结果（全库审查 2026-11-25 #11）。
+ * executeToolCalls 见到中止只 break、不推中断，余下调用留作 pending；此时再进 onTurnEnd，Socket 判出 handoff / stop
+ * 就会带着 pending 以非 paused 结局收场（旧会话留一条过期的写调用等人重放）。用户停止由 isStopped 那支另判
+ */
+function abortedMidBatch(signal: AbortSignal | undefined, batch: MutableToolBatch): boolean {
+  if (!signal?.aborted) return false
+  const answered = new Set(batch.results.map((r) => r.payload.toolCallId))
+  return batch.calls.some((c) => !answered.has(c.payload.toolCallId))
+}
+
+/** 批中途被中止而没有别的中断时补一条宿主中断说明；已有中断（审批、客户端工具…）原样返回 */
+function withBatchAbortNote(interruptions: Interruption[]): Interruption[] {
+  return interruptions.length > 0
+    ? interruptions
+    : [{ kind: "host", note: "host aborted during the tool batch" }]
 }
 
 /** 时间线里全部 tool_call 的 toolCallId */

@@ -702,3 +702,30 @@ describe("D2：中断后写工具不重放", () => {
     expect(lowering.requests[1]?.events.map((e) => e.type)).not.toContain("core.tool_started")
   })
 })
+
+describe("非停止中止落在工具批中途（全库审查 2026-11-25 #11）", () => {
+  it("断线 / 丢租约式的普通中止 + Socket 判 handoff：不进 onTurnEnd，以 paused(host) 收场、pending 留着补跑", async () => {
+    const log = new InMemoryEventLog()
+    const ac = new AbortController()
+    const executed: string[] = []
+    let turnEnds = 0
+    const handoffer: Socket = {
+      onTurnEnd() {
+        turnEnds++
+        return { handoff: { summary: "交给下一位", reason: "context" } }
+      },
+    }
+    const tools = [writeTool("a", executed, () => ac.abort()), writeTool("b", executed)]
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "a", { x: 1 }), callTool("c2", "b", { x: 2 })] },
+    ])
+    const { result } = await drain(
+      runLoop(cfgOf(lowering, log, { tools, sockets: [handoffer], input: "go", signal: ac.signal })),
+    )
+    expect(result).toMatchObject({ status: "paused", reason: "host" })
+    expect(turnEnds).toBe(0)
+    expect(executed).toEqual(["a:1"])
+    expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c2"])
+    expect(types(await all(log))).not.toContain("handoff")
+  })
+})
