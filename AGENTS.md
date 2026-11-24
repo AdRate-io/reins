@@ -23,7 +23,7 @@
 - **10-30** OnSet 第三轮反馈：onset-pause eval 66 格证明"改整理规则"无效，却顺藤摸出阈值兜底与感知口径不一（感知报 ≥85%、兜底一次没折），core / brain 0.4.0 修正。同日按 Boss 最新的启动资产把文档体系换代：入口改名 AGENTS.md、决策并入全景图、踩坑记录编号化。
 - **11-05～06** AdRate 正式接入前两批建议：core 0.10.0 加停止语义与"中断的写调用不重放"；store-pg 0.4.0 接 postgres.js，探针发现事件被二次编码、却被读侧兼容盖住，改成事件只按文本过库。独立审查又揪出测试设施 pglite-socket 不可靠，于是把真库 PG 16.13（与 AdRate 生产同版本）搬进 CI，连真 Drizzle 一起测。
 
-12 个包、约 5.1 万行 TypeScript（源码 2.9 万 + 测试 2.2 万）、1261 个用例，全部在 npm 官方源 `@reinsjs/*`。
+12 个包、约 6.9 万行 TypeScript（`packages/*/src` 下：源码即非 `*.test.ts` 的 .ts 2.9 万 + 测试 `*.test.ts` 4.0 万）、2229 个用例（`pnpm test` 输出，含 6 个跳过；2026-11-25 实测），全部在 npm 官方源 `@reinsjs/*`。
 
 **我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
@@ -132,7 +132,7 @@
                           └── @reinsjs/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。当前版本：core 0.17.0、brain 0.10.1、lowering-fetch 0.7.1、lowering-pi 0.5.1、eval 0.4.13、agent 0.7.5、server 0.10.0、ui-agui 0.8.0、store-pg 0.6.0、adapter-tanstack-ai 0.5.2、tools-mcp 0.4.4、store-sqlite 0.4.0。
+脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。版本以各包 `package.json` / `CHANGELOG.md` 为准；最近一次发版：2026-11-24（tag `v0.22.0`，ui-agui 0.8.0）。
 
 ## 技术栈
 
@@ -176,7 +176,7 @@ docs/                # 维护者文档（中文），见文档索引
 - **运行时文案一律英文，注释与 docs 一律中文**：英文的是宿主 / 模型会看到的——`throw` 的 message、`warn()`、模型可见的 tool_result 说明、有损矩阵的 `note` / `when`、占位文本、`core/testing` 套件、eval 报告。构造期校验统一 `X must be …, got …`；模型可见的一句话首字母大写。JSDoc 保持中文。
 - **告警只告一次**：可选能力缺失（无 BlobStore、无 MemoryStore、技能不合规）走 `warn` 出口告警一次并降级，不抛错。
 - **同一个值两处比对调同一个纯函数**，登记全景图真源索引；实在只能写两份的，必须有一条穿过两个入口的跨包用例。
-- **README 配方即用例**：配方代码与 `*.recipe.test.ts` 逐字一致。
+- **README 配方即用例**：由结构守门 `scripts/structure/readme-recipes.test.ts` 锁住（README 用 `<!-- recipe: <路径>#<id> -->` 标记，与 `*.recipe.test.ts` 的配方本体逐字一致）。
 - **版本号单源**：`REINS_VERSION` 手改，`check:dist` 核对。
 - **一次性脚本不进仓库**：数据改写、批量替换用 scratchpad 里的 Node 脚本，执行完即弃。
 
@@ -184,7 +184,7 @@ docs/                # 维护者文档（中文），见文档索引
 
 - **EventLog 只 append**。压缩、外溢、交接一律以追加事件表达；模型可见的一切都在"日志 + 不可变 blob"里（图片引用的字节在 BlobStore，id 不复用、写后不改）。
 - **run 状态可序列化**；暂停是 `runLoop` 的显式返回值，不是阻塞的回调。
-- **`runLoop` 是导出的普通异步生成器**，几百行，无私有状态，用户可整个复制。
+- **`runLoop` 是一个文件里导出的普通异步生成器**，代码较长（约 1.5k 行、代码约 1.15k）但无私有状态，可读可复制（复制时连同它引用的少量内部辅助函数，见 core 盘点）。
 - **每个事件 type 带 `schemaVersion`**，读时 upcast，查不到升级函数即拒绝。
 - **模型自决类机制无 eval 不默认开**（缺省开关由 `examples/eval` 跑数决定）。
 - 核心零 Node、依赖方向、上游类型不出包，见上方架构与入口规范。
