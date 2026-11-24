@@ -713,6 +713,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
      * 成功一次后瞬断重试复用同一份；存储故障（非 not_found）在 try 里抛出，走模型调用失败与重试判定
      */
     let hydrated: Event[] | undefined
+    /** 本会话已用过的 toolCallId：模型新给的调用 id 与它们撞了（或为空）就改写，见 withUniqueToolCallId */
+    const usedCallIds = toolCallIdsOf(timeline)
     for (let attempt = 1; ; attempt++) {
       let failure: ModelCallFailure | undefined
       let attemptOutput = 0
@@ -737,7 +739,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
             break
           }
           // 模型说的每一块立刻入日志，宿主随即拿到
-          const appended = await append([step.value])
+          const appended = await append([withUniqueToolCallId(step.value, usedCallIds, () => newId(now()))])
           modelEvents.push(...appended)
           attemptOutput += appended.length
           yield* appended
@@ -955,6 +957,39 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     ])
     await cfg.onHandoff?.(sessionId, toSessionId)
     return { status: "handoff", sessionId, lastSeq, toSessionId }
+  }
+}
+
+/** 时间线里全部 tool_call 的 toolCallId */
+function toolCallIdsOf(timeline: readonly Event[]): Set<string> {
+  const ids = new Set<string>()
+  for (const raw of timeline) {
+    const e = raw as CoreEvent
+    if (e.type === "core.tool_call") ids.add(e.payload.toolCallId)
+  }
+  return ids
+}
+
+/**
+ * 模型给的调用 id 在会话内必须唯一且非空（全库审查 2026-11-25 #50）：审批结论、tool_started、pending 与结果配对都按 toolCallId 认领，
+ * 号池中转站或不合规的兼容端点按轮次编号（call_0）或干脆不给（Chat 线落空串）时，后一个调用会认领前一个的批准 / 拒绝 /
+ * "已开始"，免审批执行或被误判。撞了就改写成 `reins_<newId>`、原值记进 `payload.meta.originalToolCallId`（不进模型上下文）；
+ * 历史回放按改写后的 id 成对下发，厂商只要求同一请求里调用与结果对得上。不撞的草稿原样返回，并登记进 `used`
+ */
+function withUniqueToolCallId(draft: EventDraft, used: Set<string>, freshId: () => string): EventDraft {
+  if (draft.type !== "core.tool_call") return draft
+  const payload = draft.payload as ToolCallEvent["payload"]
+  const original = payload.toolCallId
+  if (typeof original === "string" && original.length > 0 && !used.has(original)) {
+    used.add(original)
+    return draft
+  }
+  let id = `reins_${freshId()}`
+  while (used.has(id)) id = `reins_${freshId()}`
+  used.add(id)
+  return {
+    ...draft,
+    payload: { ...payload, toolCallId: id, meta: { ...payload.meta, originalToolCallId: original } },
   }
 }
 

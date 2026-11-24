@@ -2095,3 +2095,74 @@ describe("needsApproval 抛错（全库审查 2026-11-25 #14）", () => {
     expect(second.result.status).toBe("done")
   })
 })
+
+describe("厂商复用 / 不给 toolCallId（全库审查 2026-11-25 #50）", () => {
+  const toolCalls = async (log: InMemoryEventLog) =>
+    (await all(log)).filter((e): e is CoreEventOf<"core.tool_call"> => e.type === "core.tool_call")
+
+  it("后一轮复用已批准过的 id：改写成会话内唯一的 id（原值进 meta），新调用照样要审批", async () => {
+    const log = new InMemoryEventLog()
+    const executed: unknown[] = []
+    const deploy = defineTool<{ env: string }>({
+      name: "deploy",
+      risk: "low",
+      description: "",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: (a) => {
+        executed.push(a.env)
+        return "ok"
+      },
+    })
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("call_0", "deploy", { env: "staging" })] },
+      { drafts: [callTool("call_0", "deploy", { env: "prod" })] },
+      { drafts: [say("done")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [deploy] })
+    const first = await drain(runLoop({ ...cfg, input: "上线" }))
+    if (first.result.status !== "paused") throw new Error("expected paused")
+    const second = await drain(
+      runLoop({
+        ...cfg,
+        resume: first.result.state,
+        decisions: [{ toolCallId: "call_0", approved: true, by: "boss" }],
+      }),
+    )
+    // 第二个调用没被第一条批准带过去：停在审批上，prod 没执行
+    expect(second.result).toMatchObject({ status: "paused", reason: "approval" })
+    expect(executed).toEqual(["staging"])
+    const calls = await toolCalls(log)
+    expect(calls).toHaveLength(2)
+    const rewritten = calls[1]
+    expect(rewritten?.payload.toolCallId).not.toBe("call_0")
+    expect(rewritten?.payload.meta).toEqual({ originalToolCallId: "call_0" })
+    const requests = (await all(log)).filter((e) => e.type === "core.approval_request")
+    expect(requests.map((e) => (e as CoreEventOf<"core.approval_request">).payload.toolCallId)).toEqual([
+      "call_0",
+      rewritten?.payload.toolCallId,
+    ])
+  })
+
+  it("同一响应里两个空 id 的并行调用：各得唯一 id，两个都执行、结果各自配对", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("", "add", { a: 1, b: 1 }), callTool("", "add", { a: 2, b: 2 })] },
+      { drafts: [say("2 和 4")] },
+    ])
+    const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "算" })))
+    expect(result.status).toBe("done")
+    const ids = (await toolCalls(log)).map((c) => c.payload.toolCallId)
+    expect(ids).toHaveLength(2)
+    expect(new Set(ids).size).toBe(2)
+    expect(ids.every((id) => id.length > 0)).toBe(true)
+    const results = (await all(log)).filter(
+      (e): e is CoreEventOf<"core.tool_result"> => e.type === "core.tool_result",
+    )
+    expect(results.map((r) => r.payload.toolCallId)).toEqual(ids)
+    expect(results.map((r) => r.payload.content)).toEqual([
+      [{ type: "text", text: "2" }],
+      [{ type: "text", text: "4" }],
+    ])
+  })
+})
