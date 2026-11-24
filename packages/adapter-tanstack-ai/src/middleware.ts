@@ -90,6 +90,7 @@ import {
   type ChatMiddlewareContext,
   DISCOVERY_TOOL_NAME,
   isStandardSchema,
+  parseWithStandardSchema,
   type StreamChunk,
   type SystemPrompt,
   type TokenUsage as TanstackUsage,
@@ -1265,7 +1266,8 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (v.kind === "unknown") return { type: "skip", result: { error: v.text } }
       // 纵深防御（第二波返修 B1）：引擎将要执行的入参必须就是日志里的那份。引擎按客户端带来的历史取入参、原生审批的
       // editedArgs 直接替换入参，任何一处与日志不同，执行的就不是时间线上记的调用。比的是"引擎对日志入参会得到的输入"：
-      // 引擎把非对象入参当 {}；Standard Schema 的工具会被引擎按 schema 变换入参（缺省值、强制类型），比不了，只靠 init 的拦截
+      // 引擎把非对象入参当 {}，Standard Schema 的工具再经同步、确定的 parseWithStandardSchema 变换（缺省值、强制类型）——
+      // 这里对日志入参走同一个函数再比（第二轮返修：Zod 是 TanStack 宿主最常见的写法，不比就是绕过口）；解析抛错按拦截（fail-closed）
       const block = (text: string) => {
         s.verdicts.set(hookCtx.toolCallId, { kind: "block", text })
         return { type: "skip" as const, result: { error: `Tool call blocked: ${text}` } }
@@ -1273,9 +1275,17 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (s.callArgs.has(hookCtx.toolCallId)) {
         const logged = s.callArgs.get(hookCtx.toolCallId)
         const schema = s.hostTools.get(hookCtx.toolName)?.inputSchema
-        const comparable = schema === undefined || !isStandardSchema(schema)
-        const expected = typeof logged === "object" && logged !== null ? logged : {}
-        if (comparable && !sameArgs(hookCtx.args, expected))
+        let expected: unknown = typeof logged === "object" && logged !== null ? logged : {}
+        if (schema !== undefined && isStandardSchema(schema)) {
+          try {
+            expected = parseWithStandardSchema(schema, expected)
+          } catch (err) {
+            return block(
+              `the logged arguments could not be checked against the tool's input schema (${errorMessageOf(err)}), so it was not executed`,
+            )
+          }
+        }
+        if (!sameArgs(hookCtx.args, expected))
           return block(
             `the arguments about to run (${JSON.stringify(hookCtx.args)}) differ from the call in the timeline, so it was not executed. Make the call again if you still need it`,
           )

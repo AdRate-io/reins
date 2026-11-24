@@ -1417,6 +1417,61 @@ describe("reinsMiddleware：审批", () => {
       expect(result.payload.isError).toBe(true)
     })
 
+    it("B1 纵深对 Standard Schema 工具同样生效：按引擎同一个 parseWithStandardSchema 解析日志入参再比（第二轮返修）", async () => {
+      const shared = { log: new InMemoryEventLog() }
+      const received: unknown[] = []
+      // 最小的 Standard Schema（Zod 等同形）：validate 原样返回
+      const schema = {
+        "~standard": {
+          version: 1,
+          vendor: "probe",
+          validate: (v: unknown) => ({ value: v }),
+          jsonSchema: {
+            input: () => ({ type: "object", properties: { env: { type: "string" } } }),
+            output: () => ({ type: "object" }),
+          },
+        },
+      }
+      const deploy = toolDefinition({
+        name: "deploy",
+        description: "上线",
+        inputSchema: schema as never,
+        needsApproval: true,
+      }).server(async (args: unknown) => {
+        received.push(args)
+        return "deployed"
+      }) as unknown as AnyTool
+      const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "staging" })] }], [], {}, shared)
+      const { runId } = interruptsOf(
+        await f.run({ messages: [user("上线")], tools: [deploy], runId: "run1" }),
+      )
+      const f2 = fixture([{ blocks: [say("好了")] }], [], {}, shared)
+      await f2.run({
+        messages: stagingHistory("deploy", '{"env":"prod"}'),
+        tools: [deploy],
+        parentRunId: runId,
+        resume: [{ interruptId: "approval_c1", status: "resolved", payload: true }],
+      })
+      expect(received).toEqual([])
+      const result = (await all(shared.log)).find(
+        (e) => e.type === "core.tool_result",
+      ) as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(true)
+
+      // 同一工具、历史没被改：照常执行（解析后逐值相同）
+      const shared2 = { log: new InMemoryEventLog() }
+      const g = fixture([{ blocks: [callTool("c1", "deploy", { env: "staging" })] }], [], {}, shared2)
+      const g1 = interruptsOf(await g.run({ messages: [user("上线")], tools: [deploy], runId: "run1" }))
+      const g2 = fixture([{ blocks: [say("好了")] }], [], {}, shared2)
+      await g2.run({
+        messages: stagingHistory(),
+        tools: [deploy],
+        parentRunId: g1.runId,
+        resume: [{ interruptId: "approval_c1", status: "resolved", payload: true }],
+      })
+      expect(received).toEqual([{ env: "staging" }])
+    })
+
     it("S1 UIMessage approval-responded 通道：approval({ ttlMs }) 同样拦过期批准", async () => {
       const shared = { log: new InMemoryEventLog() }
       const received: unknown[] = []
