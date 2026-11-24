@@ -1,24 +1,24 @@
 # 模块盘点：`@reinsjs/core`
 
-> 以 2026-09-10 的 `packages/core/src` 代码为准。技术方案 §4~§8、§13 用作术语核对；两处出入在文末"与技术方案的出入"里列出。
+> 以 `packages/core/src` 当前代码为准（2026-09-10 建立，2026-11-25 全库审查对照文件清单通扫）。技术方案 §4~§8、§13 用作术语核对；两处出入在文末"与技术方案的出入"里列出。
 
 ## 架构概览
 
-`@reinsjs/core` 是 reins 的底盘：把"事件时间线"这一唯一真源，变成一次可暂停、可续跑、可回放的模型循环。它自己不认识任何厂商协议，也不含任何"脑子"策略 —— 前者在 `@reinsjs/lowering-pi`，后者在 `@reinsjs/brain`，两边都只通过本包定义的接口接入。
+`@reinsjs/core` 是 reins 的底盘：把"事件时间线"这一唯一真源，变成一次可暂停、可续跑、可回放的模型循环。它自己不认识任何厂商协议，也不含任何"脑子"策略 —— 前者在 `@reinsjs/lowering-fetch` / `@reinsjs/lowering-pi`，后者在 `@reinsjs/brain`，两边都只通过本包定义的接口接入。
 
 包内共六组能力，`src/index.ts` 平铺导出前五组，第六组走独立入口 `@reinsjs/core/testing`（`tsup` 两个 entry）：
 
 | 导出组 | 内容 |
 | --- | --- |
-| `events/` | 事件壳 `EventBase` / `Event`、16 种 `core.*` 载荷、`uuidv7`、schema 注册表与 upcast |
+| `events/` | 事件壳 `EventBase` / `Event`、18 种 `core.*` 载荷、`uuidv7`、schema 注册表与 upcast |
 | `store/` | `EventLog` / `BlobStore` / `MemoryStore` / `RunLease` 四接口、内存实现、`readTimeline`（读时升级的唯一正确读法） |
 | `projection/` | 投影策略链（过滤 / 折叠 / 钉住 / 裁剪）、token 粗估、被折叠工具结果清单 |
-| `lowering/` | 降级层**接口与有损矩阵类型**，外加一份两条降级路线共用的 trust 标注纯函数（R9） |
+| `lowering/` | 降级层**接口与有损矩阵类型**，外加一份各降级线共用的 trust 标注纯函数（R9） |
 | `loop/` | `runLoop` 与它的插座（`Socket`、`Tool`）、run 状态签名与恢复校验、静态贡献解析、瞬断重试、fork |
 | `replay/` | 只凭日志重算每轮模型看到了什么 |
 | `testing/`（独立入口） | 四份存储一致性套件 + `ScriptedLowering` 脚本化降级层 |
 
-依赖方向：`package.json` 里**零 dependencies**、零 `node:*`（P5），只用 Web 标准 API（`crypto.getRandomValues`、`crypto.subtle`、`structuredClone`、`TextEncoder`）。被 9 个包依赖：`@reinsjs/brain`、`@reinsjs/lowering-pi`、`@reinsjs/server`、`@reinsjs/ui-agui`、`@reinsjs/adapter-tanstack-ai`、`@reinsjs/store-sqlite`、`@reinsjs/store-pg`、`@reinsjs/eval`、`@reinsjs/reins`（聚合包）。core 不反向依赖其中任何一个。
+依赖方向：`package.json` 里**零 dependencies**、零 `node:*`（P5），只用 Web 标准 API（`crypto.getRandomValues`、`crypto.subtle`、`structuredClone`、`TextEncoder`）。被其余 11 个包依赖：`@reinsjs/brain`、`@reinsjs/lowering-pi`、`@reinsjs/lowering-fetch`、`@reinsjs/server`、`@reinsjs/ui-agui`、`@reinsjs/adapter-tanstack-ai`、`@reinsjs/store-sqlite`、`@reinsjs/store-pg`、`@reinsjs/eval`、`@reinsjs/tools-mcp`、`@reinsjs/agent`（总包）。core 不反向依赖其中任何一个。
 
 ```
   宿主 input（string / ContentPart[] / EventDraft）
@@ -70,7 +70,7 @@
 | --- | --- |
 | `events/index.ts` | 汇总导出 base / core / create / id / registry |
 | `events/base.ts` | 事件公共壳 `EventBase`、`Event<T,P>`、`Actor`、`Trust`、`Provenance`、`ContentPart`（text / image / **video / audio**（2026-11-05，mime 前缀 + 可选 `durationSec`）/ **tool_reference**——工具定义引用，带 name / description / inputSchema 快照，L1）、`renderToolReference()`（引用段展开成文本的唯一写法）、各 actor 的默认信任 `DEFAULT_TRUST`；`ImagePart` 是判别联合 `ImageInlinePart`（`data`）| `ImageRefPart`（`blobId`，2026-11-24） |
-| `events/core.ts` | 16 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite）与 `contextOverheadOf(timeline)`（估算不含的固定开销，非有限值回 0；阈值兜底与感知共用，2026-10-30 从 brain 搬来） |
+| `events/core.ts` | 18 种内置事件的载荷 interface（P1 加 `ToolsBoundPayload`）、`CoreEventPayloads` 映射表与可判别联合 `CoreEvent`、`ExtEvent`，以及 `contextTokensOf(usage)`（input + cacheRead + cacheWrite）与 `contextOverheadOf(timeline)`（估算不含的固定开销，非有限值回 0；阈值兜底与感知共用，2026-10-30 从 brain 搬来） |
 | `events/create.ts` | `EventDraft`（无 id/seq/at/sessionId 的草稿）与 `createEvent` / `createCoreEvent` 工厂：补齐壳字段、从注册表取 schemaVersion |
 | `events/id.ts` | 自实现 `uuidv7`（RFC 9562，只用 `crypto.getRandomValues`，不引依赖） |
 | `events/registry.ts` | `EventSchemaRegistry`：登记 type → 当前版本 + 逐级 upcaster，`read()` fail-closed（6 种 `SchemaError` code）；`CORE_SCHEMAS`（`user_message` / `tool_result` v2——图片引用形态，v1 → v2 恒等升级；其余 v1）与 `createCoreRegistry()` |
@@ -109,7 +109,7 @@
 | `lowering/index.ts` | 汇总导出 errors / tool-arguments / trust / types |
 | `lowering/types.ts` | `Lowering`（capabilities / toRequest / stream）、`ModelRef`、`ToolSpec`（含 `deferLoading?`：向厂商声明但不载入上下文，L1）、`LoweringCapabilities`（含 `deferredTools`：有无 `defer_loading` / `tool_reference` 的原生落点）、有损矩阵 `LossMatrix` 与落点 `LandingRecord`、`lossesOf()`、`LoweringOutcome`、`BoundModel` |
 | `lowering/errors.ts` | `LoweringError` 与 4 种 code（unsupported_model / unsupported_api / missing_api_key / invalid_request） |
-| `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记；`tool_reference` 片段保持形状，但名字、描述与 schema 里每个字符串（含键）同样转义并计入 `escaped`——它在 untrusted 结果里一律展开成文本，2026-11-25）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi 与 TanStack 适配器都调这里，不各自拼字符串 |
+| `lowering/trust.ts` | trust 标注纯函数（R9，§14）：`needsUntrustedMark`（`trust === "untrusted"`）、`untrustedSourceOf`（`tool:<name>` → `provenance.source` → actor）、`markUntrusted` / `markUntrustedText`（包成 `<untrusted source=…>…</untrusted>`，只包文本、首尾图片各插一段文本标记；`tool_reference` 片段保持形状，但名字、描述与 schema 里每个字符串（含键）同样转义并计入 `escaped`——它在 untrusted 结果里一律展开成文本，2026-11-25）、`escapeUntrustedText`（`</untrusted` → `<\/untrusted`，报 `escaped` 供落点记 lossy）。lowering-pi、lowering-fetch（`ir.ts`、`chat/to-request.ts`）与 TanStack 适配器都调这里，不各自拼字符串 |
 | `lowering/tool-arguments.ts` | 工具入参二次编码解码（OnSet 建议 8）：`decodeToolArgumentsText(raw)` 收线上原文，空白 → `{}`、解成非字符串就用、解成字符串再交下一个函数、没解成对象一律存原文（不变式：`args` 是字符串 ⟺ 线上原文）；`unwrapToolArguments(parsed)` 收已解析值，字符串能再解成普通对象（容忍字面量里的裸控制字符）时换成对象、报 `unwrapped`，其余原样；`toolCallArgumentsMeta` 据此给 `tool_call.payload` 拼 `meta.argumentsUnwrapped: true`。fetch 三条线与 lowering-pi 读侧都调这里 |
 | 测试 | `tool-arguments.test.ts` 覆盖只多解一层、欠转义换行、没解成对象存原文与原样返回的各种值；`trust.test.ts` 覆盖 trust 标注纯函数（标记形状、只包文本、`</untrusted` 转义与 lossy 报告）；接口与有损矩阵本身只有类型，行为由 `@reinsjs/lowering-pi` 的 T8 矩阵测试覆盖 |
 
@@ -120,7 +120,7 @@
 | `loop/index.ts` | 汇总导出 batch / fork / pause-code / retry / run-loop / run-status / state / static / stop / tools / tools-bound / types |
 | `loop/batch.ts` | `toolBatchOf(timeline, pending)`（2026-11-02）：补跑时定位遗留调用所在那批（以第一条 pending 为锚、前后扩到非模型输出且非 `isModelInvisibleByDefault`（运维事件与 ext.*）的事件为止），并收这批已落的结果；pending 跨批只取第一批。runLoop 与 TanStack 适配器共用 |
 | `loop/types.ts` | 三组契约：`Tool`（§10 四维）与 `ToolContext`（含可选 `decisions` / `spend`，asTool 用）；`Socket` 五钩子 + 两项静态贡献 + `TurnContext`（含 `batch: ToolBatch`，2026-11-02）；`ToolCallEvent` / `ToolResultEvent`；`RunResult` 四态、`SerializedRunState`、`Interruption`（五种，含 `SubagentInterruption`）、`ApprovalDecisionInput`（可选 `sessionId`）、`LoopConfig`（全部循环开关，P1 加 `announceToolChanges`）；`StaticContribution<T>` 的函数形态可返回 Promise（P1） |
-| `loop/run-loop.ts` | `runLoop` 主体（约 1260 行）：append/pause/fail/spendInto 四个基础动作（`pause` 先签状态再写 `run_paused { reason, state, awaiting, stopped?, code?, note? }`（后两个取本次中断里 budget / host 那条，`pauseDetailOf`）；`fail` 把 `core.error` 与 `run_ended(error)` 同批写；`lastSeq + 1` 即这条事件自己的 seq，`RunResult.state` 是同一对象）、恢复与审批校验（结论按 `sessionId` 分本会话 / 转发两路）、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`（含 `isSubagentPause` 冒泡分支；包一层 append 把落日志的 tool_result 登记进 `ctx.batch.results`，三处挂起登记 `held`）、`inputDrafts` 归一与白名单（草稿数组逐条查）、`checkPulledDrafts`（`pullInput` 返回值：收窄白名单 + 注册表）与每轮顶部的拉取点；图片引用（2026-11-24）：起步 input / `pullInput` / 工具结果（afterTool 之后、settle 之前）三处 `checkImageRefs`，`toRequest` 前 `hydrateImageRefs`（run 级 `imageCache`，瞬断重试复用同一份） |
+| `loop/run-loop.ts` | `runLoop` 主体（2026-11-25 实测约 1.5k 行，去注释与空行约 1.1k）：append/pause/fail/spendInto 四个基础动作（`pause` 先签状态再写 `run_paused { reason, state, awaiting, stopped?, code?, note? }`（后两个取本次中断里 budget / host 那条，`pauseDetailOf`）；`fail` 把 `core.error` 与 `run_ended(error)` 同批写；`lastSeq + 1` 即这条事件自己的 seq，`RunResult.state` 是同一对象）、恢复与审批校验（结论按 `sessionId` 分本会话 / 转发两路）、每轮投影→钩子→模型→工具→收尾、`endTurn`（含 handoff 建新会话）、`executeToolCalls`（含 `isSubagentPause` 冒泡分支；包一层 append 把落日志的 tool_result 登记进 `ctx.batch.results`，三处挂起登记 `held`）、`inputDrafts` 归一与白名单（草稿数组逐条查）、`checkPulledDrafts`（`pullInput` 返回值：收窄白名单 + 注册表）与每轮顶部的拉取点；图片引用（2026-11-24）：起步 input / `pullInput` / 工具结果（afterTool 之后、settle 之前）三处 `checkImageRefs`，`toRequest` 前 `hydrateImageRefs`（run 级 `imageCache`，瞬断重试复用同一份） |
 | `loop/pause-code.ts` | 暂停原因码（2026-11-23，AdRate 建议 16）：`PAUSE_CODE_RE` / `isPauseCode`（写入与 `runStatusOf` 读取共用的格式判定；只许收紧不许放宽）、`MAX_TURNS_PAUSE_CODE`（`reins.max_turns`）、`resolveSocketPause(pause)`（Socket 的暂停意见 → `{ interruption, error? }`：补缺省 note；码不合规丢掉、reason 不在闭集按 host，有改正时给出要记的 `core.error` 载荷；永不抛错）、`pauseDetailOf(interruptions)`（→ `run_paused` 的 `{ code?, note? }`）。runLoop 与 TanStack 适配器共用 |
 | `loop/run-status.ts` | 会话运行状态（2026-11-15，AdRate 建议 11 / 12）纯函数：`RUN_MARKER_TYPES`（tools_bound / run_paused / run_ended，store-pg 绑参数用）、`lastRunMarker(events)`、`awaitingOf({ timeline, pending, tools, interruptions })`（暂停时等外部答复的调用，以时间线 pending 为准，找不到事件跳过不抛）、`RunStatus` 八态与 `runStatusOf({ held, lastMarker, registry? })`（held 优先 → 无标记 idle → 过注册表 upcast + 形状守卫，读不出 / 不合规 unknown） |
 | `loop/stop.ts` | 停止与重放判据（2026-11-05）：`RunStop`（停止原因，`name` 判据）/ `isStopReason` / `isStopped`、`isReplayable(tool)`（`replayable ?? risk === "low"`）、`startedToolCallIds(timeline)` / `toolStartedAt(timeline)`（toolCallId → started 的 `at`）、`outcomeUnknownText(tool, at)`（"结果未知"完整文案：工具已知且不可重放才缀开始时间，2026-11-09）/ `withStartedAt(text, at)`（纯拼接）、`stopTextsOf(reason)`（按 `RunStop.by` 取收尾文案与 note），以及模型可见文案 `STOPPED_NOT_EXECUTED_TEXT` / `STOPPED_IN_PROGRESS_TEXT` / `INTERRUPTED_NOT_EXECUTED_TEXT` / `INTERRUPTED_IN_PROGRESS_TEXT` / `OUTCOME_UNKNOWN_TEXT` 与 `STOPPED_NOTE`；runLoop、TanStack 适配器、asTool 共用 |
@@ -129,6 +129,7 @@
 | `loop/subagent.ts` | 子代理暂停标记（§10.1）：`subagentPause(detail)` / `isSubagentPause()`，`Symbol.for` 品牌；工具 `execute` 返回它，循环不落 tool_result、run 整体 paused(kind=subagent) |
 | `loop/tools-bound.ts` | P1 纯函数：`lastToolsBound`、`diffToolNames`、`renderToolChangeNote`（给模型的英文文案；一侧超 20 件只列 20 个 + 总数，第二参是优先档，前档先列）、模块内 `toolMentionTiers`（时间线里出现过的工具名分两档：调用过 / tool_reference，模型可见文本与入参值里的整词；跳过以前的变化说明）、`toolsBoundDrafts`（起步要 append 的 `tools_bound`——`marksEnd` 只有 runLoop 传——+ 有增删时的 `system_note(kind=host, meta.toolsChanged)`）；runLoop 与 TanStack 适配器共用，两处文案与判定不分叉 |
 | `loop/tools.ts` | 工具纯函数：`defineTool`（擦类型以便放进 `Tool[]`）、`toolSpecOf`（刻意单参，`map(toolSpecOf)` 多一参会吃下标）、`deferredToolSpecOf(tool, deferred)`（L1）、`isContentPart`（片段形状唯一真源：text / image / video / audio / tool_reference；runLoop 输入校验也调它；图片 mime 走 `SUPPORTED_IMAGE_MIMES` / `isSupportedImageMime` 白名单）、`normalizeToolOutput`（string / ContentPart[] / {content,isError} / undefined / 其余 JSON；只差 mime 的图片逐段换成 `unsupportedImageText`）、`errorMessageOf`、`isClientTool`（没有 execute 或 `side: "client"`；执行工具批与 `awaitingOf` 共用）；图片引用形态调 `isImageRef` |
+| `loop/run-status.test.ts` | 会话运行状态（AdRate 建议 11 / 12）：每个出口恰好一条终结事件的不变式、`run_paused` 的 `awaiting` / `stopped`、`runStatusOf` 八态分类与读侧守卫，全部假模型 |
 | `loop/content-part.test.ts` | `isContentPart` 视频 / 音频边界（mime 前缀、`durationSec` 为 0 / 负 / NaN / Infinity / null）、image mime 白名单（内联与引用）、`normalizeToolOutput` 对媒体片段的归一与白名单外图片的逐段替换；runLoop 输入侧的同组边界在 `run-loop.test.ts` |
 | `loop/deferred-tools.test.ts` | L1 在 core 的用例：`renderToolReference` 写法、`normalizeToolOutput` 认引用段、估算按展开文本算、`BeforeModelPatch.deferredTools` → `ToolSpec.deferLoading` 的接线（不在表的名字忽略、后一个 Socket 整体替换、没给就沿用） |
 | `loop/retry.ts` | 瞬断判定与退避（R3 起状态码优先）：`statusFromMessage`（文案开头的三位数字或 "status 503" 写法）、`isTransientFailure`（永久错误 → SDK 连接类名 → `x-should-retry` 头 → 状态码 408/409/429/5xx 与 SDK 同策略 → `code` 精确匹配 → 关键词兜底，裸数字不匹配）、`backoffDelayMs`（base×2^(n−1) 封顶）、`defaultSleep`、`resolveRetry`。 |
@@ -228,7 +229,7 @@
 
 ## 与技术方案的出入（以代码为准）
 
-1. **§7 说 runLoop "约 600 行（M0 收口实测 578 行含注释）"** —— 实际 `loop/run-loop.ts` 已 **709 行**（后续加了瞬断重试循环与 `endTurn`）。数量级仍符合 P3"几百行、可整个复制"。
+1. **§7 说 runLoop "约 600 行（M0 收口实测 578 行含注释）"** —— 2026-11-25 实测 `loop/run-loop.ts` **1476 行**（去注释与空行 1148 行），已不是"几百行"：此后加了瞬断重试、`endTurn`、停止收尾、拉取新输入、图片引用等。"无私有状态、可整个复制"仍成立：它用到的辅助函数都从 `@reinsjs/core` 导出，唯一例外是 media-refs 的内部 `prefetchImageRefs` / `judgeImageRef`（`loop/index.ts` 刻意不导出），复制时要连 `media-refs.ts` 一起拷。公开 README 的"a few hundred lines"说法由 README 一侧负责同步。
 2. **§7 的 `TurnContext` 代码块 `budget` 只列 6 个字段** —— 代码有 8 个，多出 `targetTokens`（阈值兜底触发点）与 `lastUsage`（最近一次请求真实用量）。这两个字段在 §9.1 / §9.8 的实现段里有描述，只是 §7 的代码块没同步。
 3. **§4 事件表里 `budget_usage` 载荷写"tokens、toolCalls、wallMs、remaining"** —— 代码还有 B8 加的可选 `contextEstimate`（§7 与 §9.8 正文都提到了，表格未同步）。
 4. **§10 的 `Tool` 代码块把 `side` 写成必填** —— 代码里 `side?` 可选，缺省 server；同段的 `ToolSource = inProcess | mcp | openapi` 在 core 里并不存在（工具来源由宿主与 `@reinsjs/tools-mcp` 组装）。
