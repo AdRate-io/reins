@@ -13,12 +13,13 @@ import {
   type LoopConfig,
   type RunResult,
   RunStateError,
+  RunStop,
   runLoop,
 } from "@reinsjs/core"
 import { callTool, ScriptedLowering, type ScriptedTurn, say } from "@reinsjs/core/testing"
 import { describe, expect, it } from "vitest"
 import { z } from "zod"
-import { mcpTools } from "./mcp-tools.js"
+import { mcpTools, ROUTE_NOT_SENT_TEXT } from "./mcp-tools.js"
 import { fixtureServer } from "./test-utils.js"
 import { McpToolsError, type McpTransport } from "./types.js"
 
@@ -302,6 +303,53 @@ describe("mcpTools：tools/call 的结果与失败", () => {
     expect(textOf(r as CoreEventOf<"core.tool_result">)).toBe("echo:hi")
     expect(fx.connects).toBe(2)
     await socket.close()
+  })
+})
+
+describe("mcpTools：断线后重建握手期间被中止", () => {
+  it("握手成功 / 重建失败两种情形：不发 tools/call，模型看到'没发出'而不是'结果未知'（与 route 同口径）", async () => {
+    for (const mode of ["handshake", "reconnect-fails"] as const) {
+      const fx = fixtureServer()
+      let writes = 0
+      fx.server.registerTool("write", { description: "a write", inputSchema: {} }, async () => {
+        writes++
+        return { content: [{ type: "text" as const, text: "written" }] }
+      })
+      const ac = new AbortController()
+      // 第二次 create() 即 run 中途的重建：此刻用户点了停止
+      let creates = 0
+      const transport: McpTransport = {
+        kind: "custom",
+        label: "memory",
+        create: () => {
+          if (++creates === 2) ac.abort(new RunStop())
+          return fx.transport.create()
+        },
+      }
+      const socket = mcpTools({ transport })
+      const log = new InMemoryEventLog()
+      const lowering = new ScriptedLowering((_input, turn): ScriptedTurn => {
+        if (turn === 0) {
+          // 起步已 list 过；连接断了（stdio 子进程退出），下一次调用要重建
+          if (mode === "reconnect-fails") fx.down = true
+          void fx.serverTransports[0]?.close()
+          return { drafts: [callTool("c1", "write", {})] }
+        }
+        return { drafts: [say("done")] }
+      })
+      const { events, result } = await drain(
+        runLoop(cfg(lowering, log, { sockets: [socket], signal: ac.signal })),
+      )
+      expect(result.status, mode).toBe("paused")
+      // MCP 工具缺省不可重放（medium）：循环已先写 tool_started
+      expect(events.some((e) => e.type === "core.tool_started")).toBe(true)
+      const [r] = results(await all(log))
+      expect(r?.payload.isError).toBe(true)
+      // 修复前：握手完成后 SDK 见到已中止的 signal 在发送前抛错，循环写成"结果未知（可能已执行）"
+      expect(textOf(r as CoreEventOf<"core.tool_result">), mode).toBe(ROUTE_NOT_SENT_TEXT)
+      expect(writes).toBe(0)
+      await socket.close()
+    }
   })
 })
 

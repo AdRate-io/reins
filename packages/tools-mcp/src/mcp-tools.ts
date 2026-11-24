@@ -22,7 +22,8 @@ export const DEFAULT_CALL_TIMEOUT_MS = 60_000
 export const REINS_MCP_CLIENT_INFO = { name: "reins", version: REINS_VERSION }
 
 /**
- * 路由阶段（选凭据、建连握手，还没发出 `tools/call`）run 被中止时给模型的结果。不能让 execute 抛：MCP 工具缺省不可重放，
+ * 发出前阶段（route 选凭据；有无 route 都有的建连握手——新键、evict 后、断线后重建；还没发出 `tools/call`）run 被中止时
+ * 给模型的结果（名字沿用 route 引入时的叫法）。不能让 execute 抛：MCP 工具缺省不可重放，
  * 循环已先写 `tool_started`，中止状态下抛错会被写成"结果未知"，而调用实际没发出——告诉模型的要与事实一致。
  * 前缀与 core 的"没执行"文案同为 `Not executed:`，宿主按前缀判断时口径一致；不复用 `stopTextsOf`：它对非 RunStop 的中止
  * （丢租约等）也说"被用户停止"
@@ -78,31 +79,32 @@ export function mcpTools(options: McpToolsOptions): McpToolsSocket {
       ...(risk === "high" ? { needsApproval: true } : {}),
       async execute(args, ctx) {
         const callOptions = { timeoutMs, ...(ctx.signal ? { signal: ctx.signal } : {}) }
-        if (!route || !pool) {
-          const result = await conn.callTool(info.name, args, callOptions)
-          return { content: toContentParts(result), isError: result.isError === true }
-        }
         // 占了池项就必须 release：在途计数挡住 evict 关连接，直到这次调用结束
         let entry: PoolEntry | undefined
         try {
-          // 发出前：问宿主要键、取池项、握手。这一段出任何错都意味着调用没发出
+          let target: McpConnection
+          // 发出前：（route 时）问宿主要键、取池项；握手。这一段出任何错都意味着调用没发出
           try {
-            const key: unknown = await route.keyOf({ name: info.name, args }, ctx)
-            if (typeof key !== "string" || key === "")
-              throw new Error(
-                `MCP route must return a non-empty credential key for tool ${info.name}, got ${kindOf(key)}; the call was not sent`,
-              )
-            if (ctx.signal?.aborted) return notSent()
-            entry = pool.acquire(key)
-            // 新键与 evict 后的第一次调用都要握手：握手期间被中止时请求没发出，SDK 却会在发请求处抛错、被循环写成"结果未知"
-            await entry.conn.ready()
+            if (route && pool) {
+              const key: unknown = await route.keyOf({ name: info.name, args }, ctx)
+              if (typeof key !== "string" || key === "")
+                throw new Error(
+                  `MCP route must return a non-empty credential key for tool ${info.name}, got ${kindOf(key)}; the call was not sent`,
+                )
+              if (ctx.signal?.aborted) return notSent()
+              entry = pool.acquire(key)
+              target = entry.conn
+            } else target = conn
+            // 新键、evict 后、断线后重建的第一次调用都要握手：握手期间被中止时请求没发出，
+            // SDK 却会在发请求处抛错、被循环写成"结果未知"。连接在时 ready() 立即返回
+            await target.ready()
             if (ctx.signal?.aborted) return notSent()
           } catch (err) {
             if (ctx.signal?.aborted) return notSent()
             throw err
           }
           // 发出
-          const result = await entry.conn.callTool(info.name, args, callOptions)
+          const result = await target.callTool(info.name, args, callOptions)
           return { content: toContentParts(result), isError: result.isError === true }
         } finally {
           if (entry) pool.release(entry)
