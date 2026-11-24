@@ -369,10 +369,15 @@ async function grade(
   return { score: gradeExpect(expect, answer), gradedBy: "expect" }
 }
 
-/** 确定性判分：字符串不分大小写包含、正则、或函数（0~1 / 布尔） */
+/**
+ * 确定性判分：字符串不分大小写包含、正则、或函数（0~1 / 布尔）。
+ * 正则去掉 g / y 另建一份再匹配：同一个 RegExp 对象跨臂、跨重复、跨 --rescore 复用，
+ * 带这两个标志时 test 会推进 lastIndex，同一个答案就会交替判 1 和 0
+ */
 export function gradeExpect(expect: NonNullable<PlantedFact["expect"]>, answer: string): number {
   if (typeof expect === "string") return answer.toLowerCase().includes(expect.toLowerCase()) ? 1 : 0
-  if (expect instanceof RegExp) return expect.test(answer) ? 1 : 0
+  if (expect instanceof RegExp)
+    return new RegExp(expect.source, expect.flags.replace(/[gy]/g, "")).test(answer) ? 1 : 0
   return clamp01(expect(answer))
 }
 

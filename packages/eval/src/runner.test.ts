@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest"
 import { noneArm, thresholdArm } from "./arms.js"
 import { checkGate } from "./gate.js"
 import { renderReport } from "./report.js"
-import { probeAnswerOf, runEval, summarize } from "./runner.js"
+import { gradeExpect, probeAnswerOf, runEval, summarize } from "./runner.js"
 import type { EvalArm, EvalFixture, EvalOutcome } from "./types.js"
 
 const MODEL = { provider: "scripted", id: "scripted" }
@@ -423,6 +423,18 @@ describe("runEval：对照运行器", () => {
       answerFrom: "thinking",
     })
     expect(probeAnswerOf([])).toEqual({ answer: "", answerFrom: "none" })
+  })
+
+  it("gradeExpect：带 g / y 标志的正则反复判同一个答案结果不变，也不改动调用方的正则", () => {
+    const global = /\b14\b/g
+    expect([gradeExpect(global, "14"), gradeExpect(global, "14"), gradeExpect(global, "14")]).toEqual([
+      1, 1, 1,
+    ])
+    expect(global.lastIndex).toBe(0)
+    const sticky = /14/y
+    expect([gradeExpect(sticky, "14"), gradeExpect(sticky, "14")]).toEqual([1, 1])
+    expect(gradeExpect(/WATCH/i, "a watch")).toBe(1)
+    expect(gradeExpect(/14/g, "15")).toBe(0)
   })
 
   it("repeatStart：补跑时从指定编号起，不盖掉已有的格", async () => {
