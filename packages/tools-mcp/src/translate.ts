@@ -11,7 +11,12 @@ import type { McpToolAnnotations, McpToolInfo } from "./types.js"
 /** Anthropic / OpenAI 对工具名的共同要求；MCP 没有这个限制，不合规的名字要改写，否则请求 400 */
 export const MODEL_TOOL_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/
 
-/** 给模型看的名字：加前缀、把不合规字符换成 `_`、截到 64。返回值与原名不同则调用方应告警一次 */
+/**
+ * 单个名字的改写：加前缀、把不合规字符换成 `_`、截到 64。返回值与原名不同则调用方应告警一次。
+ * 不知道撞名——一台服务器的实际模型侧名字以 `modelToolNames` 为准（可能带 `_2` 后缀）；宿主要拿实际名字看
+ * `override(tool, info)` 收到的 `tool.name`，不要用本函数推算（README 写明）。`modelToolNames` 刻意不公开：
+ * 宿主手里没有服务器此刻的完整工具表，推算出的结果不可靠
+ */
 export function modelToolName(mcpName: string, prefix = ""): string {
   const raw = `${prefix}${mcpName}`
   if (MODEL_TOOL_NAME_RE.test(raw)) return raw

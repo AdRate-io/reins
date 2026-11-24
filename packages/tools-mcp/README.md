@@ -380,7 +380,9 @@ server already uses (`files.delete` next to `files_delete`, or two long names sh
 rewritten one gets a `_2`, `_3`… suffix and the warning names the clash — names that need no rewrite keep theirs.
 Suffixes are handed out in order of the original names, so a server listing its tools in a different order does
 not change them. They are not stable across server changes, though: if the server adds a tool whose valid name
-equals a rewritten one, the rewritten tool moves to a suffixed name.
+equals a rewritten one, the rewritten tool moves to a suffixed name. When you need the model-facing name (approval
+rules, lazy-tool lists), take it from the `tool.name` that `override(tool, info)` receives, keyed by `info.name`;
+the exported `modelToolName` rewrites a single name and does not know about clashes.
 
 Not supported: sampling, elicitation, resources, prompts, MCP Apps, and driving an OAuth authorization
 prompt (obtain tokens in your application and hand them over through `auth`).
