@@ -81,7 +81,7 @@ async function canDelete(client: PgClient, sessionId: string): Promise<boolean> 
 | table | keyed by | notes |
 | --- | --- | --- |
 | `reins_events` | `session_id, seq` | append-only, contiguous `seq` per session enforced in SQL (`seq_conflict` on violation) |
-| `reins_blobs` | `session_id, id` | large payloads spilled out of the context |
+| `reins_blobs` | `id` | large payloads spilled out of the context; `session_id` is a plain column recording the session that wrote it (ids are globally unique, and who may read a blob is decided by the timeline, not by this column) |
 | `reins_memory` (configurable) | `path` | the model's memory files; `memoryTable` gives each role or tenant its own table |
 | `reins_runs` | `session_id` | run lease: `owner` and `expires_at`; acquire / renew / release are one statement each and expiry is judged by the **database clock** (`now()`), so instances with drifting clocks still agree on who holds a session |
 
