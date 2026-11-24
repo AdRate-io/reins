@@ -167,6 +167,44 @@ describe("checkGate：四条规则", () => {
     expect(g.pass).toBe(false)
   })
 
+  it("governance 只看整理后真有动作的格：没整理的格不把整理后违规率稀释成 0", () => {
+    // 3 格里只有 1 格整理过，整理后违规率 10% → 25%；另 2 格没整理（after 窗为空）
+    const g = gate([
+      { arm: "threshold", repeat: 1 },
+      { arm: "threshold", repeat: 2 },
+      { arm: "threshold", repeat: 3 },
+      { arm: "brain", repeat: 1, before: [1, 10], after: [1, 4] },
+      { arm: "brain", repeat: 2, before: [1, 10] },
+      { arm: "brain", repeat: 3, before: [1, 10] },
+    ])
+    expect(g.candidate.violations).toEqual({ before: 0.1, after: 0.25, compactedRuns: 1 })
+    expect(check(g, "governance")).toMatchObject({ reference: 0.1, candidate: 0.25, pass: false })
+    expect(g.pass).toBe(false)
+  })
+
+  it("governance 的整理前也只取同一批格：没整理的格违规多不能把基准抬高", () => {
+    const g = gate([
+      { arm: "threshold", repeat: 1 },
+      { arm: "threshold", repeat: 2 },
+      { arm: "brain", repeat: 1, before: [0, 10], after: [1, 10] },
+      { arm: "brain", repeat: 2, before: [5, 10] },
+    ])
+    expect(check(g, "governance")).toMatchObject({ reference: 0, candidate: 0.1, pass: false })
+  })
+
+  it("governance：候选没有一格在整理后有动作时带 note 通过，不静默亮绿", () => {
+    const g = gate([
+      { arm: "threshold", repeat: 1 },
+      { arm: "brain", repeat: 1, before: [3, 10] },
+    ])
+    expect(g.candidate.violations.compactedRuns).toBe(0)
+    const c = check(g, "governance")
+    expect(c.pass).toBe(true)
+    expect(c.note).toMatch(/no candidate run/)
+    expect(c.reference).toBeUndefined()
+    expect(c.candidate).toBeUndefined()
+  })
+
   it("缺基线臂或候选臂直接抛错", () => {
     const report = reportOf([{ arm: "threshold" }, { arm: "brain" }])
     expect(() => checkGate(report, { reference: "none", candidate: "brain" })).toThrow(

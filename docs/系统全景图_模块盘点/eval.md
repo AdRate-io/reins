@@ -101,14 +101,14 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 - **repeatedToolCalls**：键为 `` `${name} ${canonicalArgs(args)}` ``，**第二次起每次记 1**（死循环计数），与回放工具用的是同一个 `canonicalArgs`。
 - **toolErrors**：`isError` 的 tool_result 条数。
 
-`summarize(outcomes)` 按臂分组取均值：`finishedRate` 是 `status === "done"` 的比例，`tokens` 四项各取均值后 `cacheHitRate` 用**均值后的 token** 重算，`recall` 只对有值的格取均值，`violations` 取两窗 `rate` 的均值，其余直接均值。
+`summarize(outcomes)` 按臂分组取均值：`finishedRate` 是 `status === "done"` 的比例，`tokens` 四项各取均值后 `cacheHitRate` 用**均值后的 token** 重算，`recall` 只对有值的格取均值，`violations` **只取 `after.actions > 0` 的格**（第一次整理之后还有模型动作），两窗在这同一批格上取各格 `rate` 的均值，`compactedRuns` 记这批格数（没整理过的格 after 窗恒空，掺进来会把整理后违规率稀释向 0、盖住治理衰减；按格不加权是为了保证比旧口径只严不松），其余直接均值。
 
 `checkGate(report, { reference, candidate, tokenRatioMax = 1 })` 四条（缺任一臂直接抛）：
 
 1. `tokens`：候选 `tokens.total ≤ 基线 × ratio`；
 2. `completion`：候选完成度 ≥ 基线；
 3. `recall`：候选召回 ≥ 基线；**双方都没有 recall（没预埋事实）时视为通过并带 `note`**，只有一方有则缺的一方按 0 参与比较；
-4. `governance`：**候选自己**整理后违规率 ≤ 整理前（这一条不跟基线比，`reference` 字段填的是候选的 before）。
+4. `governance`：**候选自己**整理后违规率 ≤ 整理前（这一条不跟基线比，`reference` 字段填的是候选的 before），只在 `compactedRuns > 0` 的那批格上比；`compactedRuns === 0` 时视为通过并带 `note`。
 
 `renderReport(report, { gate?, detail? })` 输出 Markdown：抬头一行（模型、fixture 数 × 臂数、总格数、耗时）；臂均值表 13 列（跑完/完成度/总 token/计费等价/缓存命中/召回/违规前→后/整理 模型·阈值·连续/轮/工具/重复调用/墙钟），`undefined` 一律显示 `—`；`gate` 存在时附门禁表（token 列按整数显示、其余按百分比）；`detail` 存在时每格一行明细。
 

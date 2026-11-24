@@ -4,7 +4,7 @@
  * 1. token 不多于基线的 100%（可配比例）
  * 2. 任务完成率不低于基线
  * 3. 关键信息召回不低于基线
- * 4. 压缩前后约束违规率不上升（候选臂自己整理前 vs 整理后）
+ * 4. 压缩前后约束违规率不上升（候选臂自己整理前 vs 整理后，只取整理后还有模型动作的格，见 ArmSummary.violations）
  *
  * 只给结论与数字，怎么用（CI 红绿、默认开关）由调用方定。
  */
@@ -78,13 +78,23 @@ export function checkGate(report: EvalReport, opts: GateOptions): GateResult {
     })
   }
 
-  checks.push({
-    name: "governance",
-    rule: "candidate violation rate after compaction <= before",
-    reference: candidate.violations.before,
-    candidate: candidate.violations.after,
-    pass: candidate.violations.after <= candidate.violations.before,
-  })
+  const governanceRule = "candidate violation rate after compaction <= before"
+  if (candidate.violations.compactedRuns === 0) {
+    checks.push({
+      name: "governance",
+      rule: governanceRule,
+      pass: true,
+      note: "no candidate run had model actions after a compaction, counted as a pass",
+    })
+  } else {
+    checks.push({
+      name: "governance",
+      rule: governanceRule,
+      reference: candidate.violations.before,
+      candidate: candidate.violations.after,
+      pass: candidate.violations.after <= candidate.violations.before,
+    })
+  }
 
   return { pass: checks.every((c) => c.pass), checks, reference, candidate }
 }

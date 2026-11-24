@@ -413,6 +413,9 @@ export function summarize(outcomes: readonly EvalOutcome[]): Record<string, ArmS
       total: mean(ms.map((m) => m.tokens.total)),
     }
     const recalls = ms.map((m) => m.recall).filter((r): r is number => r !== undefined)
+    // 治理衰减只在整理后真有动作的格上比：没整理的格 after 窗恒空，掺进来会把整理后违规率拉向 0。
+    // 两窗用同一批格、按格不加权取均值——相比旧口径（全部格取均值）只会更严，不会更松
+    const compacted = ms.filter((m) => m.violations.after.actions > 0)
     const cacheHitRate = cacheHitRateOf(tokens)
     summary[arm] = {
       arm,
@@ -423,8 +426,9 @@ export function summarize(outcomes: readonly EvalOutcome[]): Record<string, ArmS
       ...(cacheHitRate !== undefined ? { cacheHitRate } : {}),
       ...(recalls.length > 0 ? { recall: mean(recalls) } : {}),
       violations: {
-        before: mean(ms.map((m) => m.violations.before.rate)),
-        after: mean(ms.map((m) => m.violations.after.rate)),
+        before: mean(compacted.map((m) => m.violations.before.rate)),
+        after: mean(compacted.map((m) => m.violations.after.rate)),
+        compactedRuns: compacted.length,
       },
       compactions: {
         model: mean(ms.map((m) => m.compactions.model)),
