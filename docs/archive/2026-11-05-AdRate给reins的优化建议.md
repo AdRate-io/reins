@@ -1257,7 +1257,7 @@ AdRate 前端按 AG-UI 帧建会话时间线。用户发了图之后：
 
 ### reins 回复（2026-11-24）
 
-采纳第 1、2、3 条，形态稍有调整。待发布：ui-agui 0.8.0，agent 随依赖出 patch（0.7.5）；core 不变。AdRate 用 `createAgent` 的话把这两个包一起升。
+采纳第 1、2、3 条，形态稍有调整。随 v0.22.0 发布：ui-agui 0.8.0，agent 随依赖出 patch（0.7.5）；core 不变（仍是 0.17.0）。AdRate 用 `createAgent` 的话把这两个包一起升。
 
 - **字段**：`metadata.reins.parts`，按原顺序列出 `{ type: "text", text }`；图片引用是 `{ type: "image", mime, blobId }`；内联的图片、视频、音频只给 `{ type, mime }`，永不带字节；工具卡片（`tool_reference`）按正文的写法转成文字。只在消息里有图片、视频或音频时才出现（与 `dropped` 同出同缺），纯文字消息不带。`TEXT_MESSAGE_CONTENT` 的占位文字、`dropped`、帧的类型与顺序都不变。
 - **位置有一处与建议不同：用户消息的 `TEXT_MESSAGE_START` 和 `TEXT_MESSAGE_END` 都带**，而且是同一份完整的 `metadata.reins`。原因：AG-UI 客户端（`@ag-ui/client`）把一条消息几帧的 metadata 合并时，同名的顶层键是"后到的整个替换前面的"，只挂在 START 上，到 END 就被冲掉了。审查时发现这个问题早就存在：进行中投递用来对账的 `provenance` 也只挂在 START 上，按 `messages` 状态渲染的前端一直拿不到。这次一并修了。AdRate 前端若是按原始帧读，START 上本来就有；若是用 AG-UI 客户端拼好的消息，现在也有了。
@@ -1267,5 +1267,5 @@ AdRate 前端按 AG-UI 帧建会话时间线。用户发了图之后：
   - AdRate 的 `BlobStore` 不要用 R2 的对象路径或签名 URL 当 id。
   - 以下情况前端要能退回占位显示：内联图片没有 `blobId`；blob 被保留策略清掉后路由回 404。`blobId` 当作不透明字符串，拼进 URL 时要 `encodeURIComponent`。
   - 行为变化：带 `provenance` 或带媒体的用户消息，`TEXT_MESSAGE_END` 现在多了这些字段；依赖"END 只有 seq / eventId / type"的前端代码需要调整。
-- **验证**：全部用假数据测，不涉及真模型。覆盖：混排顺序、纯文字不带字段、内联字节（用独特标记串）在所有帧里都搜不到、畸形片段只出白名单字段、工具结果三个字段并存、用 `@ag-ui/core` 官方 `mergeMetadata` 把三帧折叠一遍后字段还在、正文块还开着时到达带图消息、经 server 实际 POST 再 GET 补发两条路径的帧相同且带 `blobId`。做了三项变异核对（去掉挂 `parts`、END 退回只带基础字段、视频带出 `durationSec`），测试都能抓到。`pnpm check` 全绿。
+- **验证**：全部用假数据测，不涉及真模型。覆盖：混排顺序、纯文字不带字段、内联字节（用独特标记串）在所有帧里都搜不到、畸形片段只出白名单字段、工具结果三个字段并存、用 `@ag-ui/core` 官方 `mergeMetadata` 把三帧折叠一遍后字段还在、正文块还开着时到达带图消息、经 server 实际 POST 再 GET 补发两条路径的帧相同且带 `blobId`。做了三项变异核对（去掉挂 `parts`、END 退回只带基础字段、视频带出 `durationSec`），测试都能抓到。发版前在 PG 16.13 真库上跑全量（2233 条通过）。发布后在空目录从 npm 官方源安装，冒烟 10/10：只有一份 core；总包与 ui-agui 导出同一个 `displayPartsOf`；START / END 元数据相同、官方 `mergeMetadata` 折叠后字段还在；工具结果带 `parts`；经 server 真走 POST 与 GET 补发，两条路径的用户帧相同、带 `blobId`、不含图片字节。
 - **请核实**：升级后在测试服发一条带图的消息，看实时流里和刷新后的用户气泡是否都显示缩略图、点开能看大图。
