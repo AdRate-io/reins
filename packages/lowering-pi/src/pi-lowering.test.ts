@@ -311,7 +311,7 @@ describe("PiAiLowering — Anthropic Messages", () => {
     expect(noteMsg?.content).toBe('<system_note kind="perception">\nContext 50-70% used.\n</system_note>')
   })
 
-  it("无签名 thinking 与来自别家的 thinking 记为 lossy；同家不同模型 id 仍 exact 但留备注", () => {
+  it("无签名记 text-or-drop；别家或同家换型号的思考按 pi-ai 实际改写记 as-text，redacted / 空的记 dropped", () => {
     seq = 0
     const events = [
       ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
@@ -322,18 +322,60 @@ describe("PiAiLowering — Anthropic Messages", () => {
         { text: "带日期的同款" },
         { replay: { ...ANTHROPIC, model: "claude-opus-5-20260301", thinkingSignature: "s" } },
       ),
+      ev(
+        "core.model_thinking",
+        { text: "[Reasoning redacted]" },
+        { replay: { ...ANTHROPIC, model: "claude-opus-5-20260301", thinkingSignature: "r", redacted: true } },
+      ),
       ev("core.model_text", { text: "ok" }, { replay: { ...ANTHROPIC } }),
     ]
     const req = lowering.toRequest({ events, model })
-    expect(req.landings.slice(1, 4).map((l) => [l.kind, l.landing])).toEqual([
+    expect(req.landings.slice(1, 5).map((l) => [l.kind, l.landing])).toEqual([
       ["lossy", "text-or-drop"],
-      ["lossy", "provider-dependent"],
-      ["exact", "thinking-block"],
+      ["lossy", "as-text"],
+      ["lossy", "as-text"],
+      ["dropped", "none"],
     ])
     expect(req.landings[3]?.note).toContain("claude-opus-5-20260301")
     // 来源不同的 model 事件不合并进同一条 assistant 消息
     const roles = (req.payload.context.messages as { role: string }[]).map((m) => m.role)
+    // 同一来源的两块（带日期的同款与它的 redacted）同在一条 assistant 里
     expect(roles).toEqual(["user", "assistant", "assistant", "assistant", "assistant"])
+  })
+
+  it("换型号的落点与 pi-ai 真实改写一致：带签名的思考到线上是纯文本，redacted 的不在", async () => {
+    // 落点声明的依据是 pi-ai transform-messages 的 isSameModel；这里直接调它，上游行为变了这格就红
+    const { transformMessages } = await import("@earendil-works/pi-ai/api/transform-messages")
+    seq = 0
+    const events = [
+      ev("core.user_message", { content: [{ type: "text", text: "hi" }] }),
+      ev(
+        "core.model_thinking",
+        { text: "旧型号的思考" },
+        { replay: { ...ANTHROPIC, model: "claude-opus-5-20260301", thinkingSignature: "s" } },
+      ),
+      ev(
+        "core.model_thinking",
+        { text: "[Reasoning redacted]" },
+        { replay: { ...ANTHROPIC, model: "claude-opus-5-20260301", thinkingSignature: "r", redacted: true } },
+      ),
+      ev("core.model_text", { text: "ok" }, { replay: { ...ANTHROPIC, model: "claude-opus-5-20260301" } }),
+      ev("core.user_message", { content: [{ type: "text", text: "again" }] }),
+    ]
+    const req = lowering.toRequest({ events, model })
+    const piModel = { ...model, api: ANTHROPIC.api, input: ["text", "image"] } as unknown as Parameters<
+      typeof transformMessages
+    >[1]
+    const context = req.payload.context as { messages: Parameters<typeof transformMessages>[0] }
+    const out = transformMessages(context.messages, piModel) as unknown as {
+      role: string
+      content: { type: string; text?: string }[]
+    }[]
+    const old = out.find((m) => m.role === "assistant")
+    expect(old?.content.map((b) => [b.type, b.text])).toEqual([
+      ["text", "旧型号的思考"],
+      ["text", "ok"],
+    ])
   })
 })
 

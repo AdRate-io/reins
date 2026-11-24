@@ -94,7 +94,7 @@
 3. `streamFunctionFor(api)` 在两条 `api/<api>` 子路径导入的 `stream` 之间二选一，调用它拿到 `AsyncIterable<AssistantMessageEvent>`，`yield* consumeStream(...)`。
 4. `consumeStream` 只把 `text_delta` / `thinking_delta` / `toolcall_delta` 转给 `ctx.onDelta`（给 UI，不落日志）；`done` / `error` 时才 `yield* draftsOf(msg)` 产出草稿并 `return outcomeOf(...)`。流在 done / error 之前就结束时返回一条 `stopReason: "error"` 的兜底 outcome。
 5. `draftsOf` 逐内容块产草稿：`thinking` → `core.model_thinking`（replay 带 `thinkingSignature` / `redacted`）、`text` → `core.model_text`（replay 带 `textSignature`，**空文本块跳过**）、`toolCall` → `core.tool_call`（replay 带 `thoughtSignature` / `namespace`）。每条 replay 都带 `{ provider, api, model }`，这是回放时判"是不是自己产的"的依据。
-6. 回程的 `thinking` 回放在去程 `to-request.ts` 的 `core.model_thinking` 分支消费：有签名且同源 → `exact`（`thinking-block` / `reasoning-item`）；无签名 → `lossy` / `text-or-drop`；`foreignOrigin`（provider 或 api 不同）→ `lossy` / `provider-dependent`；只是 model id 不同 → 仍 `exact`，只在备注里留痕。
+6. 回程的 `thinking` 回放在去程 `to-request.ts` 的 `core.model_thinking` 分支消费：有签名且同源（provider + api + model 三者一致）→ `exact`（`thinking-block` / `reasoning-item`）；无签名 → `lossy` / `text-or-drop`；来源任一项不同 → `lossy` / `as-text`（pi-ai 降成纯文本），其中 redacted 或正文为空的 → `dropped`（pi-ai 整块丢掉）。
 
 ## 4 核心设计决策
 
@@ -114,7 +114,7 @@
 
 **运维事件一律不下发** — `approval_request` / `approval_decision` / `run_paused` / `run_resumed` / `budget_usage` / `memory_op` / `handoff` / `core.error` 记 `dropped/none`，`ext.*` 同样（`NOT_SENT`）。这些信息由别的事件承载（审批结果在 `tool_result.isError`、交接由新会话首条 user 承载）。边界：投影层默认已经过滤掉它们，矩阵这一层是**第二道声明**而非唯一防线；宿主要让模型看见 `ext.*`，得在投影层翻成 core 事件。
 
-**来源判定只比 provider + api** — `foreignOrigin` 不比模型 id，因为响应报告的 id 常与请求的不同（日期后缀、别名、网关改名），按 id 严格比会把自家签名误判成别家（DECISIONS 2026-09-08，网关探针）。边界：id 不同时仍记 `exact`，只在 note 里写明签名来自哪个 id。
+**思考的来源判定与 pi-ai 同口径：provider + api + model 三者一致**（2026-11-24 改，原为只比 provider + api）— 落点声明的是 pi-ai 实际怎么发，而 pi-ai 回放时按 `transform-messages` 的 `isSameModel` 三者严格比，不一致就把带签名的思考降成纯文本、redacted / 空的丢掉；原来"只是 id 不同仍记 exact"（DECISIONS 2026-09-08，顾虑厂商回报的 id 带日期后缀或被网关改名）因此是没声明的有损。型号 id 取自厂商在 `message_start` 的回报（anthropic-messages 线），`spikes/pi-reported-model/` 实测 DeepSeek Anthropic 端口与官方 Haiku 5.5 都与请求逐字一致，实际只在会话中途换型号时触发。用例直接调 pi-ai 的 `transformMessages` 锁住口径，上游升级改了判据会红。边界：只改落点记录，请求体不变；fetch 版同样三者一致，但换型号是 dropped（它自己不发），两包口径一致。
 
 **草稿只在内容块完整时产出** — 签名类回放数据（Anthropic signature、OpenAI reasoning item）在块结束时才齐，所以 `consumeStream` 到 `done` / `error` 才产草稿，增量只经 `onDelta` 给 UI（T7，`from-stream.ts` 注释）。边界：中断或出错时也把已产出的部分内容交出去 —— 日志要记录"发生过什么"，是否继续由循环决定；pi-ai 的 `deferred` 停止原因（异步批处理句柄）第一版不支持，按 `stop` 收尾。
 

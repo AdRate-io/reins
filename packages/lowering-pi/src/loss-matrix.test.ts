@@ -97,6 +97,17 @@ function variants(api: string, model: { provider: string; id: string }): Variant
       ],
     },
     {
+      label: "model_thinking 同家换型号、redacted",
+      events: [
+        user(),
+        mk(
+          "core.model_thinking",
+          { text: "[Reasoning redacted]" },
+          { ...origin, model: `${model.id}-older`, thinkingSignature: "sig", redacted: true },
+        ),
+      ],
+    },
+    {
       label: "tool_call 对象入参",
       events: [user(), mk("core.tool_call", { toolCallId: "c1", name: "f", args: { a: 1 } }, origin)],
     },

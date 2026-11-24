@@ -63,10 +63,11 @@ const THINKING_COMMON = {
     "the event's replay has no thinkingSignature",
   ),
   foreign: lossy(
-    "provider-dependent",
-    "thinking from another model, which the provider may ignore or reject",
+    "as-text",
+    "pi-ai replays thinking from another model as plain text",
     "the replay's provider/api/model differs from the current one",
   ),
+  foreignDropped: dropped("none", "pi-ai drops redacted or empty thinking from another model"),
 }
 
 const TOOL_CALL_ARGS = lossy(
@@ -98,6 +99,7 @@ export const LOSS_MATRIX: LossMatrix = {
       exact("thinking-block", "replayed verbatim with its signature"),
       THINKING_COMMON.noSignature,
       THINKING_COMMON.foreign,
+      THINKING_COMMON.foreignDropped,
     ],
     "core.tool_call": [exact("tool_use"), TOOL_CALL_ARGS],
     "core.tool_result": [
@@ -137,6 +139,7 @@ export const LOSS_MATRIX: LossMatrix = {
       exact("reasoning-item", "the encrypted_content is replayed verbatim"),
       THINKING_COMMON.noSignature,
       THINKING_COMMON.foreign,
+      THINKING_COMMON.foreignDropped,
     ],
     "core.tool_call": [exact("function_call"), TOOL_CALL_ARGS],
     "core.tool_result": [
