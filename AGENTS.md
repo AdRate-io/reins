@@ -72,7 +72,7 @@
 
 **提交**：`type: 摘要`（`.githooks/commit-msg` 校验，见 `CONTRIBUTING.md`），正文写根因与取向和对应编号（OPT / BUG / 方案名）；结尾 `Co-Authored-By: Claude <当前模型名> <noreply@anthropic.com>`。只在 Boss 要求或发布时推远程。
 
-**发布**（Boss 在真终端操作，要 OTP）：`pnpm changeset version` →（core 升版时手改 `packages/core/src/index.ts` 的 `REINS_VERSION`，否则 `check:dist` 拦下）→ 设 `REINS_PG_URL` 后 `pnpm check` + `pnpm check:dist` → 提交 → 仓库根 `pnpm -r publish --access public --no-git-checks`（**不能用 `npm publish`**，不重写 `workspace:*`）→ 打 tag / Release → 空目录从官方源真实安装冒烟。examples 是私有包不参与版本。
+**发布**（Boss 在真终端操作，要 OTP）：`pnpm changeset version` →（core 升版时手改 `packages/core/src/index.ts` 的 `REINS_VERSION`，否则 `check:dist` 拦下）→ 设 `REINS_PG_URL` 后 `pnpm check:dist` + `pnpm check`（先重建产物，examples 才按新声明检查）→ 提交 → 仓库根 `pnpm -r publish --access public --no-git-checks`（**不能用 `npm publish`**，不重写 `workspace:*`）→ 打 tag / Release → 空目录从官方源真实安装冒烟。examples 是私有包不参与版本。
 
 ---
 
@@ -205,7 +205,7 @@ docs/                # 维护者文档（中文），见文档索引
 
 ```bash
 pnpm check        # typecheck + lint + test，提交前必绿
-pnpm check:dist   # 先 pnpm build 再自检构建产物：每个 exports 入口可 import、node:* 只在 /node 子路径且前缀未被剥；发布前与含 node:* 的包改动后必跑
+pnpm check:dist   # 先 pnpm build 再自检构建产物：每个 exports 入口可 import、node:* 只在 /node 子路径且前缀未被剥，最后对新产物再 typecheck（examples 引用 dist/ 类型）；发布前、含 node:* 的包改动后、改了公开类型后必跑
 pnpm build        # pnpm -r run build
 pnpm test         # vitest run
 pnpm format       # biome format --write
