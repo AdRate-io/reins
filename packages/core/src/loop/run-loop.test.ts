@@ -9,6 +9,7 @@ import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
 import { BUILTIN_APPROVAL_POLICY, runLoop } from "./run-loop.js"
 import { resolveSocketContributions } from "./static.js"
+import { MODEL_FAILED_NOT_EXECUTED_TEXT } from "./stop.js"
 import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
 import type {
@@ -2094,6 +2095,53 @@ describe("needsApproval 抛错（全库审查 2026-11-25 #14）", () => {
     const second = await drain(runLoop(baseConfig(lowering, log, { tools: [pay], input: "继续" })))
     expect(second.result.status).toBe("done")
   })
+})
+
+describe("模型响应落下 tool_call 后才失败（全库审查 2026-11-25 #13）", () => {
+  it.each([
+    ["stopReason error", { outcome: { stopReason: "error" as const, errorMessage: "stream ended early" } }],
+    ["降级层抛错", { throws: new Error("ECONNRESET") }],
+  ])(
+    "%s：这次响应里的调用收尾成'没执行'，不留 pending；下一个 run 不在用户新话之后补跑它",
+    async (_n, tail) => {
+      const log = new InMemoryEventLog()
+      const executed: unknown[] = []
+      const pay = defineTool<unknown>({
+        name: "pay",
+        risk: "low",
+        description: "",
+        inputSchema: { type: "object" },
+        execute: (a) => {
+          executed.push(a)
+          return "paid"
+        },
+      })
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("c1", "pay", '{"amount": 10')], ...tail },
+        { drafts: [say("好的，不付了")] },
+      ])
+      const cfg = baseConfig(lowering, log, { tools: [pay], retry: { sleep: async () => {} } })
+      const first = await drain(runLoop({ ...cfg, input: "付 10 块" }))
+      expect(first.result.status).toBe("error")
+      expect(types(await all(log))).toEqual([
+        "tools_bound",
+        "user_message",
+        "tool_call",
+        "tool_result",
+        "error",
+        "run_ended",
+      ])
+      const settled = (await all(log)).find(
+        (e) => e.type === "core.tool_result",
+      ) as CoreEventOf<"core.tool_result">
+      expect(settled.payload).toMatchObject({ toolCallId: "c1", isError: true })
+      expect(settled.payload.content).toEqual([{ type: "text", text: MODEL_FAILED_NOT_EXECUTED_TEXT }])
+
+      const second = await drain(runLoop({ ...cfg, input: "算了别付了" }))
+      expect(second.result.status).toBe("done")
+      expect(executed).toEqual([])
+    },
+  )
 })
 
 describe("厂商复用 / 不给 toolCallId（全库审查 2026-11-25 #50）", () => {

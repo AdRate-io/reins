@@ -27,6 +27,13 @@ export const STOPPED_NOT_EXECUTED_TEXT =
 export const STOPPED_IN_PROGRESS_TEXT =
   "Interrupted: the run was stopped by the user while this call was in progress; it may have partly taken effect."
 
+/**
+ * 模型响应在落下 tool_call 之后才失败（断流、stopReason error）：run 以 error 收尾前把这次响应里的调用收尾成这句（全库审查 2026-11-25 #13）。
+ * 入参可能是截断的，也不知道模型原本还要说什么；留作 pending 的话，下一个 run 会在用户的新话之后、模型读到它之前先执行
+ */
+export const MODEL_FAILED_NOT_EXECUTED_TEXT =
+  "Not executed: the model response failed before it was complete, so this call was dropped."
+
 /** 宿主收尾遗留调用（`RunStop("host")`，如 asTool 开新一轮前）：调用还没开始。不说"用户停止"——多半是进程中途死亡留下的 */
 export const INTERRUPTED_NOT_EXECUTED_TEXT =
   "Not executed: an earlier run was interrupted before this call started."

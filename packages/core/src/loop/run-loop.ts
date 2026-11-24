@@ -60,6 +60,7 @@ import { resolveSocketContributions } from "./static.js"
 import {
   isReplayable,
   isStopped,
+  MODEL_FAILED_NOT_EXECUTED_TEXT,
   outcomeUnknownText,
   type StopTexts,
   stopTextsOf,
@@ -402,13 +403,20 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     ctx.budget.tokensSpent = tokensSpent
   }
 
-  /** 以 error 收尾：core.error 与终结记号 run_ended(error) 同批原子写入。非终结的 error（重试前、pullInput 抛错）不走这里 */
-  const fail = async (payload: ErrorPayload): Promise<{ events: Event[]; result: RunResult }> => {
+  /**
+   * 以 error 收尾：core.error 与终结记号 run_ended(error) 同批原子写入。非终结的 error（重试前、pullInput 抛错）不走这里。
+   * `settle` 是要排在 error 之前、同批写入的收尾结果（模型响应半途失败时，这次响应里的调用）
+   */
+  const fail = async (
+    payload: ErrorPayload,
+    settle: readonly EventDraft[] = [],
+  ): Promise<{ events: Event[]; result: RunResult }> => {
     const events = await append([
+      ...settle,
       { type: "core.error", actor: "system", payload },
       { type: "core.run_ended", actor: "system", payload: { status: "error", category: payload.category } },
     ])
-    const error = events[0] as CoreEventOf<"core.error">
+    const error = events[settle.length] as CoreEventOf<"core.error">
     return { events, result: { status: "error", sessionId, lastSeq, error } }
   }
 
@@ -785,15 +793,36 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         return result
       }
       if (!canRetry) {
-        const { events, result } = await fail({
-          ...base,
-          retryable: transient,
-          detail: {
-            ...base.detail,
-            attempts: attempt,
-            ...(attemptOutput > 0 ? { partialOutput: attemptOutput } : {}),
+        // 这次响应里已落日志的调用一并收尾成"没执行"（与停止收尾同一形状）：error 结局不能带着 pending，
+        // 否则下一个 run 在用户的新话之后、模型读到它之前就先补跑一条可能入参截断的调用
+        const dropped = modelEvents
+          .filter((e): e is ToolCallEvent => e.type === "core.tool_call")
+          .map(
+            (call): ToolResultDraft => ({
+              type: "core.tool_result",
+              actor: "tool",
+              parentId: call.id,
+              provenance: { source: call.payload.name },
+              payload: {
+                toolCallId: call.payload.toolCallId,
+                name: call.payload.name,
+                content: [{ type: "text", text: MODEL_FAILED_NOT_EXECUTED_TEXT }],
+                isError: true,
+              },
+            }),
+          )
+        const { events, result } = await fail(
+          {
+            ...base,
+            retryable: transient,
+            detail: {
+              ...base.detail,
+              attempts: attempt,
+              ...(attemptOutput > 0 ? { partialOutput: attemptOutput } : {}),
+            },
           },
-        })
+          dropped,
+        )
         yield* events
         return result
       }
