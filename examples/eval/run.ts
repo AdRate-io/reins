@@ -307,7 +307,7 @@ const report = await runEval({
       list.push(e)
       probes.set(key, list)
       if (e.type === "core.model_text") log(`    探针 ${cell.probe}: ${oneLine((e.payload as { text: string }).text, 70)}`)
-      else if (e.type === "core.tool_call" || e.type === "core.run_error" || e.type === "core.run_paused")
+      else if (e.type === "core.tool_call" || e.type === "core.error" || e.type === "core.run_paused")
         log(`    探针 ${cell.probe} ${e.type.replace("core.", "")}: ${oneLine(JSON.stringify(e.payload), 160)}`)
       return
     }
@@ -342,8 +342,8 @@ const report = await runEval({
       case "core.run_paused":
         log(`    ⏸ ${String(p.reason)}`)
         break
-      case "core.run_error":
-        log(`    ❌ ${oneLine(JSON.stringify(p), 200)}`)
+      case "core.error":
+        log(`    ❌ ${String(p.category)}: ${oneLine(String(p.message), 200)}`)
         break
       case "core.handoff":
         log("    ↪ 交接到新会话")
