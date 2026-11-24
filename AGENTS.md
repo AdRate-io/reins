@@ -192,7 +192,7 @@ docs/                # 维护者文档（中文），见文档索引
 ## 鉴权与安全默认值
 
 - **server 两层鉴权**：`principal(request)` 解析谁在问；`authorizeSession({ sessionId, principal, request, method, isNew, decisions })` 在解析出 sessionId 之后、读写日志之前决定能碰哪条会话（此时 body 已被 handler 读完，`request` 只能读 header）。**只有字面 `true` 放行，拒绝回 404**（不用 403）。
-- **客户端输入两道类型白名单**：循环层 `inputDrafts` 只收 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`（数组逐条查、任一不合规整批拒）；server 层只收 `user_message` 与客户端工具 pending 的 `tool_result`，数组 input 在 `parseBody` 无条件重建成内容片段——不带 resume / decisions 的请求不经 `checkInput`，放在那里就漏。审批结论只走 `decisions`，经 HTTP 必须连同 `resume` 一起交（否则 400），由 `validateResume` 验签（宿主给 `secret`）、核 pendingDigest 与配置漂移；进程内 `runLoop` 仍收只带结论的（asTool 子 run 就这样续跑，宿主自担），此时只核对指向本会话 pending、子会话的结论原样转发——审批人与会话主人不是同一人时，宿主在 `authorizeSession` 里看 `decisions` 把关（冻结副本、同一调用只许一条）；客户端工具在等审批时不许直接回填结果（409 `approval_pending`，判定走 core `awaitingOf`）。
+- **客户端输入两道类型白名单**：循环层 `inputDrafts` 只收 `core.user_message` / `core.tool_result` / `core.system_note` / `ext.*`（数组逐条查、任一不合规整批拒）；server 层只收 `user_message` 与客户端工具 pending 的 `tool_result`，数组 input 在 `parseBody` 无条件重建成内容片段——不带 resume / decisions 的请求不经 `checkInput`，放在那里就漏。审批结论只走 `decisions`，经 HTTP 必须连同 `resume` 一起交（否则 400），由 `validateResume` 验签（宿主给 `secret`）、核 pendingDigest 与配置漂移；进程内 `runLoop` 仍收只带结论的（asTool 子 run 就这样续跑，宿主自担），此时只核对指向本会话、**正在等审批**的调用（有 approval_request 无结论，同一调用两条也拒；`assertDecisionsAwaitApproval`）、子会话的结论原样转发——审批人与会话主人不是同一人时，宿主在 `authorizeSession` 里看 `decisions` 把关（冻结副本、同一调用只许一条）；客户端工具在等审批时不许直接回填结果（HTTP 409 `approval_pending`，进程内起步 `input` 抛 RangeError，判定都走 core `awaitingOf`）。
 - **trust**：工具结果缺省 untrusted，降级层包 `<untrusted source="tool:<name>">…</untrusted>`；只有 `Tool.resultTrust: "system"` 的成功结果是 system（`skill_read`、`tool_find`）。
 - **越权资源一律当不存在**：未授权会话 404、未被本会话引用的 blob id "不存在"、技能路径越界"不存在"。
 
@@ -254,6 +254,8 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 | "在跑"：经 handler + 租约的 run vs `agent.run()` / asTool 子 run / TanStack | 只有前者占租约、`pgRunStates` 判得出 running；后者只有结局，在跑时显示为 interrupted 或 unknown |
 | 配了 `route` 的 MCP：`tools/list` vs `tools/call` | `tools/list` 与 `optional` 只看目录凭据（`transport`）；`tools/call` 走 `keyOf` 选的凭据，选不出即不发出、不回退目录连接 |
 | 图片引用：runLoop vs TanStack 适配器 | runLoop 写入前校验归属、`toRequest` 前把视野内的引用换回内联；TanStack 不校验也不换回，引用落 `[image unavailable]` 记 lossy，工具结果落日志前引用一律换成占位文本（不校验的路径绝不能写出引用，否则会被 `mediaRefsOf` 当成"本会话已引用"放行） |
+| 回填 `tool_result`：进程内起步 `input` vs HTTP `checkInput` | 两边都拒不在 pending、重复、在等审批的；HTTP 另拒回填服务端工具（只收客户端工具的结果），进程内受信代码可以替任何 pending 调用回填 |
+| 会话内 toolCallId 去重：runLoop vs TanStack 适配器 | runLoop 落 tool_call 前把撞 id / 空 id 改写成 `reins_…`；TanStack 的 tool_call 由引擎产出、调用与结果按引擎的 id 配对，适配器不改写（改了引擎配不上） |
 | MCP 注解 vs MCP spec | spec 说没写 `destructiveHint` 等于 true；我们刻意不把"没写"当破坏性（缺省 medium），要严用 `override` 或 `approval({ unmatched: "ask" })` |
 
 ### fail-open 例外登记表
@@ -283,9 +285,11 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **投影输出顺序刻意与 seq 不一致** — 折叠把摘要插在被覆盖区间的位置，新策略不能假设 `events` 按 seq 升序；`ProjectionContext.nextSeq()` 在同一策略的一次 `apply` 内不递增，一次造两条事件会撞 seq。
 - **阈值兜底按"估算 + 固定开销"比 `contextLimit − reserveTokens`，开销是 core `contextOverheadOf(timeline)`** — `reserveTokens` 实际只给输出留；告诉模型的阈值要有用例锁住"报过线 ⟺ 真的动作"（踩坑 40）。触发后裁到回落线 `cutToRatio`（缺省 0.6）而不是触发线下，测切点合法性的用例要显式 `cutToRatio: 1`。
 - **瞬断重试的判据是"本次尝试落了几条模型输出"，不是错误多严重** — 落了半截再断一律不重试；判定先看状态码（408/409/429/5xx），有状态码就只按它定，文案关键词只在没有状态码时兜底且不匹配裸数字——SDK 文案固定 "<status> <body>"，正文里的 "timeout" / "429" 不是信号。
-- **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建。例外：补跑或工具批中途被用户停止时不调（否则 Socket 判出 handoff / done 会把 pending 带进非 paused 结局）。
+- **续跑补齐 pending 之后还会调一次 `onTurnEnd`** — 被审批 / 中止打断的那一轮到此才算结束，handoff 意图靠 `unfinishedHandoffArgs(timeline)` 从日志重建。例外：补跑或工具批中途被**任何**中止（用户停止、断线、丢租约）打断、批里还有没落结果的调用时不调，直接暂停（否则 Socket 判出 handoff / done 会把 pending 带进非 paused 结局）。
 - **用户停止的收尾挂在 `pause()` 里，判据是 `signal.reason` 的 `name === "RunStop"`** — 新增任何暂停出口都必须走 `pause()`，否则停止留下 pending、下一个 run 照样补跑；停止原因只认第一个 abort，已因丢租约中止的 run 再 `abort(new RunStop())` 无效。`RunStop("host")` 是宿主收尾遗留调用（asTool 开新一轮前），文案换"之前的 run 中断了"、不说用户；文案按原因取只走 `stopTextsOf`。连接阶段被掐时 fetch 抛的是 `signal.reason` 本身（踩坑 46），宿主已中止的失败一律暂停不记 error。
 - **Socket 暂停的 `code` 只是标注：库不按它分支、不进续跑状态，写错也不改变结局** — 意见里不合规的地方由 `resolveSocketPause` 改正（码丢掉、`reason` 不在闭集按 host），改正处记一条非终结 `core.error(input)` 再照常暂停，别改成 `fail()`（非停止中止时 pending 会被带进 error 结局）；`note` 随 budget / host 中断一并落进 `run_paused`（含宿主中止、用户停止那几句），断言该载荷全等的用例要算进去；`PAUSE_CODE_RE` 只许收紧不许放宽（读侧不合规判 unknown）。口径只走 `loop/pause-code.ts`，TanStack 适配器调同一对函数。
+- **一次没说完的模型响应里的 tool_call 一律不执行** — 响应以 error 收尾时随 `run_ended(error)` 落 `MODEL_FAILED_NOT_EXECUTED_TEXT`，被宿主中止（`stopReason: "aborted"` 或流抛错时已中止）时暂停前落 `MODEL_INTERRUPTED_NOT_EXECUTED_TEXT`，用户停止仍走停止文案。降级层被掐时会按半截入参吐出调用，不能当"完整的块"留给补跑；断言"中止后 pending"的用例要换成断言这条结果。
+- **模型给的 toolCallId 撞了会话内已有的（或为空）会被改写成 `reins_<规整过的 newId>`，原值进 `payload.meta.originalToolCallId`** — 审批、started、pending 都按 toolCallId 认领，不改写就认领前一个调用的批准；宿主回填客户端工具结果必须用日志（或 `run_paused.awaiting`）里的 id，不能用自己从流里记下的。pi-ai Responses 的复合 id（`call_x|fc_y`）被改写后不再回放 fc_ 部分，只在撞 id 时发生。
 - **没声明 `risk` 的工具缺省不可重放：execute 前多落一条 `core.tool_started`** — 断言日志长度 / seq 的用例要算进去（纯计算的测试工具标 `risk: "low"`）；TanStack 宿主工具视图不带 risk，每次执行都会写。续跑见到"有 started 无结果"落"结果未知"不执行；任何工具返回 `subagentPause` 后补写 started，asTool 靠它判"父在补跑同一个调用"。
 - **`validateResume` 只有在状态带 `modelDigest` / `pendingToolsDigest` 且调用方传了 `model` 与基础工具表时才走收窄比对** — 漏传就退回 configHash 整体比对（更严，不会放过）；两个摘要在场即进签名材料，旧状态材料不变。工具摘要取基础工具表，别传 beforeModel 补丁改过的本轮工具表。
 - **`decisions[].sessionId` 指向别的会话的结论不校验、不记事件，只经 `ToolContext.decisions` 转发** — 拿它对本会话 pending 校验必撞 `unknown_tool_call`；asTool 靠父日志里本调用是否已有 `core.tool_started` 区分"续跑"与"同一专家新一轮"，子 run 续跑不带 `resume` 状态。
@@ -328,7 +332,7 @@ pnpm changeset    # 改公开行为就加一条；发布前 pnpm changeset versi
 - **`FetchModel.auth: "none"` 时不问 `apiKey`、也不加 `Authorization`** — CF 网关凭证在 `cf-aig-authorization` 头，再带 Bearer 会失败。
 - **内置模型表是最小表，`definitionOf` 内置打底、选项覆盖，表外必须给 `baseUrl`；同一 OpenAI id 两条协议各一份，无协议解析缺省走 Responses** — 测试目标模型显式取条目，别靠无协议解析。
 - **Chat 线有损**：只有思考的一轮（停止 / 断流停在思考阶段）整条不发——assistant 没有 `content` 也没有 `tool_calls` 两家都 400，而时间线整段回放，照发即永久卡死（踩坑 51）；thinking 无回放位（dropped）、同轮多段正文合并（merged-text）、tool 消息只收文本且 isError 以 `[tool error]` 前缀表达、无显式缓存断点。**工具结果图片缺省上浮**到同批 tool 之后的一条 user（`tool+lifted-images`，`chat.liftToolImages: false` 退回占位）——放出时机是第一个**会下发的**非 tool_result 条目，`dropped` 不算（踩坑 39）。
-- ⚠️ **视频 / 音频能力位为真时三条线都走图片槽，这是中转站方言（官方端点 400），内置表一律不开；绝不改成 `input_audio`——中转站回 200 却静默丢弃（踩坑 45）** — 能力位缺省不收、落占位记 lossy；只有图片时 Chat 上浮输出逐字节不变（快照取自改动前实现），改 `chat/to-request.ts` 先跑它。片段形状真源 core `isContentPart`，server 白名单是独立一份、靠跨包用例锁同口径。
+- ⚠️ **视频 / 音频能力位为真时三条线都走图片槽，这是中转站方言（官方端点 400），内置表一律不开；绝不改成 `input_audio`——中转站回 200 却静默丢弃（踩坑 45）** — 能力位缺省不收、落占位记 lossy；只有图片时 Chat 上浮输出逐字节不变（快照取自改动前实现），改 `chat/to-request.ts` 先跑它。片段形状真源 core `isContentPart`，图片 mime 白名单真源 core `SUPPORTED_IMAGE_MIMES` / `isSupportedImageMime`（jpeg / png / gif / webp，内联与引用都查；工具结果里只差 mime 的图片逐段换成 `unsupportedImageText`）；server 白名单是独立一份、靠跨包用例锁同口径，图片 mime 那半 server 与 tools-mcp 尚未改调（BUG-261125-1）。
 - **`system_note.directive: true` 的说明三条线都走带标签的 user，不看 `midConversationSystem`** — 只给要模型去做的指令用（compact 请求）；写进日志即定格，历史说明升级后送达方式不变。Anthropic 线同轮有感知说明时形状是 user(tool_result + 请求) → system(感知)，请求不是最后一条（用例锁住）。
 - **Anthropic 线的中途 system 攒到下一条 assistant 之前或收尾再放，前一条不是 user / system 就退成 `<system_note>` user 文本** — 厂商规则：不能首条、须紧跟 user（含只带 tool_result 的 user）、后接 assistant 或收尾；说明位置比时间线晚一条 user 仍算 exact 并备注。
 - **Anthropic 线缓存断点由本包打：system 末块 / tools 末项 / 最后一条 user 末块；说明殿后缺省改顶层 `cache_control`** — 块级 + 顶层封顶 4，宿主 `requestOptions.cache_control` 占一格；别把断点留在 system 消息上（几乎零命中）。

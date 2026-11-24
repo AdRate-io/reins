@@ -5,7 +5,7 @@
  * 对改用户广告的写工具，重复执行就是重复花钱。这里放三件纯东西，循环与 asTool 共用：
  *
  * - `RunStop` / `isStopReason`：停止是中止的一种原因。宿主 `controller.abort(new RunStop())`，循环在暂停时把 pending 收尾成
- *   "没执行"等结果，下一个 run 直接问模型；其它中止原因（丢租约、断线）照旧留 pending、恢复时补跑。
+ *   "没执行"等结果，下一个 run 直接问模型；其它中止原因（丢租约、断线）落在工具批中途时照旧留 pending、恢复时补跑（落在模型响应中途时那次响应里的调用收尾成"响应被中断"）。
  * - `isReplayable`：调用开始动手后中断了，能不能再跑一遍。缺省口径与 approval 的 byRisk 一致：只有 `risk: "low"` 的算可重放。
  * - `startedToolCallIds` / `toolStartedAt`：时间线里已经开始动手的调用（`core.tool_started`）及其开始时间。
  * - `outcomeUnknownText` / `withStartedAt`："结果未知"缀上调用开始时间（2026-11-09，AdRate 建议 10）。

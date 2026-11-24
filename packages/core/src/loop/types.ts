@@ -455,7 +455,10 @@ export interface LoopConfig {
    * 缺省 100。
    */
   maxTurns?: number
-  /** 宿主中止：当前请求停止后以 paused(host) 返回，已产出的内容仍入日志 */
+  /**
+   * 宿主中止：当前请求停止后暂停（工具批里还有没轮到的调用时不进 onTurnEnd；批里另有审批 / 客户端工具中断时 reason 随它，否则 paused(host)），已产出的内容仍入日志。
+   * 原因是 `RunStop` 时 pending 全部收尾成"没执行"；其它原因下工具批里没轮到的调用留 pending 补跑，被掐断的模型响应里的调用收尾成"响应被中断"
+   */
   signal?: AbortSignal
   /**
    * 模型调用遇到瞬断（连接被掐、超时、过载 / 限流 / 5xx）时的有限重试，缺省最多 3 次尝试、1s 起翻倍退避。
