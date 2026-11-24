@@ -651,10 +651,15 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
     await log.append([spilledResult])
     const ctxOf = (sessionId: string) => ({ sessionId, toolCallId: "t", log, emit: () => {} })
     const spilled = await recallResult({ seq: 1 }, ctxOf(SESSION))
-    expect(spilled.isError).toBe(true)
-    expect(spilled.content[0]).toMatchObject({
-      text: expect.stringContaining('stored verbatim as blob "b-1". Read it with fetch_blob({ id: "b-1" })'),
-    })
+    // 全库审查 2026-11-25 #66：这是"换个工具取"的指路，不是失败（否则 haltOnFailure 会拦下同批后面的调用）；
+    // recall 看不到工具表，所以如实说"在表里时"用 fetch_blob
+    expect(spilled.isError).toBe(false)
+    expect(spilled.content).toEqual([
+      {
+        type: "text",
+        text: '[seq 1 list() was too large to keep inline; its full output is stored verbatim as blob "b-1". Read it with fetch_blob({ id: "b-1" }) if that tool is in your tool list; recall cannot return it.]',
+      },
+    ])
     // 别的会话看不到
     expect(await recallResult({ seq: 1 }, ctxOf("other"))).toMatchObject({
       isError: true,

@@ -124,9 +124,10 @@ export async function recallResult(
   const { name, spilled, isError, content } = result.payload
   const head = `${name}(${digest(call?.payload.args)})`
   if (spilled) {
-    return fail(
-      `The output of seq ${args.seq} ${head} was too large to keep inline; it is stored verbatim as blob "${spilled.blobId}". Read it with ${FETCH_BLOB_TOOL_NAME}({ id: "${spilled.blobId}" }).`,
-    )
+    // 不是失败而是"换个工具取"的指路：以 isError 回会让 haltOnFailure 拦下同批后面的调用。
+    // recall 看不到本 run 的工具表（spill({ tool: false }) 或后来去掉了 spill 时没有 fetch_blob），只能如实附条件（全库审查 2026-11-25 #66）
+    const text = `[seq ${args.seq} ${head} was too large to keep inline; its full output is stored verbatim as blob "${spilled.blobId}". Read it with ${FETCH_BLOB_TOOL_NAME}({ id: "${spilled.blobId}" }) if that tool is in your tool list; ${RECALL_TOOL_NAME} cannot return it.]`
+    return { content: [{ type: "text", text }], isError: false }
   }
   const header = `[Recalled tool result seq ${args.seq}: ${head}${isError ? " (the tool reported an error)" : ""}. Original output follows verbatim.]`
   return { content: [{ type: "text", text: header }, ...content], isError: false }

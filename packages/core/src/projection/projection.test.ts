@@ -179,6 +179,17 @@ describe("defaultThresholdSummary：非文本片段按类型摘录", () => {
     const events = [user(1, "hi"), call(2, "c1"), result(3, "c1")]
     expect(defaultThresholdSummary(events, ctxOf(events))).not.toContain("Images, video or audio")
   })
+
+  // 全库审查 2026-11-25 #66：core 不知道模型手里有没有取回工具，首句只陈述"还在日志里"，
+  // 不说"由宿主取回"——那会与 compact 规则里"recall 可取回"相左
+  it("首句只说还在会话日志里，不替模型断定谁能取回", () => {
+    const events = [user(1, "hi"), call(2, "c1"), result(3, "c1")]
+    const text = defaultThresholdSummary(events, ctxOf(events))
+    expect(text.split("\n")[0]).toBe(
+      "[Context truncated by budget] Events seq 1-3 were removed to fit the context window. They remain in the session log.",
+    )
+    expect(text).not.toContain("by the host")
+  })
 })
 
 describe("visibilityFilter", () => {

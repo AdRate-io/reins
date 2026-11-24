@@ -129,7 +129,7 @@
 2. `beforeModel`（`force` 缺省开）：`timelineSoFar(ctx)` 里最后一次 compaction 之后已有 n 条请求 → 看第 n+1 级软线（缺省 `[0.75, 0.8]`）；`contextUsageRatio(ctx)`（估算 + `contextOverheadOf`，与感知、阈值兜底同一把尺）过线、且整理后模型动过（`modelActedSinceLastCompaction`），就 emit 一条 `system_note(kind=budget, directive, meta.compactRequest={usage, autoFoldAt, attempt, at})` 请模型先整理。两级都不理就留给阈值兜底。
 3. `afterModel`：记下本轮模型有没有发工具调用（`WeakMap<TurnContext>`）。
 4. `afterTool` 见到 `compact` 调用：`parseCompactArgs` 拿规范入参 → `planCompaction(ctx.events, args, { protectCallId, timeline, manifest })` 算切点与幸存者 → `ctx.emit` 一条 `core.compaction(decidedBy=forced 或 model, actor=model, parentId=tool_call)`（本段请过即 forced） → 把占位结果换成 `receipt()` 回执。日志顺序是 tool_call → compaction → tool_result。
-5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result` 或 `user_message`，原样返回内容并加说明头；工具结果原件已外溢则指向 blob 让模型用 `fetch_blob`。
+5. `recall({ seq })` 的 `execute` 走 `recallResult`：在本会话日志里 `locate` 到那条 `tool_result` 或 `user_message`，原样返回内容并加说明头；工具结果原件已外溢则指向 blob 让模型用 `fetch_blob`——这是指路不是失败，回非 isError（否则 `haltOnFailure` 会拦下同批后面的调用）；recall 看不到本 run 的工具表，文案如实附"在表里时"（2026-11-25 全库审查 #66）。
 6. `onTurnEnd`：本轮模型还要继续时，把本轮模型自决的整理数 + 本轮开始时投影新造的阈值兜底整理数 + `trailingCompactionRun(ctx.timeline)` 相加，达到 `maxConsecutive`（缺省 3）即返回 `{ pause: { reason: "budget", code: COMPACT_STALLED_PAUSE_CODE, note } }`（原因码 `reins.compact_stalled`，事后与预算触顶分得开）。
 
 ### pins
