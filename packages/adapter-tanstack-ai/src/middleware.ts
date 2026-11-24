@@ -89,8 +89,6 @@ import {
   type ChatMiddlewareConfig,
   type ChatMiddlewareContext,
   DISCOVERY_TOOL_NAME,
-  isStandardSchema,
-  parseWithStandardSchema,
   type StreamChunk,
   type SystemPrompt,
   type TokenUsage as TanstackUsage,
@@ -1278,30 +1276,28 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
       if (!s || !v) return undefined
       if (v.kind === "block") return { type: "skip", result: { error: `Tool call blocked: ${v.text}` } }
       if (v.kind === "unknown") return { type: "skip", result: { error: v.text } }
-      // 纵深防御（第二波返修 B1）：引擎将要执行的入参必须就是日志里的那份。引擎按客户端带来的历史取入参、原生审批的
-      // editedArgs 直接替换入参，任何一处与日志不同，执行的就不是时间线上记的调用。比的是"引擎对日志入参会得到的输入"：
-      // 引擎把非对象入参当 {}，Standard Schema 的工具再经同步、确定的 parseWithStandardSchema 变换（缺省值、强制类型）——
-      // 这里对日志入参走同一个函数再比（第二轮返修：Zod 是 TanStack 宿主最常见的写法，不比就是绕过口）；解析抛错按拦截（fail-closed）
+      // 纵深防御（第二波返修 B1）：引擎执行的调用原文必须就是日志里的那份。引擎按客户端带来的历史取调用原文
+      // （toolCall.function.arguments），客户端改了历史，执行的就不是时间线上记的调用。比的是原文：按引擎同一规则解析
+      // （空串当 "{}"、不是对象当 {}），与日志入参（不是对象当 {}）逐值比，所有工具同一口径、不经 schema——
+      // schema 的输出可能带每次求值都不同的缺省值（randomUUID、Date.now），拿它比会误拦普通调用（第三轮返修 A）。
+      // 原生审批的 editedArgs 不改原文，由 init 交给引擎的"已取消"拦（s.editRefused）
       const block = (text: string) => {
         s.verdicts.set(hookCtx.toolCallId, { kind: "block", text })
         return { type: "skip" as const, result: { error: `Tool call blocked: ${text}` } }
       }
       if (s.callArgs.has(hookCtx.toolCallId)) {
         const logged = s.callArgs.get(hookCtx.toolCallId)
-        const schema = s.hostTools.get(hookCtx.toolName)?.inputSchema
-        let expected: unknown = typeof logged === "object" && logged !== null ? logged : {}
-        if (schema !== undefined && isStandardSchema(schema)) {
-          try {
-            expected = parseWithStandardSchema(schema, expected)
-          } catch (err) {
-            return block(
-              `the logged arguments could not be checked against the tool's input schema (${errorMessageOf(err)}), so it was not executed`,
-            )
-          }
+        const expected = typeof logged === "object" && logged !== null ? logged : {}
+        let actual: unknown
+        try {
+          const parsed: unknown = JSON.parse(hookCtx.toolCall.function.arguments.trim() || "{}")
+          actual = typeof parsed === "object" && parsed !== null ? parsed : {}
+        } catch {
+          actual = undefined
         }
-        if (!sameArgs(hookCtx.args, expected))
+        if (actual === undefined || !sameArgs(actual, expected))
           return block(
-            `the arguments about to run (${JSON.stringify(hookCtx.args)}) differ from the call in the timeline, so it was not executed. Make the call again if you still need it`,
+            `the call about to run (${hookCtx.toolCall.function.arguments}) differs from the call in the timeline, so it was not executed. Make the call again if you still need it`,
           )
       }
       // 引擎逐个 await 本钩子后立刻执行该工具，所以这里就是"execute 之前"：不可重放的先记开始动手（与 runLoop 同一判据；

@@ -49,6 +49,7 @@ import {
   wrapGenericInterruptContinuation,
 } from "@tanstack/ai"
 import { describe, expect, it } from "vitest"
+import { z } from "zod"
 import { reinsApprovalInterrupt } from "./interrupt.js"
 import { framedSystemNote } from "./messages.js"
 import { type ReinsMiddlewareOptions, reinsMiddleware, TANSTACK_APPROVAL_POLICY } from "./middleware.js"
@@ -1470,6 +1471,54 @@ describe("reinsMiddleware：审批", () => {
         resume: [{ interruptId: "approval_c1", status: "resolved", payload: true }],
       })
       expect(received).toEqual([{ env: "staging" }])
+    })
+
+    it("A 缺省值每次求值都不同的 Zod 工具（requestId 缺省 = 计数器）：普通 run 照常执行，不被核对误拦（第三轮返修）", async () => {
+      const received: unknown[] = []
+      let k = 0
+      const mk = toolDefinition({
+        name: "mk",
+        description: "m",
+        inputSchema: z.object({ name: z.string(), requestId: z.string().default(() => `req-${++k}`) }),
+        metadata: { reins: { risk: "low" } },
+      }).server(async (args: unknown) => {
+        received.push(args)
+        return "ok"
+      }) as unknown as AnyTool
+      const f = fixture([{ blocks: [callTool("c1", "mk", { name: "a" })] }, { blocks: [say("done")] }])
+      await f.run({ messages: [user("go")], tools: [mk] })
+      // 缺省值求值几次由引擎与 schema 转换决定，这里只认"执行了一次、拿到了缺省值"
+      expect(received).toEqual([{ name: "a", requestId: expect.stringMatching(/^req-\d+$/) }])
+      const result = (await all(f.log)).find(
+        (e) => e.type === "core.tool_result",
+      ) as CoreEventOf<"core.tool_result">
+      expect(result.payload.isError).toBe(false)
+    })
+
+    it("A 真 Zod 工具的历史入参被客户端改了：照样拦下", async () => {
+      const shared = { log: new InMemoryEventLog() }
+      const received: unknown[] = []
+      const deploy = toolDefinition({
+        name: "deploy",
+        description: "上线",
+        inputSchema: z.object({ env: z.string() }),
+        needsApproval: true,
+      }).server(async (args: unknown) => {
+        received.push(args)
+        return "deployed"
+      }) as unknown as AnyTool
+      const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "staging" })] }], [], {}, shared)
+      const { runId } = interruptsOf(
+        await f.run({ messages: [user("上线")], tools: [deploy], runId: "run1" }),
+      )
+      const f2 = fixture([{ blocks: [say("好了")] }], [], {}, shared)
+      await f2.run({
+        messages: stagingHistory("deploy", '{"env":"prod"}'),
+        tools: [deploy],
+        parentRunId: runId,
+        resume: [{ interruptId: "approval_c1", status: "resolved", payload: true }],
+      })
+      expect(received).toEqual([])
     })
 
     it("N2 原生卡上的调用被 Socket rewrite：只出原生一张卡，批了也不执行改写后的入参（卡上展示的是原入参）", async () => {
