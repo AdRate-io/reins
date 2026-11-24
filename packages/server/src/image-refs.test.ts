@@ -53,6 +53,8 @@ describe("白名单：图片引用形态", () => {
   /** 与 core isContentPart 同口径的一组坏形状：两边都必须拒 */
   const BAD_REFS: unknown[] = [
     { type: "image", mime: "text/plain", blobId: "b1" },
+    // image/ 开头但不在白名单（isImageRef 放行，白名单另叠加；BUG-261125-1）
+    { type: "image", mime: "image/svg+xml", blobId: "b1" },
     { type: "image", mime: "image/png", blobId: "b1", data: "AA" },
     { type: "image", mime: "image/png", blobId: "" },
     { type: "image", mime: "image/png", blobId: "x".repeat(129) },

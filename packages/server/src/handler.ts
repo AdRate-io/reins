@@ -25,6 +25,7 @@ import {
   type EventDraft,
   type EventLog,
   isImageRef,
+  isSupportedImageMime,
   type LoopConfig,
   lastRunMarker,
   type Principal,
@@ -220,7 +221,8 @@ function parseBody(raw: unknown): { ok: true; body: AgentRequestBody } | { ok: f
  * 网络来的内容片段按白名单重建：非空、只收 text / image / video / audio，每个片段只留该类型的字段（壳字段由服务端定）。
  * 多余字段（如 actor）因此不可能进到循环、改变它对 input 的判别；不合规返回 undefined。
  * 图片两种形态（2026-11-24 媒体引用方案）：内联（mime + data）或引用（mime + blobId，形状直接调 core 的真源 `isImageRef`：
- * mime 以 "image/" 开头、blobId 非空且 ≤ 128 字符），`data` 与 `blobId` 并存即拒；引用的归属在 `rejectImageRefs` 另判。
+ * blobId 非空且 ≤ 128 字符），`data` 与 `blobId` 并存即拒；引用的归属在 `rejectImageRefs` 另判。两种形态的 mime 都直接调
+ * core 的白名单 `isSupportedImageMime`（jpeg / png / gif / webp）：厂商不收的类型一旦进日志，之后每轮整段回放都 400、会话卡死。
  * video / audio 的形状规则与 core `isContentPart` 同口径（mime 以 "video/" / "audio/" 开头、durationSec 缺省或有限正数）；
  * server 不依赖 core 内部判定，两份实现靠跨包用例锁住（同一组坏形状两边都拒）。tool_reference 不收（网络边界不能替模型点亮工具）
  */
@@ -240,10 +242,10 @@ function rebuildContentParts(x: unknown): ContentPart[] | undefined {
     if (part.type === "text" && typeof part.text === "string") out.push({ type: "text", text: part.text })
     else if (part.type === "image" && part.blobId !== undefined) {
       const ref = { type: "image" as const, mime: part.mime, blobId: part.blobId }
-      if (part.data !== undefined || !isImageRef(ref)) return undefined
+      if (part.data !== undefined || !isSupportedImageMime(part.mime) || !isImageRef(ref)) return undefined
       out.push(ref)
-    } else if (part.type === "image" && typeof part.mime === "string" && typeof part.data === "string")
-      out.push({ type: "image", mime: part.mime, data: part.data })
+    } else if (part.type === "image" && isSupportedImageMime(part.mime) && typeof part.data === "string")
+      out.push({ type: "image", mime: part.mime as string, data: part.data })
     else if (
       (part.type === "video" || part.type === "audio") &&
       typeof part.mime === "string" &&

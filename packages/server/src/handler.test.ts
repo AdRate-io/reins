@@ -999,6 +999,47 @@ describe("数组 input：网络侧只收内容片段（输入多条草稿方案�
   })
 })
 
+describe("内联图片：mime 白名单与 core 同一函数（BUG-261125-1）", () => {
+  /** 形状都对、只差 mime 的内联图：厂商不收，进了日志之后每轮整段回放都 400 */
+  const BAD_IMAGES: unknown[] = [
+    { type: "image", mime: "image/svg+xml", data: "PHN2Zz4=" },
+    { type: "image", mime: "text/plain", data: "aGk=" },
+    { type: "image", mime: "image/jpg", data: "AAAA" },
+    { type: "image", mime: "IMAGE/PNG", data: "AAAA" },
+    { type: "image", mime: "application/octet-stream", data: "AAAA" },
+  ]
+
+  it("server 回 400 且日志不变，core isContentPart 同样判不合规；草稿形态与投递分支同一道闸", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    for (const part of BAD_IMAGES) {
+      expect(isContentPart(part), JSON.stringify(part)).toBe(false)
+      const res = await handler(postRequest({ sessionId: "s1", input: [part] }))
+      expect(res.status, JSON.stringify(part)).toBe(400)
+      expect(await res.json()).toMatchObject({ error: "bad_request" })
+      const draft = await handler(
+        postRequest({ sessionId: "s1", input: { type: "core.user_message", payload: { content: [part] } } }),
+      )
+      expect(draft.status, `draft ${JSON.stringify(part)}`).toBe(400)
+    }
+    expect(await logged(log, "s1")).toHaveLength(0)
+  })
+
+  it("白名单四种照常放行", async () => {
+    const { handler, log } = setup(TWO_TURNS)
+    const input = ["image/jpeg", "image/png", "image/gif", "image/webp"].map((mime) => ({
+      type: "image",
+      mime,
+      data: "AAAA",
+    }))
+    for (const part of input) expect(isContentPart(part)).toBe(true)
+    const res = await handler(postRequest({ sessionId: "s1", input }))
+    expect(res.status).toBe(200)
+    expect(resultOf(parseFrames(await res.text()))?.status).toBe("done")
+    const msg = (await logged(log, "s1"))[1] as CoreEventOf<"core.user_message">
+    expect(msg.payload.content).toEqual(input)
+  })
+})
+
 describe("视频 / 音频片段：网络白名单（2026-11-05 方案）", () => {
   /** 与 core isContentPart 同口径的一组坏形状：两边都必须拒（server 是独立实现，靠这条用例锁住） */
   const BAD_MEDIA: unknown[] = [
