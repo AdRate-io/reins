@@ -2059,3 +2059,39 @@ describe("input 草稿数组（OnSet 建议 7）", () => {
     expect(added[3]?.trust).toBe("system")
   })
 })
+
+describe("needsApproval 抛错（全库审查 2026-11-25 #14）", () => {
+  it("谓词求值抛错按拒绝处理：落 isError 结果、不执行、run 照常收尾，下一个 run 不再卡在同一处", async () => {
+    const log = new InMemoryEventLog()
+    const executed: unknown[] = []
+    const pay = defineTool<{ amount: { value: number } }>({
+      name: "pay",
+      risk: "low",
+      description: "",
+      inputSchema: { type: "object" },
+      needsApproval: (a) => a.amount.value > 100,
+      execute: (a) => {
+        executed.push(a)
+        return "paid"
+      },
+    })
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "pay", {})] },
+      { drafts: [say("入参不对，我再问一下")] },
+      { drafts: [say("好")] },
+    ])
+    const first = await drain(runLoop(baseConfig(lowering, log, { tools: [pay], input: "付钱" })))
+    expect(first.result.status).toBe("done")
+    expect(executed).toEqual([])
+    const result = (await all(log)).find((e) => e.type === "core.tool_result") as
+      | CoreEventOf<"core.tool_result">
+      | undefined
+    expect(result?.payload.isError).toBe(true)
+    const text = (result?.payload.content[0] as { text: string } | undefined)?.text ?? ""
+    expect(text.startsWith("Approval check failed: ")).toBe(true)
+    expect(types(await all(log))).not.toContain("approval_request")
+
+    const second = await drain(runLoop(baseConfig(lowering, log, { tools: [pay], input: "继续" })))
+    expect(second.result.status).toBe("done")
+  })
+})

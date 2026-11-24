@@ -1143,10 +1143,18 @@ async function* executeToolCalls(
     // 审批：Socket 说 defer，或工具自己声明 needsApproval 且尚无批准 —— 都转审批暂停
     let approval = typeof verdict === "object" && "defer" in verdict ? verdict.defer : undefined
     if (!approval && !decided?.approved && tool.needsApproval !== undefined) {
-      const need =
-        typeof tool.needsApproval === "function"
-          ? await tool.needsApproval(args, toolCtx)
-          : tool.needsApproval
+      // 谓词求值抛错按拒绝处理（全局范式：规则求值异常视为 deny）：落 isError、不执行，与 validate 抛错同一种收法。
+      // 冒泡的话 run 不写终结事件，调用留作 pending，之后每个 run 补跑都撞同一个错
+      let need: boolean
+      try {
+        need =
+          typeof tool.needsApproval === "function"
+            ? await tool.needsApproval(args, toolCtx)
+            : tool.needsApproval
+      } catch (err) {
+        yield* await settle(errorResult(`Approval check failed: ${errorMessageOf(err)}`))
+        continue
+      }
       if (need) {
         approval = { policyId: BUILTIN_APPROVAL_POLICY, summary: `${name}(${JSON.stringify(args) ?? ""})` }
       }
