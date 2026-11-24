@@ -2,7 +2,7 @@
  * isContentPart：片段形状的唯一真源（工具返回值与 runLoop 输入共用），视频 / 音频边界（2026-11-05 方案）
  */
 import { describe, expect, it } from "vitest"
-import { isContentPart, normalizeToolOutput } from "./tools.js"
+import { isContentPart, isSupportedImageMime, normalizeToolOutput, unsupportedImageText } from "./tools.js"
 
 describe("isContentPart：视频 / 音频", () => {
   it.each([
@@ -31,9 +31,54 @@ describe("isContentPart：视频 / 音频", () => {
   ])("%s → 不合规", (_name, part) => {
     expect(isContentPart(part)).toBe(false)
   })
+})
 
-  it("image 的 mime 维持不校验（历史行为，收紧是破坏性变更）", () => {
-    expect(isContentPart({ type: "image", mime: "video/mp4", data: "AA" })).toBe(true)
+describe("isContentPart：图片 mime 白名单（全库审查 2026-11-25 #9）", () => {
+  it.each(["image/jpeg", "image/png", "image/gif", "image/webp"])("内联 %s → 合规", (mime) => {
+    expect(isSupportedImageMime(mime)).toBe(true)
+    expect(isContentPart({ type: "image", mime, data: "AA" })).toBe(true)
+    expect(isContentPart({ type: "image", mime, blobId: "b1" })).toBe(true)
+  })
+
+  it.each(["image/svg+xml", "image/heic", "image/jpg", "IMAGE/PNG", "text/plain", "video/mp4", "image/", ""])(
+    "%s → 内联与引用都不合规（厂商只收四种，写进日志后每轮 400、会话卡死）",
+    (mime) => {
+      expect(isSupportedImageMime(mime)).toBe(false)
+      expect(isContentPart({ type: "image", mime, data: "AA" })).toBe(false)
+      expect(isContentPart({ type: "image", mime, blobId: "b1" })).toBe(false)
+    },
+  )
+
+  it("非字符串 mime 不合规", () => {
+    expect(isSupportedImageMime(undefined)).toBe(false)
+    expect(isSupportedImageMime(1)).toBe(false)
+  })
+
+  it("工具返回不支持的图片：只把那一段换成说明，其余片段照旧，不以图片片段进日志、base64 不进上下文", () => {
+    const text = { type: "text", text: "chart below" }
+    const png = { type: "image", mime: "image/png", data: "AA" }
+    const svg = { type: "image", mime: "image/svg+xml", data: "PHN2Zy8+" }
+    const note = { type: "text", text: unsupportedImageText("image/svg+xml") }
+    expect(normalizeToolOutput([text, svg, png])).toEqual({ content: [text, note, png] })
+    // { content, isError } 形态同样逐段换，isError 保留
+    expect(normalizeToolOutput({ content: [svg], isError: true })).toEqual({ content: [note], isError: true })
+    // 引用形态同样
+    const ref = { type: "image", mime: "image/heic", blobId: "b1" }
+    expect(normalizeToolOutput([ref])).toEqual({
+      content: [{ type: "text", text: unsupportedImageText("image/heic") }],
+    })
+    expect(note.text).not.toContain("PHN2Zy8+")
+  })
+
+  it("白名单外图片之外还有别的坏片段：仍整个 JSON 化（只逐段换图片 mime 这一种）", () => {
+    const mixed = [
+      { type: "image", mime: "image/svg+xml", data: "PHN2Zy8+" },
+      { type: "audio", mime: "audio/mpeg", data: "AA", durationSec: 0 },
+    ]
+    expect(normalizeToolOutput(mixed)).toEqual({ content: [{ type: "text", text: JSON.stringify(mixed) }] })
+    // data 与 blobId 同时给不是"只差 mime"
+    const both = [{ type: "image", mime: "image/svg+xml", data: "AA", blobId: "b1" }]
+    expect(normalizeToolOutput(both)).toEqual({ content: [{ type: "text", text: JSON.stringify(both) }] })
   })
 
   it("tool_reference 的 inputSchema 不能是数组", () => {

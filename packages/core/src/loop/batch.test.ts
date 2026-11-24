@@ -171,7 +171,7 @@ describe("TurnContext.batch：runLoop 随落随更", () => {
     })
   })
 
-  it("批中途中止：正常路径的 onTurnEnd 看到缺结果的批；续跑补跑轮预置上次已落的", async () => {
+  it("批中途中止：正常路径不进 onTurnEnd（全库审查 2026-11-25 #11），以 paused(host) 收场；续跑补跑轮预置上次已落的", async () => {
     const log = new InMemoryEventLog()
     const ac = new AbortController()
     const stopper = defineTool<{ x: number }>({
@@ -190,8 +190,9 @@ describe("TurnContext.batch：runLoop 随落随更", () => {
     const snaps: Snap[] = []
     const cfg = config(lowering, log, { tools: [act, stopper], sockets: [probe(snaps)] })
     const first = await drain(runLoop({ ...cfg, input: "go", signal: ac.signal }))
-    expect(first.status).toBe("paused")
-    expect(snaps.find((s) => s.where === "onTurnEnd")).toMatchObject({ calls: ["c1", "c2"], results: ["c1"] })
+    expect(first).toMatchObject({ status: "paused", reason: "host" })
+    expect(snaps.find((s) => s.where === "onTurnEnd")).toBeUndefined()
+    expect(snaps.find((s) => s.where === "beforeTool:c1")).toMatchObject({ calls: ["c1", "c2"], results: [] })
 
     snaps.length = 0
     await drain(runLoop(cfg))

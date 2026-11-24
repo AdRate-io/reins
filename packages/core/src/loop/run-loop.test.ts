@@ -9,6 +9,7 @@ import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
 import { BUILTIN_APPROVAL_POLICY, runLoop } from "./run-loop.js"
 import { resolveSocketContributions } from "./static.js"
+import { MODEL_FAILED_NOT_EXECUTED_TEXT, MODEL_INTERRUPTED_NOT_EXECUTED_TEXT } from "./stop.js"
 import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
 import type {
@@ -1331,7 +1332,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
     })
   })
 
-  it("宿主中止：模型响应 aborted 后以 paused(host) 返回，未回答的 tool_call 记为 pending", async () => {
+  it("宿主中止：模型响应 aborted 后以 paused(host) 返回，这次响应里的 tool_call 收尾成'没执行'、不留 pending", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([
       { drafts: [callTool("c1", "add", { a: 1, b: 1 })], outcome: { stopReason: "aborted" } },
@@ -1340,9 +1341,13 @@ describe("runLoop：错误、中止、上限、交接", () => {
     expect(result.status).toBe("paused")
     if (result.status !== "paused") return
     expect(result.reason).toBe("host")
-    expect(result.state.pendingToolCallIds).toEqual(["c1"])
-    // 工具没执行
-    expect(types(await all(log))).toEqual(["tools_bound", "user_message", "tool_call", "run_paused"])
+    expect(result.state.pendingToolCallIds).toEqual([])
+    // 工具没执行：收尾结果排在 run_paused 之前
+    const events = await all(log)
+    expect(types(events)).toEqual(["tools_bound", "user_message", "tool_call", "tool_result", "run_paused"])
+    const settled = events[3] as CoreEventOf<"core.tool_result">
+    expect(settled.payload).toMatchObject({ toolCallId: "c1", isError: true })
+    expect(settled.payload.content).toEqual([{ type: "text", text: MODEL_INTERRUPTED_NOT_EXECUTED_TEXT }])
   })
 
   it("signal 在开轮前已中止：直接 paused(host)，不调模型", async () => {
@@ -2057,5 +2062,252 @@ describe("input 草稿数组（OnSet 建议 7）", () => {
     const added = (await all(log)).slice(before)
     expect(types(added).slice(0, 4)).toEqual(["tools_bound", "run_resumed", "system_note", "tool_result"])
     expect(added[3]?.trust).toBe("system")
+  })
+})
+
+describe("needsApproval 抛错（全库审查 2026-11-25 #14）", () => {
+  it("谓词求值抛错按拒绝处理：落 isError 结果、不执行、run 照常收尾，下一个 run 不再卡在同一处", async () => {
+    const log = new InMemoryEventLog()
+    const executed: unknown[] = []
+    const pay = defineTool<{ amount: { value: number } }>({
+      name: "pay",
+      risk: "low",
+      description: "",
+      inputSchema: { type: "object" },
+      needsApproval: (a) => a.amount.value > 100,
+      execute: (a) => {
+        executed.push(a)
+        return "paid"
+      },
+    })
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "pay", {})] },
+      { drafts: [say("入参不对，我再问一下")] },
+      { drafts: [say("好")] },
+    ])
+    const first = await drain(runLoop(baseConfig(lowering, log, { tools: [pay], input: "付钱" })))
+    expect(first.result.status).toBe("done")
+    expect(executed).toEqual([])
+    const result = (await all(log)).find((e) => e.type === "core.tool_result") as
+      | CoreEventOf<"core.tool_result">
+      | undefined
+    expect(result?.payload.isError).toBe(true)
+    const text = (result?.payload.content[0] as { text: string } | undefined)?.text ?? ""
+    expect(text.startsWith("Approval check failed: ")).toBe(true)
+    expect(types(await all(log))).not.toContain("approval_request")
+    // 宿主那份：模型不可见的非终结 core.error，排在结果之前，run 照常 done
+    const errors = (await all(log)).filter((e) => e.type === "core.error") as CoreEventOf<"core.error">[]
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.payload).toMatchObject({
+      category: "host",
+      retryable: false,
+      detail: { phase: "needsApproval", toolCallId: "c1" },
+    })
+    expect(errors[0]?.payload.message.startsWith("needsApproval of pay threw: ")).toBe(true)
+    expect(errors[0]?.seq ?? 0).toBeLessThan(result?.seq ?? 0)
+
+    const second = await drain(runLoop(baseConfig(lowering, log, { tools: [pay], input: "继续" })))
+    expect(second.result.status).toBe("done")
+  })
+})
+
+describe("模型响应落下 tool_call 后才失败（全库审查 2026-11-25 #13）", () => {
+  it.each([
+    ["stopReason error", { outcome: { stopReason: "error" as const, errorMessage: "stream ended early" } }],
+    ["降级层抛错", { throws: new Error("ECONNRESET") }],
+  ])(
+    "%s：这次响应里的调用收尾成'没执行'，不留 pending；下一个 run 不在用户新话之后补跑它",
+    async (_n, tail) => {
+      const log = new InMemoryEventLog()
+      const executed: unknown[] = []
+      const pay = defineTool<unknown>({
+        name: "pay",
+        risk: "low",
+        description: "",
+        inputSchema: { type: "object" },
+        execute: (a) => {
+          executed.push(a)
+          return "paid"
+        },
+      })
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("c1", "pay", '{"amount": 10')], ...tail },
+        { drafts: [say("好的，不付了")] },
+      ])
+      const cfg = baseConfig(lowering, log, { tools: [pay], retry: { sleep: async () => {} } })
+      const first = await drain(runLoop({ ...cfg, input: "付 10 块" }))
+      expect(first.result.status).toBe("error")
+      expect(types(await all(log))).toEqual([
+        "tools_bound",
+        "user_message",
+        "tool_call",
+        "tool_result",
+        "error",
+        "run_ended",
+      ])
+      const settled = (await all(log)).find(
+        (e) => e.type === "core.tool_result",
+      ) as CoreEventOf<"core.tool_result">
+      expect(settled.payload).toMatchObject({ toolCallId: "c1", isError: true })
+      expect(settled.payload.content).toEqual([{ type: "text", text: MODEL_FAILED_NOT_EXECUTED_TEXT }])
+
+      const second = await drain(runLoop({ ...cfg, input: "算了别付了" }))
+      expect(second.result.status).toBe("done")
+      expect(executed).toEqual([])
+    },
+  )
+})
+
+describe("起步 input 的 tool_result 对账 pending（全库审查 2026-11-25 #15）", () => {
+  const pick: Tool = {
+    name: "pick_file",
+    description: "",
+    inputSchema: { type: "object" },
+    side: "client",
+  }
+  const filled = (toolCallId: string, name = "pick_file") => ({
+    type: "core.tool_result" as const,
+    actor: "tool" as const,
+    payload: { toolCallId, name, content: [{ type: "text" as const, text: "a.txt" }], isError: false },
+  })
+
+  it("重复回填、孤儿 id、名字对不上、同一批两条：RangeError，一条日志都不写", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "pick_file", {})] },
+      { drafts: [say("收到")] },
+      { drafts: [say("不该到这")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [pick] })
+    const first = await drain(runLoop({ ...cfg, input: "选" }))
+    expect(first.result.status).toBe("paused")
+
+    // 还在等时：名字对不上、同一批两条都拒
+    for (const input of [[filled("c1", "other")], [filled("c1"), filled("c1")]]) {
+      const before = (await all(log)).length
+      await expect(drain(runLoop({ ...cfg, input }))).rejects.toThrow(RangeError)
+      expect((await all(log)).length).toBe(before)
+    }
+
+    const second = await drain(runLoop({ ...cfg, input: [filled("c1")] }))
+    expect(second.result.status).toBe("done")
+
+    // 回答过之后：重复回填与孤儿 id 都拒
+    for (const id of ["c1", "nope"]) {
+      const before = (await all(log)).length
+      await expect(drain(runLoop({ ...cfg, input: [filled(id)] }))).rejects.toThrow(/not pending/)
+      expect((await all(log)).length).toBe(before)
+    }
+  })
+
+  it("客户端工具在等审批时回填结果：RangeError，一条不写（与 server 409 approval_pending 同一判定）；批准后才收", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "pick_file", {})] },
+      { drafts: [say("收到")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [{ ...pick, needsApproval: true }] })
+    const first = await drain(runLoop({ ...cfg, input: "选" }))
+    expect(first.result).toMatchObject({ status: "paused", reason: "approval" })
+
+    const before = (await all(log)).length
+    await expect(drain(runLoop({ ...cfg, input: [filled("c1")] }))).rejects.toThrow(/waiting for approval/)
+    expect((await all(log)).length).toBe(before)
+
+    // 先交结论：批准后客户端工具转等客户端，再回填就收
+    const approved = await drain(
+      runLoop({ ...cfg, decisions: [{ toolCallId: "c1", approved: true, by: "u" }] }),
+    )
+    expect(approved.result).toMatchObject({ status: "paused" })
+    const done = await drain(runLoop({ ...cfg, input: [filled("c1")] }))
+    expect(done.result.status).toBe("done")
+  })
+})
+
+describe("厂商复用 / 不给 toolCallId（全库审查 2026-11-25 #50）", () => {
+  const toolCalls = async (log: InMemoryEventLog) =>
+    (await all(log)).filter((e): e is CoreEventOf<"core.tool_call"> => e.type === "core.tool_call")
+
+  it("后一轮复用已批准过的 id：改写成会话内唯一的 id（原值进 meta），新调用照样要审批", async () => {
+    const log = new InMemoryEventLog()
+    const executed: unknown[] = []
+    const deploy = defineTool<{ env: string }>({
+      name: "deploy",
+      risk: "low",
+      description: "",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: (a) => {
+        executed.push(a.env)
+        return "ok"
+      },
+    })
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("call_0", "deploy", { env: "staging" })] },
+      { drafts: [callTool("call_0", "deploy", { env: "prod" })] },
+      { drafts: [say("done")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [deploy] })
+    const first = await drain(runLoop({ ...cfg, input: "上线" }))
+    if (first.result.status !== "paused") throw new Error("expected paused")
+    const second = await drain(
+      runLoop({
+        ...cfg,
+        resume: first.result.state,
+        decisions: [{ toolCallId: "call_0", approved: true, by: "boss" }],
+      }),
+    )
+    // 第二个调用没被第一条批准带过去：停在审批上，prod 没执行
+    expect(second.result).toMatchObject({ status: "paused", reason: "approval" })
+    expect(executed).toEqual(["staging"])
+    const calls = await toolCalls(log)
+    expect(calls).toHaveLength(2)
+    const rewritten = calls[1]
+    expect(rewritten?.payload.toolCallId).not.toBe("call_0")
+    expect(rewritten?.payload.meta).toEqual({ originalToolCallId: "call_0" })
+    const requests = (await all(log)).filter((e) => e.type === "core.approval_request")
+    expect(requests.map((e) => (e as CoreEventOf<"core.approval_request">).payload.toolCallId)).toEqual([
+      "call_0",
+      rewritten?.payload.toolCallId,
+    ])
+  })
+
+  it("同一响应里两个空 id 的并行调用：各得唯一 id，两个都执行、结果各自配对", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("", "add", { a: 1, b: 1 }), callTool("", "add", { a: 2, b: 2 })] },
+      { drafts: [say("2 和 4")] },
+    ])
+    const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "算" })))
+    expect(result.status).toBe("done")
+    const ids = (await toolCalls(log)).map((c) => c.payload.toolCallId)
+    expect(ids).toHaveLength(2)
+    expect(new Set(ids).size).toBe(2)
+    expect(ids.every((id) => id.length > 0)).toBe(true)
+    const results = (await all(log)).filter(
+      (e): e is CoreEventOf<"core.tool_result"> => e.type === "core.tool_result",
+    )
+    expect(results.map((r) => r.payload.toolCallId)).toEqual(ids)
+    expect(results.map((r) => r.payload.content)).toEqual([
+      [{ type: "text", text: "2" }],
+      [{ type: "text", text: "4" }],
+    ])
+  })
+
+  it("宿主自定义 newId 带厂商不收的字符或过长：改写出的 id 规整成 ^[A-Za-z0-9_-]{1,64}$", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("", "add", { a: 1, b: 1 }), callTool("", "add", { a: 2, b: 2 })] },
+      { drafts: [say("2 和 4")] },
+    ])
+    let n = 0
+    // 前缀恒定、截断后两次改写会撞：缀序号区分，不能死循环
+    const newId = () => `org/${"x".repeat(80)}:${++n}`
+    const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "算", newId })))
+    expect(result.status).toBe("done")
+    const ids = (await toolCalls(log)).map((c) => c.payload.toolCallId)
+    expect(new Set(ids).size).toBe(2)
+    for (const id of ids) expect(id).toMatch(/^reins_org_x+(_\d+)?$/)
+    for (const id of ids) expect(id).toMatch(/^[A-Za-z0-9_-]{1,64}$/)
   })
 })

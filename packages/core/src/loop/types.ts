@@ -96,7 +96,10 @@ export interface Tool<TInput = unknown> {
   toModelOutput?(output: unknown): ContentPart[]
   /** 结果处置：超限截断或外溢（B4 消费） */
   resultPolicy?: { maxTokens?: number; overflow: "truncate" | "spill" }
-  /** 执行前是否要人审批。循环内置兜底：为真且没有任何 Socket 做主时，直接转审批暂停（安全默认值） */
+  /**
+   * 执行前是否要人审批。循环内置兜底：为真且没有任何 Socket 做主时，直接转审批暂停（安全默认值）。
+   * 函数形态抛错按拒绝处理：不执行，落 isError 结果 "Approval check failed: …"，原因另记一条模型不可见的 core.error（category "host"、detail.phase "needsApproval"）
+   */
   needsApproval?: boolean | ((input: TInput, ctx: ToolContext) => Promise<boolean> | boolean)
   risk?: "low" | "medium" | "high"
   /**
@@ -452,7 +455,10 @@ export interface LoopConfig {
    * 缺省 100。
    */
   maxTurns?: number
-  /** 宿主中止：当前请求停止后以 paused(host) 返回，已产出的内容仍入日志 */
+  /**
+   * 宿主中止：当前请求停止后暂停（工具批里还有没轮到的调用时不进 onTurnEnd；批里另有审批 / 客户端工具中断时 reason 随它，否则 paused(host)），已产出的内容仍入日志。
+   * 原因是 `RunStop` 时 pending 全部收尾成"没执行"；其它原因下工具批里没轮到的调用留 pending 补跑，被掐断的模型响应里的调用收尾成"响应被中断"
+   */
   signal?: AbortSignal
   /**
    * 模型调用遇到瞬断（连接被掐、超时、过载 / 限流 / 5xx）时的有限重试，缺省最多 3 次尝试、1s 起翻倍退避。
@@ -472,7 +478,11 @@ export interface LoopConfig {
    * 不传也能续跑（同一 sessionId 再跑一次），只是少了这层校验。
    */
   resume?: SerializedRunState
-  /** 宿主给 pending 调用的审批结论，先记成 approval_decision 再执行；指向非 pending 调用即拒绝 */
+  /**
+   * 宿主给**正在等审批**的调用（有 approval_request、还没有结论）的审批结论，先记成 approval_decision 再执行。
+   * 指向不在等审批的调用（不 pending、或从没发出审批请求）、或同一调用给了两条，即抛 RunStateError("unknown_tool_call")、不写日志
+   * （`assertDecisionsAwaitApproval`）。要取消一个没在等审批的 pending 调用，用停止（`RunStop`）
+   */
   decisions?: readonly ApprovalDecisionInput[]
   /** 状态签名密钥。给了就签发与校验；没给则状态不签名、恢复不验签（只适合可信环境） */
   secret?: string

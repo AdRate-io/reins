@@ -350,6 +350,73 @@ describe("RunState：恢复校验 fail-closed，拒绝发生在写日志之前",
     )
   })
 
+  it("decisions 不能批一个从没发出审批请求的 pending 调用（全库审查 2026-11-25 #12）", async () => {
+    // 工具批 [read, del(需审批)]：read 执行时普通中止 → paused(host)，del 留作 pending 但没有 approval_request
+    const log = new InMemoryEventLog()
+    const ac = new AbortController()
+    const executed: string[] = []
+    const read: Tool = {
+      name: "read",
+      description: "",
+      inputSchema: { type: "object" },
+      risk: "low",
+      execute: () => {
+        executed.push("read")
+        ac.abort()
+        return "ok"
+      },
+    }
+    const del: Tool = {
+      name: "del",
+      description: "",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: () => {
+        executed.push("del")
+        return "deleted"
+      },
+    }
+    const cfg: LoopConfig = {
+      sessionId: SESSION,
+      log,
+      lowering: new ScriptedLowering([
+        { drafts: [callTool("r1", "read", {}), callTool("d1", "del", {})] },
+        { drafts: [say("done")] },
+      ]),
+      model: MODEL,
+      tools: [read, del],
+      secret: SECRET,
+    }
+    const first = await drain(runLoop({ ...cfg, signal: ac.signal, input: "go" }))
+    if (first.result.status !== "paused") throw new Error("expected paused")
+    expect(types(await all(log))).not.toContain("approval_request")
+    const before = (await all(log)).length
+    await expectReject(
+      { ...cfg, resume: first.result.state, decisions: [{ toolCallId: "d1", approved: true, by: "u" }] },
+      "unknown_tool_call",
+    )
+    expect((await all(log)).length).toBe(before)
+    expect(executed).toEqual(["read"])
+    // 不带结论续跑：补跑时照常发审批请求，批准要等这一次
+    const second = await drain(runLoop({ ...cfg, resume: first.result.state }))
+    expect(second.result).toMatchObject({ status: "paused", reason: "approval" })
+    expect(executed).toEqual(["read"])
+  })
+
+  it("同一请求里同一调用的两条结论整批拒（第一条落下后它就不在等审批了）", async () => {
+    const { log, stateString } = await processA()
+    await expectReject(
+      processB(log, {
+        resume: JSON.parse(stateString),
+        decisions: [
+          { toolCallId: "c1", approved: false, by: "boss" },
+          { toolCallId: "c1", approved: true, by: "boss" },
+        ],
+      }),
+      "unknown_tool_call",
+    )
+  })
+
   it("形状不对 → malformed", async () => {
     const { log } = await processA()
     await expectReject(processB(log, { resume: { v: 2 } as unknown as SerializedRunState }), "malformed")

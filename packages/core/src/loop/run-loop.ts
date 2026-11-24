@@ -50,9 +50,9 @@ import { MAX_TURNS_PAUSE_CODE, pauseDetailOf, resolveSocketPause } from "./pause
 import { type ModelCallFailure, resolveRetry } from "./retry.js"
 import { awaitingOf } from "./run-status.js"
 import {
+  assertDecisionsAwaitApproval,
   computeConfigHash,
   pendingToolCalls,
-  RunStateError,
   serializeRunState,
   validateResume,
 } from "./state.js"
@@ -60,6 +60,8 @@ import { resolveSocketContributions } from "./static.js"
 import {
   isReplayable,
   isStopped,
+  MODEL_FAILED_NOT_EXECUTED_TEXT,
+  MODEL_INTERRUPTED_NOT_EXECUTED_TEXT,
   outcomeUnknownText,
   type StopTexts,
   stopTextsOf,
@@ -248,6 +250,45 @@ function isInputArray(
   return Array.isArray(input)
 }
 
+/**
+ * 起步 input 里的 tool_result 草稿对账 pending（全库审查 2026-11-25 #15）：toolCallId 必须正 pending、名字与那次调用相同、
+ * 同一批里不重复、且不在等审批。不过就抛 RangeError（调用方在写任何日志之前调）。日志只追加，重复或孤儿结果一旦写下，
+ * 降级层每次请求都会原样下发，厂商持续 400；在等审批的调用直接回填结果等于绕过审批（结论只能经 decisions 交），
+ * "在等审批"与 server 的 409 approval_pending 同一判定（awaitingOf）。pullInput 干脆不收 tool_result。
+ * 与 server checkInput 的刻意差异：server 还拒绝回填服务端工具（只收客户端工具的结果），进程内宿主是受信代码、可以替任何 pending 调用回填
+ */
+function checkInputToolResults(input: readonly EventDraft[], timeline: readonly Event[]): void {
+  const results = input.filter((d) => d.type === "core.tool_result")
+  if (results.length === 0) return
+  const pendingCalls = pendingToolCalls(timeline)
+  const pending = new Map(pendingCalls.map((c) => [c.payload.toolCallId, c.payload.name]))
+  const awaitingApproval = new Set(
+    awaitingOf({ timeline, pending: pendingCalls, tools: [], interruptions: [] })
+      .filter((a) => a.kind === "approval")
+      .map((a) => a.toolCallId),
+  )
+  const seen = new Set<string>()
+  for (const d of results) {
+    // 形状已由 checkInputDraft 校验：toolCallId 与 name 都是字符串
+    const { toolCallId, name } = d.payload as { toolCallId: string; name: string }
+    const expected = pending.get(toolCallId)
+    if (expected === undefined || seen.has(toolCallId)) {
+      throw new RangeError(
+        `input draft core.tool_result: call ${toolCallId} is not pending (already answered, unknown, or answered twice in this input)`,
+      )
+    }
+    if (name !== expected) {
+      throw new RangeError(`input draft core.tool_result: name must be ${expected}, got ${name}`)
+    }
+    if (awaitingApproval.has(toolCallId)) {
+      throw new RangeError(
+        `input draft core.tool_result: call ${toolCallId} is waiting for approval; pass the decision in decisions first`,
+      )
+    }
+    seen.add(toolCallId)
+  }
+}
+
 /** 输入草稿里可能带图片引用的内容片段：user_message / tool_result 的 content（形状已由 checkInputDraft 校验），其余为空 */
 function draftParts(draft: EventDraft): readonly ContentPart[] {
   if (draft.type !== "core.user_message" && draft.type !== "core.tool_result") return []
@@ -282,6 +323,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   // 起步先把整条日志过一遍注册表：有读不出来的事件（未登记的 ext.*、未来版本）就在写任何东西之前拒绝（P9 fail-closed）
   const startTimeline = await readTimeline(log, sessionId, { registry })
   let lastSeq = startTimeline.at(-1)?.seq ?? 0
+  // 回填的工具结果对账 pending 与审批（与 server checkInput 的异同见 checkInputToolResults）：在写任何东西之前拒
+  checkInputToolResults(input, startTimeline)
   /** run 级图片缓存（blobId → base64）：写入校验与换回共用，同一 blob 一个 run 只读一次 */
   const imageCache: ImageRefCache = new Map()
   // 起步 input 里的图片引用（媒体引用方案）：归属 / mime 不过抛 RangeError、一条不写，与片段形状校验同口径；
@@ -402,13 +445,20 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     ctx.budget.tokensSpent = tokensSpent
   }
 
-  /** 以 error 收尾：core.error 与终结记号 run_ended(error) 同批原子写入。非终结的 error（重试前、pullInput 抛错）不走这里 */
-  const fail = async (payload: ErrorPayload): Promise<{ events: Event[]; result: RunResult }> => {
+  /**
+   * 以 error 收尾：core.error 与终结记号 run_ended(error) 同批原子写入。非终结的 error（重试前、pullInput 抛错）不走这里。
+   * `settle` 是要排在 error 之前、同批写入的收尾结果（模型响应半途失败时，这次响应里的调用）
+   */
+  const fail = async (
+    payload: ErrorPayload,
+    settle: readonly EventDraft[] = [],
+  ): Promise<{ events: Event[]; result: RunResult }> => {
     const events = await append([
+      ...settle,
       { type: "core.error", actor: "system", payload },
       { type: "core.run_ended", actor: "system", payload: { status: "error", category: payload.category } },
     ])
-    const error = events[0] as CoreEventOf<"core.error">
+    const error = events[settle.length] as CoreEventOf<"core.error">
     return { events, result: { status: "error", sessionId, lastSeq, error } }
   }
 
@@ -435,19 +485,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         ...(cfg.allowConfigDrift !== undefined ? { allowConfigDrift: cfg.allowConfigDrift } : {}),
       })
     }
-    const decisions = ownDecisions
-    const pendingIds = new Set(pendingToolCalls(timeline).map((c) => c.payload.toolCallId))
-    for (const d of decisions) {
-      if (!pendingIds.has(d.toolCallId)) {
-        throw new RunStateError(
-          "unknown_tool_call",
-          `approval decision refers to call ${d.toolCallId}, which is not pending`,
-          {
-            toolCallId: d.toolCallId,
-          },
-        )
-      }
-    }
+    // 结论只收正在等审批的调用（不只是 pending）：口径在 state.ts。server 预校验眼下仍只查 pending，第二波改调同一个函数（BUG-261125-1）
+    assertDecisionsAwaitApproval({ sessionId, timeline, decisions: ownDecisions })
   }
 
   // ---- 工具表快照（P1）：每次 run 起步一条模型不可见的 tools_bound；与上一条比对有增删则再追加模型可见的说明 ----
@@ -668,10 +707,11 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
         imageCache,
       })
       toolCallsTotal += settled.executed
-      // 用户停止时不进 onTurnEnd：余下的调用还 pending，Socket 判出 handoff / done 就会把它们带进一个不是 paused 的结局
-      if (settled.interruptions.length > 0 || isStopped(cfg.signal)) {
-        const reason = pauseReasonOf(settled.interruptions)
-        const { events, result } = await pause(reason, settled.interruptions)
+      // 用户停止、或其它中止（断线、丢租约）落在批中途时不进 onTurnEnd：余下的调用还 pending，
+      // Socket 判出 handoff / done 就会把它们带进一个不是 paused 的结局
+      if (settled.interruptions.length > 0 || isStopped(cfg.signal) || abortedMidBatch(cfg.signal, batch)) {
+        const interruptions = withBatchAbortNote(settled.interruptions)
+        const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
         yield* events
         return result
       }
@@ -724,6 +764,8 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
      * 成功一次后瞬断重试复用同一份；存储故障（非 not_found）在 try 里抛出，走模型调用失败与重试判定
      */
     let hydrated: Event[] | undefined
+    /** 本会话已用过的 toolCallId：模型新给的调用 id 与它们撞了（或为空）就改写，见 withUniqueToolCallId */
+    const usedCallIds = toolCallIdsOf(timeline)
     for (let attempt = 1; ; attempt++) {
       let failure: ModelCallFailure | undefined
       let attemptOutput = 0
@@ -748,7 +790,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
             break
           }
           // 模型说的每一块立刻入日志，宿主随即拿到
-          const appended = await append([step.value])
+          const appended = await append([withUniqueToolCallId(step.value, usedCallIds, () => newId(now()))])
           modelEvents.push(...appended)
           attemptOutput += appended.length
           yield* appended
@@ -787,22 +829,31 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
             }
       // 宿主中止导致的失败（连接阶段被掐：fetch 抛出的是 signal.reason，不一定是 AbortError）是暂停不是错误
       if (!canRetry && cfg.signal?.aborted) {
+        // 抛错前已落日志的调用来自一次没说完的响应，与下面 aborted 出口同样收尾后再暂停
+        const dropped = await append(droppedCallResults(modelEvents, cfg.signal))
         const { events, result } = await pause("host", [
           { kind: "host", note: "host aborted the model request" },
         ])
+        yield* dropped
         yield* events
         return result
       }
       if (!canRetry) {
-        const { events, result } = await fail({
-          ...base,
-          retryable: transient,
-          detail: {
-            ...base.detail,
-            attempts: attempt,
-            ...(attemptOutput > 0 ? { partialOutput: attemptOutput } : {}),
+        // 这次响应里已落日志的调用一并收尾成"没执行"（与停止收尾同一形状）：error 结局不能带着 pending，
+        // 否则下一个 run 在用户的新话之后、模型读到它之前就先补跑一条可能入参截断的调用
+        const dropped = notExecutedResults(modelEvents, MODEL_FAILED_NOT_EXECUTED_TEXT)
+        const { events, result } = await fail(
+          {
+            ...base,
+            retryable: transient,
+            detail: {
+              ...base.detail,
+              attempts: attempt,
+              ...(attemptOutput > 0 ? { partialOutput: attemptOutput } : {}),
+            },
           },
-        })
+          dropped,
+        )
         yield* events
         return result
       }
@@ -837,10 +888,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     yield* await flush()
 
     if (outcome.stopReason === "aborted") {
-      // 已完整的内容块都入了日志；未回答的 tool_call 留给恢复时补齐
+      // 这次响应没说完：降级层可能按已累积的半截入参吐出 tool_call（不保证是完整的块），所以这些调用一律收尾成"没执行"
+      // 再暂停、不进 onTurnEnd，不留作 pending——否则下一个 run 在用户的新话之后、模型读到它之前就先补跑
+      const dropped = await append(droppedCallResults(modelEvents, cfg.signal))
       const { events, result } = await pause("host", [
         { kind: "host", note: "host aborted the model response" },
       ])
+      yield* dropped
       yield* events
       return result
     }
@@ -877,8 +931,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       },
     ])
 
-    // 用户停止在工具批中途：余下调用还 pending，同样不进 onTurnEnd（见续跑处）
-    if (interruptions.length > 0 || (calls.length > 0 && isStopped(cfg.signal))) {
+    // 用户停止或其它中止在工具批中途：余下调用还 pending，同样不进 onTurnEnd（见续跑处）
+    if (
+      interruptions.length > 0 ||
+      (calls.length > 0 && isStopped(cfg.signal)) ||
+      abortedMidBatch(cfg.signal, batch)
+    ) {
+      interruptions = withBatchAbortNote(interruptions)
       const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
       yield* events
       return result
@@ -966,6 +1025,95 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     ])
     await cfg.onHandoff?.(sessionId, toSessionId)
     return { status: "handoff", sessionId, lastSeq, toSessionId }
+  }
+}
+
+/**
+ * 中止（任何原因）落在工具批中途：signal 已中止且本批还有调用没落结果（全库审查 2026-11-25 #11）。
+ * executeToolCalls 见到中止只 break、不推中断，余下调用留作 pending；此时再进 onTurnEnd，Socket 判出 handoff / stop
+ * 就会带着 pending 以非 paused 结局收场（旧会话留一条过期的写调用等人重放）。用户停止由 isStopped 那支另判
+ */
+function abortedMidBatch(signal: AbortSignal | undefined, batch: MutableToolBatch): boolean {
+  if (!signal?.aborted) return false
+  const answered = new Set(batch.results.map((r) => r.payload.toolCallId))
+  return batch.calls.some((c) => !answered.has(c.payload.toolCallId))
+}
+
+/**
+ * 一次没说完的模型响应里已落日志的 tool_call → 同形状的"没执行"收尾结果（isError，不执行）。
+ * 模型失败（error 结局）与宿主中止（paused 结局）共用；只管形状，文案由调用方定
+ */
+function notExecutedResults(modelEvents: readonly Event[], text: string): ToolResultDraft[] {
+  return modelEvents
+    .filter((e): e is ToolCallEvent => e.type === "core.tool_call")
+    .map(
+      (call): ToolResultDraft => ({
+        type: "core.tool_result",
+        actor: "tool",
+        parentId: call.id,
+        provenance: { source: call.payload.name },
+        payload: {
+          toolCallId: call.payload.toolCallId,
+          name: call.payload.name,
+          content: [{ type: "text", text }],
+          isError: true,
+        },
+      }),
+    )
+}
+
+/**
+ * 宿主中止模型响应时要先落的收尾结果。用户停止（RunStop）返回空：交给 pause() 的 settleStopped，
+ * 文案随停止原因，与停止落在别处时一致
+ */
+function droppedCallResults(
+  modelEvents: readonly Event[],
+  signal: AbortSignal | undefined,
+): ToolResultDraft[] {
+  return isStopped(signal) ? [] : notExecutedResults(modelEvents, MODEL_INTERRUPTED_NOT_EXECUTED_TEXT)
+}
+
+/** 批中途被中止而没有别的中断时补一条宿主中断说明；已有中断（审批、客户端工具…）原样返回 */
+function withBatchAbortNote(interruptions: Interruption[]): Interruption[] {
+  return interruptions.length > 0
+    ? interruptions
+    : [{ kind: "host", note: "host aborted during the tool batch" }]
+}
+
+/** 时间线里全部 tool_call 的 toolCallId */
+function toolCallIdsOf(timeline: readonly Event[]): Set<string> {
+  const ids = new Set<string>()
+  for (const raw of timeline) {
+    const e = raw as CoreEvent
+    if (e.type === "core.tool_call") ids.add(e.payload.toolCallId)
+  }
+  return ids
+}
+
+/**
+ * 模型给的调用 id 在会话内必须唯一且非空（全库审查 2026-11-25 #50）：审批结论、tool_started、pending 与结果配对都按 toolCallId 认领，
+ * 号池中转站或不合规的兼容端点按轮次编号（call_0）或干脆不给（Chat 线落空串）时，后一个调用会认领前一个的批准 / 拒绝 /
+ * "已开始"，免审批执行或被误判。撞了就改写成 `reins_<newId>`、原值记进 `payload.meta.originalToolCallId`（不进模型上下文）；
+ * 历史回放按改写后的 id 成对下发，厂商只要求同一请求里调用与结果对得上。不撞的草稿原样返回，并登记进 `used`。
+ * 改写出的 id 规整成 `^[A-Za-z0-9_-]{1,64}$`（Anthropic tool_use id 的规矩，三家都收）：宿主自定义的 `newId` 可能带别的字符，
+ * 不规整的话改写本身就会让每次回放 400。pi-ai Responses 的复合 id（`call_x|fc_y`）被改写后 fc_ 部分不再回放，只在撞 id 时发生
+ */
+function withUniqueToolCallId(draft: EventDraft, used: Set<string>, freshId: () => string): EventDraft {
+  if (draft.type !== "core.tool_call") return draft
+  const payload = draft.payload as ToolCallEvent["payload"]
+  const original = payload.toolCallId
+  if (typeof original === "string" && original.length > 0 && !used.has(original)) {
+    used.add(original)
+    return draft
+  }
+  // 规整与截断后仍撞（宿主 newId 前 58 字符恒定之类）就缀序号，保证必然结束
+  const base = `reins_${freshId().replace(/[^A-Za-z0-9_-]/g, "_")}`.slice(0, 64)
+  let id = base
+  for (let i = 2; used.has(id); i++) id = `${base.slice(0, 63 - String(i).length)}_${i}`
+  used.add(id)
+  return {
+    ...draft,
+    payload: { ...payload, toolCallId: id, meta: { ...payload.meta, originalToolCallId: original } },
   }
 }
 
@@ -1143,10 +1291,29 @@ async function* executeToolCalls(
     // 审批：Socket 说 defer，或工具自己声明 needsApproval 且尚无批准 —— 都转审批暂停
     let approval = typeof verdict === "object" && "defer" in verdict ? verdict.defer : undefined
     if (!approval && !decided?.approved && tool.needsApproval !== undefined) {
-      const need =
-        typeof tool.needsApproval === "function"
-          ? await tool.needsApproval(args, toolCtx)
-          : tool.needsApproval
+      // 谓词求值抛错按拒绝处理（全局范式：规则求值异常视为 deny）：落 isError、不执行，与 validate 抛错同一种收法。
+      // 冒泡的话 run 不写终结事件，调用留作 pending，之后每个 run 补跑都撞同一个错
+      let need: boolean
+      try {
+        need =
+          typeof tool.needsApproval === "function"
+            ? await tool.needsApproval(args, toolCtx)
+            : tool.needsApproval
+      } catch (err) {
+        // 宿主那份记录：模型不可见的 core.error（与工具结果图片引用读库失败同一做法，经 emit 排在结果之前落下）
+        ctx.emit({
+          type: "core.error",
+          actor: "system",
+          payload: {
+            category: "host",
+            message: `needsApproval of ${name} threw: ${describeThrown(err)}`,
+            retryable: false,
+            detail: { phase: "needsApproval", toolCallId },
+          },
+        })
+        yield* await settle(errorResult(`Approval check failed: ${errorMessageOf(err)}`))
+        continue
+      }
       if (need) {
         approval = { policyId: BUILTIN_APPROVAL_POLICY, summary: `${name}(${JSON.stringify(args) ?? ""})` }
       }

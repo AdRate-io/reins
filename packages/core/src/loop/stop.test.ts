@@ -2,7 +2,7 @@
  * 停止语义与中断不重放（2026-11-05，docs/implementation-plans/2026-11-05-停止语义与中断不重放.md D1 / D2）。
  *
  * D1：用户停止（`abort(new RunStop())`）时，所有暂停出口都把 pending 收尾成 isError 结果，下一个 run 直接问模型；
- *     其它中止原因照旧留 pending、恢复时补跑。
+ *     其它中止原因落在工具批中途时照旧留 pending、恢复时补跑；落在模型响应中途时这次响应里的调用收尾成"响应被中断"。
  * D2：不可重放的工具在 execute 之前记 `core.tool_started`；续跑见到"started 无结果"就落"结果未知"、不再执行。
  */
 import { describe, expect, it } from "vitest"
@@ -18,6 +18,7 @@ import {
   INTERRUPTED_NOT_EXECUTED_TEXT,
   isReplayable,
   isStopReason,
+  MODEL_INTERRUPTED_NOT_EXECUTED_TEXT,
   OUTCOME_UNKNOWN_TEXT,
   outcomeUnknownText,
   RunStop,
@@ -316,7 +317,7 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
     }
   })
 
-  it("模型回复中途：已完整的 tool_call 停止时落'没执行'；非停止留 pending", async () => {
+  it("模型回复中途：响应里的 tool_call 停止时落'没执行'；非停止落'响应被中断'——都不留 pending（全库审查返修）", async () => {
     for (const stop of [true, false]) {
       const log = new InMemoryEventLog()
       const ac = new AbortController()
@@ -335,9 +336,34 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
         expect(result.state.pendingToolCallIds).toEqual([])
         expect((await resultTexts(log)).c1).toBe(STOPPED_NOT_EXECUTED_TEXT)
       } else {
-        expect(result.state.pendingToolCallIds).toEqual(["c1"])
+        // 降级层被中止时可能按半截入参吐出调用：不留 pending，下一个 run 不会在用户新话之后先补跑它
+        expect(result.state.pendingToolCallIds).toEqual([])
+        expect((await resultTexts(log)).c1).toBe(MODEL_INTERRUPTED_NOT_EXECUTED_TEXT)
         expect(result.interruptions[0]).toEqual({ kind: "host", note: "host aborted the model response" })
       }
+    }
+  })
+
+  it("模型流抛错前已落了 tool_call、此时宿主已中止（连接被掐）：同样收尾成'响应被中断'，以 paused(host) 结束", async () => {
+    for (const stop of [true, false]) {
+      const log = new InMemoryEventLog()
+      const ac = new AbortController()
+      const executed: string[] = []
+      const lowering = new ScriptedLowering((): ScriptedTurn => {
+        ac.abort(stop ? new RunStop() : undefined)
+        return { drafts: [callTool("c1", "a", '{"x": 1')], throws: ac.signal.reason as Error }
+      })
+      const { result } = await drain(
+        runLoop(cfgOf(lowering, log, { tools: [writeTool("a", executed)], input: "go", signal: ac.signal })),
+      )
+      expect(result).toMatchObject({ status: "paused", reason: "host" })
+      if (result.status !== "paused") continue
+      expect(executed).toEqual([])
+      expect(result.state.pendingToolCallIds).toEqual([])
+      expect((await resultTexts(log)).c1).toBe(
+        stop ? STOPPED_NOT_EXECUTED_TEXT : MODEL_INTERRUPTED_NOT_EXECUTED_TEXT,
+      )
+      expect(types(await all(log))).not.toContain("error")
     }
   })
 
@@ -701,4 +727,96 @@ describe("D2：中断后写工具不重放", () => {
     // 模型看到的请求里没有 tool_started
     expect(lowering.requests[1]?.events.map((e) => e.type)).not.toContain("core.tool_started")
   })
+})
+
+describe("非停止中止落在工具批中途（全库审查 2026-11-25 #11）", () => {
+  it("断线 / 丢租约式的普通中止 + Socket 判 handoff：不进 onTurnEnd，以 paused(host) 收场、pending 留着补跑", async () => {
+    const log = new InMemoryEventLog()
+    const ac = new AbortController()
+    const executed: string[] = []
+    let turnEnds = 0
+    const handoffer: Socket = {
+      onTurnEnd() {
+        turnEnds++
+        return { handoff: { summary: "交给下一位", reason: "context" } }
+      },
+    }
+    const tools = [writeTool("a", executed, () => ac.abort()), writeTool("b", executed)]
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "a", { x: 1 }), callTool("c2", "b", { x: 2 })] },
+    ])
+    const { result } = await drain(
+      runLoop(cfgOf(lowering, log, { tools, sockets: [handoffer], input: "go", signal: ac.signal })),
+    )
+    expect(result).toMatchObject({ status: "paused", reason: "host" })
+    expect(turnEnds).toBe(0)
+    expect(executed).toEqual(["a:1"])
+    expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c2"])
+    expect(types(await all(log))).not.toContain("handoff")
+  })
+
+  // 全库审查 2026-11-25 #58：onTurnEnd 的三种非 continue 决定 × 正常路径 / 补跑路径，结局都是 paused(host) 且 pending 保留
+  const decisions: [string, ReturnType<NonNullable<Socket["onTurnEnd"]>>][] = [
+    ["stop", "stop"],
+    ["handoff", { handoff: { summary: "交给下一位", reason: "context" } }],
+    ["pause", { pause: { reason: "budget", note: "over budget" } }],
+  ]
+
+  it.each(decisions)(
+    "正常路径：普通中止批中途 + onTurnEnd 判 %s → paused(host)，c2 仍 pending",
+    async (_n, d) => {
+      const log = new InMemoryEventLog()
+      const ac = new AbortController()
+      const executed: string[] = []
+      const decider: Socket = { onTurnEnd: () => d }
+      const tools = [writeTool("a", executed, () => ac.abort()), writeTool("b", executed)]
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("c1", "a", { x: 1 }), callTool("c2", "b", { x: 2 })] },
+      ])
+      const { result } = await drain(
+        runLoop(cfgOf(lowering, log, { tools, sockets: [decider], input: "go", signal: ac.signal })),
+      )
+      expect(result).toMatchObject({
+        status: "paused",
+        reason: "host",
+        interruptions: [{ kind: "host", note: "host aborted during the tool batch" }],
+      })
+      expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c2"])
+      expect(types(await all(log)).at(-1)).toBe("run_paused")
+    },
+  )
+
+  it.each(decisions)(
+    "补跑路径：补跑途中普通中止 + onTurnEnd 判 %s → paused(host)，余下仍 pending",
+    async (_n, d) => {
+      const log = new InMemoryEventLog()
+      const first = new AbortController()
+      const second = new AbortController()
+      const executed: string[] = []
+      const tools = [
+        writeTool("a", executed, () => first.abort()),
+        writeTool("b", executed, () => second.abort()),
+        writeTool("c", executed),
+      ]
+      const lowering = new ScriptedLowering([
+        {
+          drafts: [
+            callTool("c1", "a", { x: 1 }),
+            callTool("c2", "b", { x: 2 }),
+            callTool("c3", "c", { x: 3 }),
+          ],
+        },
+      ])
+      await drain(runLoop(cfgOf(lowering, log, { tools, input: "go", signal: first.signal })))
+      expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c2", "c3"])
+
+      const decider: Socket = { onTurnEnd: () => d }
+      const { result } = await drain(
+        runLoop(cfgOf(lowering, log, { tools, sockets: [decider], signal: second.signal })),
+      )
+      expect(result).toMatchObject({ status: "paused", reason: "host" })
+      expect(executed).toEqual(["a:1", "b:2"])
+      expect(pendingToolCalls(await all(log)).map((c) => c.payload.toolCallId)).toEqual(["c3"])
+    },
+  )
 })

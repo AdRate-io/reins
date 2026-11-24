@@ -5,7 +5,7 @@
  * 对改用户广告的写工具，重复执行就是重复花钱。这里放三件纯东西，循环与 asTool 共用：
  *
  * - `RunStop` / `isStopReason`：停止是中止的一种原因。宿主 `controller.abort(new RunStop())`，循环在暂停时把 pending 收尾成
- *   "没执行"等结果，下一个 run 直接问模型；其它中止原因（丢租约、断线）照旧留 pending、恢复时补跑。
+ *   "没执行"等结果，下一个 run 直接问模型；其它中止原因（丢租约、断线）落在工具批中途时照旧留 pending、恢复时补跑（落在模型响应中途时那次响应里的调用收尾成"响应被中断"）。
  * - `isReplayable`：调用开始动手后中断了，能不能再跑一遍。缺省口径与 approval 的 byRisk 一致：只有 `risk: "low"` 的算可重放。
  * - `startedToolCallIds` / `toolStartedAt`：时间线里已经开始动手的调用（`core.tool_started`）及其开始时间。
  * - `outcomeUnknownText` / `withStartedAt`："结果未知"缀上调用开始时间（2026-11-09，AdRate 建议 10）。
@@ -26,6 +26,21 @@ export const STOPPED_NOT_EXECUTED_TEXT =
 /** 用户停止：可重放的调用（子代理）做了一半 */
 export const STOPPED_IN_PROGRESS_TEXT =
   "Interrupted: the run was stopped by the user while this call was in progress; it may have partly taken effect."
+
+/**
+ * 模型响应在落下 tool_call 之后才失败（断流、stopReason error）：run 以 error 收尾前把这次响应里的调用收尾成这句（全库审查 2026-11-25 #13）。
+ * 入参可能是截断的，也不知道模型原本还要说什么；留作 pending 的话，下一个 run 会在用户的新话之后、模型读到它之前先执行
+ */
+export const MODEL_FAILED_NOT_EXECUTED_TEXT =
+  "Not executed: the model response failed before it was complete, so this call was dropped."
+
+/**
+ * 模型响应被宿主中止（断线、丢租约，`stopReason: "aborted"` 或连接阶段被掐）而这次响应里已落了 tool_call：
+ * 暂停前把这些调用收尾成这句（全库审查 2026-11-25 返修，与 #13 同一形状）。降级层被中止时可能按已累积的半截入参吐出调用，
+ * 留作 pending 的话下一个 run 会在用户的新话之后先补跑它。用户停止不用这句，走 `stopTextsOf` 的"没执行"
+ */
+export const MODEL_INTERRUPTED_NOT_EXECUTED_TEXT =
+  "Not executed: the model response was interrupted before it was complete, so this call was dropped."
 
 /** 宿主收尾遗留调用（`RunStop("host")`，如 asTool 开新一轮前）：调用还没开始。不说"用户停止"——多半是进程中途死亡留下的 */
 export const INTERRUPTED_NOT_EXECUTED_TEXT =
