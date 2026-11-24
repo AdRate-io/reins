@@ -2215,7 +2215,9 @@ describe("起步 input 的 tool_result 对账 pending（全库审查 2026-11-25 
     expect((await all(log)).length).toBe(before)
 
     // 先交结论：批准后客户端工具转等客户端，再回填就收
-    const approved = await drain(runLoop({ ...cfg, decisions: [{ toolCallId: "c1", approved: true }] }))
+    const approved = await drain(
+      runLoop({ ...cfg, decisions: [{ toolCallId: "c1", approved: true, by: "u" }] }),
+    )
     expect(approved.result).toMatchObject({ status: "paused" })
     const done = await drain(runLoop({ ...cfg, input: [filled("c1")] }))
     expect(done.result.status).toBe("done")
