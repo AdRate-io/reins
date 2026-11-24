@@ -2189,6 +2189,27 @@ describe("起步 input 的 tool_result 对账 pending（全库审查 2026-11-25 
       expect((await all(log)).length).toBe(before)
     }
   })
+
+  it("客户端工具在等审批时回填结果：RangeError，一条不写（与 server 409 approval_pending 同一判定）；批准后才收", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "pick_file", {})] },
+      { drafts: [say("收到")] },
+    ])
+    const cfg = baseConfig(lowering, log, { tools: [{ ...pick, needsApproval: true }] })
+    const first = await drain(runLoop({ ...cfg, input: "选" }))
+    expect(first.result).toMatchObject({ status: "paused", reason: "approval" })
+
+    const before = (await all(log)).length
+    await expect(drain(runLoop({ ...cfg, input: [filled("c1")] }))).rejects.toThrow(/waiting for approval/)
+    expect((await all(log)).length).toBe(before)
+
+    // 先交结论：批准后客户端工具转等客户端，再回填就收
+    const approved = await drain(runLoop({ ...cfg, decisions: [{ toolCallId: "c1", approved: true }] }))
+    expect(approved.result).toMatchObject({ status: "paused" })
+    const done = await drain(runLoop({ ...cfg, input: [filled("c1")] }))
+    expect(done.result.status).toBe("done")
+  })
 })
 
 describe("厂商复用 / 不给 toolCallId（全库审查 2026-11-25 #50）", () => {

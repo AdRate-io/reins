@@ -252,13 +252,21 @@ function isInputArray(
 
 /**
  * 起步 input 里的 tool_result 草稿对账 pending（全库审查 2026-11-25 #15）：toolCallId 必须正 pending、名字与那次调用相同、
- * 同一批里不重复。不过就抛 RangeError（调用方在写任何日志之前调）。日志只追加，重复或孤儿结果一旦写下，
- * 降级层每次请求都会原样下发，厂商持续 400；pullInput 干脆不收 tool_result，server 对不在 pending 的回 409，口径一致
+ * 同一批里不重复、且不在等审批。不过就抛 RangeError（调用方在写任何日志之前调）。日志只追加，重复或孤儿结果一旦写下，
+ * 降级层每次请求都会原样下发，厂商持续 400；在等审批的调用直接回填结果等于绕过审批（结论只能经 decisions 交），
+ * "在等审批"与 server 的 409 approval_pending 同一判定（awaitingOf）。pullInput 干脆不收 tool_result。
+ * 与 server checkInput 的刻意差异：server 还拒绝回填服务端工具（只收客户端工具的结果），进程内宿主是受信代码、可以替任何 pending 调用回填
  */
 function checkInputToolResults(input: readonly EventDraft[], timeline: readonly Event[]): void {
   const results = input.filter((d) => d.type === "core.tool_result")
   if (results.length === 0) return
-  const pending = new Map(pendingToolCalls(timeline).map((c) => [c.payload.toolCallId, c.payload.name]))
+  const pendingCalls = pendingToolCalls(timeline)
+  const pending = new Map(pendingCalls.map((c) => [c.payload.toolCallId, c.payload.name]))
+  const awaitingApproval = new Set(
+    awaitingOf({ timeline, pending: pendingCalls, tools: [], interruptions: [] })
+      .filter((a) => a.kind === "approval")
+      .map((a) => a.toolCallId),
+  )
   const seen = new Set<string>()
   for (const d of results) {
     // 形状已由 checkInputDraft 校验：toolCallId 与 name 都是字符串
@@ -271,6 +279,11 @@ function checkInputToolResults(input: readonly EventDraft[], timeline: readonly 
     }
     if (name !== expected) {
       throw new RangeError(`input draft core.tool_result: name must be ${expected}, got ${name}`)
+    }
+    if (awaitingApproval.has(toolCallId)) {
+      throw new RangeError(
+        `input draft core.tool_result: call ${toolCallId} is waiting for approval; pass the decision in decisions first`,
+      )
     }
     seen.add(toolCallId)
   }
@@ -310,7 +323,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
   // 起步先把整条日志过一遍注册表：有读不出来的事件（未登记的 ext.*、未来版本）就在写任何东西之前拒绝（P9 fail-closed）
   const startTimeline = await readTimeline(log, sessionId, { registry })
   let lastSeq = startTimeline.at(-1)?.seq ?? 0
-  // 回填的工具结果对账 pending（与 server checkInput 同一口径）：在写任何东西之前拒
+  // 回填的工具结果对账 pending 与审批（与 server checkInput 的异同见 checkInputToolResults）：在写任何东西之前拒
   checkInputToolResults(input, startTimeline)
   /** run 级图片缓存（blobId → base64）：写入校验与换回共用，同一 blob 一个 run 只读一次 */
   const imageCache: ImageRefCache = new Map()
