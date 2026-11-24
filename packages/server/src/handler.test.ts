@@ -429,6 +429,34 @@ describe("审批暂停与跨请求恢复", () => {
     expect(typesOf(frames)).toContain("model_text")
   })
 
+  it("Socket 按 principal 贡献工具：恢复预校验与 run 起步用同一组输入（带 principal），同一用户批准后续跑到 done 而不是 409", async () => {
+    const sockets = [
+      {
+        name: "p",
+        tools: (s: { principal?: { id: string } }) => (s.principal?.id === "boss" ? [deployTool] : []),
+      },
+    ]
+    const { handler } = setup(
+      SCRIPT,
+      [],
+      { secret: "k", sockets },
+      { principal: async () => ({ id: "boss" }) },
+    )
+    const { result } = await pauseFirst(handler)
+    const res = await handler(
+      postRequest({
+        sessionId: "s1",
+        lastSeq: result.lastSeq,
+        resume: result.state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(res.status).toBe(200)
+    const frames = parseFrames(await res.text())
+    expect(resultOf(frames)?.status).toBe("done")
+    expect(typesOf(frames)).toContain("model_text")
+  })
+
   it("D4 续跑校验收窄（与 runLoop 同一个 validateResume）：加了别的工具 → 200 续跑；pending 工具 schema 变了 → 409 config_mismatch 且日志不写", async () => {
     const shared = setup(SCRIPT, [deployTool], { secret: "k" })
     const { result } = await pauseFirst(shared.handler)

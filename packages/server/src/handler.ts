@@ -804,7 +804,12 @@ export function createAgentHandler(definition: AgentDefinition, options: Handler
     ) {
       try {
         const timeline = await readTimeline(log, sessionId, { registry })
-        const contributions = await resolveSocketContributions(agent)
+        // 与下面 begin() 交给 runLoop 的配置同一组输入：Socket 可按 setup.principal 决定带哪些工具，
+        // 漏传 principal 会算出另一张工具表，合法续跑被判配置漂移（409）、客户端工具回填被当成服务端工具拒掉
+        const contributions = await resolveSocketContributions({
+          ...agent,
+          ...(principal !== undefined ? { principal } : {}),
+        })
         if (body.resume !== undefined) {
           await validateResume({
             state: body.resume,
