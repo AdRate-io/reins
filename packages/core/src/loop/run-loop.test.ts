@@ -9,7 +9,7 @@ import { InMemoryEventLog, InMemoryMemoryStore } from "../store/in-memory.js"
 import { callTool, ScriptedLowering, type ScriptedTurn, say, think } from "../testing/scripted-lowering.js"
 import { BUILTIN_APPROVAL_POLICY, runLoop } from "./run-loop.js"
 import { resolveSocketContributions } from "./static.js"
-import { MODEL_FAILED_NOT_EXECUTED_TEXT } from "./stop.js"
+import { MODEL_FAILED_NOT_EXECUTED_TEXT, MODEL_INTERRUPTED_NOT_EXECUTED_TEXT } from "./stop.js"
 import { subagentPause } from "./subagent.js"
 import { defineTool } from "./tools.js"
 import type {
@@ -1332,7 +1332,7 @@ describe("runLoop：错误、中止、上限、交接", () => {
     })
   })
 
-  it("宿主中止：模型响应 aborted 后以 paused(host) 返回，未回答的 tool_call 记为 pending", async () => {
+  it("宿主中止：模型响应 aborted 后以 paused(host) 返回，这次响应里的 tool_call 收尾成'没执行'、不留 pending", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([
       { drafts: [callTool("c1", "add", { a: 1, b: 1 })], outcome: { stopReason: "aborted" } },
@@ -1341,9 +1341,13 @@ describe("runLoop：错误、中止、上限、交接", () => {
     expect(result.status).toBe("paused")
     if (result.status !== "paused") return
     expect(result.reason).toBe("host")
-    expect(result.state.pendingToolCallIds).toEqual(["c1"])
-    // 工具没执行
-    expect(types(await all(log))).toEqual(["tools_bound", "user_message", "tool_call", "run_paused"])
+    expect(result.state.pendingToolCallIds).toEqual([])
+    // 工具没执行：收尾结果排在 run_paused 之前
+    const events = await all(log)
+    expect(types(events)).toEqual(["tools_bound", "user_message", "tool_call", "tool_result", "run_paused"])
+    const settled = events[3] as CoreEventOf<"core.tool_result">
+    expect(settled.payload).toMatchObject({ toolCallId: "c1", isError: true })
+    expect(settled.payload.content).toEqual([{ type: "text", text: MODEL_INTERRUPTED_NOT_EXECUTED_TEXT }])
   })
 
   it("signal 在开轮前已中止：直接 paused(host)，不调模型", async () => {

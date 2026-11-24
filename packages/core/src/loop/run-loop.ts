@@ -61,6 +61,7 @@ import {
   isReplayable,
   isStopped,
   MODEL_FAILED_NOT_EXECUTED_TEXT,
+  MODEL_INTERRUPTED_NOT_EXECUTED_TEXT,
   outcomeUnknownText,
   type StopTexts,
   stopTextsOf,
@@ -815,31 +816,19 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
             }
       // 宿主中止导致的失败（连接阶段被掐：fetch 抛出的是 signal.reason，不一定是 AbortError）是暂停不是错误
       if (!canRetry && cfg.signal?.aborted) {
+        // 抛错前已落日志的调用来自一次没说完的响应，与下面 aborted 出口同样收尾后再暂停
+        const dropped = await append(droppedCallResults(modelEvents, cfg.signal))
         const { events, result } = await pause("host", [
           { kind: "host", note: "host aborted the model request" },
         ])
+        yield* dropped
         yield* events
         return result
       }
       if (!canRetry) {
         // 这次响应里已落日志的调用一并收尾成"没执行"（与停止收尾同一形状）：error 结局不能带着 pending，
         // 否则下一个 run 在用户的新话之后、模型读到它之前就先补跑一条可能入参截断的调用
-        const dropped = modelEvents
-          .filter((e): e is ToolCallEvent => e.type === "core.tool_call")
-          .map(
-            (call): ToolResultDraft => ({
-              type: "core.tool_result",
-              actor: "tool",
-              parentId: call.id,
-              provenance: { source: call.payload.name },
-              payload: {
-                toolCallId: call.payload.toolCallId,
-                name: call.payload.name,
-                content: [{ type: "text", text: MODEL_FAILED_NOT_EXECUTED_TEXT }],
-                isError: true,
-              },
-            }),
-          )
+        const dropped = notExecutedResults(modelEvents, MODEL_FAILED_NOT_EXECUTED_TEXT)
         const { events, result } = await fail(
           {
             ...base,
@@ -886,10 +875,13 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
     yield* await flush()
 
     if (outcome.stopReason === "aborted") {
-      // 已完整的内容块都入了日志；未回答的 tool_call 留给恢复时补齐
+      // 这次响应没说完：降级层可能按已累积的半截入参吐出 tool_call（不保证是完整的块），所以这些调用一律收尾成"没执行"
+      // 再暂停、不进 onTurnEnd，不留作 pending——否则下一个 run 在用户的新话之后、模型读到它之前就先补跑
+      const dropped = await append(droppedCallResults(modelEvents, cfg.signal))
       const { events, result } = await pause("host", [
         { kind: "host", note: "host aborted the model response" },
       ])
+      yield* dropped
       yield* events
       return result
     }
@@ -1032,6 +1024,40 @@ function abortedMidBatch(signal: AbortSignal | undefined, batch: MutableToolBatc
   if (!signal?.aborted) return false
   const answered = new Set(batch.results.map((r) => r.payload.toolCallId))
   return batch.calls.some((c) => !answered.has(c.payload.toolCallId))
+}
+
+/**
+ * 一次没说完的模型响应里已落日志的 tool_call → 同形状的"没执行"收尾结果（isError，不执行）。
+ * 模型失败（error 结局）与宿主中止（paused 结局）共用；只管形状，文案由调用方定
+ */
+function notExecutedResults(modelEvents: readonly Event[], text: string): ToolResultDraft[] {
+  return modelEvents
+    .filter((e): e is ToolCallEvent => e.type === "core.tool_call")
+    .map(
+      (call): ToolResultDraft => ({
+        type: "core.tool_result",
+        actor: "tool",
+        parentId: call.id,
+        provenance: { source: call.payload.name },
+        payload: {
+          toolCallId: call.payload.toolCallId,
+          name: call.payload.name,
+          content: [{ type: "text", text }],
+          isError: true,
+        },
+      }),
+    )
+}
+
+/**
+ * 宿主中止模型响应时要先落的收尾结果。用户停止（RunStop）返回空：交给 pause() 的 settleStopped，
+ * 文案随停止原因，与停止落在别处时一致
+ */
+function droppedCallResults(
+  modelEvents: readonly Event[],
+  signal: AbortSignal | undefined,
+): ToolResultDraft[] {
+  return isStopped(signal) ? [] : notExecutedResults(modelEvents, MODEL_INTERRUPTED_NOT_EXECUTED_TEXT)
 }
 
 /** 批中途被中止而没有别的中断时补一条宿主中断说明；已有中断（审批、客户端工具…）原样返回 */

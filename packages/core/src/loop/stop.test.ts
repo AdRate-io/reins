@@ -2,7 +2,7 @@
  * 停止语义与中断不重放（2026-11-05，docs/implementation-plans/2026-11-05-停止语义与中断不重放.md D1 / D2）。
  *
  * D1：用户停止（`abort(new RunStop())`）时，所有暂停出口都把 pending 收尾成 isError 结果，下一个 run 直接问模型；
- *     其它中止原因照旧留 pending、恢复时补跑。
+ *     其它中止原因落在工具批中途时照旧留 pending、恢复时补跑；落在模型响应中途时这次响应里的调用收尾成"响应被中断"。
  * D2：不可重放的工具在 execute 之前记 `core.tool_started`；续跑见到"started 无结果"就落"结果未知"、不再执行。
  */
 import { describe, expect, it } from "vitest"
@@ -18,6 +18,7 @@ import {
   INTERRUPTED_NOT_EXECUTED_TEXT,
   isReplayable,
   isStopReason,
+  MODEL_INTERRUPTED_NOT_EXECUTED_TEXT,
   OUTCOME_UNKNOWN_TEXT,
   outcomeUnknownText,
   RunStop,
@@ -316,7 +317,7 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
     }
   })
 
-  it("模型回复中途：已完整的 tool_call 停止时落'没执行'；非停止留 pending", async () => {
+  it("模型回复中途：响应里的 tool_call 停止时落'没执行'；非停止落'响应被中断'——都不留 pending（全库审查返修）", async () => {
     for (const stop of [true, false]) {
       const log = new InMemoryEventLog()
       const ac = new AbortController()
@@ -335,9 +336,34 @@ describe("D1：用户停止时收尾 pending（五个暂停出口 × 停止 / �
         expect(result.state.pendingToolCallIds).toEqual([])
         expect((await resultTexts(log)).c1).toBe(STOPPED_NOT_EXECUTED_TEXT)
       } else {
-        expect(result.state.pendingToolCallIds).toEqual(["c1"])
+        // 降级层被中止时可能按半截入参吐出调用：不留 pending，下一个 run 不会在用户新话之后先补跑它
+        expect(result.state.pendingToolCallIds).toEqual([])
+        expect((await resultTexts(log)).c1).toBe(MODEL_INTERRUPTED_NOT_EXECUTED_TEXT)
         expect(result.interruptions[0]).toEqual({ kind: "host", note: "host aborted the model response" })
       }
+    }
+  })
+
+  it("模型流抛错前已落了 tool_call、此时宿主已中止（连接被掐）：同样收尾成'响应被中断'，以 paused(host) 结束", async () => {
+    for (const stop of [true, false]) {
+      const log = new InMemoryEventLog()
+      const ac = new AbortController()
+      const executed: string[] = []
+      const lowering = new ScriptedLowering((): ScriptedTurn => {
+        ac.abort(stop ? new RunStop() : undefined)
+        return { drafts: [callTool("c1", "a", '{"x": 1')], throws: ac.signal.reason as Error }
+      })
+      const { result } = await drain(
+        runLoop(cfgOf(lowering, log, { tools: [writeTool("a", executed)], input: "go", signal: ac.signal })),
+      )
+      expect(result).toMatchObject({ status: "paused", reason: "host" })
+      if (result.status !== "paused") continue
+      expect(executed).toEqual([])
+      expect(result.state.pendingToolCallIds).toEqual([])
+      expect((await resultTexts(log)).c1).toBe(
+        stop ? STOPPED_NOT_EXECUTED_TEXT : MODEL_INTERRUPTED_NOT_EXECUTED_TEXT,
+      )
+      expect(types(await all(log))).not.toContain("error")
     }
   })
 
