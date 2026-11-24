@@ -32,3 +32,6 @@ examples/adrate/recordings/raw/
 spikes/l1-deferred-tools/out/
 spikes/runtime-matrix/out-vercel.json
 examples/eval/fixtures/onset-pause/data/
+
+# 审查工作清单（含未修安全问题，公开仓库不提交）
+审查清单-*.md

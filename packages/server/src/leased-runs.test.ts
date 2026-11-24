@@ -247,6 +247,32 @@ describe("D4 leasedRunRegistry：两台实例共用一份租约", () => {
     expect(inner.holderOf("s1")).toBeUndefined()
   })
 
+  it("上一个 run 的 release 还在路上时同会话再 create：先等它落地再 acquire，迟到的 release 删不掉新 run 的租约", async () => {
+    const inner = new InMemoryRunLease()
+    const release = gate()
+    const slow: RunLease = {
+      acquire: (s, o, t) => inner.acquire(s, o, t),
+      renew: (s, o, t) => inner.renew(s, o, t),
+      release: async (s, o) => {
+        await release.wait()
+        await inner.release(s, o)
+      },
+    }
+    const runs = leasedRunRegistry(slow, { owner: "A", ttlMs: 30, warn: () => {} })
+    const first = await runs.create("s1")
+    first.abandon("test", "收工") // 同步删项，release 卡在路上
+    const second = runs.create("s1")
+    await new Promise((r) => setTimeout(r, 10))
+    release.open() // 上一个 run 的 release 此刻才落地
+    const run = await second
+    expect(inner.holderOf("s1")).toBe("A") // 新 run 的租约还在
+    await new Promise((r) => setTimeout(r, 40)) // 心跳（ttl/3 = 10ms）续期都应成功，不被判丢租约
+    expect(run.controller.signal.aborted).toBe(false)
+    run.abandon("test", "收工")
+    await run.done
+    expect(inner.holderOf("s1")).toBeUndefined()
+  })
+
   it("ttlMs 非正数在构造时就拒绝", () => {
     const lease = new InMemoryRunLease()
     expect(() => leasedRunRegistry(lease, { ttlMs: 0 })).toThrow(RangeError)

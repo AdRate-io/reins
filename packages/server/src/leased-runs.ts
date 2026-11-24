@@ -10,6 +10,10 @@
  *                                                          controller.abort() → 本 run paused(host)
  *                              run 结束（onFinish）：停心跳 + lease.release；失败只告警，靠到期自然释放
  *
+ * 同会话的下一个 create 要先等上一个 run 的 release 落地再 acquire：owner 按实例而不是按 run，
+ * 本进程名额在结束那一刻同步归还，而 release 是之后才落库的 DELETE（按 session + owner）。不排队的话，
+ * 新 run 的幂等 acquire 先到、旧 run 的 DELETE 后到，新 run 的租约被删，下一次心跳判丢租约、误中止（审查 2026-11-25 #36）。
+ *
  * 语义放这里一份而不是每个 store 各写一遍：心跳、丢租约中止、失败告警是登记表的行为，与用哪种数据库无关，
  * store 只做 acquire / renew / release 三条语句（`@reinsjs/store-pg` 的 `PgRunLease`）。
  *
@@ -39,6 +43,8 @@ export function leasedRunRegistry(lease: RunLease, options: LeasedRunRegistryOpt
   const warn = options.warn ?? ((message: string) => console.warn(message))
   const heartbeatMs = Math.max(1, Math.floor(ttlMs / 3))
   const local = new InMemoryRunRegistry()
+  /** 每个会话还在路上的 release；下一个 create 先等它（成败都等，失败已在钩子里告警） */
+  const releasing = new Map<string, Promise<void>>()
 
   return {
     get: (sessionId) => local.get(sessionId),
@@ -46,6 +52,7 @@ export function leasedRunRegistry(lease: RunLease, options: LeasedRunRegistryOpt
     async create(sessionId, controller = new AbortController()) {
       // 本进程已有：不必问存储
       if (local.get(sessionId) !== undefined) throw new RunConflictError(sessionId, "process")
+      await releasing.get(sessionId)
       if (!(await lease.acquire(sessionId, owner, ttlMs))) throw new RunConflictError(sessionId, "lease")
       // 同进程两个请求并发到这里：acquire 对同一 owner 幂等都成功，这一步只让先到者登记；后到者抛出、租约仍归先到者
       let run: ActiveRun
@@ -79,15 +86,18 @@ export function leasedRunRegistry(lease: RunLease, options: LeasedRunRegistryOpt
         )
       }, heartbeatMs)
 
-      run.onFinish(async () => {
+      run.onFinish(() => {
         clearInterval(timer)
-        try {
-          await lease.release(sessionId, owner)
-        } catch (err) {
+        // 钩子在 run 结束那一刻同步调用：登记必须同步完成，紧随其后的 create 才看得见
+        const released = lease.release(sessionId, owner).catch((err: unknown) => {
           warn(
             `[reins/server] Failed to release the run lease for session ${sessionId}: ${messageOf(err)}. It expires on its own after ${ttlMs} ms.`,
           )
-        }
+        })
+        releasing.set(sessionId, released)
+        return released.finally(() => {
+          if (releasing.get(sessionId) === released) releasing.delete(sessionId)
+        })
       })
       return run
     },
