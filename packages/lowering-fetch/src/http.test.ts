@@ -5,6 +5,7 @@
 import { isTransientFailure } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
 import { HttpError, postJson, requestSignals } from "./http.js"
+import { parseSse } from "./sse.js"
 
 const respond = (status: number, body: string, headers: Record<string, string> = {}) =>
   (async () => new Response(body, { status, headers })) as typeof globalThis.fetch
@@ -72,6 +73,46 @@ describe("postJson", () => {
       fetch: respond(200, "data: {}\n\n", { "content-type": "text/event-stream; charset=utf-8" }),
     })
     expect(ok.status).toBe(200)
+  })
+
+  it("2xx 标成 JSON、正文却是 SSE（中转站标错类型）：分块到达也逐帧交回流解析，不抛（审查返修）", async () => {
+    const enc = new TextEncoder()
+    // 第一块只有前导空白与半个字段名，判定要跨块攒；后面的块在偷看之后才读
+    const chunks = ["\nda", 'ta: {"a":1}\n\n', ": keep-alive\n\n", "data: [DONE]\n\n"]
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const s of chunks) c.enqueue(enc.encode(s))
+        c.close()
+      },
+    })
+    const res = await postJson({
+      url: "u",
+      headers: {},
+      body: {},
+      signal: new AbortController().signal,
+      fetch: (async () =>
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof globalThis.fetch,
+    })
+    const messages: string[] = []
+    for await (const m of parseSse(res.body as ReadableStream<Uint8Array>)) messages.push(m.data)
+    expect(messages).toEqual(['{"a":1}', "[DONE]"])
+    // 带 BOM 的 JSON 错误体、只有空白的正文照样抛
+    for (const text of ['﻿  {"error":"quota"}', "  "]) {
+      const err = (await thrown(() =>
+        postJson({
+          url: "u",
+          headers: {},
+          body: {},
+          signal: new AbortController().signal,
+          fetch: respond(200, text, { "content-type": "application/json; charset=utf-8" }),
+        }),
+      )) as HttpError
+      expect(err).toBeInstanceOf(HttpError)
+      expect(err.message).toBe(`200 ${text.replace(/^\uFEFF/, "")}`)
+    }
   })
 
   it("服务端 x-should-retry 头优先于状态码", () => {

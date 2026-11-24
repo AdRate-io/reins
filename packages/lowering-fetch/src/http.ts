@@ -103,8 +103,72 @@ function isJsonContentType(value: string | null): boolean {
   return type === "application/json" || (type?.endsWith("+json") ?? false)
 }
 
+/** SSE 的行首：字段名后跟冒号，或冒号开头的注释行（保活用的 `: keep-alive`） */
+const SSE_LINE_START = /^(?::|(?:data|event|id|retry):)/
+
 /**
- * POST JSON；非 2xx（以及 2xx 但正文明说是 JSON）读完正文抛 HttpError。网络层失败（DNS、连接被掐、超时）由 fetch 自己抛出，原样上抛——
+ * 2xx 却标成 JSON 的响应：先看正文第一个非空白字符之后像不像 SSE。像（中转站把流错标成 application/json）就把
+ * 已读的块接回剩下的流、包成新 Response 交还，流照常逐帧到达；不像才读完全文抛 HttpError。只偷看到出现非空白为止，
+ * 不把整条流读进内存。
+ */
+async function sseOrThrow(res: Response, url: string): Promise<Response> {
+  if (!res.body) {
+    throw new HttpError(res.status, res.headers, "", url)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const seen: Uint8Array[] = []
+  let head = ""
+  let done = false
+  // 去掉 BOM 与前导空白后，攒到足以判出"data:" / "retry:" 这类最长 6 字符的行首，或流已结束
+  while (!done && head.replace(/^﻿?\s+/, "").length < 6) {
+    const chunk = await reader.read()
+    if (chunk.done) {
+      done = true
+      head += decoder.decode()
+    } else {
+      seen.push(chunk.value)
+      head += decoder.decode(chunk.value, { stream: true })
+    }
+  }
+  const start = head.replace(/^﻿?\s+/, "")
+  if (SSE_LINE_START.test(start)) {
+    const replay = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of seen) controller.enqueue(c)
+        if (done) controller.close()
+      },
+      async pull(controller) {
+        const next = await reader.read()
+        if (next.done) controller.close()
+        else controller.enqueue(next.value)
+      },
+      cancel(reason) {
+        return reader.cancel(reason)
+      },
+    })
+    return new Response(replay, { status: res.status, statusText: res.statusText, headers: res.headers })
+  }
+  // 不是 SSE：读完剩下的正文，原文进 HttpError
+  let text = head
+  try {
+    while (!done) {
+      const chunk = await reader.read()
+      if (chunk.done) {
+        done = true
+        text += decoder.decode()
+      } else {
+        text += decoder.decode(chunk.value, { stream: true })
+      }
+    }
+  } catch {
+    // 读剩余正文失败时只带已读到的部分，与非 2xx 分支 `res.text().catch(() => "")` 同一取向
+  }
+  throw new HttpError(res.status, res.headers, text, url)
+}
+
+/**
+ * POST JSON；非 2xx（以及 2xx 但正文是 JSON）读完正文抛 HttpError。网络层失败（DNS、连接被掐、超时）由 fetch 自己抛出，原样上抛——
  * 那些错误对象上的 `cause.code` / `name` 正是 core 判瞬断要看的东西，包一层反而会盖掉。
  */
 export async function postJson(input: PostJsonInput): Promise<Response> {
@@ -121,10 +185,7 @@ export async function postJson(input: PostJsonInput): Promise<Response> {
   }
   // 2xx 却明说是 JSON：网关 / 中转站把错误（鉴权失败、额度用尽）以 200 + JSON 回。交给 SSE 解析只会得到
   // "流没收尾"、被当瞬断重试且厂商原文丢失（全库审查 #72）。只认明确的 JSON 类型——没写或写错 content-type 的
-  // SSE 照旧放行，别误伤
-  if (isJsonContentType(res.headers.get("content-type"))) {
-    const text = await res.text().catch(() => "")
-    throw new HttpError(res.status, res.headers, text, input.url)
-  }
+  // SSE 照旧放行，别误伤；标成 JSON 的还要偷看正文，真是 SSE（中转站标错类型）照常交回流解析
+  if (isJsonContentType(res.headers.get("content-type"))) return sseOrThrow(res, input.url)
   return res
 }
