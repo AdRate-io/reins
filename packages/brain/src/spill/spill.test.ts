@@ -430,6 +430,43 @@ describe("spill × runLoop：结果外溢", () => {
       expect(textOf(resultOf(logged, "l"))).toBe(medium)
       expect(resultOf(logged, "e").payload.spilled).toBeDefined()
     })
+
+    // 全库审查 2026-11-25 #65：首段 end、fetch_blob 的单次上限、预览字符数三处口径一致
+    it("工具上限高于模块上限：头部给的首段 end 正是 fetch_blob 一次给得出的，照读不被裁", async () => {
+      const log = new InMemoryEventLog()
+      const wide = echoTool({ name: "wide", resultPolicy: { maxTokens: 400, overflow: "spill" } })
+      const lowering = new ScriptedLowering((req, turn) => {
+        if (turn === 0) return { drafts: [callTool("w", "wide", { text: BIG })] }
+        if (turn > 1) return { drafts: [say("x")] }
+        // 照头部给的参数读首段
+        const spilled = resultOf(req.events, "w")
+        const m = /fetch_blob\(\{ id: "([^"]+)", start: 0, end: (\d+) \}\)/.exec(textOf(spilled))
+        return { drafts: [callTool("f", "fetch_blob", { id: m?.[1], start: 0, end: Number(m?.[2]) })] }
+      })
+      await drain(runLoop(config(lowering, log, { tools: [wide] })))
+      const logged = await all(log)
+      const fetched = textOf(resultOf(logged, "f"))
+      expect(fetched).toMatch(/^\[blob "[^"]+": characters 0–/)
+      expect(fetched).not.toContain("clipped")
+    })
+
+    it("工具上限很小：缺省预览字符数按工具上限派生，不按模块上限", async () => {
+      const log = new InMemoryEventLog()
+      const tiny = echoTool({ name: "tiny", resultPolicy: { maxTokens: 40, overflow: "spill" } })
+      const long = `${"a".repeat(3000)}\n${"b".repeat(3000)}`
+      const lowering = new ScriptedLowering([
+        { drafts: [callTool("t", "tiny", { text: long })] },
+        { drafts: [say("x")] },
+      ])
+      await drain(
+        runLoop(config(lowering, log, { tools: [tiny], sockets: [spill({ maxResultTokens: 16_000 })] })),
+      )
+      const text = textOf(resultOf(await all(log), "t"))
+      const preview = text.slice(text.indexOf("]\n") + 2)
+      // min(2000, 40 / 4) = 10：首尾各 10 字符，加省略标记
+      expect(preview.startsWith(`${"a".repeat(10)}\n[... `)).toBe(true)
+      expect(preview.endsWith(`\n${"b".repeat(10)}`)).toBe(true)
+    })
   })
 
   it("没有 BlobStore：外溢关闭，大结果原样通过并告警一次；声明 truncate 的工具照常截断", async () => {

@@ -44,11 +44,17 @@ import {
 import { FETCH_BLOB_TOOL_DESCRIPTION, FETCH_BLOB_TOOL_NAME, SPILL_RULES } from "./rules.js"
 
 export interface SpillOptions {
-  /** 结果文本超过多少 token 就外溢；也是 fetch_blob 单次返回的上限。工具的 `resultPolicy.maxTokens` 优先。缺省 16000（E3 定） */
+  /**
+   * 结果文本超过多少 token 就外溢（工具的 `resultPolicy.maxTokens` 优先）；也是 fetch_blob 单次返回的上限（不看工具级，
+   * 外溢说明给的首段 end 因此按两者较小的算，照读不会再被裁）。缺省 16000（E3 定）
+   */
   maxResultTokens?: number
   /** 预览首尾各取多少行。缺省 20 */
   previewLines?: number
-  /** 预览首尾各最多多少字符（防单行超长）。缺省 min(2000, maxResultTokens / 4)，保证预览本身远低于上限 */
+  /**
+   * 预览首尾各最多多少字符（防单行超长）。缺省按该工具的生效上限派生：min(2000, 上限 / 4)，
+   * 保证预览本身远低于该工具的上限；显式给值则所有工具统一用它
+   */
   previewChars?: number
   /** 文本 token 估算器；缺省 core 粗估。宿主有精确 tokenizer 时注入 */
   estimate?: TextTokenEstimator
@@ -160,10 +166,13 @@ export function spill(opts: SpillOptions = {}): Socket {
   if (!Number.isInteger(previewLines) || previewLines < 0) {
     throw new RangeError(`spill.previewLines must be an integer >= 0, got ${String(previewLines)}`)
   }
-  const previewChars = opts.previewChars ?? Math.min(DEFAULT_PREVIEW_CHARS, Math.floor(maxTokens / 4))
-  if (!Number.isInteger(previewChars) || previewChars < 0) {
-    throw new RangeError(`spill.previewChars must be an integer >= 0, got ${String(previewChars)}`)
+  const fixedPreviewChars = opts.previewChars
+  if (fixedPreviewChars !== undefined && (!Number.isInteger(fixedPreviewChars) || fixedPreviewChars < 0)) {
+    throw new RangeError(`spill.previewChars must be an integer >= 0, got ${String(fixedPreviewChars)}`)
   }
+  /** 预览字符数与外溢判定同一口径：按该工具的生效上限派生（全库审查 2026-11-25 #65） */
+  const previewCharsFor = (limit: number) =>
+    fixedPreviewChars ?? Math.min(DEFAULT_PREVIEW_CHARS, Math.floor(limit / 4))
   const estimate = opts.estimate ?? defaultTextTokens
   const withTool = opts.tool ?? true
   const warn = opts.warn ?? ((message: string) => console.warn(message))
@@ -204,7 +213,7 @@ export function spill(opts: SpillOptions = {}): Socket {
       const measure = measureText(text, estimate)
       if (measure.tokens <= policy.maxTokens) return undefined
 
-      const preview = previewOf(text, { lines: previewLines, chars: previewChars })
+      const preview = previewOf(text, { lines: previewLines, chars: previewCharsFor(policy.maxTokens) })
       const size = `~${fmt(measure.tokens)} tokens (${fmt(measure.chars)} characters, ${fmt(measure.lines)} lines)`
       const shown =
         preview.tail.length === 0
@@ -230,7 +239,8 @@ export function spill(opts: SpillOptions = {}): Socket {
       }
 
       const { id } = await ctx.blobs.put(text, { mime: SPILL_BLOB_MIME, sessionId: ctx.session.id })
-      const firstSliceEnd = clipEndByTokens(text, policy.maxTokens)
+      // 首段按 fetch_blob 一次实际给得出的量算：它只按模块上限裁，工具上限更宽时照工具上限给 end 会被裁、白费一轮
+      const firstSliceEnd = clipEndByTokens(text, Math.min(policy.maxTokens, maxTokens))
       const header = `[Output of \`${name}\` is too large to show inline: ${size}; the inline limit is ${fmt(policy.maxTokens)} tokens. The complete output is stored verbatim as blob "${id}". Read it with ${FETCH_BLOB_TOOL_NAME}({ id: "${id}", start: 0, end: ${fmt(firstSliceEnd).replace(/,/g, "")} }); offsets are characters, and the header of each fetch tells you where to continue. ${shown}]`
       const summary = `${size} from \`${name}\`, stored as blob ${id}`
       return {

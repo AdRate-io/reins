@@ -146,7 +146,7 @@
 2. 把结果里全部文本片段拼成正文（图片等非文本片段不度量），`measureText` 估算不超限就原样通过。
 3. 超限且 `overflow: "truncate"`：不存 blob，只留 `previewOf` 的首尾预览，说明里明说中段不可恢复。
 4. 超限且没有 `BlobStore`：外溢关闭，结果原样通过，经 `warn` 告警一次（每个实例只一次）。
-5. 超限且有 `BlobStore`：`ctx.blobs.put(text, { mime, sessionId })` 存全文，结果换成 `[说明 + 首尾预览]` 并在草稿上写 `payload.spilled = { blobId, summary }`；日志里仍只有一条 `tool_result`。
+5. 超限且有 `BlobStore`：`ctx.blobs.put(text, { mime, sessionId })` 存全文，结果换成 `[说明 + 首尾预览]` 并在草稿上写 `payload.spilled = { blobId, summary }`；日志里仍只有一条 `tool_result`。说明里给的首段 `end` 按 min(工具上限, `maxResultTokens`) 算——fetch_blob 单次只按模块上限裁，照工具上限给会被裁；预览字符数缺省按该工具的生效上限派生（`min(2000, 上限 / 4)`），与外溢判定同一口径（2026-11-25 全库审查 #65）。
 6. `fetch_blob({ id, start?, end? })` 的 `execute` 走 `readBlobSlice`：先 `referencedHere` 判本会话日志里有没有 `tool_result.spilled.blobId` 指向它（没有一律当不存在），再整段取回、UTF-8 解码、按**字符**切片、按 token 上限裁，头部写明范围、总长与续读起点。
 
 ### handoff
