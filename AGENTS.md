@@ -198,7 +198,7 @@ docs/                # 维护者文档（中文），见文档索引
 
 ## 存储原则
 
-- 表 `reins_events` / `reins_blobs` / `reins_memory`，pg 另有 `reins_runs`；只有记忆表名可配，事件表与 blob 表按 `session_id` 隔离、刻意不可配。保留策略见全景图 §6。
+- 表 `reins_events` / `reins_blobs` / `reins_memory`，pg 另有 `reins_runs`；只有记忆表名可配；事件按 `session_id` 隔离，blob 归属由时间线判定，两表名都刻意不可配。保留策略见全景图 §6。
 - 一份 SQL 多个驱动（node:sqlite / bun:sqlite / pg / PGlite），驱动由宿主传入；四份一致性套件在 `@reinsjs/core/testing`，新实现必须共跑。
 
 ## 关键脚本
