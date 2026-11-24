@@ -6,6 +6,7 @@ import {
   type BlobMeta,
   type BlobStore,
   blobUsableBy,
+  createCoreEvent,
   createCoreRegistry,
   type EventLog,
   InMemoryBlobStore,
@@ -51,20 +52,14 @@ async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
 
-async function chat(
-  log: InMemoryEventLog,
-  blobs: InMemoryBlobStore,
-  sessionId: string,
-  blobId: string,
-  mime = "image/png",
-) {
+async function chat(log: InMemoryEventLog, blobs: InMemoryBlobStore, sessionId: string, blobId: string) {
   const gen = runLoop({
     sessionId,
     log,
     blobs,
     lowering: new ScriptedLowering([{ drafts: [say("ok")] }]),
     model: { provider: "scripted", id: "scripted" },
-    input: [{ type: "image", mime, blobId }],
+    input: [{ type: "image", mime: "image/png", blobId }],
   })
   for await (const _ of gen) {
     // 跑完即可
@@ -103,8 +98,16 @@ describe("配方：图片下发路由", () => {
       mime: "image/svg+xml",
       sessionId: "s1",
     })
-    // 引用本身能通过 core 的图片引用校验（只要求 image/ 前缀）
-    await chat(log, blobs, "s1", svg.id, "image/svg+xml")
+    // core 现在拒收 svg（图片 mime 白名单，全库审查 #9），但白名单之前写进日志的旧引用仍在：直接落一条历史事件模拟
+    await log.append([
+      createCoreEvent(registry, {
+        type: "core.user_message",
+        actor: "user",
+        sessionId: "s1",
+        seq: 1,
+        payload: { content: [{ type: "image", mime: "image/svg+xml", blobId: svg.id }] },
+      }),
+    ])
     expect((await serveImage(log, blobs, "s1", svg.id)).status).toBe(404)
   })
 })
