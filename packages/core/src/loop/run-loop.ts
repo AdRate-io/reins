@@ -1094,7 +1094,9 @@ function toolCallIdsOf(timeline: readonly Event[]): Set<string> {
  * 模型给的调用 id 在会话内必须唯一且非空（全库审查 2026-11-25 #50）：审批结论、tool_started、pending 与结果配对都按 toolCallId 认领，
  * 号池中转站或不合规的兼容端点按轮次编号（call_0）或干脆不给（Chat 线落空串）时，后一个调用会认领前一个的批准 / 拒绝 /
  * "已开始"，免审批执行或被误判。撞了就改写成 `reins_<newId>`、原值记进 `payload.meta.originalToolCallId`（不进模型上下文）；
- * 历史回放按改写后的 id 成对下发，厂商只要求同一请求里调用与结果对得上。不撞的草稿原样返回，并登记进 `used`
+ * 历史回放按改写后的 id 成对下发，厂商只要求同一请求里调用与结果对得上。不撞的草稿原样返回，并登记进 `used`。
+ * 改写出的 id 规整成 `^[A-Za-z0-9_-]{1,64}$`（Anthropic tool_use id 的规矩，三家都收）：宿主自定义的 `newId` 可能带别的字符，
+ * 不规整的话改写本身就会让每次回放 400。pi-ai Responses 的复合 id（`call_x|fc_y`）被改写后 fc_ 部分不再回放，只在撞 id 时发生
  */
 function withUniqueToolCallId(draft: EventDraft, used: Set<string>, freshId: () => string): EventDraft {
   if (draft.type !== "core.tool_call") return draft
@@ -1104,8 +1106,10 @@ function withUniqueToolCallId(draft: EventDraft, used: Set<string>, freshId: () 
     used.add(original)
     return draft
   }
-  let id = `reins_${freshId()}`
-  while (used.has(id)) id = `reins_${freshId()}`
+  // 规整与截断后仍撞（宿主 newId 前 58 字符恒定之类）就缀序号，保证必然结束
+  const base = `reins_${freshId().replace(/[^A-Za-z0-9_-]/g, "_")}`.slice(0, 64)
+  let id = base
+  for (let i = 2; used.has(id); i++) id = `${base.slice(0, 63 - String(i).length)}_${i}`
   used.add(id)
   return {
     ...draft,

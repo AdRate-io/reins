@@ -2291,4 +2291,21 @@ describe("厂商复用 / 不给 toolCallId（全库审查 2026-11-25 #50）", ()
       [{ type: "text", text: "4" }],
     ])
   })
+
+  it("宿主自定义 newId 带厂商不收的字符或过长：改写出的 id 规整成 ^[A-Za-z0-9_-]{1,64}$", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("", "add", { a: 1, b: 1 }), callTool("", "add", { a: 2, b: 2 })] },
+      { drafts: [say("2 和 4")] },
+    ])
+    let n = 0
+    // 前缀恒定、截断后两次改写会撞：缀序号区分，不能死循环
+    const newId = () => `org/${"x".repeat(80)}:${++n}`
+    const { result } = await drain(runLoop(baseConfig(lowering, log, { input: "算", newId })))
+    expect(result.status).toBe("done")
+    const ids = (await toolCalls(log)).map((c) => c.payload.toolCallId)
+    expect(new Set(ids).size).toBe(2)
+    for (const id of ids) expect(id).toMatch(/^reins_org_x+(_\d+)?$/)
+    for (const id of ids) expect(id).toMatch(/^[A-Za-z0-9_-]{1,64}$/)
+  })
 })
