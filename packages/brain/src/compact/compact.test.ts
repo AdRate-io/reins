@@ -685,6 +685,25 @@ describe("compact × recall：被折叠的工具结果有路可回（E3c）", ()
     })
   })
 
+  it("recall: false 时模型看到的每一处都不提 recall：规则、compact 工具说明、摘要清单标题（清单照列）", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "add", { a: 2, b: 3 })] },
+      { drafts: [doCompact("c2", { summary: "Plain.", keep: [] })] },
+      { drafts: [say("5")] },
+    ])
+    await drain(runLoop(config(lowering, log, { sockets: [compact({ recall: false })] })))
+    const req = lowering.requests[0]
+    expect(req?.tools?.map((t) => t.name)).toEqual(["add", "compact"])
+    const compactSpec = req?.tools?.find((t) => t.name === "compact")
+    expect(compactSpec?.description).not.toContain("recall")
+    expect(req?.systemPrompt).toContain("## Managing your context window")
+    expect(req?.systemPrompt).not.toContain("recall")
+    const summary = (compactionsOf(await all(log))[0] as Compaction).payload.summary
+    expect(summary).toContain("Folded tool results (still in the session log, by seq):\n- seq 4 add(")
+    expect(summary).not.toContain("recall")
+  })
+
   it("清单不列脑子自己的回执（compact / pin / recall），列宿主工具的结果", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([

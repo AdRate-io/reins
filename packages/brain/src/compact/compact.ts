@@ -54,10 +54,12 @@ import {
   timelineSoFar,
 } from "./request.js"
 import {
+  COMPACT_NO_RECALL_RULE,
+  COMPACT_RECALL_RULE,
   COMPACT_REQUEST_RULE,
   COMPACT_RULES,
-  COMPACT_TOOL_DESCRIPTION,
   COMPACT_TOOL_NAME,
+  compactToolDescription,
   RECALL_TOOL_NAME,
 } from "./rules.js"
 
@@ -76,7 +78,10 @@ export interface CompactOptions {
    * 关掉清单时缺省文案里关于清单的说法就不成立了，宿主应一并换 rules。
    */
   manifest?: false | ManifestOptions
-  /** 是否给模型 recall 取回工具（E3c）。缺省 true；false 时清单照列，只是模型自己取不回（宿主另有读法时用） */
+  /**
+   * 是否给模型 recall 取回工具（E3c）。缺省 true；false 时清单照列，只是模型自己取不回（宿主另有读法时用）。
+   * false 时缺省规则、compact 工具说明、清单标题都换成不提 recall 的版本；自定义 rules 由宿主自己保证一致
+   */
   recall?: boolean
   /**
    * 到线请模型整理（OPT-261030-3 / OPT-261031-1）：真实上下文过某一级软线（缺省 75%、80%）、且本段（上次整理之后）还没在这一级请过时，
@@ -189,7 +194,7 @@ export function compact(opts: CompactOptions = {}): Socket {
 
   const tool: Tool = {
     name: COMPACT_TOOL_NAME,
-    description: COMPACT_TOOL_DESCRIPTION,
+    description: compactToolDescription(withRecall),
     inputSchema: COMPACT_INPUT_SCHEMA as unknown as Record<string, unknown>,
     validate: parseCompactArgs,
     risk: "low",
@@ -239,6 +244,7 @@ export function compact(opts: CompactOptions = {}): Socket {
           protectCallId: call.id,
           timeline: ctx.timeline,
           ...(opts.manifest !== undefined ? { manifest: opts.manifest } : {}),
+          recall: withRecall,
         })
       } catch (err) {
         return replaceResult(result, err instanceof Error ? err.message : String(err), true)
@@ -283,8 +289,11 @@ export function compact(opts: CompactOptions = {}): Socket {
     },
   }
   if (opts.rules !== false) {
-    socket.systemPrompt =
-      opts.rules ?? (force ? COMPACT_RULES : COMPACT_RULES.replace(`${COMPACT_REQUEST_RULE}\n`, ""))
+    // 缺省规则只讲框架兑现得了的事：没开 force 去掉"到线会请你整理"，没给 recall 把"能取回"换成"取不回"
+    let rules = COMPACT_RULES
+    if (!force) rules = rules.replace(`${COMPACT_REQUEST_RULE}\n`, "")
+    if (!withRecall) rules = rules.replace(COMPACT_RECALL_RULE, COMPACT_NO_RECALL_RULE)
+    socket.systemPrompt = opts.rules ?? rules
   }
   return socket
 }
