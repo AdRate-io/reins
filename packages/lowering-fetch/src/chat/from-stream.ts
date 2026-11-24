@@ -57,6 +57,8 @@ class ChatAssembly {
   reasoning = ""
   text = ""
   readonly calls = new Map<number, { id: string; name: string; args: string }>()
+  /** 最近写入的工具调用槽：上游省略 index 时，不带新 id 的增量续到这里 */
+  lastCallIndex: number | undefined
   finish: string | undefined
   usage: ChatUsage | undefined
   responseModel: string | undefined
@@ -105,6 +107,25 @@ export function usageOf(u: ChatUsage | undefined): TokenUsage {
   return usage
 }
 
+/**
+ * tool_calls 增量落哪个槽。OpenAI 规范要求带 index，按它拼；个别兼容端点省略 index（每个调用整块下发、只带 id），
+ * 这时一律塞进 0 号槽会把并行调用并成一个、入参拼成 '{..}{..}'（全库审查 #71）。省略时：来了与当前槽不同的非空 id
+ * 就开新槽（编号接在已有最大号之后），否则续到当前槽（分片的后续增量通常不再带 id）。
+ */
+function callSlotOf(tc: { index?: unknown; id?: unknown }, a: ChatAssembly): number {
+  const given = num(tc.index)
+  if (given !== undefined) return given
+  const current = a.lastCallIndex === undefined ? undefined : a.calls.get(a.lastCallIndex)
+  const id = typeof tc.id === "string" && tc.id !== "" ? tc.id : undefined
+  if (
+    current !== undefined &&
+    a.lastCallIndex !== undefined &&
+    (id === undefined || current.id === "" || current.id === id)
+  )
+    return a.lastCallIndex
+  return a.calls.size === 0 ? 0 : Math.max(...a.calls.keys()) + 1
+}
+
 function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
   if (typeof chunk.model === "string" && chunk.model !== "") a.responseModel = chunk.model
   if (chunk.usage && typeof chunk.usage === "object") a.usage = chunk.usage
@@ -121,7 +142,8 @@ function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
       ctx.onDelta?.({ kind: "text", index: a.indexOf("text"), delta: d.content })
     }
     for (const tc of d.tool_calls ?? []) {
-      const index = num(tc.index) ?? 0
+      const index = callSlotOf(tc, a)
+      a.lastCallIndex = index
       let call = a.calls.get(index)
       if (!call) {
         call = { id: "", name: "", args: "" }

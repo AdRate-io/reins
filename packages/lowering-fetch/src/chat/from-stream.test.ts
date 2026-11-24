@@ -203,6 +203,21 @@ describe("consumeChatStream", () => {
     expect(drafts).toHaveLength(1)
   })
 
+  it("兼容端点省略 tool_calls[].index：新的非空 id 开新槽，不带 id 的增量续到当前槽（全库审查 #71）", async () => {
+    const { drafts, outcome } = await run([
+      chunk({ tool_calls: [{ id: "c1", function: { name: "a", arguments: '{"x":' } }] }),
+      chunk({ tool_calls: [{ function: { arguments: "1}" } }] }),
+      chunk({ tool_calls: [{ id: "c2", function: { name: "b", arguments: '{"y":2}' } }] }),
+      finish("tool_calls"),
+      { data: "[DONE]" },
+    ])
+    expect(drafts.map((d) => d.payload)).toEqual([
+      { toolCallId: "c1", name: "a", args: { x: 1 } },
+      { toolCallId: "c2", name: "b", args: { y: 2 } },
+    ])
+    expect(outcome.stopReason).toBe("toolUse")
+  })
+
   it("入参 JSON 解析失败：args 存原始字符串；空入参 → {}", async () => {
     const { drafts } = await run([
       chunk({
