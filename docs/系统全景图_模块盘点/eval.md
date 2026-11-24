@@ -83,7 +83,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 3. **会话与种子**：`newId()` 生成 sessionId；有 `task.seed` 就 `map(e => ({ ...e, sessionId }))` 后 append——**只换 sessionId，事件 id 保留**，`parentId` / `pinsKept` 这些会话内引用才不断。
 4. **跑任务**：`drain(runLoop(loopConfig(...{ input })))` 第一次跑，之后进 `while (steps++ < maxSteps)`（缺省 200）：
    - `status === "handoff"` → sessionId 换成 `result.toSessionId`、推进 `sessionIds`，用空 extra 再 `runLoop`；
-   - `paused` + `reason === "approval"` → 逐条 interruption，`kind === "approval"` 的交 `fixture.approve(i, draft())`（缺省全批），装成 `ApprovalDecisionInput{ by: "eval" }`；出现非 approval 的中断（客户端工具等）就 `blocked = true` 并**跳出**——eval 里没人能回填；
+   - `paused` + `reason === "approval"` → 逐条 interruption，`kind === "approval"` 的交 `fixture.approve(i, draft)`（缺省全批；`draft` 是暂停那一刻从日志读出的中间态，与第 5 步收尾同一个函数组出，`timeline` / `fresh` / `finalText` 都是真的），装成 `ApprovalDecisionInput{ by: "eval" }`；出现非 approval 的中断（客户端工具等）就 `blocked = true` 并**跳出**——eval 里没人能回填；
    - `paused` + `reason === "budget"` 且 `resumes < (fixture.maxResumes ?? 0)` → `resumes++` 后带 `resume: result.state` 续跑；**缺省 `maxResumes` 是 0，即暂停就算没跑完**；
    - 其余（error、host、budget 且续跑用尽）→ break，`status` 如实进指标。
    墙钟 `wallMs` 从这一段开始前量到结束，含续跑之间的开销，不含探针。

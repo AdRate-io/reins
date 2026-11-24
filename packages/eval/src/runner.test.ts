@@ -216,6 +216,58 @@ describe("runEval：对照运行器", () => {
     expect(o.metrics.violations.before.violations).toBe(1)
   })
 
+  it("审批：fixture.approve 收到的中间态带着暂停那一刻的时间线（可按先前的调用决定批不批）", async () => {
+    const script: Script = (input) => {
+      const has = (name: string) =>
+        input.events.some(
+          (e) =>
+            e.type === "core.tool_result" && (e as CoreEventOf<"core.tool_result">).payload.name === name,
+        )
+      if (!has("lookup")) return { drafts: [callTool("l1", "lookup", { key: "code" })] }
+      if (!has("deploy")) return { drafts: [say("Checked, deploying."), callTool("d1", "deploy", {})] }
+      return { drafts: [say("Done")] }
+    }
+    const seen: { timeline: number; fresh: number; sessions: number; finalText: string }[] = []
+    const report = await runEval({
+      fixtures: [
+        {
+          id: "deploy-after-check",
+          task: { input: "check then ship" },
+          tools: [lookup, deploy],
+          completion: (o) => o.finalText === "Done",
+          approve: (_i, o) => {
+            seen.push({
+              timeline: o.timeline.length,
+              fresh: o.fresh.length,
+              sessions: o.timelines.length,
+              finalText: o.finalText,
+            })
+            return o.timeline.some(
+              (e) =>
+                e.type === "core.tool_call" && (e as CoreEventOf<"core.tool_call">).payload.name === "lookup",
+            )
+          },
+        },
+      ],
+      arms: [thresholdArm()],
+      lowering: new ScriptedLowering(script),
+      model: MODEL,
+      ...deterministic(),
+    })
+    const o = report.outcomes[0]
+    if (!o) throw new Error("unreachable")
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.sessions).toBe(1)
+    expect(seen[0]?.timeline).toBeGreaterThan(0)
+    expect(seen[0]?.fresh).toBe(seen[0]?.timeline)
+    expect(seen[0]?.finalText).toBe("Checked, deploying.")
+    const decision = o.timeline.find((e) => e.type === "core.approval_decision") as
+      | CoreEventOf<"core.approval_decision">
+      | undefined
+    expect(decision?.payload).toMatchObject({ approved: true, by: "eval" })
+    expect(o.metrics.completed).toBe(1)
+  })
+
   it("预算暂停：缺省不续跑、状态 paused、完成 0；maxResumes 给几次就续几次", async () => {
     const forever: Script = (input) => ({
       drafts: [callTool(`c${input.events.length}`, "lookup", { key: "x" })],

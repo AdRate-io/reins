@@ -176,15 +176,26 @@ async function runCell(
   let resumes = 0
   let steps = 0
   const maxSteps = opts.maxSteps ?? 200
-  const draft = (): EvalOutcomeDraft => ({
-    ...cell,
-    sessionIds,
-    timelines: [],
-    timeline: [],
-    fresh: [],
-    result,
-    finalText: "",
-  })
+  // 种子历史是别人（上一次真实运行）的账：token、轮数、动作都不算在这一格头上，只算本次新追加的事件
+  const seedLen = fixture.task.seed?.length ?? 0
+  /** 从日志读出此刻的各会话时间线，组成评分器看到的中间态；审批代答（暂停那一刻）与收尾（第 3 步）共用 */
+  const draft = async (): Promise<EvalOutcomeDraft> => {
+    const timelines: Event[][] = []
+    for (const id of sessionIds)
+      timelines.push(await readTimeline(env.stores.log, id, { registry: env.registry }))
+    const timeline = timelines.flat()
+    const fresh =
+      seedLen > 0 ? [...(timelines[0] ?? []).slice(seedLen), ...timelines.slice(1).flat()] : timeline
+    return {
+      ...cell,
+      sessionIds: [...sessionIds],
+      timelines,
+      timeline,
+      fresh,
+      result,
+      finalText: finalTextOf(fresh),
+    }
+  }
   while (steps++ < maxSteps) {
     opts.signal?.throwIfAborted()
     if (result.status === "handoff") {
@@ -197,9 +208,10 @@ async function runCell(
     if (result.reason === "approval") {
       const decisions: ApprovalDecisionInput[] = []
       let blocked = false
+      const atPause = fixture.approve ? await draft() : undefined
       for (const i of result.interruptions) {
         if (i.kind === "approval") {
-          const approved = fixture.approve ? fixture.approve(i, draft()) : true
+          const approved = fixture.approve && atPause ? fixture.approve(i, atPause) : true
           decisions.push({ toolCallId: i.toolCallId, approved, by: "eval" })
         } else blocked = true // 客户端工具等：eval 里没人能回填
       }
@@ -223,23 +235,8 @@ async function runCell(
   const wallMs = now() - wallStart
 
   // 3. 收时间线、算完成度
-  const timelines: Event[][] = []
-  for (const id of sessionIds)
-    timelines.push(await readTimeline(env.stores.log, id, { registry: env.registry }))
-  const timeline = timelines.flat()
-  // 种子历史是别人（上一次真实运行）的账：token、轮数、动作都不算在这一格头上，只算本次新追加的事件
-  const seedLen = fixture.task.seed?.length ?? 0
-  const fresh =
-    seedLen > 0 ? [...(timelines[0] ?? []).slice(seedLen), ...timelines.slice(1).flat()] : timeline
-  const outcomeDraft: EvalOutcomeDraft = {
-    ...cell,
-    sessionIds,
-    timelines,
-    timeline,
-    fresh,
-    result,
-    finalText: finalTextOf(fresh),
-  }
+  const outcomeDraft = await draft()
+  const { timelines, fresh } = outcomeDraft
   const completed = clamp01(await fixture.completion(outcomeDraft))
 
   // 4. 探针问答

@@ -74,7 +74,10 @@ export interface EvalFixture {
    * 这是确定性评分器；要 LLM judge 判完成度就自己在这里调 judge。
    */
   completion(outcome: EvalOutcomeDraft): boolean | number | Promise<boolean | number>
-  /** 审批由 runner 代人回答；缺省全批。返回 false 即拒绝（模型会看到被拒的 tool_result） */
+  /**
+   * 审批由 runner 代人回答；缺省全批。返回 false 即拒绝（模型会看到被拒的 tool_result）。
+   * outcome 是暂停那一刻的中间态：时间线读到这次暂停为止，`result` 是这次暂停，`finalText` 是此前最后一段正文
+   */
   approve?(interruption: ApprovalInterruption, outcome: EvalOutcomeDraft): boolean
   /**
    * 覆盖模型的上下文窗口（token）。把窗口缩小，中等长度的任务也会触发整理 ——
@@ -180,7 +183,7 @@ export interface FactResult {
   gradedBy: "expect" | "judge"
 }
 
-/** completion / approve 回调看到的中间态：跑完了但还没算指标 */
+/** completion / approve 回调看到的中间态：completion 时是跑完、还没算指标；approve 时是暂停的那一刻 */
 export interface EvalOutcomeDraft {
   fixtureId: string
   arm: string
