@@ -912,6 +912,106 @@ describe("reinsMiddleware：审批", () => {
     expect((result.payload.content[0] as { text: string }).text).toContain("make the call again")
   })
 
+  /** 本次 run 结束时的全部中断（通用中断与原生审批混在一起） */
+  function interruptsOf(chunks: StreamChunk[]): { interrupts: Interrupt[]; runId: string } {
+    const finished = chunks.find(
+      (c) => c.type === "RUN_FINISHED" && (c as { outcome?: { type: string } }).outcome?.type === "interrupt",
+    ) as { runId: string; outcome: { interrupts: Interrupt[] } } | undefined
+    if (!finished) throw new Error("没有中断")
+    return { interrupts: finished.outcome.interrupts, runId: finished.runId }
+  }
+  /** 照前端的做法答复一个中断：通用中断带 continuation，原生审批只带答复 */
+  function answer(interrupt: Interrupt, response: unknown): RunAgentResumeItem {
+    return genericInterruptContinuationFromDescriptor(interrupt)
+      ? resumeItem(interrupt, response)
+      : { interruptId: interrupt.id, status: "resolved", payload: response }
+  }
+
+  it("reins 工具声明 needsApproval: true（如 MCP destructive）：同一调用只出一个中断，答完即执行（全库审查 2026-11-25 #4）", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    let executed = 0
+    const wipe = defineTool({
+      name: "wipe",
+      description: "清空",
+      inputSchema: { type: "object", properties: {} },
+      needsApproval: true,
+      execute: () => {
+        executed++
+        return "wiped"
+      },
+    })
+    const sockets: Socket[] = [{ name: "mcp", tools: [wipe] }]
+    const f = fixture([{ blocks: [callTool("c1", "wipe", {})] }], sockets, {}, shared)
+    const chunks = await f.run({ messages: [user("清空")], tools: [], runId: "run1" })
+    const { interrupts, runId } = interruptsOf(chunks)
+    expect(interrupts).toHaveLength(1)
+    const f2 = fixture([{ blocks: [say("清空了")] }], sockets, {}, shared)
+    const chunks2 = await f2.run({
+      messages: [
+        user("清空"),
+        {
+          role: "assistant",
+          content: null,
+          toolCalls: [{ id: "c1", type: "function", function: { name: "wipe", arguments: "{}" } }],
+        },
+      ],
+      tools: [],
+      parentRunId: runId,
+      resume: interrupts.map((i) => answer(i, { approved: true, by: "boss" })),
+    })
+    expect(chunks2.some((c) => c.type === "RUN_ERROR")).toBe(false)
+    expect(executed).toBe(1)
+    const events = await all(shared.log)
+    expect(events.filter((e) => e.type === "core.approval_request")).toHaveLength(1)
+    expect(
+      (
+        events.filter((e) => e.type === "core.approval_decision") as CoreEventOf<"core.approval_decision">[]
+      ).map((d) => d.payload),
+    ).toEqual([{ toolCallId: "c1", approved: true, by: "boss" }])
+  })
+
+  it("宿主原生 needsApproval 工具又被 approval 模块要求审批：只问一次（原生那张卡），批准即执行（全库审查 2026-11-25 #4）", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    let executed = 0
+    const native = toolDefinition({
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object", properties: { env: { type: "string" } } },
+      needsApproval: true,
+    }).server(async () => {
+      executed++
+      return "deployed"
+    })
+    const sockets = [approval({ ask: ["deploy"] })]
+    const f = fixture([{ blocks: [callTool("c1", "deploy", { env: "prod" })] }], sockets, {}, shared)
+    const chunks = await f.run({ messages: [user("上线")], tools: [native], runId: "run1" })
+    const first = interruptsOf(chunks)
+    expect(first.interrupts).toHaveLength(1)
+    const f2 = fixture([{ blocks: [say("上线完成")] }], sockets, {}, shared)
+    const chunks2 = await f2.run({
+      messages: history(),
+      tools: [native],
+      parentRunId: first.runId,
+      resume: first.interrupts.map((i) => answer(i, { approved: true })),
+    })
+    // 第二次请求不该再停下来问第二遍
+    expect(chunks2.some((c) => c.type === "RUN_ERROR")).toBe(false)
+    expect(
+      chunks2.some(
+        (c) =>
+          c.type === "RUN_FINISHED" && (c as { outcome?: { type: string } }).outcome?.type === "interrupt",
+      ),
+    ).toBe(false)
+    expect(executed).toBe(1)
+    const events = await all(shared.log)
+    // 审批请求只有一条，记的是 approval 模块的策略与摘要
+    const requests = events.filter(
+      (e) => e.type === "core.approval_request",
+    ) as CoreEventOf<"core.approval_request">[]
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.payload.policyId).not.toBe(TANSTACK_APPROVAL_POLICY)
+  })
+
   it("TanStack 原生 needsApproval 工具：审批请求以 tanstack.needsApproval 入日志并暂停", async () => {
     const native = toolDefinition({
       name: "deploy",

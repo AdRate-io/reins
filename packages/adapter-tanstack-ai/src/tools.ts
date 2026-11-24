@@ -54,8 +54,9 @@ export interface ToolBridge {
 }
 
 /**
- * reins 工具 → TanStack 工具。`needsApproval` 只透传布尔形态（TanStack 只认布尔）；函数形态由适配器在
- * beforeTools 边界按 runLoop 的规则判定（circular：见 middleware 的 beforeTools）。
+ * reins 工具 → TanStack 工具。`needsApproval` 一律**不透传**：布尔与函数两种形态都由适配器在 beforeTools 边界
+ * 按 runLoop 的规则判定（先 validate、再问），以 reins 通用中断问人。透传布尔形态会让 TanStack 再开一张原生审批卡：
+ * 同一调用两个中断，前端只答 reins 那张时引擎拒绝续跑、run 记 error（全库审查 2026-11-25 #4）
  */
 export function toTanstackTool(tool: ReinsTool, bridge: ToolBridge): AnyTool {
   const out: AnyTool = {
@@ -64,7 +65,6 @@ export function toTanstackTool(tool: ReinsTool, bridge: ToolBridge): AnyTool {
     inputSchema: tool.inputSchema as JSONSchema,
     metadata: { reins: true },
   }
-  if (tool.needsApproval === true) out.needsApproval = true
   const execute = tool.execute?.bind(tool)
   if (execute) {
     out.execute = async (args: unknown, tctx?: ToolExecutionContext<unknown>) => {

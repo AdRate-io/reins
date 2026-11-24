@@ -675,6 +675,21 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
         }
       }
       if (approval && !decided?.approved) {
+        // 宿主工具自带静态 needsApproval：TanStack 执行阶段会自己开原生审批卡。Socket 的 defer 不再另发 reins 中断——
+        // 同一调用两张卡，只答一张引擎就拒绝续跑，答两张审批人被问两遍（全库审查 2026-11-25 #4）。
+        // 请求按 Socket 的策略与摘要入日志（toolPhaseComplete 见已有请求不重记），问人交给原生那张卡
+        if (tool && isNativeToolView(tool) && tool.needsApproval === true) {
+          if (!requested.has(toolCallId)) {
+            s.emitted.push({
+              type: "core.approval_request",
+              actor: "system",
+              parentId: call.id,
+              payload: { toolCallId, policyId: approval.policyId, summary: approval.summary },
+            })
+          }
+          s.verdicts.set(toolCallId, rewritten ? { kind: "rewrite", args } : { kind: "proceed" })
+          continue
+        }
         if (!requested.has(toolCallId)) {
           s.emitted.push({
             type: "core.approval_request",
