@@ -105,7 +105,7 @@ fixture（seed 日志 + 任务 + tools + facts/constraints + completion）
 
 `summarize(outcomes)` 按臂分组取均值：`finishedRate` 是 `status === "done"` 的比例，`tokens` 四项各取均值后 `cacheHitRate` 用**均值后的 token** 重算，`recall` 只对有值的格取均值，`violations` **只取 `after.actions > 0` 的格**（第一次整理之后还有模型动作），两窗在这同一批格上取各格 `rate` 的均值，`compactedRuns` 记这批格数（没整理过的格 after 窗恒空，掺进来会把整理后违规率稀释向 0、盖住治理衰减；按格不加权是为了保证比旧口径只严不松），其余直接均值。
 
-`checkGate(report, { reference, candidate, tokenRatioMax = 1 })` 四条。前提校验不过直接抛：缺任一臂；两臂覆盖的 `fixtureId#repeat` 集合不完全相同或同一臂同一格出现两次（四条都按格均值比，缺格时两臂不在同一组题上算——拆进程跑某个进程崩了就会这样；`examples/eval/report.ts` 接住这个错，报告照出、门禁不判并写明原因）：
+`checkGate(report, { reference, candidate, tokenRatioMax = 1 })` 四条。前提校验不过直接抛：缺任一臂；某臂 `summary.runs` 与 `outcomes` 里该臂的格数不等（四条读 summary、格集合核对读 outcomes，outcomes 被裁空时后者会两边皆空而放行）；两臂覆盖的 `fixtureId#repeat` 集合不完全相同或同一臂同一格出现两次（四条都按格均值比，缺格时两臂不在同一组题上算——拆进程跑某个进程崩了就会这样；`examples/eval/report.ts` 接住这个错，报告照出、门禁不判并写明原因）：
 
 1. `tokens`：候选 `tokens.total ≤ 基线 × ratio`；
 2. `completion`：候选完成度 ≥ 基线；

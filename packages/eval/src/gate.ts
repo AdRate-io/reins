@@ -44,6 +44,8 @@ export function checkGate(report: EvalReport, opts: GateOptions): GateResult {
   const candidate = report.summary[opts.candidate]
   if (!reference) throw new Error(`the report has no reference arm "${opts.reference}"`)
   if (!candidate) throw new Error(`the report has no candidate arm "${opts.candidate}"`)
+  assertSummaryMatchesCells(report, opts.reference, "reference")
+  assertSummaryMatchesCells(report, opts.candidate, "candidate")
   assertSameCells(report.outcomes, opts.reference, opts.candidate)
   const ratio = opts.tokenRatioMax ?? 1
 
@@ -124,6 +126,19 @@ function cellKeysOf(outcomes: readonly EvalOutcome[], arm: string, role: string)
   if (duplicates.length > 0)
     throw new Error(`the ${role} arm "${arm}" has duplicate cells: ${listCells(duplicates)}`)
   return keys
+}
+
+/**
+ * 四条门禁读的是 summary，格集合核对读的是 outcomes：两者必须描述同一批格。
+ * 调用方把 outcomes 裁空（或只留一部分）、summary 照旧时，格集合核对两边都空会直接放行，这里先拦住
+ */
+function assertSummaryMatchesCells(report: EvalReport, arm: string, role: string): void {
+  const runs = report.summary[arm]?.runs ?? 0
+  const cells = report.outcomes.filter((o) => o.arm === arm).length
+  if (runs !== cells)
+    throw new Error(
+      `the ${role} arm "${arm}" summarizes ${runs} run(s) but the report has ${cells} cell(s) for it; summary and outcomes must describe the same runs`,
+    )
 }
 
 /** 两臂必须覆盖同一组 fixture × 重复：门禁按格均值比，缺格或多格都会让两边不在同一组题上算 */

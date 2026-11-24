@@ -222,6 +222,20 @@ describe("checkGate：四条规则", () => {
     ).toThrow(/missing from reference: f#2/)
   })
 
+  it("summary 的格数与 outcomes 对不上时抛错：outcomes 被裁空、summary 照旧不能放行", () => {
+    const full = reportOf([
+      { arm: "threshold", total: 1000 },
+      { arm: "brain", total: 900 },
+    ])
+    expect(() =>
+      checkGate({ ...full, outcomes: [] }, { reference: "threshold", candidate: "brain" }),
+    ).toThrow(/reference arm "threshold" summarizes 1 run\(s\) but the report has 0 cell\(s\) for it/)
+    const onlyRef = full.outcomes.filter((o) => o.arm === "threshold")
+    expect(() =>
+      checkGate({ ...full, outcomes: onlyRef }, { reference: "threshold", candidate: "brain" }),
+    ).toThrow(/candidate arm "brain" summarizes 1 run\(s\) but the report has 0 cell\(s\) for it/)
+  })
+
   it("同一臂同一格出现两次也抛错（按格均值会让重复的格多算一份）", () => {
     expect(() =>
       gate([
