@@ -20,7 +20,7 @@ import { encodeAnthropicRequest } from "./anthropic/to-request.js"
 import { capabilitiesOf } from "./capabilities.js"
 import { consumeChatStream } from "./chat/from-stream.js"
 import { encodeChatRequest } from "./chat/to-request.js"
-import { DEFAULT_TIMEOUT_MS, postJson, requestSignals, touchEach } from "./http.js"
+import { DEFAULT_TIMEOUT_MS, postJson, requestSignals, touchChunks, touchEach } from "./http.js"
 import { eventsToIr } from "./ir.js"
 import { endpointOf, type FetchApi, type FetchModel, resolveModel } from "./models.js"
 import { consumeResponsesStream } from "./responses/from-stream.js"
@@ -145,7 +145,7 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       }
     }
     const streamInput = {
-      messages: touchEach(parseSse(res.body), signals),
+      messages: touchEach(parseSse(touchChunks(res.body, signals)), signals),
       origin: { provider: model.provider, api: model.api, model: model.id },
       ...(model.cost ? { cost: model.cost } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -161,6 +161,8 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       case "openai-responses":
         return yield* consumeResponsesStream(streamInput, ctx)
       default:
+        // touchEach 的 finally 只在消息流被迭代过才走到，这里没迭代，计时器要自己清
+        signals.dispose()
         throw new LoweringError("unsupported_api", `unsupported wire protocol ${req.payload.api}`, {
           api: req.payload.api,
         })

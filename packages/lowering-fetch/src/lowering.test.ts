@@ -214,6 +214,18 @@ describe("FetchLowering", () => {
     expect(cut.drafts).toEqual([expect.objectContaining({ payload: { text: "ab" } })])
     expect(cut.outcome).toMatchObject({ stopReason: "error" })
     expect((cut.outcome as { errorMessage: string }).errorMessage).toContain("timed out")
+
+    // 长推理时只发 SSE 注释保活（不产出消息）：注释也续命，总静默远超 timeoutMs 照常收尾（审查返修）
+    const keepAlive = [
+      ...Array.from({ length: 8 }, () => ": keep-alive\n\n"),
+      `data: ${JSON.stringify(delta({ content: "z" }))}\n\n`,
+      `data: ${JSON.stringify(delta({}, "stop"))}\n\n`,
+      "data: [DONE]\n\n",
+    ]
+    const pinged = new FetchLowering({ apiKey: () => "k", fetch: dripFetch(keepAlive, 25), timeoutMs: 80 })
+    const alive = await collect(pinged.stream(pinged.toRequest({ events: [user("hi")], model: MODEL })))
+    expect(alive.outcome).toMatchObject({ stopReason: "stop" })
+    expect(alive.drafts).toEqual([expect.objectContaining({ payload: { text: "z" } })])
   })
 
   it("2xx 但没有响应体：不抛，以 stopReason=error 收场并说明", async () => {

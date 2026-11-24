@@ -51,10 +51,7 @@ export function requestSignals(hostSignal: AbortSignal | undefined, timeoutMs: n
   const arm = () => {
     if (timer !== undefined) clearTimeout(timer)
     timer = setTimeout(
-      () =>
-        local.abort(
-          new DOMException(`request timed out: no response data for ${timeoutMs}ms`, "TimeoutError"),
-        ),
+      () => local.abort(new DOMException(`request timed out: no data for ${timeoutMs}ms`, "TimeoutError")),
       timeoutMs,
     )
     // Node 下不让这个计时器单独撑住进程（AbortSignal.timeout 也是如此）；其它运行时没有 unref，跳过
@@ -77,7 +74,26 @@ export function requestSignals(hostSignal: AbortSignal | undefined, timeoutMs: n
 }
 
 /**
+ * 包住响应字节流：每到一块字节 `touch()` 一次。按字节块而不是按解析出的消息续命——SSE 注释行
+ * （`: keep-alive`，DeepSeek / OpenRouter 长推理时用来保活）不产出消息，只按消息续命会把保活中的流当成停住。
+ */
+export function touchChunks(
+  body: ReadableStream<Uint8Array>,
+  signals: RequestSignals,
+): ReadableStream<Uint8Array> {
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        signals.touch()
+        controller.enqueue(chunk)
+      },
+    }),
+  )
+}
+
+/**
  * 包住 SSE 消息流：每到一帧 `touch()` 一次，流结束（含出错、调用方提前 return）时 `dispose()`。
+ * 字节级续命见 `touchChunks`；这里的 dispose 靠生成器 finally，调用方提前 return 也会走到。
  */
 export async function* touchEach<T>(source: AsyncIterable<T>, signals: RequestSignals): AsyncGenerator<T> {
   try {
