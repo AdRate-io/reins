@@ -441,7 +441,7 @@ describe("handoff × 审批同轮（R2）", () => {
     expect(types(await all(log, second.result.toSessionId))).toEqual(["system_note", "user_message"])
   })
 
-  it("用户停止后发新消息：普通轮次不重建旧意图（快照里看不到本轮模型输出，只有补跑轮才重建）", async () => {
+  it("用户停止后发新消息：回执之后有用户消息，旧意图作废（普通轮次的快照里看不到本轮模型输出，只能靠用户消息判）", async () => {
     const deploy = defineTool<{ env: string }>({
       name: "deploy",
       description: "上线",
@@ -487,5 +487,16 @@ describe("handoff × 审批同轮（R2）", () => {
       { ...(events[0] as Event), type: "core.model_text", payload: { text: "x" } },
     ]
     expect(unfinishedHandoffArgs(withNewTurn)).toBeUndefined()
+    // 回执之后用户又开口了（停止后发新消息、续跑带新话）→ 旧意图作废
+    const withUserMessage = [
+      ...events,
+      {
+        ...(events[0] as Event),
+        type: "core.user_message",
+        actor: "user",
+        payload: { content: [{ type: "text", text: "换个事" }] },
+      },
+    ]
+    expect(unfinishedHandoffArgs(withUserMessage)).toBeUndefined()
   })
 })

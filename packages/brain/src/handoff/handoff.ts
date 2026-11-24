@@ -161,16 +161,22 @@ export function lastVisibleUserMessage(events: readonly Event[]): string | undef
 
 /**
  * 上一次 run 里模型调了 handoff、拿到了"已安排交接"的回执，但那一轮被打断（审批暂停、宿主中止），
- * 没能走到 onTurnEnd，内存里的意图随之丢失（R2）。续跑补齐 pending 后循环会再调 onTurnEnd（`ctx.batch.resumed`），
- * 只有那一轮才调本函数——别的轮次的时间线快照不含本轮模型输出，判据不成立。
+ * 没能走到 onTurnEnd，内存里的意图随之丢失（R2）。续跑补齐 pending 后循环会再调 onTurnEnd，
  * 这里从日志把入参找回来：最后一条成功的 handoff 回执之后，既没有 `core.handoff`（说明还没交接），
- * 也没有新的模型输出（说明没有开新的一轮、旧意图仍然有效）。任一不满足即 undefined。
+ * 也没有新的模型输出（说明没有开新的一轮），也没有新的用户消息（用户在回执之后又开口了，比如停止后发新消息、
+ * 续跑时带了新话：旧意图作废，由模型看过新消息再决定要不要交接）。任一不满足即 undefined。
+ *
+ * 用户消息这一条不能省：普通轮次的 ctx.timeline 是轮起点快照、看不到本轮刚产生的模型输出，
+ * 只靠"回执之后有模型输出"判不出旧意图已过时。也不能按 `ctx.batch.resumed` 收窄：TanStack 的补跑批不调 onTurnEnd，
+ * 那条路径的 R2 只能在下一轮从日志重建。
  */
 export function unfinishedHandoffArgs(timeline: readonly Event[]): HandoffArgs | undefined {
   let receipt: CoreEventOf<"core.tool_result"> | undefined
   for (let i = timeline.length - 1; i >= 0; i--) {
     const e = timeline[i] as Event
     if (e.type === "core.handoff") return undefined
+    // 回执之后的用户消息：意图作废（回执之前的那条是发起交接时的任务，循环在那一轮的模型输出处就停了，到不了）
+    if (e.type === "core.user_message" && !receipt) return undefined
     if (isModelOutput(e)) {
       // 回执之前的模型输出就是发起交接的那一轮本身；回执之后出现的模型输出说明新的一轮已开始
       if (receipt) break
@@ -255,9 +261,7 @@ export function handoff(opts: HandoffOptions = {}): Socket {
       const intent = intents.get(ctx)
       if (intent) return { handoff: intent }
       // 本轮内存里没有：可能是上一次 run 被打断、这次补齐 pending 后的收尾，从日志重建（R2）。
-      // 只在补跑那一轮重建：普通轮次的 ctx.timeline 是轮起点快照、看不到本轮刚产生的模型输出，
-      // "回执之后有新的模型输出 ⇒ 意图作废"的判据在这里失效——用户停止后发新消息，旧意图会被误兑现
-      if (!ctx.batch.resumed) return undefined
+      // 不限补跑轮（TanStack 的补跑批不调 onTurnEnd，只能在下一轮重建）；用户在回执之后开口即作废，见 unfinishedHandoffArgs
       const args = unfinishedHandoffArgs(ctx.timeline)
       return args ? { handoff: intentOf(ctx, args).intent } : undefined
     },
