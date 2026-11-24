@@ -11,6 +11,10 @@
  * Anthropic `tool_use.id` / `tool_result.tool_use_id` 的厂商字符集是 `^[a-zA-Z0-9_-]+$`。与 pi-ai
  * （anthropic-messages normalizeToolCallId）同一规则：非法字符换成 `_`、截到 64 位——同一段时间线经两条降级层发往
  * Anthropic 得到同一个 id。厂商自己产出的 id（`toolu_…`）原样不变。
+ *
+ * 映射有损、可能撞号：`a|b` 与 `a_b`、前 64 位相同的两个长 id 会规整成同一个，与 pi-ai 同等（为两层得到同一 id 刻意
+ * 不加哈希）；只在不同厂商 / 降级层写下的 id 混在一段时间线里时才可能出现。落点仍记 exact：id 不是模型可见内容，
+ * 不撞号时配对关系不变。
  */
 export function anthropicToolCallId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64)
