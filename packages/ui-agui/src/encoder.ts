@@ -100,7 +100,11 @@ export function createAguiEncoder(options: AguiEncoderOptions = {}): StreamEncod
   let runId = ""
   /** 流过增量、尚未被完整事件认领的块；键 `kind:index`，Map 的插入顺序即认领顺序 */
   const open = new Map<string, OpenBlock>()
-  /** 本轮 assistant 文本的消息 id，给随后的 tool_call 做 parentMessageId；用户说话即重置 */
+  /**
+   * 本次模型响应里 assistant 文本的消息 id，给随后的 tool_call 做 parentMessageId。
+   * 任何非模型输出的事件（工具结果、用户说话、暂停 / 续跑标记……）都标志这次响应已结束，即重置：
+   * 否则下一轮只出思考 + 工具调用时，调用会挂到上一轮的正文上，前端把它并进上一轮的气泡、排在上一轮工具结果之前
+   */
   let parentMessageId: string | undefined
 
   /** 一块的收尾帧；由完整事件认领时带 metadata.reins，无主收尾时不带 */
@@ -174,9 +178,10 @@ export function createAguiEncoder(options: AguiEncoderOptions = {}): StreamEncod
         return endOf(block, e)
       }
     }
-    // 同一次响应的其它模型输出（工具调用、没流过的块）不打断仍待认领的块；其余事件先把半截块无主收尾
-    const out = kind !== undefined || e.type === "core.tool_call" ? [] : closeOpen()
-    if (e.type === "core.user_message") parentMessageId = undefined
+    // 同一次响应的其它模型输出（工具调用、没流过的块）不打断仍待认领的块；其余事件先把半截块无主收尾，并结束本次响应的父消息
+    const modelOutput = kind !== undefined || e.type === "core.tool_call"
+    const out = modelOutput ? [] : closeOpen()
+    if (!modelOutput) parentMessageId = undefined
     if (e.type === "core.model_text") parentMessageId = e.id
     out.push(...mapEvent(e, parentMessageId !== undefined ? { parentMessageId } : {}))
     return out
