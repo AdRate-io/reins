@@ -249,6 +249,28 @@ describe("consumeResponsesStream", () => {
     expect((await run("cancelled")).stopReason).toBe("error")
   })
 
+  it("有 function_call 项时 incomplete 仍按原因判：max_output_tokens → length、content_filter → error，不被 toolUse 盖掉（全库审查 #28）", async () => {
+    const run = async (reason: string) =>
+      (
+        await collect(
+          consumeResponsesStream({
+            messages: feed([
+              created,
+              added(0, { id: "fc_1", type: "function_call", call_id: "call_1", name: "f", arguments: "" }),
+              { type: "response.function_call_arguments.delta", output_index: 0, delta: '{"amount": 10' },
+              {
+                type: "response.incomplete",
+                response: { id: "resp_1", status: "incomplete", incomplete_details: { reason } },
+              },
+            ]),
+            origin,
+          }),
+        )
+      ).outcome as { stopReason: string; errorMessage?: string }
+    expect((await run("max_output_tokens")).stopReason).toBe("length")
+    expect(await run("content_filter")).toMatchObject({ stopReason: "error" })
+  })
+
   it("response.failed → error 带 code 与 message；流里的 error 事件立即收尾；半截正文仍交出", async () => {
     const failed = await collect(
       consumeResponsesStream({

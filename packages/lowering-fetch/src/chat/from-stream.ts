@@ -139,9 +139,13 @@ function apply(chunk: ChatChunk, a: ChatAssembly, ctx: LoweringStreamContext) {
 }
 
 /**
- * 停止原因：有 tool_call 就是 toolUse（强制 tool_choice 时官方 finish_reason 是 stop，F0 实测）；
- * content_filter / insufficient_system_resource（DeepSeek 服务端资源不足）/ aborted（服务端中止）都是"没正常说完"，
- * 记 error 并把原因写进 errorMessage——core 只按文案判是否重试，资源不足那条写明 temporarily unavailable 让它值得再试。
+ * 停止原因，判定顺序固定：先看 finish_reason 是否"没正常说完"，最后才看有没有 tool_call——
+ * 截断（length）、过滤、没收尾的流里也可能已有半截 tool_call，先判 toolUse 会把截断藏起来（全库审查 #28）。
+ * - length → length；content_filter / insufficient_system_resource（DeepSeek 服务端资源不足）/ aborted（服务端中止）
+ *   → error 并把原因写进 errorMessage——core 只按文案判是否重试，资源不足那条写明 temporarily unavailable 让它值得再试；
+ * - 没有 finish_reason：没等到 [DONE]，或等到了却既无正文也无 tool_call → error "stream ended before finish_reason"（可重试）；
+ * - 其余（stop / tool_calls / 未知值、或 [DONE] 收尾但网关吞了 finish_reason）：有 tool_call 就是 toolUse
+ *   （强制 tool_choice 时官方 finish_reason 是 stop，F0 实测），否则 stop。
  */
 function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolean): LoweringOutcome {
   const usage = usageOf(a.usage)
@@ -150,37 +154,34 @@ function outcomeOf(a: ChatAssembly, cost: ModelCost | undefined, sawDone: boolea
   if (c !== undefined) out.costUsd = c
   if (a.responseModel) out.responseModel = a.responseModel
 
-  if (a.calls.size > 0) out.stopReason = "toolUse"
-  else {
-    switch (a.finish) {
-      case "stop":
-      case "tool_calls":
-        break
-      case "length":
-        out.stopReason = "length"
-        break
-      case "content_filter":
+  switch (a.finish) {
+    case "length":
+      out.stopReason = "length"
+      return out
+    case "content_filter":
+      out.stopReason = "error"
+      out.errorMessage = "finish_reason=content_filter: the provider's content filter cut this output short"
+      return out
+    case "insufficient_system_resource":
+      out.stopReason = "error"
+      out.errorMessage = "finish_reason=insufficient_system_resource (service temporarily unavailable)"
+      return out
+    case "aborted":
+      out.stopReason = "error"
+      out.errorMessage = "finish_reason=aborted: the server aborted this generation"
+      return out
+    case undefined:
+      if (!sawDone || (a.text.length === 0 && a.calls.size === 0)) {
         out.stopReason = "error"
-        out.errorMessage = "finish_reason=content_filter: the provider's content filter cut this output short"
-        break
-      case "insufficient_system_resource":
-        out.stopReason = "error"
-        out.errorMessage = "finish_reason=insufficient_system_resource (service temporarily unavailable)"
-        break
-      case "aborted":
-        out.stopReason = "error"
-        out.errorMessage = "finish_reason=aborted: the server aborted this generation"
-        break
-      case undefined:
-        if (!sawDone || a.text.length === 0) {
-          out.stopReason = "error"
-          out.errorMessage = "stream ended before finish_reason"
-        }
-        break
-      default:
-        break
-    }
+        out.errorMessage = "stream ended before finish_reason"
+        return out
+      }
+      break
+    default:
+      // stop / tool_calls / 未知值
+      break
   }
+  if (a.calls.size > 0) out.stopReason = "toolUse"
   return out
 }
 

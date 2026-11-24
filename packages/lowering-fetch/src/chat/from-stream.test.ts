@@ -159,6 +159,26 @@ describe("consumeChatStream", () => {
     expect((await run([finish("aborted"), { data: "[DONE]" }])).outcome.stopReason).toBe("error")
   })
 
+  it("有 tool_call 时截断与异常仍按 finish_reason 判：length → length、content_filter → error、没收尾 → error，不被 toolUse 盖掉（全库审查 #28）", async () => {
+    const cut = chunk({
+      tool_calls: [{ index: 0, id: "c", function: { name: "f", arguments: '{"amount": 10' } }],
+    })
+    const length = (await run([cut, finish("length"), { data: "[DONE]" }])).outcome
+    expect(length.stopReason).toBe("length")
+    const filtered = (await run([cut, finish("content_filter"), { data: "[DONE]" }])).outcome
+    expect(filtered.stopReason).toBe("error")
+    expect(filtered.errorMessage).toContain("content_filter")
+    const unfinished = await run([cut])
+    expect(unfinished.drafts).toHaveLength(1)
+    expect(unfinished.outcome).toMatchObject({
+      stopReason: "error",
+      errorMessage: "stream ended before finish_reason",
+    })
+    // 有 [DONE] 但网关吞了 finish_reason：与只有正文时同口径，流已正常收尾，按 toolUse
+    const swallowed = chunk({ tool_calls: [{ index: 0, id: "c", function: { name: "f", arguments: "{}" } }] })
+    expect((await run([swallowed, { data: "[DONE]" }])).outcome.stopReason).toBe("toolUse")
+  })
+
   it("没有 [DONE] 也没有 finish_reason：已拼出的内容照样交出去，outcome 记 error（core 判可重试）", async () => {
     const { drafts, outcome } = await run([chunk({ content: "半" }), chunk({ content: "截" })])
     expect(drafts).toEqual([

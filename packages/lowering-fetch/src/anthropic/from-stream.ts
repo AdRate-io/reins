@@ -278,10 +278,13 @@ function apply(ev: AnthropicStreamEvent, a: AnthropicAssembly, ctx: LoweringStre
 }
 
 /**
- * 停止原因：有 tool_use 块即 toolUse；end_turn / stop_sequence / pause_turn → stop；max_tokens 与
- * model_context_window_exceeded → length；refusal → error 并把 stop_details 写进 errorMessage（厂商分类器拒答，
- * 不是瞬断，core 不会重试）；流里的 error 事件 → error（overloaded_error 的文案含 Overloaded，core 判可重试）；
- * 没等到 message_stop 也没有 stop_reason → error "stream ended before message_stop"（可重试）。
+ * 停止原因，判定顺序固定：流里的 error → 截断 / 拒答 / 没收尾 → 最后才看有没有 tool_use 块——
+ * 半截 tool_use 也是 tool_use 块，先判 toolUse 会把截断与拒答藏起来（全库审查 #28）。
+ * - 流里的 error 事件 → error（overloaded_error 的文案含 Overloaded，core 判可重试）；
+ * - max_tokens 与 model_context_window_exceeded → length；
+ * - refusal → error 并把 stop_details 写进 errorMessage（厂商分类器拒答，不是瞬断，core 不会重试）；
+ * - 没等到 message_stop 也没有 stop_reason → error "stream ended before message_stop"（可重试）；
+ * - 其余（end_turn / stop_sequence / pause_turn / tool_use / 未知值）：有 tool_use 块即 toolUse，否则 stop。
  */
 function outcomeOf(a: AnthropicAssembly, cost: ModelCost | undefined): LoweringOutcome {
   const usage = usageOf(a.start, a.delta)
@@ -295,36 +298,30 @@ function outcomeOf(a: AnthropicAssembly, cost: ModelCost | undefined): LoweringO
     out.errorMessage = `${a.error.type}: ${a.error.message}`
     return out
   }
-  if (a.hasToolUse()) {
-    out.stopReason = "toolUse"
-    return out
-  }
   switch (a.stopReason) {
-    case "end_turn":
-    case "stop_sequence":
-    case "pause_turn":
-    case "tool_use":
-      break
     case "max_tokens":
     case "model_context_window_exceeded":
       out.stopReason = "length"
-      break
+      return out
     case "refusal": {
       out.stopReason = "error"
       const category = str(a.stopDetails?.category)
       const explanation = str(a.stopDetails?.explanation)
       out.errorMessage = `stop_reason=refusal${category ? ` (${category})` : ""}: the provider's classifier refused to answer${explanation ? `: ${explanation}` : ""}`
-      break
+      return out
     }
     case undefined:
       if (!a.sawStop) {
         out.stopReason = "error"
         out.errorMessage = "stream ended before message_stop"
+        return out
       }
       break
     default:
+      // end_turn / stop_sequence / pause_turn / tool_use / 未知值
       break
   }
+  if (a.hasToolUse()) out.stopReason = "toolUse"
   return out
 }
 

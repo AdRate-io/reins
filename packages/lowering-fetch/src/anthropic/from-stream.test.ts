@@ -225,6 +225,29 @@ describe("consumeAnthropicStream", () => {
     expect(String((refusal as { errorMessage: string }).errorMessage)).toContain("nope")
   })
 
+  it("有 tool_use 块时 max_tokens → length、refusal → error、没收尾 → error，不被 toolUse 盖掉（全库审查 #28）", async () => {
+    const tool = [
+      start(),
+      bstart(0, { type: "tool_use", id: "t1", name: "f", input: {} }),
+      bdelta(0, { type: "input_json_delta", partial_json: '{"amount": 10' }),
+      bstop(0),
+    ]
+    const run = (tail: unknown[]) =>
+      collect(consumeAnthropicStream({ messages: feed([...tool, ...tail]), origin }))
+    expect((await run([mdelta("max_tokens", 9), mstop])).outcome).toMatchObject({ stopReason: "length" })
+    const refusal = (await run([mdelta("refusal", 9, { stop_details: { category: "cyber" } }), mstop]))
+      .outcome
+    expect(refusal).toMatchObject({ stopReason: "error" })
+    expect(String((refusal as { errorMessage: string }).errorMessage)).toContain("refusal")
+    const unfinished = await run([])
+    expect(unfinished.drafts).toHaveLength(1)
+    expect(unfinished.outcome).toMatchObject({
+      stopReason: "error",
+      errorMessage: "stream ended before message_stop",
+    })
+    expect((await run([mdelta("tool_use", 9), mstop])).outcome).toMatchObject({ stopReason: "toolUse" })
+  })
+
   it("流里的 error 事件 → error（overloaded 文案保留给 core 判瞬断）；缺 message_stop → error；坏帧跳过", async () => {
     const err = await collect(
       consumeAnthropicStream({
