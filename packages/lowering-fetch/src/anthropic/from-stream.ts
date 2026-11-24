@@ -32,6 +32,8 @@ interface AnthropicUsage {
   output_tokens?: unknown
   cache_creation_input_tokens?: unknown
   cache_read_input_tokens?: unknown
+  /** 缓存写按存活期拆开（厂商字段）；没有时按宿主配的 cacheTtl 算 */
+  cache_creation?: { ephemeral_5m_input_tokens?: unknown; ephemeral_1h_input_tokens?: unknown } | null
 }
 
 interface AnthropicStreamEvent {
@@ -76,6 +78,8 @@ export interface AnthropicStreamInput {
   signal?: AbortSignal
   timedOut?: () => boolean
   timeoutMs?: number
+  /** 请求里断点的存活期（anthropic.cacheTtl）；上游没给缓存写分档时据此决定按哪档价算（全库审查 #74） */
+  cacheTtl?: "5m" | "1h"
 }
 
 /** pi-ai 对 redacted_thinking 的正文约定，两条降级路线的事件互换 */
@@ -286,10 +290,23 @@ function apply(ev: AnthropicStreamEvent, a: AnthropicAssembly, ctx: LoweringStre
  * - 没等到 message_stop 也没有 stop_reason → error "stream ended before message_stop"（可重试）；
  * - 其余（end_turn / stop_sequence / pause_turn / tool_use / 未知值）：有 tool_use 块即 toolUse，否则 stop。
  */
-function outcomeOf(a: AnthropicAssembly, cost: ModelCost | undefined): LoweringOutcome {
+/**
+ * 缓存写里 1 小时存活期的 token 数：优先读厂商的 cache_creation 分档（后到的 message_delta 为准）；
+ * 没有分档时，宿主配了 cacheTtl "1h" 就全部算 1 小时（本包打的断点都带同一个 ttl）。
+ */
+function oneHourWritesOf(a: AnthropicAssembly, usage: TokenUsage, cacheTtl: "5m" | "1h" | undefined): number {
+  const reported =
+    num(a.delta?.cache_creation?.ephemeral_1h_input_tokens) ??
+    num(a.start?.cache_creation?.ephemeral_1h_input_tokens)
+  if (reported !== undefined) return reported
+  const hasSplit = a.delta?.cache_creation != null || a.start?.cache_creation != null
+  return !hasSplit && cacheTtl === "1h" ? (usage.cacheWrite ?? 0) : 0
+}
+
+function outcomeOf(a: AnthropicAssembly, input: AnthropicStreamInput): LoweringOutcome {
   const usage = usageOf(a.start, a.delta)
   const out: LoweringOutcome = { stopReason: "stop", usage }
-  const c = costOf(usage, cost)
+  const c = costOf(usage, input.cost, { cacheWrite1h: oneHourWritesOf(a, usage, input.cacheTtl) })
   if (c !== undefined) out.costUsd = c
   if (a.responseModel) out.responseModel = a.responseModel
 
@@ -344,7 +361,7 @@ export async function* consumeAnthropicStream(
     }
   } catch (err) {
     yield* a.drafts(input.origin)
-    const base = outcomeOf(a, input.cost)
+    const base = outcomeOf(a, input)
     if (input.signal?.aborted) return { ...base, stopReason: "aborted", errorMessage: "aborted by host" }
     if (input.timedOut?.())
       return {
@@ -355,7 +372,7 @@ export async function* consumeAnthropicStream(
     return { ...base, stopReason: "error", errorMessage: errorText(err) }
   }
   yield* a.drafts(input.origin)
-  return outcomeOf(a, input.cost)
+  return outcomeOf(a, input)
 }
 
 function errorText(err: unknown): string {

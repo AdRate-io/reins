@@ -112,6 +112,52 @@ describe("consumeAnthropicStream", () => {
     ])
   })
 
+  it("1 小时缓存写按 2 倍输入价计：读 usage.cache_creation 的分档；没有分档时按宿主配的 cacheTtl（全库审查 #74）", async () => {
+    const withUsage = (usage: Record<string, unknown>, extra: { cacheTtl?: "5m" | "1h" } = {}) =>
+      collect(
+        consumeAnthropicStream({
+          messages: feed([
+            { type: "message_start", message: { id: "m", model: "claude-opus-5", usage } },
+            mdelta("end_turn", 0),
+            mstop,
+          ]),
+          origin,
+          cost,
+          ...extra,
+        }),
+      ).then((r) => (r.outcome as { costUsd: number }).costUsd)
+    // 分档：5m 写 40、1h 写 60 → 40 × 6.25 + 60 × (5 × 2)
+    const split = await withUsage({
+      input_tokens: 0,
+      cache_creation_input_tokens: 100,
+      cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 60 },
+    })
+    expect(split).toBeCloseTo((40 * 6.25 + 60 * 10) / 1_000_000, 12)
+    // 上游没给分档、宿主配了 1h：全部按 1h
+    const ttl = await withUsage({ input_tokens: 0, cache_creation_input_tokens: 100 }, { cacheTtl: "1h" })
+    expect(ttl).toBeCloseTo((100 * 10) / 1_000_000, 12)
+    // 缺省 5 分钟：不变
+    const plain = await withUsage({ input_tokens: 0, cache_creation_input_tokens: 100 })
+    expect(plain).toBeCloseTo((100 * 6.25) / 1_000_000, 12)
+    // 价目里显式给了 1h 写价就用它
+    const explicit = await collect(
+      consumeAnthropicStream({
+        messages: feed([
+          {
+            type: "message_start",
+            message: { id: "m", model: "x", usage: { input_tokens: 0, cache_creation_input_tokens: 10 } },
+          },
+          mdelta("end_turn", 0),
+          mstop,
+        ]),
+        origin,
+        cost: { ...cost, cacheWrite1h: 16 },
+        cacheTtl: "1h",
+      }),
+    )
+    expect((explicit.outcome as { costUsd: number }).costUsd).toBeCloseTo((10 * 16) / 1_000_000, 12)
+  })
+
   it("正文为空但有签名的 thinking（display omitted）仍出草稿；redacted_thinking 出 pi-ai 同款草稿；空 text 块不出", async () => {
     const { drafts, outcome } = await collect(
       consumeAnthropicStream({

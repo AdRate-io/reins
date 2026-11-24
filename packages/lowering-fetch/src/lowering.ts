@@ -151,6 +151,7 @@ export class FetchLowering implements Lowering<FetchLoweredPayload> {
       ...(ctx.signal ? { signal: ctx.signal } : {}),
       timedOut: signals.timedOut,
       timeoutMs: this.timeoutMs,
+      ...(model.anthropic?.cacheTtl ? { cacheTtl: model.anthropic.cacheTtl } : {}),
     }
     switch (req.payload.api) {
       case "openai-chat":

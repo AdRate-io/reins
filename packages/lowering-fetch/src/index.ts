@@ -82,7 +82,7 @@ export {
   reasoningItemOf,
 } from "./responses/to-request.js"
 export { parseSse, type SseMessage } from "./sse.js"
-export { costOf, type ModelCost } from "./usage.js"
+export { type CacheWriteSplit, costOf, type ModelCost } from "./usage.js"
 
 import type { LossMatrix } from "@reinsjs/core"
 import { ANTHROPIC_LOSS_MATRIX } from "./anthropic/loss-matrix.js"
