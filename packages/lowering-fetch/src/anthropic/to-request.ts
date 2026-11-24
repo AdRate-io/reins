@@ -47,8 +47,8 @@ import {
   RELAY_DIALECT_NOTE,
 } from "../media.js"
 import type { FetchModel } from "../models.js"
-import { anthropicToolCallId } from "../tool-call-id.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
+import { anthropicToolCallId } from "../tool-call-id.js"
 
 export interface AnthropicCacheControl {
   type: "ephemeral"

@@ -43,8 +43,8 @@ import {
   RELAY_DIALECT_NOTE,
 } from "../media.js"
 import type { FetchModel } from "../models.js"
-import { splitResponsesToolCallId } from "../tool-call-id.js"
 import { DIRECTIVE_NOTE, framedSummary, framedSystemNote } from "../notes.js"
+import { splitResponsesToolCallId } from "../tool-call-id.js"
 
 export type ResponsesInputContent =
   | { type: "input_text"; text: string }
