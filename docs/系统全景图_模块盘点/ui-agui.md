@@ -35,9 +35,9 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/index.ts` | 公共出口：`mapEvent` / `AGUI_MAPPING` / `partsToText` / `reinsMetadata`、`createAguiEncoder` / `aguiEncoding`、以及 `types.ts` 的全部类型 |
-| `src/types.ts` | AG-UI 协议事件的本地类型（本包用到的子集）、`AguiInterrupt` / `AguiRunOutcome`、挂在每条事件上的 `ReinsMetadata`（`provenance?` 只在 user_message 的 START 上出现） |
-| `src/map-event.ts` | 映射表 `AGUI_MAPPING` 与纯函数 `mapEvent`；`partsToText` 把内容片段压成文本并记 dropped，`reinsMetadata` 生成 `metadata.reins` |
+| `src/index.ts` | 公共出口：`mapEvent` / `AGUI_MAPPING` / `partsToText` / `displayPartsOf` / `reinsMetadata`、`createAguiEncoder` / `aguiEncoding`、以及 `types.ts` 的全部类型 |
+| `src/types.ts` | AG-UI 协议事件的本地类型（本包用到的子集）、`AguiInterrupt` / `AguiRunOutcome`、挂在每条事件上的 `ReinsMetadata`（`provenance?` 只在 user_message 的 START / END 上出现；`parts?` 见 3.1）、展示片段 `AguiDisplayPart` |
+| `src/map-event.ts` | 映射表 `AGUI_MAPPING` 与纯函数 `mapEvent`；`partsToText` 把内容片段压成文本并记 dropped，`displayPartsOf` 把内容片段转成不含字节的展示片段，`reinsMetadata` 生成 `metadata.reins` 的基础字段 |
 | `src/encoder.ts` | 有状态编码器：增量与完整事件接成同一条消息、`parentMessageId` 维护、run 四态收尾、`interruptsOf` 把 core 的 `Interruption` 翻成 AG-UI interrupt、SSE 帧的 id 归属 |
 | `demo/index.html` | 无依赖的最小页面：直连 SSE、按 AG-UI 事件渲染 |
 | `demo/serve.mjs` | 最小演示服务（node:http + `createAgentHandler` + `aguiEncoding()`），无密钥时用 core testing 的剧本假模型离线跑 |
@@ -56,12 +56,12 @@
 | `core.tool_result` | `TOOL_CALL_RESULT`（role=tool） |
 | `core.system_note` / `approval_request` / `approval_decision` / `compaction` / `handoff` / `memory_op` / `budget_usage` / `run_paused` / `run_resumed` / `core.error` / `ext.*` | `CUSTOM`（`name` = 事件 type，`value` = 事件本身） |
 
-1. `messageId` 一律取 `event.id`；`timestamp` 取 `event.at`；每条都带 `metadata.reins = { seq, eventId, type, dropped? }`，客户端据此去重或定位回时间线。
+1. `messageId` 一律取 `event.id`；`timestamp` 取 `event.at`；每条都带 `metadata.reins = { seq, eventId, type, dropped? }`（user_message 与 tool_result 另有下面 4～6 条的字段），客户端据此去重或定位回时间线。
 2. **没有任何事件被丢弃**：`switch` 的 `default` 分支兜底成 `CUSTOM`，所以新增事件类型不会静默消失，只是前端可能不认识。
 3. 空正文不造空帧：`model_text` / `user_message` 文本为空时不发 `TEXT_MESSAGE_CONTENT`；`model_thinking` 文本为空（加密 reasoning 只有 replay 没正文）时只发 `REASONING_START` + `REASONING_END`，让前端知道"这里想过"。
-4. 内容片段只有文本能进 AG-UI 正文：`partsToText` 把图片 / 视频 / 音频换成 `[<类型> <mime>]` 占位并在 `metadata.reins.dropped` 里记 `<类型>:<mime>`（P7 有损必声明）。
-5. `tool_result` 的 `isError` / `spilled` 在 AG-UI 没有对应字段，塞进 `metadata.reins` 不丢。
-6. `user_message` 有 `provenance` 时只在它的 `TEXT_MESSAGE_START` 上带 `metadata.reins.provenance`（2026-11-06，server 进行中投递的对账键 `deliveryId`）；其余事件不带——tool_result 与脑子写的事件都有 provenance，全量带出会改变每条 `TOOL_CALL_RESULT` 的形状，`CUSTOM` 的 `value` 本就是整条事件。
+4. 内容片段只有文本能进 AG-UI 正文：`partsToText` 把图片 / 视频 / 音频换成 `[<类型> <mime>]` 占位并在 `metadata.reins.dropped` 里记 `<类型>:<mime>`（P7 有损必声明）。有媒体片段时（与 `dropped` 同出同缺）另带 `metadata.reins.parts`：`displayPartsOf` 逐个对应、按白名单新建对象、永不含字节，图片引用带 `blobId`、内联媒体只给 mime、`tool_reference` 按正文写法转文本（2026-11-24，AdRate 建议 19）。
+5. `tool_result` 的 `isError` / `spilled` 在 AG-UI 没有对应字段，塞进 `metadata.reins` 不丢；有媒体片段时 `parts` 与它们并存（`TOOL_CALL_RESULT` 只有一帧）。
+6. `user_message` 的 `TEXT_MESSAGE_START` 与 `_END` 带同一份完整 `metadata.reins`（`dropped?` / `provenance?` / `parts?`），`_CONTENT` 只带基础字段——AG-UI 客户端拼消息时按顶层键后写整个替换（`@ag-ui/core` `mergeMetadata`），只挂 START 会被 END 冲掉（2026-11-24 前就是这样，按 `messages` 状态渲染的前端拿不到 `provenance`）。`provenance` 是 server 进行中投递的对账键 `deliveryId`（2026-11-06）；其余事件不带——tool_result 与脑子写的事件都有 provenance，全量带出会改变每条 `TOOL_CALL_RESULT` 的形状，`CUSTOM` 的 `value` 本就是整条事件。
 
 ### 3.2 流式：增量与完整事件接成一条消息
 
@@ -83,7 +83,7 @@
 
 **AG-UI 类型手抄，官方包只进测试** — `types.ts` 按 `@ag-ui/core` 0.0.59 的 zod schema 抄成本地类型，官方包作 devDependency 在测试里逐条校验产出（T13）。为的是运行时零依赖，不把 zod 带给用户。边界：上游 schema 变了要靠测试发现，本地类型得手工跟。
 
-**每条事件带 `metadata.reins`** — `{ seq, eventId, type, dropped? }` 让任何 AG-UI 客户端都能把渲染出来的消息对回时间线（去重、定位、重连）。边界：AG-UI 原生字段装不下的 reins 信息（`isError`、`spilled`、图片占位）也走这里，属约定而非协议。
+**每条事件带 `metadata.reins`** — `{ seq, eventId, type, dropped? }` 让任何 AG-UI 客户端都能把渲染出来的消息对回时间线（去重、定位、重连）。边界：AG-UI 原生字段装不下的 reins 信息（`isError`、`spilled`、图片占位、展示片段 `parts`）也走这里，属约定而非协议；客户端按顶层键合并 metadata，所以一条消息多帧时，要留到拼好的消息上的字段必须挂在最后一帧（user_message 的 END）。
 
 **编码器是按流的工厂** — `aguiEncoding()` 返回 `StreamEncoderFactory`，server 每开一条流调用一次（T13；`@reinsjs/server` 的 `StreamEncoderFactory` 注释同样写明）。因为把增量与随后的完整事件接成同一条消息必须有状态，而多条流会并发交错，状态必须按流隔离。边界：`mapEvent` 本身仍是纯函数，不想要状态的场景可以只用它。
 

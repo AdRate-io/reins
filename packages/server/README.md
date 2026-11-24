@@ -148,6 +148,8 @@ async function serveImage(log: EventLog, blobs: BlobStore, sessionId: string, id
 
 Blob ids are never reused and bytes never change after `put`, so the response can be cached for good.
 
+Keep the `image/` check: `blobUsableBy` also accepts the session's own non-image blobs, such as spilled tool results. With the default AG-UI encoding a client finds the ids in `metadata.reins.parts` of a user message or tool result (`@reinsjs/ui-agui`, "Images and other media").
+
 ## Multiple instances
 
 The run registry is what turns a second `POST` on a busy session into `409`. The default `InMemoryRunRegistry` is a `Map` in this process, so **two instances behind a load balancer can both start a run on the same session**: the second one spends a model call and then fails with `seq_conflict` when it tries to append (the log stays correct — the seq check in the store is the last gate — but the call was wasted and the client sees an `error` frame instead of a clean `409`).

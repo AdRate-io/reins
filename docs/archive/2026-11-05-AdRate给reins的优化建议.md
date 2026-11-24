@@ -1220,3 +1220,52 @@ PG 版的 `BlobStore` 和本机存储的宿主不容易察觉这个问题，但�
   - 行为变化：同一条工具结果里同一张图出现两次、读取瞬断时，现在两段都回 storage error（这张图只读一次）。一批里出了第一个问题后，剩下的引用也会被读（并发读），所以失败场景下的读取次数会比以前多。
 - **验证**：全部用假模型与带延迟的计数存储测，判据是"耗时 < 2 倍单次延迟"和在途峰值，不看墙钟绝对值。覆盖：10 张一波读完、40 张时在途峰值 16、去重、失败顺序、返回 null、`stat` 与 `get` 不一致、HTTP 读取次数（有 / 无 `stat`）、合批入口、工具结果。把并发上限改成 1 做变异核对，并发那几条用例会挂。`pnpm check` 全绿；发版前在 PG 16.13 真库上跑全量（2225 条通过）。发布后在空目录从 npm 官方源安装，冒烟 8/8：只有一份 core；内存、SQLite、PG 三个存储的一致性套件（含 `stat`）全过；40 张图同时在读最多 16 张；HTTP 发 3 张新图，`stat` 3 次、`get` 3 次。
 - **请核实**：升级后在测试服发一条带 10 张新图的消息，看首字延迟（预期比现在少约 10 秒）。
+
+## AdRate 建议 19：AG-UI 帧带上图片引用，前端能显示用户发过的图
+
+### 现状（ui-agui 0.7.2 / core 0.17.0）
+
+- 用户消息里的图片引用 `{ type: "image", mime, blobId }` 已能写进事件日志，模型侧完整（建议 17）。
+- 但 `@reinsjs/ui-agui` 把 `core.user_message` 编成 AG-UI 帧时，`partsToText` 把每张图换成一行文字占位 `[image <mime>]`，`metadata.reins.dropped` 里只记 `image:<mime>`，**不带 `blobId`**（`dist/index.js` 约 35～55、65～77 行）。`core.tool_result` 同样经 `partsToText`，`TOOL_CALL_RESULT` 也只剩占位。
+- `@reinsjs/agent` 的 `createAgent` 缺省用 `aguiEncoding()`，GET 补发历史与 POST 实时流都走它。
+
+### 问题
+
+AdRate 前端按 AG-UI 帧建会话时间线。用户发了图之后：
+
+- 实时流与刷新后补发的历史里，用户气泡只能显示文字 `[image image/jpeg]`，看不到自己发过的截图；
+- 前端拿不到 `blobId`，也就无法去宿主自己的鉴权路由取图（server README「Images by reference」建议的显示方式需要这个 id）；
+- 若前端按占位文字去猜，与用户恰好打出的同样文字无法区分。
+
+宿主可以替换 `encode` 自己包一层补上，但等于在宿主里改 reins 的编码，每次升级都要跟着核对。凡是用 ui-agui、又让用户发图的宿主都会碰到，放在 reins 里做更合适。
+
+### 建议形态（供参考，形态由 reins 定）
+
+1. **用户消息的 `TEXT_MESSAGE_START` 带上不含字节的内容片段**：例如 `metadata.reins.parts`，按原顺序列出 `{ type: "text", text }` 与 `{ type: "image", mime, blobId }`；内联图片（带 `data`）只给 `{ type: "image", mime }`，**永不输出字节**。前端有它就按片段渲染（文字 + 图片位置），没有它就照旧读 `TEXT_MESSAGE_CONTENT`。
+2. **文字占位保持不变**：`TEXT_MESSAGE_CONTENT` 照旧带 `[image <mime>]`，不认识新字段的前端行为不变。
+3. **（可选，一致性）`TOOL_CALL_RESULT` 同样带上片段**：工具结果里的图片引用（如 MCP 返回的截图）也能被前端显示。AdRate 这一期只用用户消息，这条可以按 reins 的节奏做。
+
+### 边界
+
+- 只加只读的附加信息，不改事件日志、不改模型请求、不改现有帧的字段与顺序。
+- 只输出 `blobId` 与 `mime`，不输出字节、不输出存储位置。取图由宿主路由按 README 的方式鉴权（会话归属 + `blobUsableBy`）。
+
+### 对 AdRate 的影响
+
+- A12 的会话页依赖它：用户气泡按片段显示缩略图，点开看大图，图片走宿主鉴权路由（按 `blobId` 取）。
+- 不阻塞 A12 方案与后端实施，前端显示已发图片的那一批需要它，实施时与 core 0.17 一起升级。
+
+### reins 回复（2026-11-24）
+
+采纳第 1、2、3 条，形态稍有调整。待发布：ui-agui 0.8.0，agent 随依赖出 patch（0.7.5）；core 不变。AdRate 用 `createAgent` 的话把这两个包一起升。
+
+- **字段**：`metadata.reins.parts`，按原顺序列出 `{ type: "text", text }`；图片引用是 `{ type: "image", mime, blobId }`；内联的图片、视频、音频只给 `{ type, mime }`，永不带字节；工具卡片（`tool_reference`）按正文的写法转成文字。只在消息里有图片、视频或音频时才出现（与 `dropped` 同出同缺），纯文字消息不带。`TEXT_MESSAGE_CONTENT` 的占位文字、`dropped`、帧的类型与顺序都不变。
+- **位置有一处与建议不同：用户消息的 `TEXT_MESSAGE_START` 和 `TEXT_MESSAGE_END` 都带**，而且是同一份完整的 `metadata.reins`。原因：AG-UI 客户端（`@ag-ui/client`）把一条消息几帧的 metadata 合并时，同名的顶层键是"后到的整个替换前面的"，只挂在 START 上，到 END 就被冲掉了。审查时发现这个问题早就存在：进行中投递用来对账的 `provenance` 也只挂在 START 上，按 `messages` 状态渲染的前端一直拿不到。这次一并修了。AdRate 前端若是按原始帧读，START 上本来就有；若是用 AG-UI 客户端拼好的消息，现在也有了。
+- **工具结果（第 3 条）这次一起做了**：`TOOL_CALL_RESULT` 只有一帧，`parts` 与 `isError` / `spilled` 并存。两边共用同一个函数，只做一边反而要留一处没有道理的差异。自己写编码器的宿主可以直接用导出的 `displayPartsOf(content)`。
+- **请留意**：
+  - `blobId` 到了浏览器，但它本身不给权限。取图路由的三道检查缺一不可：先过会话鉴权，再用 `blobUsableBy`，最后看 `meta.mime` 是否以 `image/` 开头。`blobUsableBy` 对本会话自己的任何 blob 都放行，包括外溢的文本 blob，而外溢 blob 的 id（`spilled.blobId`）和图片 id 出现在同一个 `metadata.reins` 里。server README 的配方里已经有 mime 检查，请别删。
+  - AdRate 的 `BlobStore` 不要用 R2 的对象路径或签名 URL 当 id。
+  - 以下情况前端要能退回占位显示：内联图片没有 `blobId`；blob 被保留策略清掉后路由回 404。`blobId` 当作不透明字符串，拼进 URL 时要 `encodeURIComponent`。
+  - 行为变化：带 `provenance` 或带媒体的用户消息，`TEXT_MESSAGE_END` 现在多了这些字段；依赖"END 只有 seq / eventId / type"的前端代码需要调整。
+- **验证**：全部用假数据测，不涉及真模型。覆盖：混排顺序、纯文字不带字段、内联字节（用独特标记串）在所有帧里都搜不到、畸形片段只出白名单字段、工具结果三个字段并存、用 `@ag-ui/core` 官方 `mergeMetadata` 把三帧折叠一遍后字段还在、正文块还开着时到达带图消息、经 server 实际 POST 再 GET 补发两条路径的帧相同且带 `blobId`。做了三项变异核对（去掉挂 `parts`、END 退回只带基础字段、视频带出 `durationSec`），测试都能抓到。`pnpm check` 全绿。
+- **请核实**：升级后在测试服发一条带图的消息，看实时流里和刷新后的用户气泡是否都显示缩略图、点开能看大图。

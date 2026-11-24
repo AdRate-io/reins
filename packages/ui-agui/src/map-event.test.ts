@@ -1,4 +1,4 @@
-import { EventSchemas } from "@ag-ui/core"
+import { EventSchemas, mergeMetadata } from "@ag-ui/core"
 import {
   CORE_SCHEMAS,
   type CoreEventPayloads,
@@ -9,7 +9,7 @@ import {
   type Event,
 } from "@reinsjs/core"
 import { describe, expect, it } from "vitest"
-import { AGUI_MAPPING, mapEvent, partsToText } from "./map-event.js"
+import { AGUI_MAPPING, displayPartsOf, mapEvent, partsToText } from "./map-event.js"
 import type { AguiEvent } from "./types.js"
 
 const registry = createCoreRegistry()
@@ -179,22 +179,21 @@ describe("字段细节", () => {
     assertValidAgui(out)
   })
 
-  it("user_message 带 provenance：只在 TEXT_MESSAGE_START 的 metadata.reins 原样带出（server 进行中投递的对账键）", () => {
+  it("user_message 带 provenance：START 与 END 的 metadata.reins 原样带出（server 进行中投递的对账键）", () => {
     const plain = ev("core.user_message", SAMPLES["core.user_message"])
     const delivered: Event = { ...plain, provenance: { source: "reins.delivery", ref: "d1" } }
     const out = mapEvent(delivered)
-    expect(out[0]).toMatchObject({
-      type: "TEXT_MESSAGE_START",
-      role: "user",
-      metadata: { reins: { provenance: { source: "reins.delivery", ref: "d1" } } },
-    })
-    // CONTENT / END 不带；不带 provenance 的 user_message 输出与此前逐字相同
-    for (const e of out.slice(1)) expect(e.metadata?.reins).not.toHaveProperty("provenance")
-    expect(mapEvent(plain)).toEqual(
-      out.map((e, i) =>
-        i === 0 ? { ...e, metadata: { reins: { seq: 1, eventId: "e1", type: "core.user_message" } } } : e,
-      ),
-    )
+    expect(out.map((e) => e.type)).toEqual(["TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END"])
+    const base = { seq: 1, eventId: "e1", type: "core.user_message" }
+    const full = { ...base, provenance: { source: "reins.delivery", ref: "d1" } }
+    // START / END 同带（AG-UI 客户端合并 metadata 时 END 会整个替换 reins 键），CONTENT 只带基础字段
+    expect(out[0]).toMatchObject({ role: "user", metadata: { reins: full } })
+    expect(out[1]?.metadata?.reins).toStrictEqual(base)
+    expect(out[2]?.metadata?.reins).toStrictEqual(full)
+    // 两帧不共用对象
+    expect(out[0]?.metadata?.reins).not.toBe(out[2]?.metadata?.reins)
+    // 不带 provenance、无媒体的 user_message 三帧都只有基础字段，与此前逐字相同
+    for (const e of mapEvent(plain)) expect(e.metadata?.reins).toStrictEqual(base)
     assertValidAgui(out)
   })
 
@@ -220,5 +219,148 @@ describe("工具定义引用段（L1）", () => {
       { type: "tool_reference", name: "g", description: "dg", inputSchema: { type: "object" } },
     ])
     expect(out).toEqual({ text: '### g\ndg\nInput schema: {"type":"object"}', dropped: [] })
+  })
+})
+
+describe("展示片段 metadata.reins.parts（AdRate 建议 19）", () => {
+  const MARK = "BYTES_MARKER_9f3c"
+  const TOOL_REF = {
+    type: "tool_reference",
+    name: "g",
+    description: "dg",
+    inputSchema: { type: "object" },
+  } as const
+  const mixed = [
+    { type: "text", text: "看这两张" },
+    { type: "image", mime: "image/png", blobId: "blob-1" },
+    { type: "image", mime: "image/jpeg", data: MARK },
+    TOOL_REF,
+    { type: "text", text: "然后呢" },
+  ] as const
+  const expectedParts = [
+    { type: "text", text: "看这两张" },
+    { type: "image", mime: "image/png", blobId: "blob-1" },
+    { type: "image", mime: "image/jpeg" },
+    { type: "text", text: '### g\ndg\nInput schema: {"type":"object"}' },
+    { type: "text", text: "然后呢" },
+  ]
+
+  it("user_message 混排：START / END 带同一份 parts（顺序一致、不合并文本），CONTENT 与 dropped 不变", () => {
+    const out = mapEvent(ev("core.user_message", { content: [...mixed] }))
+    expect(out.map((e) => e.type)).toEqual(["TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END"])
+    const reins = {
+      seq: 1,
+      eventId: "e1",
+      type: "core.user_message",
+      dropped: ["image:image/png", "image:image/jpeg"],
+      parts: expectedParts,
+    }
+    expect(out[0]?.metadata?.reins).toStrictEqual(reins)
+    expect(out[2]?.metadata?.reins).toStrictEqual(reins)
+    expect(out[1]).toMatchObject({
+      delta: partsToText([...mixed]).text,
+      metadata: { reins: { seq: 1, eventId: "e1", type: "core.user_message" } },
+    })
+    expect(out[1]?.metadata?.reins).not.toHaveProperty("parts")
+    assertValidAgui(out)
+  })
+
+  it("纯文本 / 只含 tool_reference：不带 parts 键，帧与此前相同", () => {
+    for (const e of mapEvent(ev("core.user_message", SAMPLES["core.user_message"]))) {
+      expect(e.metadata?.reins).not.toHaveProperty("parts")
+    }
+    const onlyRef = mapEvent(
+      ev("core.tool_result", { toolCallId: "c1", name: "tool_find", content: [TOOL_REF], isError: false }),
+    )
+    expect(onlyRef[0]?.metadata?.reins).toStrictEqual({
+      seq: 1,
+      eventId: "e1",
+      type: "core.tool_result",
+      isError: false,
+    })
+    const textResult = mapEvent(ev("core.tool_result", SAMPLES["core.tool_result"]))
+    expect(textResult[0]?.metadata?.reins).not.toHaveProperty("parts")
+  })
+
+  it("永不输出字节：内联图片 / 视频 / 音频（用户消息与工具结果），视频不带 durationSec", () => {
+    const media = [
+      { type: "image", mime: "image/png", data: `${MARK}-img` },
+      { type: "video", mime: "video/mp4", data: `${MARK}-vid`, durationSec: 12 },
+      { type: "audio", mime: "audio/mpeg", data: `${MARK}-aud` },
+    ] as const
+    const user = mapEvent(ev("core.user_message", { content: [...media] }))
+    const tool = mapEvent(
+      ev("core.tool_result", { toolCallId: "c1", name: "shot", content: [...media], isError: false }),
+    )
+    const parts = [
+      { type: "image", mime: "image/png" },
+      { type: "video", mime: "video/mp4" },
+      { type: "audio", mime: "audio/mpeg" },
+    ]
+    // 严格相等：视频的 durationSec 等原片段字段一个都不能带出
+    const partsOf = (e: AguiEvent | undefined) =>
+      (e?.metadata?.reins as { parts?: unknown } | undefined)?.parts
+    expect(partsOf(user[0])).toStrictEqual(parts)
+    expect(partsOf(tool[0])).toStrictEqual(parts)
+    expect(JSON.stringify([...user, ...tool])).not.toContain(MARK)
+    assertValidAgui([...user, ...tool])
+  })
+
+  it("畸形片段：只按白名单挑字段，不出字节、不出空 blobId、不带多余键", () => {
+    const odd = [
+      { type: "image", mime: "image/png", data: MARK, blobId: "" },
+      { type: "text", text: "hi", trust: "system", extra: MARK },
+    ] as never
+    expect(displayPartsOf(odd)).toStrictEqual([
+      { type: "image", mime: "image/png" },
+      { type: "text", text: "hi" },
+    ])
+  })
+
+  it("tool_result 带图片引用：parts 与 isError / spilled 并存", () => {
+    const out = mapEvent(
+      ev("core.tool_result", {
+        toolCallId: "c1",
+        name: "screenshot",
+        content: [
+          { type: "text", text: "截图如下" },
+          { type: "image", mime: "image/webp", blobId: "shot-7" },
+        ],
+        isError: true,
+        spilled: { blobId: "b9", summary: "页面 HTML" },
+      }),
+    )
+    expect(out[0]).toMatchObject({ type: "TOOL_CALL_RESULT", content: "截图如下\n[image image/webp]" })
+    expect(out[0]?.metadata?.reins).toStrictEqual({
+      seq: 1,
+      eventId: "e1",
+      type: "core.tool_result",
+      dropped: ["image:image/webp"],
+      isError: true,
+      spilled: { blobId: "b9", summary: "页面 HTML" },
+      parts: [
+        { type: "text", text: "截图如下" },
+        { type: "image", mime: "image/webp", blobId: "shot-7" },
+      ],
+    })
+    assertValidAgui(out)
+  })
+
+  it("官方 mergeMetadata 依次折叠三帧：parts / provenance / dropped 都留在拼好的消息上", () => {
+    const e: Event = {
+      ...ev("core.user_message", { content: [...mixed] }),
+      provenance: { source: "reins.delivery", ref: "d7" },
+    }
+    const out = mapEvent(e)
+    // 单帧也要完整：START 与 END 各自都带 provenance 与 parts
+    expect(out[0]?.metadata?.reins).toStrictEqual(out[2]?.metadata?.reins)
+    expect(out[0]?.metadata?.reins).toMatchObject({ provenance: { ref: "d7" }, parts: expectedParts })
+    let merged: Record<string, unknown> | undefined
+    for (const f of out) merged = mergeMetadata(merged, f.metadata)
+    expect(merged?.reins).toMatchObject({
+      provenance: { source: "reins.delivery", ref: "d7" },
+      dropped: ["image:image/png", "image:image/jpeg"],
+      parts: expectedParts,
+    })
   })
 })

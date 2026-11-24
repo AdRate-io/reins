@@ -6,6 +6,7 @@ import {
   createCoreRegistry,
   defineTool,
   type Event,
+  InMemoryBlobStore,
   InMemoryEventLog,
   type RunResult,
 } from "@reinsjs/core"
@@ -424,6 +425,39 @@ describe("流式增量与完整事件接成同一条消息", () => {
   })
 })
 
+describe("展示片段在流里（AdRate 建议 19）", () => {
+  it("正文块还开着时到达带图 user_message：先无主收尾，START / END 照样带 parts，SSE id 挂 END", () => {
+    const content = [
+      { type: "text", text: "再看这张" },
+      { type: "image", mime: "image/png", blobId: "blob-2" },
+    ] as const
+    const frames = feed([
+      start,
+      delta("text", 0, "说到一半"),
+      item(ev("core.user_message", { content: [...content] }, 2)),
+      done,
+    ])
+    expect(types(frames)).toEqual([
+      "RUN_STARTED",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END", // 半截块无主收尾
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "RUN_FINISHED",
+    ])
+    const parts = [
+      { type: "text", text: "再看这张" },
+      { type: "image", mime: "image/png", blobId: "blob-2" },
+    ]
+    expect(data(frames)[4]).toMatchObject({ role: "user", messageId: "e2", metadata: { reins: { parts } } })
+    expect(data(frames)[6]).toMatchObject({ messageId: "e2", metadata: { reins: { parts } } })
+    expect(frames[6]?.id).toBe("2")
+    assertValidAgui(frames)
+  })
+})
+
 describe("run 结束的三种翻译", () => {
   it("paused → RUN_FINISHED(interrupt)，中断项一一对应；state 原样放 result 供前端回传", () => {
     const paused: RunResult = {
@@ -679,5 +713,50 @@ describe("接上 @reinsjs/server", () => {
       result: { status: "replayed", lastSeq: 9 },
     })
     assertValidAgui(replay)
+  })
+
+  it("带图片引用的消息：实时流与补发的 user_message 帧带同一份 parts（含 blobId），不出字节（AdRate 建议 19）", async () => {
+    const log = new InMemoryEventLog()
+    const blobs = new InMemoryBlobStore()
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
+    const b64 = btoa(String.fromCharCode(...bytes))
+    const { id } = await blobs.put(bytes, { mime: "image/png", sessionId: "s1" })
+    const lowering = new ScriptedLowering([{ drafts: [say("看到了")] }])
+    const handler = createAgentHandler(
+      { log, lowering, model: { provider: "scripted", id: "scripted" }, tools: [], blobs },
+      { heartbeatMs: 0, encode: aguiEncoding() },
+    )
+    const input = [
+      { type: "text", text: "看图" },
+      { type: "image", mime: "image/png", blobId: id },
+    ]
+    const res = await handler(
+      new Request("http://t/agent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "s1", input }),
+      }),
+    )
+    const userFrames = (frames: SseFrame[]) =>
+      data(frames).filter(
+        (e) => (e.metadata?.reins as { type?: string } | undefined)?.type === "core.user_message",
+      )
+    const live = parseSse(await res.text())
+    const replay = parseSse(await (await handler(new Request("http://t/agent?sessionId=s1"))).text())
+    const parts = [
+      { type: "text", text: "看图" },
+      { type: "image", mime: "image/png", blobId: id },
+    ]
+    for (const frames of [live, replay]) {
+      assertValidAgui(frames)
+      const u = userFrames(frames)
+      expect(u.map((e) => e.type)).toEqual(["TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END"])
+      expect(u[0]?.metadata?.reins).toMatchObject({ parts })
+      expect(u[2]?.metadata?.reins).toMatchObject({ parts })
+      // 模型侧看到的是换回的内联字节，帧里绝不能有
+      expect(JSON.stringify(data(frames))).not.toContain(b64)
+    }
+    expect(lowering.requests[0] && JSON.stringify(lowering.requests[0].events)).toContain(b64)
+    expect(userFrames(live)).toEqual(userFrames(replay))
   })
 })

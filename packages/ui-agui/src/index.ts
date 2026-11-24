@@ -7,5 +7,12 @@
  * 运行时零依赖；事件形状在测试里用 @ag-ui/core 的官方 schema 逐条校验。
  */
 export { type AguiEncoderOptions, aguiEncoding, createAguiEncoder } from "./encoder.js"
-export { AGUI_MAPPING, type MapContext, mapEvent, partsToText, reinsMetadata } from "./map-event.js"
+export {
+  AGUI_MAPPING,
+  displayPartsOf,
+  type MapContext,
+  mapEvent,
+  partsToText,
+  reinsMetadata,
+} from "./map-event.js"
 export type * from "./types.js"

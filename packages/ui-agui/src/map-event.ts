@@ -11,15 +11,18 @@
  * | 其余 core.* 与 ext.*  | CUSTOM，name = 事件 type，value = 事件本身（审批弹窗、感知、预算等都在这里） |
  *
  * 内容片段只有文本能进 AG-UI 的消息正文；图片以占位文本代替并在 metadata.reins.dropped 里声明（P7：有损必声明）。
+ * 有媒体片段时另在 metadata.reins.parts 给出不含字节的展示片段（`displayPartsOf`，AdRate 建议 19），
+ * 前端据此按原顺序渲染、拿 blobId 去宿主自己的鉴权路由取图。
  */
 import {
   type ContentPart,
   type CoreEventPayloads,
   type CoreEventType,
   type Event,
+  isImageRef,
   renderToolReference,
 } from "@reinsjs/core"
-import type { AguiEvent, AguiEventType, ReinsMetadata } from "./types.js"
+import type { AguiDisplayPart, AguiEvent, AguiEventType, ReinsMetadata } from "./types.js"
 
 /** 每种事件会翻成哪些 AG-UI 事件类型（按顺序）；测试据此逐条核对 */
 export const AGUI_MAPPING: Record<CoreEventType | "ext.*", readonly AguiEventType[]> = {
@@ -80,6 +83,33 @@ export function partsToText(parts: readonly ContentPart[]): { text: string; drop
   return { text, dropped }
 }
 
+/**
+ * 内容片段 → 前端展示片段（AdRate 建议 19）。与 content 逐个对应、顺序相同、**永不含字节**：
+ * 只按白名单挑字段新建对象，绝不展开原片段（`{ ...p }` 会把 `data` 带出去）。
+ * 图片只有引用形态（`isImageRef`）才带 `blobId`，内联或畸形的只给 mime；`tool_reference` 与正文同一写法转成文本。
+ */
+export function displayPartsOf(content: readonly ContentPart[]): AguiDisplayPart[] {
+  return content.map((p): AguiDisplayPart => {
+    switch (p.type) {
+      case "text":
+        return { type: "text", text: p.text }
+      case "tool_reference":
+        return { type: "text", text: renderToolReference(p) }
+      case "image":
+        return isImageRef(p)
+          ? { type: "image", mime: p.mime, blobId: p.blobId }
+          : { type: "image", mime: p.mime }
+      case "video":
+      case "audio":
+        return { type: p.type, mime: p.mime }
+      default: {
+        const _exhaustive: never = p
+        return _exhaustive
+      }
+    }
+  })
+}
+
 export function reinsMetadata(event: Event, dropped: string[] = []): { metadata: { reins: ReinsMetadata } } {
   const reins: ReinsMetadata = { seq: event.seq, eventId: event.id, type: event.type }
   if (dropped.length > 0) reins.dropped = dropped
@@ -93,20 +123,30 @@ export function mapEvent(event: Event, ctx: MapContext = {}): AguiEvent[] {
   const meta = (dropped: string[] = []) => ({ timestamp, ...reinsMetadata(event, dropped) })
 
   switch (event.type) {
-    case "core.user_message":
-    case "core.model_text": {
-      const role = event.type === "core.user_message" ? "user" : "assistant"
-      const { text, dropped } =
-        event.type === "core.user_message"
-          ? partsToText((event.payload as P<"core.user_message">).content)
-          : { text: (event.payload as P<"core.model_text">).text, dropped: [] }
+    case "core.user_message": {
+      const { content } = event.payload as P<"core.user_message">
+      const { text, dropped } = partsToText(content)
       const messageId = event.id
-      const startMeta = meta(dropped)
-      // 只有 user_message 带出 provenance（server 进行中投递的对账键），其余事件输出不变
-      if (event.type === "core.user_message" && event.provenance !== undefined) {
-        startMeta.metadata.reins.provenance = { ...event.provenance }
+      // START 与 END 带同一份完整 metadata.reins：AG-UI 客户端拼消息时按顶层键"后写整个替换"合并三帧的
+      // metadata（@ag-ui/core mergeMetadata），只挂 START 的 provenance / dropped / parts 会被 END 冲掉。
+      // CONTENT 只带基础字段，与此前相同
+      // 每次调用新建一份，两帧不共用对象（宿主改其中一帧不串到另一帧）
+      const full = () => {
+        const m = meta(dropped)
+        // provenance 是 server 进行中投递的对账键；只有 user_message 带出，其余事件输出不变
+        if (event.provenance !== undefined) m.metadata.reins.provenance = { ...event.provenance }
+        if (dropped.length > 0) m.metadata.reins.parts = displayPartsOf(content)
+        return m
       }
-      const out: AguiEvent[] = [{ type: "TEXT_MESSAGE_START", messageId, role, ...startMeta }]
+      const out: AguiEvent[] = [{ type: "TEXT_MESSAGE_START", messageId, role: "user", ...full() }]
+      if (text.length > 0) out.push({ type: "TEXT_MESSAGE_CONTENT", messageId, delta: text, ...meta() })
+      out.push({ type: "TEXT_MESSAGE_END", messageId, ...full() })
+      return out
+    }
+    case "core.model_text": {
+      const { text } = event.payload as P<"core.model_text">
+      const messageId = event.id
+      const out: AguiEvent[] = [{ type: "TEXT_MESSAGE_START", messageId, role: "assistant", ...meta() }]
       if (text.length > 0) out.push({ type: "TEXT_MESSAGE_CONTENT", messageId, delta: text, ...meta() })
       out.push({ type: "TEXT_MESSAGE_END", messageId, ...meta() })
       return out
@@ -145,7 +185,13 @@ export function mapEvent(event: Event, ctx: MapContext = {}): AguiEvent[] {
       const { text, dropped } = partsToText(content)
       const m = meta(dropped)
       // isError / spilled 是 reins 特有信息，AG-UI 结果事件没有对应字段，放 metadata 不丢
-      const reins = { ...m.metadata.reins, isError, ...(spilled !== undefined ? { spilled } : {}) }
+      const reins: ReinsMetadata & { isError: boolean; spilled?: { blobId: string; summary: string } } = {
+        ...m.metadata.reins,
+        isError,
+        ...(spilled !== undefined ? { spilled } : {}),
+        // 有媒体片段时给展示片段（与 dropped 同出同缺），工具产出的图片引用也能被前端显示
+        ...(dropped.length > 0 ? { parts: displayPartsOf(content) } : {}),
+      }
       return [
         {
           type: "TOOL_CALL_RESULT",
