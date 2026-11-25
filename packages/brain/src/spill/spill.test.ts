@@ -185,6 +185,28 @@ describe("spill × runLoop：结果外溢", () => {
     expect(seen.payload).toEqual(r.payload)
   })
 
+  it("宿主 beforeModel 补丁把工具表整份浅拷贝（改说明的常见写法）：fetch_blob 副本仍算自家的，照常外溢（发版前终审）", async () => {
+    const log = new InMemoryEventLog()
+    const blobs = new InMemoryBlobStore()
+    const copier: Socket = {
+      name: "copier",
+      beforeModel: (ctx) => ({ tools: ctx.tools.map((t) => ({ ...t })) }),
+    }
+    const lowering = new ScriptedLowering([{ drafts: [echo("c1", BIG)] }, { drafts: [say("看到了")] }])
+    const { result } = await drain(
+      runLoop(
+        config(lowering, log, {
+          blobs,
+          sockets: [spill({ maxResultTokens: 200, previewLines: 3, previewChars: 80 }), copier],
+        }),
+      ),
+    )
+    expect(result.status).toBe("done")
+    const r = resultOf(await all(log), "c1")
+    expect(r.payload.spilled).toBeDefined()
+    expect(textOf(r).length).toBeLessThan(BIG.length)
+  })
+
   it("错误结果同样外溢，isError 保留", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([{ drafts: [echo("c1", BIG, true)] }, { drafts: [say("x")] }])

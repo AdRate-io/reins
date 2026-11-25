@@ -1591,8 +1591,10 @@ describe("BUG-261105-2 第二步：authorizeSession 看得见这次带的审批�
     let step = await gen.next()
     while (!step.done) step = await gen.next()
     expect(step.value).toMatchObject({ status: "paused", reason: "approval" })
-    const paused = (await logged(log, "s1")).findLast((e) => e.type === "core.run_paused")
-    expect((paused?.payload as { note?: string }).note).toBe("host aborted during the tool batch")
+    const paused = (await logged(log, "s1")).filter((e) => e.type === "core.run_paused").at(-1)
+    expect((paused?.payload as { note?: string } | undefined)?.note).toBe(
+      "host aborted during the tool batch",
+    )
     const before = (await logged(log, "s1")).length
     const res = await handler(
       asUser("owner", {

@@ -57,7 +57,15 @@ export function ownToolsGuard(opts: OwnToolsGuardOptions): (setup: Pick<SocketSe
   }
 }
 
-/** 本 run 绑定的是不是模块自家那件工具（对象同一性）：按工具名认调用、或会叫模型调它的钩子先问这一句，不是就停手 */
+/**
+ * 本轮绑定的是不是模块自家那件工具：按工具名认调用、或会叫模型调它的钩子先问这一句，不是就停手。
+ *
+ * 认"同一对象"或"同名且 execute 是同一个函数"：宿主 beforeModel 补丁常把工具表整份浅拷贝（`ctx.tools.map((t) => ({ ...t }))`
+ * 改说明），副本不是同一对象，core 却按名字执行、跑的仍是自家闭包——只认对象同一性会让 spill / handoff 等钩子静默停手
+ * （发版前终审）。别人的同名工具、或把 execute 包了一层的替身不算自家的；自家工具都有 execute，没有的不认
+ */
 export function ownsTool(ctx: { tools: readonly Tool[] }, tool: Tool): boolean {
-  return ctx.tools.includes(tool)
+  return ctx.tools.some(
+    (t) => t === tool || (t.name === tool.name && tool.execute !== undefined && t.execute === tool.execute),
+  )
 }

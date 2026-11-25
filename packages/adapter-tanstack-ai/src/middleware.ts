@@ -178,7 +178,10 @@ type Verdict =
   | { kind: "rewrite"; args: unknown }
   | { kind: "block"; text: string }
   | { kind: "await" }
-  /** 开始动手后中断、没留下结果的不可重放调用（与 runLoop 同一判据）：不执行，落"结果未知"（判定时就定稿，两处落点同一句） */
+  /**
+   * 不执行、原样落 text（判定时就定稿，两处落点同一句）：开始动手后中断、没留下结果的不可重放调用落"结果未知"（与 runLoop 同一判据）；
+   * reins 工具的 needsApproval 抛错落 "Approval check failed: …"（与 runLoop 同口径）
+   */
   | { kind: "unknown"; text: string }
 
 interface TurnState {
@@ -945,14 +948,35 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
           valid = false
         }
         if (valid) {
-          const need =
-            typeof tool.needsApproval === "function"
-              ? await tool.needsApproval(input, {
-                  ...toolContextBase(),
-                  toolCallId,
-                  emit: (d) => s.emitted.push(d),
-                })
-              : tool.needsApproval
+          let need: boolean
+          try {
+            need =
+              typeof tool.needsApproval === "function"
+                ? await tool.needsApproval(input, {
+                    ...toolContextBase(),
+                    toolCallId,
+                    emit: (d) => s.emitted.push(d),
+                  })
+                : tool.needsApproval
+          } catch (err) {
+            // 与 runLoop 同口径：判不出要不要审批就当拒绝（fail-closed），不执行、模型看到一句说明；宿主那份记在模型不可见的
+            // core.error(host)。不收口的话异常直接抛给宿主、tool_call 悬空，下一个请求也补不齐（发版前终审）
+            s.emitted.push({
+              type: "core.error",
+              actor: "system",
+              payload: {
+                category: "host",
+                message: `needsApproval of ${name} threw: ${errorMessageOf(err)}`,
+                retryable: false,
+                detail: { phase: "needsApproval", toolCallId },
+              },
+            })
+            s.verdicts.set(toolCallId, {
+              kind: "unknown",
+              text: `Approval check failed: ${errorMessageOf(err)}`,
+            })
+            continue
+          }
           if (need)
             approval = {
               policyId: BUILTIN_APPROVAL_POLICY,

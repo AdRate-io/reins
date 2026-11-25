@@ -1005,6 +1005,46 @@ describe("reinsMiddleware：审批", () => {
     ).toEqual([{ toolCallId: "c1", approved: true, by: "boss" }])
   })
 
+  it("reins 工具的 needsApproval 抛错：与 runLoop 同口径按拒绝收口——不执行、落 Approval check failed、记 core.error(host)，不抛给宿主", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    let executed = 0
+    const wipe = defineTool({
+      name: "wipe",
+      description: "清空",
+      inputSchema: { type: "object", properties: {} },
+      needsApproval: () => {
+        throw new Error("policy store down")
+      },
+      execute: () => {
+        executed++
+        return "wiped"
+      },
+    })
+    const sockets: Socket[] = [{ name: "mcp", tools: [wipe] }]
+    const f = fixture(
+      [{ blocks: [callTool("c1", "wipe", {})] }, { blocks: [say("审批检查失败，没清空")] }],
+      sockets,
+      {},
+      shared,
+    )
+    const chunks = await f.run({ messages: [user("清空")], tools: [], runId: "run1" })
+    expect(chunks.some((c) => c.type === "RUN_ERROR")).toBe(false)
+    expect(executed).toBe(0)
+    const events = await all(shared.log)
+    const result = events.find((e) => e.type === "core.tool_result") as
+      | CoreEventOf<"core.tool_result">
+      | undefined
+    expect(result?.payload).toMatchObject({ toolCallId: "c1", isError: true })
+    expect(result?.payload.content[0]).toMatchObject({
+      type: "text",
+      text: "Approval check failed: policy store down",
+    })
+    const err = events.find(
+      (e) => e.type === "core.error" && (e.payload as { category?: string }).category === "host",
+    ) as CoreEventOf<"core.error"> | undefined
+    expect(err?.payload.detail).toMatchObject({ phase: "needsApproval", toolCallId: "c1" })
+  })
+
   it("宿主原生 needsApproval 工具又被 approval 模块要求审批：只问一次（原生那张卡），批准即执行（全库审查 2026-11-25 #4）", async () => {
     const shared = { log: new InMemoryEventLog() }
     let executed = 0
