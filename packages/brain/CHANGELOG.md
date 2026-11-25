@@ -1,5 +1,55 @@
 # @reinsjs/brain
 
+## 0.11.0
+
+### Minor Changes
+
+- 90f5bd2: Modules that bring their own tools — `compact()` (`compact`, `recall`), `spill()` (`fetch_blob`), `pins()` (`pin`), `handoff()`, `memory()`, `skills()` (`skill_read`) and `lazyTools()` (`tool_find`) — now stand down when a tool of the same name is already bound before them (a host tool, or one from a socket registered earlier such as an MCP server). The loop keeps the first tool of a name, so before this the module's rules sent the model to someone else's tool and its hooks treated that tool's calls as its own: a spilled result fetched from an MCP server, an MCP `handoff` call ending the session, an MCP `compact` call folding history. Now the module registers neither its tools nor its rules for that run, its hooks stay idle, and it warns once. `spill()` then passes results through unspilled, as without a `BlobStore`; `pins()` keeps the host's pins and drops only the `pin` tool, as with `tool: false`. Passing the module's own tool object in the host's `tools` is not a clash. `compact()`, `pins()` and `handoff()` gain a `warn` option for this. Because the check needs the tool table, these modules' `tools` and `systemPrompt` contributions are now functions of the socket setup: code that read `spill().systemPrompt` or `handoff().tools` as plain values should resolve them with `resolveSocketContributions` from `@reinsjs/core`.
+- ff0a333: `compact({ recall: false })`: the default rules, the `compact` tool description and the manifest headings no longer tell the model to use `recall({ seq })`, which it does not have; the manifest is still listed, headed "still in the session log, by seq". New exports `compactToolDescription(recall)`, `COMPACT_RECALL_RULE`, `COMPACT_NO_RECALL_RULE`, `MANIFEST_HEADING_NO_RECALL` and `MEDIA_MANIFEST_HEADING_NO_RECALL`; `renderCompactionSummary` and `planCompaction` take an optional `recall` flag (default `true`, output unchanged).
+- 984548c: `memory()`: the value returned by `namespace(ctx)` is now validated before every call. It must be `""` or a canonical path (leading `/`, no trailing `/`, no empty, `.`, `..` or `memories` segments); otherwise the call fails with `isError`, touches no keys, and `warn` reports the first invalid value once per `memory()` instance. Previously any string was used as-is, so prefixes such as `/a` and `/a/memories/x` could nest and let one principal read and write the other's memories.
+- 72902cd: `skills()`: a `memories` path segment is now reserved for the memory tool. A `root` containing one (such as `/t/memories`) is refused at construction, and any skill key with one — a skill named `memories`, or a supporting file under a `memories/` folder — is skipped from the menu and reads as nonexistent through `skill_read`. Previously a host whose `memory({ namespace })` returned the skills root (or a skill folder) let the model write a file that `skill_read` then returned with system trust.
+
+### Patch Changes
+
+- 70f2247: `approval()`: a rule's `summary()` that throws is now treated like a throwing `match()` — the call is denied (fail-closed) with the rule id as `by`, instead of the error escaping `runLoop` and leaving the call pending for every later run.
+- fa0e6c9: Copies of a module's own tools are no longer mistaken for someone else's. Modules that bring their own tools (`compact()`, `spill()`, `pins()`, `handoff()`, `memory()`, `skills()`, `lazyTools()`) recognised them by object identity, so a `beforeModel` patch that copies the tool table (for example `ctx.tools.map((t) => ({ ...t }))` to reword descriptions) silently switched them off: `spill()` stopped spilling, `handoff()` no longer ended the run, `lazyTools()` sent every lazy tool in full, all without a warning. A host that put a copy of a module's tool in its own `tools` was also treated as a name clash. A tool now counts as the module's own when it is the same object, or has the same name and the same `execute` function; a same-name tool with a different or wrapped `execute` still does not.
+- bda7466: The default `budget()` pause note no longer promises a fresh budget for `contextTokens`. That limit is the size of the latest model request, and a resumed run inherits it from the log, so resuming does not reset it. Each turn is checked against the request that turn made, before any compaction in it takes effect, so a resumed run pauses at least once more, and the limit clears only once a later request is smaller (after the model compacts, or the session hands off). The note now says so when `contextTokens` is among the hit limits, and still says resuming starts a fresh budget for `totalTokens`, `turns`, `toolCalls` and `wallMs`. The README and the `BudgetLimits.contextTokens` docs say the same.
+- 1c6fc8c: The folded-results list, `recall`'s answer for a spilled result and the `recall` tool description now say the same thing about spilled outputs: read them with `fetch_blob` "if that tool is in your tool list". The list used to state it unconditionally, though a run may not have `fetch_blob` (`spill({ tool: false })`, or spill removed later).
+- ac5e3ad: `handoff()`: an interrupted handoff intent is no longer rebuilt from the timeline once a user message follows the handoff receipt. Previously, after a user stop followed by a new message, a plain-text reply still ended the run with `status: "handoff"`. Rebuilding is not limited to the settling turn, so the TanStack adapter (whose settling batch has no `onTurnEnd`) still honours a handoff scheduled alongside a call that needed approval.
+- 40c82dc: `memory()`: the `memory` tool now declares `replayable: false`. It stays `risk: "low"` (no approval), but `insert` / `str_replace` / `delete` / `rename` are not idempotent, so a call interrupted after it started is no longer re-run on resume; it settles as "outcome unknown" instead. Each memory call now writes a `core.tool_started` event before it executes.
+- 13ec412: The perception reading now counts the threshold compaction that the projection creates in the current turn. Before, it counted only the timeline snapshot taken at the start of the turn, so on the turn where the fallback folded the oldest turns the note still said `Compactions so far: 0 (nothing has been folded; everything above is verbatim)` while the folded summary sat at the top of the same view, and every later count lagged by one. The session token total uses the same up-to-date timeline.
+- 7702219: `pins()`: the `pin` tool's "already pinned" check and its `replaces` lookup now only match notes still in effect. Pinning a note back after it was replaced pins it again (instead of answering "Already pinned" while the note would not survive the next compaction), and `replaces` pointing at a note that was already replaced is an error that says so (instead of leaving both the current note and the new one in force).
+- 252764c: Wording made consistent about getting folded content back. The default threshold summary no longer says removed events "can be recovered by the host"; it states that they remain in the session log, and the module that provides a recall tool says how to use it (with `compact()`, `recall`). `recall` on a tool result whose output was spilled now returns a normal (non-error) result pointing to the blob and `fetch_blob` "if that tool is in your tool list", so `haltOnFailure` no longer holds back the rest of the batch.
+- 84ae969: `skills()`: the "a tool named `skill_read` already exists" check now also covers tools contributed by sockets registered before `skills()` (for example an MCP server exposing `skill_read`), matching `lazyTools()`. Previously only host tools were checked, so the menu pointed the model at another socket's tool.
+- e79c6a2: `spill()`: the first-slice `end` suggested in a spill notice is now what one `fetch_blob` call can return (the smaller of the tool's `resultPolicy.maxTokens` and `maxResultTokens`), so following it is never clipped; and the default `previewChars` is derived from the tool's effective limit instead of the module-wide one, so a tool with a small limit no longer gets a preview larger than that limit.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.10.1
 
 ### Patch Changes

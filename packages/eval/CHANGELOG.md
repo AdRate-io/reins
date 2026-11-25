@@ -1,5 +1,48 @@
 # @reinsjs/eval
 
+## 0.5.0
+
+### Minor Changes
+
+- b1b0cf5: `checkGate` now throws when the reference and candidate arms do not cover exactly the same fixture × repeat cells, or when one arm has the same cell twice. Every gate rule compares per-run means, so a candidate missing its most expensive cells (for example a crashed process when arms are run separately) used to pass the token rule on a different set of tasks without any warning.
+- 5165c1f: Gate: the governance rule no longer lets runs that never compacted dilute the after-compaction violation rate. `ArmSummary.violations` is now computed only over runs that had model actions after their first compaction (both windows over the same runs) and gains `compactedRuns`; when it is 0 the governance check passes with a `note` instead of silently. Previously a candidate whose only compacted run got worse could still pass because the other runs counted as a 0% after-rate. `renderReport` shows the run count next to the rates.
+- b340493: Gate: the governance rule now passes only when the violation rate does not rise under both the per-run mean and the rate pooled over actions. `ArmSummary.violations` gains `pooledBefore` / `pooledAfter` (total violations / total actions over the same compacted runs). Either measure alone can hide decay: a run with 2 actions before compaction can lift the per-run "before" mean, while runs with many actions dominate the pooled rate. The governance check reports the measure that failed and states the other one in its `note`.
+- ee05340: `scrubEvents` now also replaces values that sit inside a JSON string in a tool result's text (an envelope tool returning its whole response as text), where quotes and backslashes are escaped twice. A name such as `Shop "A"` used to be replaced in model text but left verbatim in the tool result. New export `scrubForms(value)` lists every form a value can take in an event's JSON text, so a "nothing left" self-check can look for all of them; checking for the raw value alone can never find a value that contains a quote or backslash.
+
+### Patch Changes
+
+- 11beda2: `fixture.approve(interruption, outcome)` now receives the real state at the pause: `timelines`, `timeline`, `fresh` and `finalText` are read from the log up to that point (they used to be empty arrays and an empty string), and `result` is the pause itself. An approve callback that decides from earlier calls in the timeline no longer silently rejects or approves everything.
+- 1de02ea: `checkGate` also throws when an arm's `summary.runs` does not match the number of its cells in `report.outcomes`. The rules read the summary while the same-cells check reads the outcomes, so a report whose outcomes had been stripped to an empty list used to pass the same-cells check trivially.
+- a49d5e7: `gradeExpect` (and so every planted fact graded by a regular expression) no longer depends on how often the same `RegExp` was used before. A fact written as `expect: /\b14\b/g` used to score the same correct answer 1, 0, 1, … across arms and repeats because `test` advanced `lastIndex`; the `g` and `y` flags are now ignored for grading and the caller's `RegExp` is left untouched.
+- 0a1eca4: `recordedTools`: replay progress (which of several recordings of the same arguments comes next, and which recordings `sequence: true` has used) is now kept per session. A fixture builds its tools once and every arm and repeat reuses them, so a run that went first used to advance the replay for the runs after it: they got the second recording of a page, or "No recorded response" in sequence mode. A session reached by handoff also starts from the first recording.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.4.13
 
 ### Patch Changes

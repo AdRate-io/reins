@@ -1,5 +1,53 @@
 # @reinsjs/server
 
+## 0.11.0
+
+### Minor Changes
+
+- fddefac: `authorizeSession` now receives `decisions`: the approval decisions the request carries, as sent (an empty array for `GET`, `STOP` and requests without any). When the approver is not the session's owner, a host can refuse approvals from anyone else (`decisions.some((d) => d.approved)`) while still allowing refusals, such as a user sending a new message instead of approving. The array is a frozen copy, and it includes entries addressed to sub-agent sessions. Code that builds a `SessionAuthzInput` itself (test stubs) must add the field.
+
+  Two related checks close ways around that gate: a request carrying more than one decision for the same call is refused with `400` (the loop would apply the last one, so a hook reading the first could be misled), and a client-side tool result can no longer be filled in while that call is waiting for approval (`409 approval_pending`; send the decision first).
+
+  **Breaking for HTTP clients that send `decisions` without `resume`:** such a request is now refused with `400`. Send the state from the pause with the decisions — it is in the `result` frame of the paused run and in the `end` frame of a replay. In-process `runLoop` callers are unaffected.
+
+### Patch Changes
+
+- 62435d5: `leasedRunRegistry`: a new run on the same session now waits for the previous run's lease release to land before acquiring. Previously a late release could delete the new run's lease, and the next heartbeat aborted it as "lost lease".
+- 5a88d1b: `nodeListener` now notices a client that disconnects before the handler returns (while it authorizes, reads the log or takes the run lease). The response stream is cancelled as soon as the handler hands it over, so `onDisconnect: "abort"` stops the run and the heartbeat no longer writes to a dead connection. Before, the close listener was attached only after the handler returned, so such an early disconnect was missed and the run went on to the end.
+- fde8da4: `nodeListener` (`@reinsjs/server/node`) now catches errors the handler passes up to the host, such as the run lease store being unreachable. Before, such an error was an unhandled rejection, and Node's default is to exit the process, cutting every running run and SSE stream. A thrown `Response` is written back as is; any other error gets `500 { "error": "internal_error" }` (details go to `console.error`, not to the client); a response body that fails mid-stream destroys the connection so the client reconnects and replays. A client that disconnects while still uploading the request body is not reported as an error: the handler is not called and nothing is logged.
+- 8a1c005: README: the image route recipe ("Images by reference") now serves only raster formats (PNG, JPEG, GIF, WebP) and sends `x-content-type-options: nosniff` and `content-security-policy: default-src 'none'; sandbox`. The earlier recipe served any `image/*` blob with its stored type, so a session's owner could reference an `image/svg+xml` blob whose scripts would run on your origin with the credentials of whoever opened it, such as an approver. If you copied the recipe, update your route.
+- 14b316f: The handler's check of `decisions` now uses the same rule as `runLoop` (`assertDecisionsAwaitApproval`): a decision for this session must point at a call that is waiting for approval, not just at any pending call. Before, approving a pending call that never asked for approval (a client-side tool, or a call later in a batch that was aborted) passed the HTTP check and then failed inside the run, so the client got `200` with an `error` frame instead of `409 unknown_tool_call`. When this check fails while another run of the session is active in this process, the answer is `409 run_in_progress`, as before.
+- 0639b3a: An `image` part sent over HTTP (inline or by reference, in an array `input` or in a `core.user_message` / `core.tool_result` draft) must now have a `mime` of `image/jpeg`, `image/png`, `image/gif` or `image/webp`, checked with `isSupportedImageMime` from `@reinsjs/core`; anything else answers `400` and nothing is written. Before, an inline image only needed a string `mime`, so an SVG or a mislabeled file passed the handler and then failed inside the run, giving `200` with an `error` frame instead of `400`.
+- 7ac3586: The handler's resume pre-check now resolves Socket contributions with the request's `principal`, the same input the run itself starts with. A Socket that picks its tools from `setup.principal` no longer makes a legitimate resume fail with `409 config_mismatch` ("the definition of pending tool … differs"), and a client-side tool result for such a tool is no longer refused as a server-side tool.
+- 3d15ec1: A client-side tool result is no longer accepted for a call the loop never evaluated. When a run is aborted by the host (a dropped connection with `onDisconnect: "abort"`, a lost lease) partway through a tool batch, the calls after the abort stay pending without ever reaching `beforeTool` or the approval check, so a client could fill in the result of a call that needs approval and skip both the approval and the approver's `authorizeSession` check. Filling in is now accepted only when the session's last run paused for external answers alone (no budget / host note, not a stop); otherwise the handler answers `409 call_not_evaluated`, and a `POST { sessionId }` without `input` lets the run evaluate the pending calls again before the result is sent.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.10.0
 
 ### Minor Changes

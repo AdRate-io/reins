@@ -1,5 +1,55 @@
 # @reinsjs/lowering-fetch
 
+## 0.8.0
+
+### Minor Changes
+
+- a644dcd: The built-in table now has `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` and `claude-fable-5-2` with their 1M context window, 128K output and official prices. Before, these ids fell back to the conservative defaults for unknown models (128k window, 16k output, no `costUsd`), so context management folded far too early and the default `max_tokens` was 16 384. `claude-haiku-5-5` is priced by prompt length; the table stores the rate for prompts up to 100K tokens, so `costUsd` is a lower bound above that.
+
+  Mid-conversation `system` now also covers Sonnet 5.5 and Haiku 5.5 (Sonnet 5 still does not), and `capabilities.taskBudget` follows the provider's current list: Fable 5.x, Mythos 5.x, Opus 5 / 5.5 / 4.8 / 4.7, Sonnet 5.5 and Haiku 5.5.
+
+- d095d03: `timeoutMs` (default 600 000 ms) no longer caps the whole streamed response. It now covers the wait for response headers and every gap between two stream frames, so a long answer or a long tool input that keeps streaming is not cut off at ten minutes. Before, with Anthropic's default `max_tokens` of 128 000, a slow turn could be aborted mid-stream and, because part of the output had already arrived, the run ended in an error without a retry. The official SDKs also only time the wait for headers; to cap the total time, abort with your own `signal`. `requestSignals()` now also returns `touch()` and `dispose()`, and the timeout message reads `request timed out: no data for <n>ms (…)`.
+
+### Patch Changes
+
+- 13cc1ff: `costUsd` on Anthropic now prices 1-hour cache writes at the 1-hour rate. Before, every cache write was priced at the 5-minute rate (1.25× input), so with `anthropic.cacheTtl: "1h"` the cache-write part was under-reported by about 40%. The split comes from the provider's `usage.cache_creation` (`ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`); when the upstream does not send it, writes count as 1-hour only if every cache breakpoint in the sent request is 1-hour; if your `requestOptions.cache_control` uses a different TTL from `cacheTtl`, they are priced at the 5-minute rate, so the cost may be under-reported but never over-reported. The 1-hour price is the new optional `ModelCost.cacheWrite1h`, defaulting to twice the input price. `costOf()` takes an optional third argument with the number of 1-hour write tokens.
+- 2a58f9b: Provider errors that arrive with status 200 are no longer reported as a retryable "stream ended before finish_reason". An `error` frame inside a Chat Completions stream (`data: {"error": {...}}`, common on OpenAI-compatible relays) now ends the turn with `"<code>: <message>"` carrying the provider's text, like the Anthropic and Responses lines. A 2xx response whose `content-type` is JSON (a gateway answering an auth or quota error with status 200) now throws `HttpError` with the raw body on all three lines, and is not retried. A body labelled JSON that actually starts like an event stream (`data:`, `event:`, a `:` comment) is still read as a stream, so a relay that mislabels its stream keeps working.
+- bc5f8b9: Chat Completions: when an OpenAI-compatible upstream omits `index` on streamed `tool_calls`, parallel calls are no longer merged into one. A delta with a new, different `id` starts a new call; a delta without an `id` continues the current one. Before, every such delta went to slot 0, so the earlier call disappeared and the last tool received both argument strings joined together.
+- 891e29c: Tool call ids recorded by another lowering layer are now translated on the way out, so a timeline written by `@reinsjs/lowering-pi` keeps working after switching to this package. On Anthropic, `tool_use.id` and `tool_result.tool_use_id` are mapped to the provider's character set and cut to 64 characters, the same rule pi-ai applies; before, pi's OpenAI Responses ids such as `call_x|fc_y` were sent as is and every later request of that session was rejected. On OpenAI Responses, pi's composite id is split back into `call_id` and the `fc_` item id. On Chat Completions, ids that contain `|` or are longer than 40 characters (the OpenAI limit) are shortened the way pi-ai does it: invalid characters become `_`, and an id still too long becomes a prefix plus an 8-character hash of the full id, so parallel calls that share a `call_id` stay distinct. Ids produced by this package are unchanged.
+- a186f5f: Anthropic: when a breakpoint slot is free, a fourth cache breakpoint now goes where the previous request ended (the last block of the `user` message before the latest assistant turn). The provider looks back only about 20 blocks from each breakpoint, so after a turn with ten or more parallel tool calls the whole conversation history used to miss the cache and be written again. The system, tools and last-user breakpoints keep priority, and the total never exceeds four.
+- 3443735: A turn that contains a tool call no longer hides how it ended. On all three lines the stop reason is now decided in a fixed order: errors in the stream first, then a stream that never reached its terminal event, then truncation and refusals, and only last `toolUse`. Before, any tool call made the outcome `toolUse`, so a tool call cut off by `max_tokens` / `finish_reason: "length"` / `status: "incomplete"` reported `toolUse` instead of `length`, an Anthropic `refusal` or Chat `content_filter` after a tool call was swallowed, and a Chat or Anthropic stream that closed without `[DONE]` / `message_stop` (and without a finish reason) was treated as a normal tool turn instead of an `error`.
+
+  What this means for `@reinsjs/core`: with `length` the run still executes every tool call of the turn as before, including the cut-off one. With `error` the core retries only when the attempt produced no output; once tool call drafts were streamed it does not retry, and the run ends with `error` after closing those calls as not executed (see the `@reinsjs/core` changelog), so the next run on the session does not execute them.
+
+- cb44e80: An image whose type is outside `image/jpeg`, `image/png`, `image/gif` and `image/webp` (`isSupportedImageMime` in `@reinsjs/core`) is no longer sent to the provider. Such images can still sit in logs written before core started rejecting them, and every request replays them, so one SVG made the whole session fail with a provider 400. All three wire protocols and the pi-ai lowering now put the core `unsupportedImageText` sentence in its place and record the event `lossy` (declared in each loss matrix); on Chat, such an image in a tool result is not lifted into the follow-up user message. Requests with only supported images are byte-identical to before.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.7.1
 
 ### Patch Changes

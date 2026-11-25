@@ -1,5 +1,65 @@
 # @reinsjs/adapter-tanstack-ai
 
+## 0.6.0
+
+### Minor Changes
+
+- cf87a07: `runLoop` no longer yields the new session's opening events on a handoff; it yields only events of its own `sessionId`. Before, the summary note and trigger message written into the new session were yielded to the old session's consumer, so `createAgentHandler` streamed them on the old session's SSE stream (ids going back to 1, 2 before the old session's `run_ended`), AG-UI clients showed the trigger message in the old thread, a reconnect with that `Last-Event-ID` replayed most of the old session, and `onEvent` reported them under the old `sessionId`. The opening is still written to the log; read it from `toSessionId`. The TanStack adapter likewise no longer passes them to `onEvent`.
+- 53c5561: Handoff now records who really wrote each opening event of the new session. The summary note used to be a host note (`actor: "host"`, system trust) and the trigger message a user message (`actor: "user"`, principal trust), even when the model wrote both — so a `triggerMessage` the model was talked into by a tool result showed up in the new session as the user's own instruction. Now the summary is recorded as `intent.by` (default `"model"`), and so is the trigger message unless it repeats one of the old session's user messages word for word, in which case it keeps that message's `actor` and trust (the user's stays the user's, a host-written one the host's) and `provenance.ref` points at that message. The summary and self-written trigger messages carry `provenance: { source: "handoff", ref: <core.handoff event id> }`. The shape is built by the new export `handoffOpeningDrafts`, shared by `runLoop` and the TanStack adapter. Event types, payloads and what the model sees are unchanged; code that filtered the new session by `actor` (for example "the user's first message") should read the event type or `provenance` instead.
+- a74c719: Host tools can now declare their risk to the brain: `toolDefinition({ …, metadata: { reins: { risk: "low" } } })` (type `ReinsToolMetadata`, also `replayable`). Before, the read-only view of a TanStack tool never carried a risk, so `approval()`'s default `byRisk` asked a human before every host tool call — the README's `approval({ ask: ["deploy"] })` paused on read-only tools too — and every call logged a `tool_started`. Tools without the declaration behave as before (fail-closed: asked about, not replayable); an invalid value is treated as undeclared and reported once through `warn`. `viewOfTanstackTool` takes an optional options object (`{ warn }`) as its second argument; it is an object rather than a function so that `tools.map(viewOfTanstackTool)`, which passes the array index there, stays harmless.
+- 0fc255a: Answers to TanStack's native approvals (tools with a static `needsApproval: true`) are now logged, and an approval that edits the arguments no longer runs them.
+
+  **Logging.** Approving a native card left no `approval_decision` and no `run_resumed`, so the log could not tell who let the call through, and `approval({ ttlMs })` never saw the approval. Answers sent with `resume` are now recorded at the start of the resumed run, before any tool runs, server or client: a `run_resumed` (carrying the first answer's `by`), then `approval_decision` with `by: "tanstack"`, the same order as `runLoop`. Answers carried by `UIMessage` `approval-responded` parts are recorded just before a server tool runs, and the brain's `beforeTool` checks (such as an expired `ttlMs`) run again at that point. For a client tool answered through those parts, the decision is still recorded only when the client's result arrives, as approved unless that result is an error. Only calls still waiting for approval get a decision.
+
+  **Breaking for hosts that use `editedArgs`.** An approval whose `editedArgs` differ from the arguments the model wrote used to execute with the edited arguments while the log kept the original call, so the timeline disagreed with what happened. Such a call is now handed to the engine as cancelled — neither a server tool nor a client tool runs — and logged as approved plus a second `approval_decision` (`by: "reins"`) whose reason, also shown to the model, names the edited arguments, so the model can make the call again. Hosts relying on edit-then-approve must ask the model to re-issue the call instead. Also, before a server tool runs, the call text the engine is about to execute is compared with the logged call (parsed the same way, without the schema, so a non-deterministic schema default does not count) and the call is skipped if they differ.
+
+- b5ade5e: A tool call now raises exactly one approval interrupt, which changes which interrupt a client receives. Before, a reins tool declaring `needsApproval: true` (such as an MCP tool with `destructiveHint`) got both TanStack's native approval and `reinsApprovalInterrupt` for the same call: a client answering only the reins one had the resume rejected by the engine and the run ended in an error.
+
+  - Reins tools are now asked only through `reinsApprovalInterrupt`. A client that answered the native `approval_<id>` card for them must answer the reins interrupt instead.
+  - A host tool with a static `needsApproval: true` that a socket (such as `approval()`) also wants to ask about is asked only through TanStack's native approval; the `approval_request` records the socket's policy and summary. A client that answered the reins interrupt for such a call must answer the native card instead; a `reinsApprovalInterrupt` answer pointing at such a call is ignored with a warning.
+
+### Patch Changes
+
+- 3830f23: `budget_usage.contextEstimate` now estimates the view actually sent to the model, after `beforeModel` patches and the notes injected during `beforeModel`. Before, it was the projection estimate taken before injection, so a large injected note (such as a pins snapshot at a segment start) was counted as fixed overhead and then counted again on the next turn once it was in the timeline. That made the next turn's perception reading, compact's soft-line requests and the threshold fallback all overestimate the context, and could fold old turns while real usage was far below the line.
+- 040768e: `ext.*` events a socket writes during `beforeModel` no longer join that turn's view. They are not sent to the model, but they were counted in the estimate of what was sent, so the calibrated fixed overhead (`contextOverheadOf`) came out too low. "Hidden from the model by default" now has one definition, exported as `isModelInvisibleByDefault` (the operational event types plus the `ext.` prefix), used by `visibilityFilter`, `runLoop` and the TanStack AI middleware.
+- e366aef: `reinsApprovalInterrupt` answers are now recorded only for calls of this session that are waiting for approval (an `approval_request` and no decision yet, at most one answer per call), the same check `runLoop` and the server apply. TanStack does not sign generic-interrupt continuations, so a client could copy a valid entry, change its `key`, and get an `approval_decision` written for any id, including one the model had not produced yet; when the model later emitted that id, the call ran without being asked about. Such answers are now dropped with a warning.
+- c89523d: A socket block on a client tool (one without `execute`, including an `approval()` deny or a rewrite of a call on TanStack's native approval card) now stops the call: the middleware adds it to the engine's `cancelledToolCallIds` at the `beforeTools` boundary, so the client is never asked to run it. Previously the engine still handed the call to the client, and when the client's result came back it was logged as "Tool call blocked … not executed", replacing what had really happened. If the block cannot be enforced (a middleware placed before reins replaces the engine's cancel set with a copy), the real result is now logged as it came back, followed by a `core.error` (category `tanstack-ai`, not shown to the model) saying the block was not enforced.
+- 456cdf2: `TANSTACK_LOSS_MATRIX` now declares every landing `toModelMessages` can report: host extension events under the wildcard key `"ext.*"` (dropped, same convention as `@reinsjs/lowering-pi`), and `core.tools_bound` (dropped as an operational event; it reaches the translator only when a `beforeModel` patch replaces the projected events). Before, both were reported to `onLandings` as dropped but had no entry in the table, so a host checking landings against it saw an undeclared type.
+- 2a0f4b2: TanStack's native lazy tools (`lazy: true`) now work within a run. After the model called the discovery tool, the middleware handed the engine its start-of-run tool list again on the next turn, overwriting the engine's updated list: the model never saw the discovered tool, and calling it anyway returned "Unknown tool". The middleware now adds tools the engine brings in mid-run (and drops the discovery tool once the engine does), placing them after the other host tools. The engine's discovery tool is treated as read-only (`risk: "low"`), so `approval()` with its default risk rules no longer asks a human before the model looks tools up.
+- fa0e6c9: A reins tool whose `needsApproval` function throws is now handled as in `runLoop`: the call is not executed, the model gets `Approval check failed: <message>`, and a `core.error` (category `host`, `detail.phase: "needsApproval"`) records it for the host. Before, the error escaped `chat()` and left the tool call without a result, which later requests did not repair.
+
+  Client-side reins tools contributed by a socket (no `execute`) are now cancelled through the engine when a socket blocks them, an approval is denied, or the check above fails, like the host's own client tools. Before, only the host's TanStack client tools were recognised, so the engine still handed such a call to the frontend and the result it sent back was then replaced by the block message.
+
+- 237ddd6: An image already in the log whose type is outside `image/jpeg`, `image/png`, `image/gif` and `image/webp` is no longer handed to TanStack AI as is (the provider would reject it on every request). Like the two lowering packages, the adapter puts the core `unsupportedImageText` sentence in its place and records the event `lossy`, declared in `TANSTACK_LOSS_MATRIX`.
+- e46e287: `reinsMiddleware()` now checks `capabilities.contextWindow` and `projection.reserveTokens` when it is created, with the same check as `runLoop` (`resolveReserveTokens`), and throws a `RangeError` for a bad window or reserve. Before, the error only surfaced at the first projection, after `tools_bound` and the imported user messages were already in the log, so the session looked interrupted.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.5.2
 
 ### Patch Changes

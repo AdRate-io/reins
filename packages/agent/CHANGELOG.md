@@ -1,5 +1,54 @@
 # @reinsjs/agent
 
+## 0.8.0
+
+### Minor Changes
+
+- 9856645: Carries `@reinsjs/core` 0.18 and `@reinsjs/server` 0.11, which `@reinsjs/agent` re-exports. Those releases contain breaking changes: HTTP `decisions` must be sent together with `resume` (400 otherwise), `decisions` only accept calls that are waiting for approval, `SessionAuthzInput` has a required `decisions` field, and image types outside the supported list (jpeg / png / gif / webp) are rejected with a `RangeError`. See those packages' changelogs before upgrading.
+
+### Patch Changes
+
+- Updated dependencies [067238b]
+- Updated dependencies [b4f5322]
+- Updated dependencies [fddefac]
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [62435d5]
+- Updated dependencies [246c457]
+- Updated dependencies [5a88d1b]
+- Updated dependencies [fde8da4]
+- Updated dependencies [252764c]
+- Updated dependencies [8a1c005]
+- Updated dependencies [14b316f]
+- Updated dependencies [0639b3a]
+- Updated dependencies [7ac3586]
+- Updated dependencies [3d15ec1]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/ui-agui@0.8.1
+  - @reinsjs/server@0.11.0
+  - @reinsjs/core@0.18.0
+
 ## 0.7.5
 
 ### Patch Changes

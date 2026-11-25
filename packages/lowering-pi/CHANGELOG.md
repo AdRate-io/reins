@@ -1,5 +1,55 @@
 # @reinsjs/lowering-pi
 
+## 0.6.0
+
+### Minor Changes
+
+- 816199a: `anthropic()` / `openai()` now throw a `RangeError` when `contextWindow`, `maxOutputTokens`, `reasoning`, `images` or `midConversationSystem` is passed without `baseUrl`. These fields only describe the model behind a `baseUrl`; without one they were silently ignored and the capabilities still came from pi-ai's built-in table, so a host shrinking the window or declaring capabilities believed it had done so. The README now says this, and the `unsupported_model` error for a model the built-in table does not know points to `baseUrl` as well as the `models` option of `PiAiLowering`.
+- cf1b7f9: A user message (or any user text) that starts with `[[reins:system_note]]` is no longer promoted to a `system` / `developer` message. Previously the internal marker that tags mid-conversation `system_note` messages was a fixed string, so user text beginning with it was rewritten into a system message on the wire: on OpenAI Responses the user's words arrived with developer authority, and on Anthropic a session whose first message carried it got a 400 on every request. `PiAiLowering` now tags notes with a fresh random marker per request (`newSystemNoteMark()`), carried to `stream` in the new optional `PiLoweredPayload.systemNoteMark`; user text is always sent as written with the `user` role.
+
+  `markSystemNote`, `rewriteAnthropicPayload`, `rewriteOpenAIResponsesPayload`, `rewritePayload` and `eventsToContext` accept the marker as an optional argument (`mark` / `systemNoteMark`); without it they keep the fixed `SYSTEM_NOTE_MARK`, which is only safe when the caller guarantees user text cannot start with it.
+
+### Patch Changes
+
+- cb44e80: An image whose type is outside `image/jpeg`, `image/png`, `image/gif` and `image/webp` (`isSupportedImageMime` in `@reinsjs/core`) is no longer sent to the provider. Such images can still sit in logs written before core started rejecting them, and every request replays them, so one SVG made the whole session fail with a provider 400. All three wire protocols and the pi-ai lowering now put the core `unsupportedImageText` sentence in its place and record the event `lossy` (declared in each loss matrix); on Chat, such an image in a tool result is not lifted into the follow-up user message. Requests with only supported images are byte-identical to before.
+- b47e1f8: Images sent to a model whose capabilities say it takes none (`images: false`, which is also what a `ModelDefinition` without `images` means) are now replaced with `[image omitted: this model does not accept images]` by this layer and the landing is declared `lossy`, with the reason in its note. Previously the image was handed to pi-ai, which silently swapped it for its own placeholder text while the landing still said `exact`. The placeholder text is the same as in `@reinsjs/lowering-fetch`, and the loss matrix declares the new case.
+- 7de3284: On the Anthropic line, a mid-conversation `system_note` whose place on the wire would not follow a user turn is now wrapped in a `<system_note>` tag and sent with the `user` role, declared `lossy` (`user-role`). Previously it was still sent as a `system` message right after an assistant message (for example when a run starts with only a note after the model's last plain-text answer, or a note sits between two assistant messages) and declared `exact`; Anthropic rejects that shape with a 400, and since the timeline is replayed every turn the session kept failing until a new user message arrived. This matches `@reinsjs/lowering-fetch`.
+
+  The check runs against the messages pi-ai actually sends: a whitespace-only user message (which pi-ai drops on the Anthropic line) no longer counts as the user turn a note may follow.
+
+- 2328528: A signed thinking block recorded by a different model of the same provider and API is now declared `lossy` (`as-text`) instead of `exact`: pi-ai replays thinking only for the exact same provider, API and model, and turns the rest into plain text. Redacted or empty thinking from another model is declared `dropped`, since pi-ai removes it. The request itself is unchanged; only the declared landings now match what is sent.
+
+  On the OpenAI Responses line the same switch also loses what pi-ai replays only for the same model, and this is now declared too: text recorded with a `textSignature` lands `lossy` (its message id and phase are not replayed), a tool call carrying a `namespace` lands `lossy` (the namespace is dropped), and a tool call with an `fc_` item id stays `exact` with a note that the item id is not replayed.
+
+- d198aa7: `LOSS_MATRIX` now declares the landing of a `system_note` the host marked `trust: "untrusted"` whose text holds an early-closing `</untrusted`: `lossy` `system` on Anthropic, and `lossy` `developer` / `system` on OpenAI Responses (the tag is escaped). The request was already correct and the landing already said `lossy`; only the declaration was missing, so checks against the matrix failed on it.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.5.1
 
 ### Patch Changes

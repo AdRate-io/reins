@@ -1,5 +1,39 @@
 # @reinsjs/store-pg
 
+## 0.6.1
+
+### Patch Changes
+
+- bdfdc7c: `MemoryStore.list(prefix)` on Postgres and SQLite now matches prefixes containing characters outside the BMP (emoji, CJK extension B). The prefix length was bound as UTF-16 code units while the database counts characters, so such prefixes always returned an empty list. The MemoryStore conformance suite in `@reinsjs/core/testing` gains a case for it. **Third-party backends that passed before may now fail these new cases** — that is the point: they flag real contract violations.
+- 5c36bfd: `PgEventLog.read` and `PgBlobStore.slice` now clamp bounds to the integer column range, matching the in-memory and SQLite stores: `toSeq: Number.MAX_SAFE_INTEGER`, `end: Infinity` and similar "to the end" values read to the end instead of throwing a raw Postgres error. The EventLog and BlobStore conformance suites in `@reinsjs/core/testing` gain cases for these bounds. **Third-party backends that passed before may now fail these new cases** — that is the point: they flag real contract violations.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.6.0
 
 ### Minor Changes

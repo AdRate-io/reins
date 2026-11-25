@@ -1,5 +1,46 @@
 # @reinsjs/tools-mcp
 
+## 0.5.0
+
+### Minor Changes
+
+- 113c0d5: Keep secrets out of transport labels. `httpTransport` now defaults its label to the URL's origin (it used to keep the path, where several hosted MCP services put the API key) and `stdioTransport` to the bare command (it used to include every argument, such as `--api-key …`). The label names the socket (`mcp:<label>`) and appears in connection errors, which can reach the model as an error result and stay in the log. Both recipes accept an explicit `label` option for a friendlier name; an empty label is rejected at construction. `Socket.name` changes for existing configurations (`mcp:https://host/path` → `mcp:https://host`); it does not feed the config hash, so paused runs still resume.
+
+### Patch Changes
+
+- 0f72aad: An MCP `image` block, or an embedded `image/*` resource, whose type is not `image/jpeg`, `image/png`, `image/gif` or `image/webp` (an SVG chart, a TIFF, a mislabeled `application/octet-stream`) now becomes the text `unsupportedImageText(mime)` from `@reinsjs/core` in `toContentParts`, checked with `isSupportedImageMime`. Before, any string `mime` was passed through as an image part; providers reject such parts with a 400, and core had to replace them later with the same sentence. Supported images are unchanged.
+- 7902e00: Keep model-facing MCP tool names unique. When rewriting an invalid name (`files.delete` → `files_delete`) or truncating to 64 characters lands on a name another tool of the same server already uses, the rewritten tool now gets a `_2`, `_3`… suffix (assigned in order of the original names, not the server's listing order) and the warning names the clash. Previously both tools carried the same name and the loop silently dropped one of them, while the only warning pointed at the other.
+- 90f5bd2: `mcpTools()` now warns once when one of its tools has a model-facing name that is already bound before it — by a host tool, another server, or a `@reinsjs/brain` module registered earlier such as `spill()`'s `fetch_blob`. The loop keeps the first tool of a name, so that server tool never reached the model and nothing said so; the warning names it and suggests `prefix`. The README's first example now registers the MCP socket after `spill()` and explains the ordering.
+- 211c70f: A `tools/call` without `route` that is stopped while the dropped connection is being rebuilt now reports `ROUTE_NOT_SENT_TEXT` ("Not executed: …") instead of letting the loop record "outcome unknown". The request never reached the server; routed calls already behaved this way.
+- 4eae543: Rebuild the MCP connection when a stateful Streamable HTTP server answers 404 for an expired session (server restart, session TTL). Previously the stale session id was reused forever, so every later run failed at `tools/list` until the host called `close()`. `tools/list` now re-initializes and lists again in the same call; a `tools/call` that hits the 404 is still reported as an error (not resent) and the next call reconnects. Other calls already in flight on the expired connection are left to finish; the old client is closed once they settle.
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [246c457]
+- Updated dependencies [252764c]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/core@0.18.0
+
 ## 0.4.4
 
 ### Patch Changes

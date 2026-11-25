@@ -1,5 +1,49 @@
 # @reinsjs/ui-agui
 
+## 0.8.1
+
+### Patch Changes
+
+- 067238b: A tool call's `parentMessageId` now only points at assistant text from the same model response. Before, it was reset only by a user message, so when a later turn of the same run (or a run resumed after approval) emitted a tool call without text, the call was attached to the previous turn's message: clients that build `messages` from the stream (CopilotKit, `@ag-ui/client`) merged it into the earlier bubble, ahead of that turn's tool results. Any event that is not model output (tool result, user message, pause or resume marker) now ends the response.
+- b4f5322: `TOOL_CALL_ARGS` now carries a tool call's arguments as the model wrote them when the timeline stores them as a string (arguments that did not parse, kept as the raw wire text). Before, the string was JSON-encoded once more, so the client saw a quoted string literal such as `"{\"a\":1"` instead of `{"a":1`. Object arguments are unchanged.
+- Updated dependencies [fddefac]
+- Updated dependencies [729f892]
+- Updated dependencies [e04c188]
+- Updated dependencies [3830f23]
+- Updated dependencies [60b6052]
+- Updated dependencies [9856645]
+- Updated dependencies [b4de7f3]
+- Updated dependencies [4a2f5b6]
+- Updated dependencies [6eb8b09]
+- Updated dependencies [cf87a07]
+- Updated dependencies [53c5561]
+- Updated dependencies [afcc7b7]
+- Updated dependencies [040768e]
+- Updated dependencies [5703a3e]
+- Updated dependencies [da6250a]
+- Updated dependencies [6cd00cd]
+- Updated dependencies [b086f75]
+- Updated dependencies [7e4f674]
+- Updated dependencies [9291394]
+- Updated dependencies [9d47f4d]
+- Updated dependencies [01b9440]
+- Updated dependencies [7a7fbe4]
+- Updated dependencies [1c6fc8c]
+- Updated dependencies [62435d5]
+- Updated dependencies [246c457]
+- Updated dependencies [5a88d1b]
+- Updated dependencies [fde8da4]
+- Updated dependencies [252764c]
+- Updated dependencies [8a1c005]
+- Updated dependencies [14b316f]
+- Updated dependencies [0639b3a]
+- Updated dependencies [7ac3586]
+- Updated dependencies [3d15ec1]
+- Updated dependencies [bdfdc7c]
+- Updated dependencies [5c36bfd]
+  - @reinsjs/server@0.11.0
+  - @reinsjs/core@0.18.0
+
 ## 0.8.0
 
 ### Minor Changes

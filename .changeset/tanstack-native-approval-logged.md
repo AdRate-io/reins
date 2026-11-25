@@ -1,9 +1,0 @@
----
-"@reinsjs/adapter-tanstack-ai": minor
----
-
-Answers to TanStack's native approvals (tools with a static `needsApproval: true`) are now logged, and an approval that edits the arguments no longer runs them.
-
-**Logging.** Approving a native card left no `approval_decision` and no `run_resumed`, so the log could not tell who let the call through, and `approval({ ttlMs })` never saw the approval. Answers sent with `resume` are now recorded at the start of the resumed run, before any tool runs, server or client: a `run_resumed` (carrying the first answer's `by`), then `approval_decision` with `by: "tanstack"`, the same order as `runLoop`. Answers carried by `UIMessage` `approval-responded` parts are recorded just before a server tool runs, and the brain's `beforeTool` checks (such as an expired `ttlMs`) run again at that point. For a client tool answered through those parts, the decision is still recorded only when the client's result arrives, as approved unless that result is an error. Only calls still waiting for approval get a decision.
-
-**Breaking for hosts that use `editedArgs`.** An approval whose `editedArgs` differ from the arguments the model wrote used to execute with the edited arguments while the log kept the original call, so the timeline disagreed with what happened. Such a call is now handed to the engine as cancelled — neither a server tool nor a client tool runs — and logged as approved plus a second `approval_decision` (`by: "reins"`) whose reason, also shown to the model, names the edited arguments, so the model can make the call again. Hosts relying on edit-then-approve must ask the model to re-issue the call instead. Also, before a server tool runs, the call text the engine is about to execute is compared with the logged call (parsed the same way, without the schema, so a non-deterministic schema default does not count) and the call is skipped if they differ.
