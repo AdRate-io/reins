@@ -1045,6 +1045,38 @@ describe("reinsMiddleware：审批", () => {
     expect(err?.payload.detail).toMatchObject({ phase: "needsApproval", toolCallId: "c1" })
   })
 
+  it("Socket 贡献的 reins 客户端工具 needsApproval 抛错：交给引擎取消，前端拿不到这次调用，结果落 Approval check failed", async () => {
+    const shared = { log: new InMemoryEventLog() }
+    const pick = defineTool({
+      name: "pick_file",
+      description: "让用户选文件",
+      inputSchema: { type: "object", properties: {} },
+      side: "client",
+      needsApproval: () => {
+        throw new Error("policy store down")
+      },
+    })
+    const sockets: Socket[] = [{ name: "ui", tools: [pick] }]
+    const f = fixture(
+      [{ blocks: [callTool("c1", "pick_file", {})] }, { blocks: [say("没法选文件")] }],
+      sockets,
+      {},
+      shared,
+    )
+    const chunks = await f.run({ messages: [user("选个文件")], tools: [], runId: "run1" })
+    expect(chunks.some((c) => c.type === "RUN_ERROR")).toBe(false)
+    const events = await all(shared.log)
+    // 没有等前端回填的暂停：调用被引擎取消，当场落拒绝结果
+    expect(events.some((e) => e.type === "core.run_paused")).toBe(false)
+    const result = events.find((e) => e.type === "core.tool_result") as
+      | CoreEventOf<"core.tool_result">
+      | undefined
+    expect(result?.payload.content[0]).toMatchObject({
+      type: "text",
+      text: "Approval check failed: policy store down",
+    })
+  })
+
   it("宿主原生 needsApproval 工具又被 approval 模块要求审批：只问一次（原生那张卡），批准即执行（全库审查 2026-11-25 #4）", async () => {
     const shared = { log: new InMemoryEventLog() }
     let executed = 0

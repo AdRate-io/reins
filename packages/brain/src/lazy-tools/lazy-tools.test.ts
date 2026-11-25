@@ -556,6 +556,29 @@ describe("lazyTools() 与 runLoop 集成", () => {
     expect(textOf(resultOf(events, "c2"))).toBe('tt_ad_get:{"x":"1"}')
   })
 
+  it("排在前面的 beforeModel 补丁把工具表整份浅拷贝：菜单工具与 tool_find 的副本仍认得，lazy 工具照样藏（发版前终审）", async () => {
+    const copier: Socket = {
+      name: "copier",
+      beforeModel: (ctx) => ({ tools: ctx.tools.map((t) => ({ ...t })) }),
+    }
+    const lowering = new ScriptedLowering([{ drafts: [say("done")] }])
+    const warnings: string[] = []
+    await drain(
+      runLoop({
+        sessionId: SESSION,
+        log: new InMemoryEventLog(),
+        lowering,
+        model: MODEL,
+        tools: [tool("greet"), tool("big", { lazy: true })],
+        sockets: [copier, lazyTools({ warn: (m) => warnings.push(m) })],
+        input: "开始",
+        ...deterministic(),
+      }),
+    )
+    expect(names(lowering.requests[0]?.tools ?? [])).toEqual(["greet", TOOL_FIND_TOOL_NAME])
+    expect(warnings).toEqual([])
+  })
+
   it("与 spill 同装：取回 20 件大 schema 的结果整段进时间线，不被外溢成 blob", async () => {
     const big = Array.from({ length: 20 }, (_, i) =>
       tool(`big_${String(i).padStart(2, "0")}`, {

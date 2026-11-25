@@ -47,7 +47,7 @@ import {
   type ToolCallEvent,
   type TurnContext,
 } from "@reinsjs/core"
-import { ownToolsGuard } from "../shared/own-tools.js"
+import { ownToolsGuard, ToolIdentitySet } from "../shared/own-tools.js"
 import {
   LAZY_TOOL_RULES,
   type LazyToolMenuEntry,
@@ -212,9 +212,9 @@ export function lazyTools(opts: LazyToolsOptions = {}): Socket {
     warn,
   })
   /** 本模块造过的 tool_find：beforeModel 见到绑定的同名工具不在其中，说明被别家顶掉，钩子停手 */
-  const ownFinds = new WeakSet<Tool>()
-  /** 哪些 Tool 对象是（某次 setup 的）菜单工具：对象同一性，注册在本模块之后的 Socket 贡献的同名 / 标 lazy 的工具不在其中 */
-  const menuTools = new WeakSet<Tool>()
+  const ownFinds = new ToolIdentitySet()
+  /** 哪些工具是（某次 setup 的）菜单工具（口径同 isSameTool，补丁浅拷贝的副本也认）；注册在本模块之后的 Socket 贡献的同名 / 标 lazy 的工具不在其中 */
+  const menuTools = new ToolIdentitySet()
   /** 每次 run 起步 tools 与 systemPrompt 各被解析一次，菜单只算一遍：按 setup 对象缓存 */
   const resolved = new WeakMap<SocketSetup, Resolved | undefined>()
   const resolveFor = (setup: SocketSetup): Resolved | undefined => {

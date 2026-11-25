@@ -9,9 +9,37 @@
  *
  * 统一做法：本次解析的工具表（`SocketSetup.tools`：宿主工具 + 排在前面的 Socket 的贡献）里有同名、却不是自家那个对象的工具，
  * 模块这次就不注册工具与规则，告警一次；按名字认调用的钩子先用 `ownsTool` 确认本 run 绑定的是自家那件，不是就停手。
- * 同一对象不算撞名：宿主把模块的工具对象放进自己的工具表时，绑定的仍是它。
+ * 同一件工具不算撞名：宿主把模块的工具对象（或保留同一个 execute 的副本）放进自己的工具表时，绑定的仍是它。
+ * 「是不是同一件」只走 `isSameTool`（setup 守卫、运行期 `ownsTool`、lazy-tools 的 `ToolIdentitySet` 同一口径）。
  */
 import type { SocketSetup, Tool } from "@reinsjs/core"
+
+/**
+ * 两件工具是不是同一件：同一对象，或同名且 execute 是同一个函数。宿主 beforeModel 补丁常把工具表整份浅拷贝
+ * （`ctx.tools.map((t) => ({ ...t }))` 改说明），副本不是同一对象，core 却按名字执行、跑的仍是原件的闭包——只认对象同一性
+ * 会让钩子静默停手（发版前终审）。别人的同名工具、把 execute 包了一层的替身不算；`own` 没有 execute（客户端工具）时只认同一对象
+ */
+export function isSameTool(bound: Tool, own: Tool): boolean {
+  return (
+    bound === own || (bound.name === own.name && own.execute !== undefined && bound.execute === own.execute)
+  )
+}
+
+/** 一组工具的成员判定，口径同 `isSameTool`；只持弱引用（每次 setup 造的新工具不随 run 累积） */
+export class ToolIdentitySet {
+  readonly #objects = new WeakSet<Tool>()
+  readonly #executes = new WeakMap<object, string>()
+  add(tool: Tool): void {
+    this.#objects.add(tool)
+    if (tool.execute !== undefined) this.#executes.set(tool.execute, tool.name)
+  }
+  has(tool: Tool): boolean {
+    return (
+      this.#objects.has(tool) ||
+      (tool.execute !== undefined && this.#executes.get(tool.execute) === tool.name)
+    )
+  }
+}
 
 /** 自家工具里第一个被同名他人工具顶掉的名字；都没撞返回 undefined。`own` 给名字时，同名的任何工具都算撞 */
 export function shadowingToolName(
@@ -20,7 +48,7 @@ export function shadowingToolName(
 ): string | undefined {
   for (const o of own) {
     const name = typeof o === "string" ? o : o.name
-    if (bound.some((t) => t.name === name && t !== o)) return name
+    if (bound.some((t) => t.name === name && (typeof o === "string" || !isSameTool(t, o)))) return name
   }
   return undefined
 }
@@ -57,15 +85,7 @@ export function ownToolsGuard(opts: OwnToolsGuardOptions): (setup: Pick<SocketSe
   }
 }
 
-/**
- * 本轮绑定的是不是模块自家那件工具：按工具名认调用、或会叫模型调它的钩子先问这一句，不是就停手。
- *
- * 认"同一对象"或"同名且 execute 是同一个函数"：宿主 beforeModel 补丁常把工具表整份浅拷贝（`ctx.tools.map((t) => ({ ...t }))`
- * 改说明），副本不是同一对象，core 却按名字执行、跑的仍是自家闭包——只认对象同一性会让 spill / handoff 等钩子静默停手
- * （发版前终审）。别人的同名工具、或把 execute 包了一层的替身不算自家的；自家工具都有 execute，没有的不认
- */
+/** 本轮绑定的是不是模块自家那件工具（口径同 `isSameTool`）：按工具名认调用、或会叫模型调它的钩子先问这一句，不是就停手 */
 export function ownsTool(ctx: { tools: readonly Tool[] }, tool: Tool): boolean {
-  return ctx.tools.some(
-    (t) => t === tool || (t.name === tool.name && tool.execute !== undefined && t.execute === tool.execute),
-  )
+  return ctx.tools.some((t) => isSameTool(t, tool))
 }

@@ -797,9 +797,13 @@ export function reinsMiddleware(options: ReinsMiddlewareOptions): ReinsChatMiddl
   }
   /** 宿主工具自带静态 needsApproval: true：它的审批只走 TanStack 原生卡，reins 卡从不为它发 */
   const onNativeCard = (s: RunState, name: string): boolean => s.hostTools.get(name)?.needsApproval === true
-  /** 客户端工具：宿主给的 TanStack 工具没有 execute，由引擎交给前端执行，不经 onBeforeToolCall */
+  /**
+   * 客户端工具：没有 execute、由引擎交给前端执行、不经 onBeforeToolCall 的——宿主给的 TanStack 工具，或 Socket 贡献的
+   * reins 客户端工具（包装后同样没有 execute）。只认宿主工具会让 Socket 的 block / approval 拒绝 / needsApproval 抛错
+   * 拦不住后者：引擎照常交给前端执行（发版前终审 B 复查）
+   */
   const isClientTool = (s: RunState, name: string): boolean => {
-    const t = s.hostTools.get(name)
+    const t = s.hostTools.get(name) ?? s.wrapped.get(name)
     return t !== undefined && typeof t.execute !== "function"
   }
 
