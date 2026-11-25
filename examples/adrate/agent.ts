@@ -1,7 +1,7 @@
 /**
  * dogfood agent：AdRate CLI 工具 + 全部脑子模块 + SQLite 存储 + 经网关的模型。
  *
- * 模型来源（`REINS_PROVIDER`）：`aireiter`（缺省，claude-opus-5）或 `deepseek`（deepseek-v4-flash）；密钥从仓库根
+ * 模型来源（`REINS_PROVIDER`）：`aireiter`（缺省，claude-opus-5）、`deepseek`（deepseek-v4-flash）或 `cloudflare`（官方 Anthropic 经 CF AI Gateway 透传，claude-sonnet-5-5，凭证 CF_AIG_TOKEN）；密钥从仓库根
  * `.env.local` 读（经 scripts/local-env.mjs：AIREITER_API_KEY / DEEPSEEK_API_KEY），也可用 ANTHROPIC_API_KEY 覆盖。`REINS_MODEL` 覆盖模型 id。
  *
  * 系统提示 = 角色与任务约定 + 技能菜单（两份 AdRate Agent Skill 的 name + description）；正文由模型用 `skill_read` 按需翻（S1）。
@@ -14,11 +14,11 @@
 import { execFileSync } from "node:child_process"
 import { mkdirSync } from "node:fs"
 import { approval, budget, compact, handoff, inlineSkills, memory, perception, pins, skills, spill } from "@reinsjs/brain"
-import { anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
+import { anthropic, anthropicMessages, deepseek } from "@reinsjs/lowering-fetch"
 import { sqliteStores } from "@reinsjs/store-sqlite"
 import { openSqlite } from "@reinsjs/store-sqlite/node"
 import { createAgent } from "@reinsjs/agent"
-import { need } from "../../scripts/local-env.mjs"
+import { cfGatewayBase, need } from "../../scripts/local-env.mjs"
 import { advertiserId } from "./local.ts"
 import { adrateTools } from "./tools.ts"
 
@@ -29,8 +29,9 @@ function readKey(section: "aireiter" | "deepseek"): string {
   return need(section === "aireiter" ? "AIREITER_API_KEY" : "DEEPSEEK_API_KEY")
 }
 
-const provider = (process.env.REINS_PROVIDER ?? "aireiter") as "aireiter" | "deepseek"
-const modelId = process.env.REINS_MODEL ?? (provider === "deepseek" ? "deepseek-v4-flash" : "claude-opus-5")
+const provider = (process.env.REINS_PROVIDER ?? "aireiter") as "aireiter" | "deepseek" | "cloudflare"
+const DEFAULT_MODEL = { aireiter: "claude-opus-5", deepseek: "deepseek-v4-flash", cloudflare: "claude-sonnet-5-5" } as const
+const modelId = process.env.REINS_MODEL ?? DEFAULT_MODEL[provider]
 
 /**
  * AdRate CLI 自带的 Agent Skills → 内联技能载体：`skills list --json` 给 name / description，`skills read --json` 给正文。
@@ -82,14 +83,21 @@ const ROLE = `你是 AdRate（TikTok 广告投放工具）的运营助手，替 
 - AdRate 官方给 Agent 的操作契约以技能（Skills）形式提供，动手前先读相关技能并全文遵守。`
 
 /**
- * 降级层用 fetch 版（0.2 起示例统一）。aireiter 走 Anthropic Messages 线：表外模型，baseUrl 给到协议根（其后接 /messages）、
+ * 降级层用 fetch 版（0.2 起示例统一）。cloudflare 是官方 Anthropic 的透传（内置表有型号，凭证在 cf-aig-authorization 头、auth: "none"，与 examples/eval 同一套）。aireiter 走 Anthropic Messages 线：表外模型，baseUrl 给到协议根（其后接 /messages）、
  * 能力位手动声明，网关会丢中途 system 所以留 user 文本落点；DeepSeek 走官方 Chat Completions 直连（内置表有 deepseek-v4-flash，
  * reasoning_content 方言缺省开、中途 system 任意位置）。thinking 不在这里设：Opus 5 起厂商缺省 adaptive，DeepSeek 缺省就是 thinking 模式。
  */
 const model =
   provider === "deepseek"
     ? deepseek(modelId, { apiKey: readKey("deepseek") })
-    : anthropicMessages(modelId, {
+    : provider === "cloudflare"
+      ? anthropic(modelId, {
+          apiKey: "",
+          auth: "none",
+          baseUrl: `${cfGatewayBase()}/anthropic/v1`,
+          headers: { "cf-aig-authorization": `Bearer ${need("CF_AIG_TOKEN")}` },
+        })
+      : anthropicMessages(modelId, {
         provider: "aireiter",
         baseUrl: "https://aireiter.com/api/v1",
         apiKey: readKey("aireiter"),

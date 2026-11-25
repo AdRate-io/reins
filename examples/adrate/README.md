@@ -10,6 +10,7 @@ node examples/adrate/sync.ts                 # 从服务端拉能力与操作 sc
 node examples/adrate/tools.ts                # 打印生成的工具表核对
 node examples/adrate/smoke.ts                # 不经模型直接调用工具，核对子进程与信封解析
 REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] [--approve-all]
+REINS_PROVIDER=cloudflare node examples/adrate/run.ts "<任务>"   # 官方 Anthropic 经 CF AI Gateway（缺省 claude-sonnet-5-5，凭证 CF_AIG_TOKEN）
 ```
 
 - `tools.ts`：每个服务端操作一个 reins Tool。inputSchema 用服务端的（拿掉 `idempotencyKey`，幂等键 = `reins-<toolCallId>`，
@@ -22,7 +23,7 @@ REINS_PROVIDER=deepseek node examples/adrate/run.ts "<任务>" [--session <id>] 
   `REINS_PROVIDER=deepseek` 走 DeepSeek 官方 Chat Completions 直连（reasoning_content 方言回放思考；多轮请求在 aireiter 上会被掐断，dogfood 用 DeepSeek）。thinking 不手设，用厂商缺省。
 - `run.ts`：跑一条任务，审批逐条问 y/n（`--approve-all` 全批），结束写 JSONL 并用 `examples/minimal/replay.ts --agent` 生成回放页面。
 - `probe.ts`：排障用，单独打一次模型请求。
-- `local.ts`：测试广告主 id 等本地专用值的唯一读取处（环境变量或 gitignore 的密钥文件）。
+- `local.ts`：测试广告主 id 等本地专用值的唯一读取处（环境变量或 gitignore 的密钥文件）。账户下有多份 TikTok 授权时 AdRate 要求每次调用指明 `authId`（否则 `TIKTOK_AUTH_ID_REQUIRED`）：跑任务时模型从报错给的候选里自己选，不经模型的冒烟脚本读可选的 `ADRATE_AUTH_ID`。
 - `scrub.ts`：把 `recordings/raw/` 的真实录像脱敏成公开版并重生成回放页面。
 
 ## 技能改造后的真跑：只读巡检（2026-09-13，S1，`recordings/s1-skills-{deepseek,claude}.jsonl` / `.html`）
