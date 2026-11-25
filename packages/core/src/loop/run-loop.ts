@@ -1197,7 +1197,7 @@ function withResultTrust(input: EventDraft, tools: readonly Tool[]): EventDraft 
  * 需要审批 / 客户端执行的工具必须走 Socket 静态 `tools`（2026-11-25 定案，全景图核心设计决策）。
  */
 const toolUnavailableOnResumeText = (name: string): string =>
-  `Tool not available on resume: ${name} was only offered for the turn in which it was called (or has since been removed), so the call was not executed. Call a currently available tool instead.`
+  `Tool not available on resume: ${name} is not in the current tool list (it may have been offered only for the turn in which it was called, or removed since), so the call was not executed. Call a currently available tool instead.`
 
 /**
  * 逐个处理工具调用：beforeTool → 审批判定 → 校验 → 执行 → afterTool → append tool_result。
@@ -1257,6 +1257,14 @@ async function* executeToolCalls(
       continue
     }
 
+    // 补跑时工具已不在基础工具表：先于 beforeTool 直接收尾——没有任何 Socket 能让它执行，
+    // 交给管线只会被 approval 之类判成"unknown tool"（还会在已批准的调用上再落一条拒绝结论），模型又以为自己调错了名字。
+    // 多半是 beforeModel 补丁当轮临时加的（补跑先于任何模型轮、补丁没生效），也可能已被撤掉或名字本就是编的，文案按"现在不可用"说（全景图决策「补丁工具不跨暂停」）
+    if (!tool && batch.resumed) {
+      yield* await settle(errorResult(toolUnavailableOnResumeText(name)))
+      continue
+    }
+
     // beforeTool：任一 block / defer 即定；rewrite 替换入参后继续问下一个 ——
     // 后续钩子看到的 call 带改写后的入参（策略判定的必须是真正要执行的那份，B7）；
     // 宿主已批准的调用再遇到 defer 不短路：批准只是"不用再问"，排在后面的钩子（如审批策略）仍有权拦。
@@ -1281,10 +1289,7 @@ async function* executeToolCalls(
     }
 
     if (!tool) {
-      // 补跑时工具不在基础工具表里：多半是 beforeModel 补丁当轮临时加的（补跑先于任何模型轮、补丁没生效），
-      // 也可能是宿主 / Socket 已撤掉它。如实告诉模型"这次没执行、现在用不了"，别说成"不存在"让它以为调错了名字（OPT-261125-5 定案）
-      const text = batch.resumed ? toolUnavailableOnResumeText(name) : `Unknown tool: ${name}`
-      yield* await settle(errorResult(text))
+      yield* await settle(errorResult(`Unknown tool: ${name}`))
       continue
     }
 

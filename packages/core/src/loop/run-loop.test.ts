@@ -829,7 +829,7 @@ describe("runLoop：Socket 五个钩子", () => {
     expect(res.payload.content[0]).toEqual({ type: "text", text: "Tool call blocked: 冻结期" })
   })
 
-  it("beforeModel 补丁当轮加的工具被审批暂停：批准续跑时工具不在场，如实落「续跑时不可用、没执行」而不是 Unknown tool（OPT-261125-5 定案）", async () => {
+  it("beforeModel 补丁当轮加的工具被审批暂停：批准续跑时工具不在场，如实落「续跑时不可用、没执行」而不是 Unknown tool（全景图决策「补丁工具不跨暂停」）", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([
       { drafts: [callTool("c1", "deploy", { env: "prod" })] },

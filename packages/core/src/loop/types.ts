@@ -136,7 +136,7 @@ export interface BeforeModelPatch {
    * 本轮工具表（整体替换）。⚠️ 补丁加进来的工具只活在调过 beforeModel 的模型轮里：续跑补齐 pending 调用发生在任何
    * 模型轮之前，用的是基础工具表（宿主工具 + Socket 静态 `tools`），补丁工具不在场——被审批暂停的补丁工具批准后不执行，落
    * "Tool not available on resume: …"，补丁加的客户端工具也不进 `run_paused.awaiting`。需要审批或由客户端执行的工具必须走
-   * Socket 的静态 `tools` 贡献（可以是按运行环境算一次的函数），不要靠这里加（OPT-261125-5）。
+   * Socket 的静态 `tools` 贡献（可以是按运行环境算一次的函数），不要靠这里加（全景图决策「补丁工具不跨暂停」）。
    */
   tools?: Tool[]
   systemPrompt?: string

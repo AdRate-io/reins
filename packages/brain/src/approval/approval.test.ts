@@ -453,6 +453,37 @@ describe("approval × runLoop", () => {
     expect(textOf(resultOf(await all(log), "c1"))).toBe("已上线 prod")
   })
 
+  it("beforeModel 补丁当轮加的高危工具：批准续跑时工具不在场，落「续跑时不可用」，不被判成 unknown tool、不再追加拒绝结论", async () => {
+    executed.length = 0
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "deploy", { env: "prod" })] },
+      { drafts: [say("换个办法")] },
+    ])
+    // 补丁 Socket 只在模型轮把 deploy 加进本轮工具表；基础工具表里没有它
+    const patcher: Socket = { name: "patcher", beforeModel: (ctx) => ({ tools: [...ctx.tools, deployTool] }) }
+    const cfg = config(lowering, log, { tools: [readTool], sockets: [patcher, approval()] })
+    const first = await drain(runLoop(cfg))
+    expect(first.result.status).toBe("paused")
+    if (first.result.status !== "paused") throw new Error("unreachable")
+
+    const second = await drain(
+      runLoop({
+        ...resumed(cfg),
+        resume: first.result.state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(second.result.status).toBe("done")
+    expect(executed).toEqual([])
+    const events = await all(log)
+    const text = textOf(resultOf(events, "c1"))
+    expect(text.startsWith("Tool not available on resume: deploy")).toBe(true)
+    expect(text).toContain("not executed")
+    // 只有宿主那条批准，没有 approval.unknown_tool 补的拒绝
+    expect(decisionsOf(events).map((d) => d.payload.by)).toEqual(["boss"])
+  })
+
   it("未声明 risk 的工具缺省先问人；unmatched='deny' 时一律拒", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([{ drafts: [callTool("c1", "search", { q: "x" })] }])
