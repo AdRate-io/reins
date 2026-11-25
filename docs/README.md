@@ -30,7 +30,7 @@ Claude Code / Codex / Cursor 都读根目录 `AGENTS.md`，不再另设 CLAUDE.m
 | 翻旧账 | `docs/archive/`（调研、审查报告、任务记录、0.1～0.4 决策日志） | 只作证据，不引用其中过期定位 |
 | 上游行为核实 | `spikes/README.md` | 上游升级时复跑 |
 
-**历史引用的读法**：代码注释与旧文档里的「DECISIONS 2026-09-xx」指 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 当日的行；「技术方案 §x」指 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` 对应章节；「TASKS 某任务号」到 `docs/archive/*任务记录*` 里找。这些引用不批量改写——它们是快照的一部分，按文件名 grep 即可。
+**历史引用的读法**：代码注释与旧文档里的「DECISIONS 2026-09-xx」指 `docs/archive/2026-10-30-决策日志DECISIONS-0.1至0.4.md` 当日的行；「技术方案 §x」指 `docs/archive/implementation-plans/2026-09-08-技术方案v1.0.md` 对应章节；「TASKS 某任务号」到 `docs/archive/*任务记录*` 里找。「全库审查 #N」（2026-11-25）指 `docs/archive/2026-11-25-全库审查报告.md` 的第 N 项。这些引用不批量改写——它们是快照的一部分，按文件名 grep 即可。
 
 ---
 
