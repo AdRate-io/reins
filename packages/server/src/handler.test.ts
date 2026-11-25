@@ -1545,6 +1545,68 @@ describe("BUG-261105-2 第二步：authorizeSession 看得见这次带的审批�
     expect(again.status).toBe(409)
     expect(await again.json()).toMatchObject({ error: "approval_pending" })
   })
+
+  it("同批已有审批中断时再遇宿主中止：暂停仍带 note，没走过判定的客户端工具照样 409 call_not_evaluated（发版前终审）", async () => {
+    // 批 = [要审批的服务端工具, 执行时宿主中止的工具, 要审批的客户端工具]：c0 已挂起等审批，c2 没经过判定
+    const ac = new AbortController()
+    const deploy = defineTool<Record<string, never>>({
+      name: "deploy",
+      description: "上线（要审批）",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: () => "deployed",
+    })
+    const abortsHost = defineTool<Record<string, never>>({
+      name: "probe",
+      description: "执行时宿主中止",
+      inputSchema: { type: "object" },
+      risk: "low",
+      execute: () => {
+        ac.abort()
+        return "ok"
+      },
+    })
+    const pick = defineTool<Record<string, never>>({
+      name: "pick_file",
+      description: "让用户选文件（要审批）",
+      inputSchema: { type: "object" },
+      side: "client",
+      needsApproval: true,
+    })
+    const { handler, log, agent } = setup(
+      [
+        {
+          drafts: [
+            callTool("c0", "deploy", {}),
+            callTool("c1", "probe", {}),
+            callTool("c2", "pick_file", {}),
+          ],
+        },
+      ],
+      [deploy, abortsHost, pick],
+      { secret: "k" },
+      approverOnly,
+    )
+    const gen = runLoop({ ...agent, sessionId: "s1", input: "上线", signal: ac.signal })
+    let step = await gen.next()
+    while (!step.done) step = await gen.next()
+    expect(step.value).toMatchObject({ status: "paused", reason: "approval" })
+    const paused = (await logged(log, "s1")).findLast((e) => e.type === "core.run_paused")
+    expect((paused?.payload as { note?: string }).note).toBe("host aborted during the tool batch")
+    const before = (await logged(log, "s1")).length
+    const res = await handler(
+      asUser("owner", {
+        sessionId: "s1",
+        input: {
+          type: "core.tool_result",
+          payload: { toolCallId: "c2", content: [{ type: "text", text: "secret.txt" }] },
+        },
+      }),
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ error: "call_not_evaluated" })
+    expect(await logged(log, "s1")).toHaveLength(before)
+  })
 })
 
 describe("sessionId 字符集：越界值给 400，不让它冒成未捕获异常", () => {

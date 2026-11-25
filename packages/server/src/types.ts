@@ -164,7 +164,7 @@ export interface SessionAuthzInput {
    * 通常只拦批准、不拦拒绝：`decisions.some((d) => d.approved)` 且 principal 不是审批人就返回 false；
    * 会话主人发新消息代替审批时会带 `approved: false`，拦掉它用户就发不了话。
    * `by` 是客户端自报的，不可信，判断审批权只看 `principal`。
-   * 注意：只带结论、不带 `resume` 时循环不验签、不查配置漂移，只核对结论指向本会话 pending（BUG-261105-2）。
+   * 经 HTTP 交结论必须连同 `resume` 一起交（否则 handler 在调本钩子之前就回 400），所以到这里的结论都会再经验签与配置漂移校验。
    */
   decisions: readonly ApprovalDecisionInput[]
 }

@@ -717,7 +717,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       // 用户停止、或其它中止（断线、丢租约）落在批中途时不进 onTurnEnd：余下的调用还 pending，
       // Socket 判出 handoff / done 就会把它们带进一个不是 paused 的结局
       if (settled.interruptions.length > 0 || isStopped(cfg.signal) || abortedMidBatch(cfg.signal, batch)) {
-        const interruptions = withBatchAbortNote(settled.interruptions)
+        const interruptions = withBatchAbortNote(settled.interruptions, abortedMidBatch(cfg.signal, batch))
         const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
         yield* events
         return result
@@ -948,7 +948,7 @@ export async function* runLoop(cfg: LoopConfig): AsyncGenerator<Event, RunResult
       (calls.length > 0 && isStopped(cfg.signal)) ||
       abortedMidBatch(cfg.signal, batch)
     ) {
-      interruptions = withBatchAbortNote(interruptions)
+      interruptions = withBatchAbortNote(interruptions, abortedMidBatch(cfg.signal, batch))
       const { events, result } = await pause(pauseReasonOf(interruptions), interruptions)
       yield* events
       return result
@@ -1085,11 +1085,15 @@ function droppedCallResults(
   return isStopped(signal) ? [] : notExecutedResults(modelEvents, MODEL_INTERRUPTED_NOT_EXECUTED_TEXT)
 }
 
-/** 批中途被中止而没有别的中断时补一条宿主中断说明；已有中断（审批、客户端工具…）原样返回 */
-function withBatchAbortNote(interruptions: Interruption[]): Interruption[] {
-  return interruptions.length > 0
-    ? interruptions
-    : [{ kind: "host", note: "host aborted during the tool batch" }]
+/**
+ * 批中途被中止（批里还有没落结果的调用）时一律追加宿主中断说明，即使同批已有审批 / 客户端工具 / 子代理中断——
+ * 原因仍按 pauseReasonOf 定（审批优先），但 run_paused 必须带 note：server 的 call_not_evaluated 闸靠"中止的暂停带 note"
+ * 认出批里排在后面、没走过判定的调用，漏了 note 客户端工具就能免审批回填（发版前终审）。
+ * 没中止、只有别的中断时原样返回；什么中断都没有（如用户停止落在批末）照旧补这一条
+ */
+function withBatchAbortNote(interruptions: Interruption[], abortedMid: boolean): Interruption[] {
+  if (interruptions.length > 0 && !abortedMid) return interruptions
+  return [...interruptions, { kind: "host", note: "host aborted during the tool batch" }]
 }
 
 /** 时间线里全部 tool_call 的 toolCallId */
