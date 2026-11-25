@@ -829,6 +829,46 @@ describe("runLoop：Socket 五个钩子", () => {
     expect(res.payload.content[0]).toEqual({ type: "text", text: "Tool call blocked: 冻结期" })
   })
 
+  it("beforeModel 补丁当轮加的工具被审批暂停：批准续跑时工具不在场，如实落「续跑时不可用、没执行」而不是 Unknown tool（OPT-261125-5 定案）", async () => {
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "deploy", { env: "prod" })] },
+      { drafts: [say("知道了")] },
+    ])
+    let executed = 0
+    const deploy: Tool = {
+      name: "deploy",
+      description: "上线",
+      inputSchema: { type: "object" },
+      needsApproval: true,
+      execute: () => {
+        executed++
+        return "已上线"
+      },
+    }
+    // 补丁在每个模型轮把 deploy 加进本轮工具表；补跑先于任何模型轮，补丁不生效
+    const patcher: Socket = { beforeModel: (ctx) => ({ tools: [...ctx.tools, deploy] }) }
+    const cfg = baseConfig(lowering, log, { sockets: [patcher] })
+    const first = await drain(runLoop({ ...cfg, input: "上线" }))
+    expect(first.result.status).toBe("paused")
+    if (first.result.status !== "paused") throw new Error("unreachable")
+
+    const second = await drain(
+      runLoop({
+        ...cfg,
+        resume: first.result.state,
+        decisions: [{ toolCallId: "c1", approved: true, by: "boss" }],
+      }),
+    )
+    expect(second.result.status).toBe("done")
+    expect(executed).toBe(0)
+    const res = (await all(log)).find((e) => e.type === "core.tool_result") as CoreEventOf<"core.tool_result">
+    expect(res.payload.isError).toBe(true)
+    const text = (res.payload.content[0] as { text: string }).text
+    expect(text.startsWith("Tool not available on resume: deploy")).toBe(true)
+    expect(text).toContain("not executed")
+  })
+
   it("onTurnEnd continue 强行再来一轮；stop 在有工具调用时也能结束", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([

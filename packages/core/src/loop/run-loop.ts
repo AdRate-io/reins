@@ -1193,6 +1193,13 @@ function withResultTrust(input: EventDraft, tools: readonly Tool[]): EventDraft 
 }
 
 /**
+ * 续跑补齐 pending 时调用的工具已不在工具表（模型可见）。补丁工具只活在调过 beforeModel 的那一轮，
+ * 需要审批 / 客户端执行的工具必须走 Socket 静态 `tools`（2026-11-25 定案，全景图核心设计决策）。
+ */
+const toolUnavailableOnResumeText = (name: string): string =>
+  `Tool not available on resume: ${name} was only offered for the turn in which it was called (or has since been removed), so the call was not executed. Call a currently available tool instead.`
+
+/**
  * 逐个处理工具调用：beforeTool → 审批判定 → 校验 → 执行 → afterTool → append tool_result。
  * 已有审批决定（timeline 里的 approval_decision）的调用按决定办；已有审批请求但没决定的不重复发请求。
  */
@@ -1274,7 +1281,10 @@ async function* executeToolCalls(
     }
 
     if (!tool) {
-      yield* await settle(errorResult(`Unknown tool: ${name}`))
+      // 补跑时工具不在基础工具表里：多半是 beforeModel 补丁当轮临时加的（补跑先于任何模型轮、补丁没生效），
+      // 也可能是宿主 / Socket 已撤掉它。如实告诉模型"这次没执行、现在用不了"，别说成"不存在"让它以为调错了名字（OPT-261125-5 定案）
+      const text = batch.resumed ? toolUnavailableOnResumeText(name) : `Unknown tool: ${name}`
+      yield* await settle(errorResult(text))
       continue
     }
 
