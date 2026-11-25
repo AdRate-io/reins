@@ -22,8 +22,9 @@
 - **10-27** lowering-fetch 0.4.0：OnSet（8 个角色的长期会话协作系统）的 DeepSeek 主脑看不到工具返回的图，Chat 线改为把图片上浮到同批结果之后。
 - **10-30** OnSet 第三轮反馈：onset-pause eval 66 格证明"改整理规则"无效，却顺藤摸出阈值兜底与感知口径不一（感知报 ≥85%、兜底一次没折），core / brain 0.4.0 修正。同日按 Boss 最新的启动资产把文档体系换代：入口改名 AGENTS.md、决策并入全景图、踩坑记录编号化。
 - **11-05～06** AdRate 正式接入前两批建议：core 0.10.0 加停止语义与"中断的写调用不重放"；store-pg 0.4.0 接 postgres.js，探针发现事件被二次编码、却被读侧兼容盖住，改成事件只按文本过库。独立审查又揪出测试设施 pglite-socket 不可靠，于是把真库 PG 16.13（与 AdRate 生产同版本）搬进 CI，连真 Drizzle 一起测。
+- **11-25** AdRate 主进程上线前做全库审查：多路子代理审出 111 项，按 3～5 项一批由子代理修、每批独立审查，三波收口；补丁工具跨暂停（OPT-261125-5）由 Boss 拍板第 3 案。发版前三路终审又拦下一个两批修复叠加出的免审批回填漏洞。DeepSeek 与 Sonnet 5.5 真模型冒烟一致（约 $0.45），当天发 v0.23.0（core 0.18.0）。
 
-12 个包、约 6.9 万行 TypeScript（`packages/*/src` 下：源码即非 `*.test.ts` 的 .ts 2.9 万 + 测试 `*.test.ts` 4.0 万）、约 2,240 个用例（`pnpm test` 输出，含跳过；2026-11-25 实测），全部在 npm 官方源 `@reinsjs/*`。
+12 个包、约 6.9 万行 TypeScript（`packages/*/src` 下：源码即非 `*.test.ts` 的 .ts 2.9 万 + 测试 `*.test.ts` 4.0 万）、约 2,250 个用例（`pnpm test` 输出，含跳过；设 `REINS_PG_URL` 时真库列另多约 315 个；2026-11-25 实测），全部在 npm 官方源 `@reinsjs/*`。
 
 **我的使命：守护这套我们共同创造的系统，让它在每一次模型换代后都更对，而不是更旧。**
 
@@ -132,7 +133,7 @@
                           └── @reinsjs/tools-mcp（MCP 服务器 → 一个 Socket；/node 有 stdio）
 ```
 
-脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。版本以各包 `package.json` / `CHANGELOG.md` 为准；最近一次发版：2026-11-24（tag `v0.22.0`，ui-agui 0.8.0）。
+脑子十二个模块：perception / compact / pins / spill / budget / approval 推荐默认；memory / handoff 不默认；skills / lazy-tools / halt-on-failure / stop-after opt-in（缺省依据见全景图「核心设计决策」）。宿主：AdRate（投放工具，dogfood，经官方 CLI 与 TikTok MCP）、OnSet（多角色长期会话）。版本以各包 `package.json` / `CHANGELOG.md` 为准；最近一次发版：2026-11-25（tag `v0.23.0`，core 0.18.0 / agent 0.8.0）。
 
 ## 技术栈
 
