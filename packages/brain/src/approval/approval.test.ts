@@ -484,6 +484,28 @@ describe("approval × runLoop", () => {
     expect(decisionsOf(events).map((d) => d.payload.by)).toEqual(["boss"])
   })
 
+  it("同上但宿主拒绝：仍先落 Approval denied，不被「续跑时不可用」抢先", async () => {
+    executed.length = 0
+    const log = new InMemoryEventLog()
+    const lowering = new ScriptedLowering([
+      { drafts: [callTool("c1", "deploy", { env: "prod" })] },
+      { drafts: [say("好的，不上线")] },
+    ])
+    const patcher: Socket = { name: "patcher", beforeModel: (ctx) => ({ tools: [...ctx.tools, deployTool] }) }
+    const cfg = config(lowering, log, { tools: [readTool], sockets: [patcher, approval()] })
+    const first = await drain(runLoop(cfg))
+    if (first.result.status !== "paused") throw new Error("unreachable")
+
+    await drain(
+      runLoop({
+        ...resumed(cfg),
+        resume: first.result.state,
+        decisions: [{ toolCallId: "c1", approved: false, by: "boss", reason: "不许上线" }],
+      }),
+    )
+    expect(textOf(resultOf(await all(log), "c1"))).toBe("Approval denied: 不许上线")
+  })
+
   it("未声明 risk 的工具缺省先问人；unmatched='deny' 时一律拒", async () => {
     const log = new InMemoryEventLog()
     const lowering = new ScriptedLowering([{ drafts: [callTool("c1", "search", { q: "x" })] }])
